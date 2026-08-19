@@ -1,0 +1,9 @@
+entry: hyprland.conf   (captured from ~/.config/hypr with `fetch.sh --local`, sanitised)
+Path mapping:
+  ~/.config/hypr  -> .        (also $config/hypr where `$config = $HOME/.config`, and
+                               absolute /home/<user>/.config/hypr which was rewritten to ~)
+  ~/repos/...     -> _home/repos/...   (forest-shell integration confs)
+Only files reachable via source= from hyprland.conf are included; sibling files in
+~/.config/hypr (hyprlock/hypridle, dms/*, wallust/, scripts/, *.backup) were dropped.
+Runtime-generated: colors.conf, noctalia/noctalia-colors.conf, dms/cursor.conf,
+hyprland-gui.conf, shell-switcher-*.conf are written by tools (noctalia/dms/hyprland-gui).

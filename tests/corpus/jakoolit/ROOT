@@ -1,0 +1,7 @@
+entry: hyprland.conf
+Path mapping: $HOME/.config/hypr -> .   (hyprland.conf sets $configs = $HOME/.config/hypr/configs
+and $UserConfigs = $HOME/.config/hypr/UserConfigs, then `source= $configs/...`).
+Runtime-generated: wallust/wallust-hyprland.conf is rewritten by wallust (template);
+the copy here is the shipped default. wallpaper_effects/ (2.8 MB of images) omitted.
+Alternate rule sets: configs/WindowRules-pre-53.conf and WindowRules-config-v3.conf are
+not sourced by default (0.53+ syntax file is).

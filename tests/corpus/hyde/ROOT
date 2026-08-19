@@ -1,0 +1,12 @@
+entry: hyprland.conf
+Path mapping needed to resolve source= lines when this dir is the corpus root:
+  ~/.config/hypr            -> .            (also $XDG_CONFIG_HOME/hypr, $HOME/.config/hypr)
+  ~/.local/share/hyde       -> _home/.local/share/hyde   ($XDG_DATA_HOME/hyde)
+  ~/.local/share/hypr       -> _home/.local/share/hypr   ($XDG_DATA_HOME/hypr)
+  ~/.local/state/hyde/*.conf ($XDG_STATE_HOME/hyde/hyprland.conf, hypr.conf) are
+    generated at runtime by hyde-shell from config.toml and are NOT in the corpus;
+    they are wrapped in `# hyprlang noerror true`, so treat as missing/empty.
+  ./hyde.conf (legacy fallback) does not exist upstream either (noerror).
+Load order: hyprland.conf -> $XDG_DATA_HOME/hyde/hyprland.conf (defines $XDG_* vars
+via `# hyprlang if !XDG_DATA_HOME`, then sources everything) -> back to ./keybindings.conf,
+./windowrules.conf, ./monitors.conf, ./userprefs.conf.

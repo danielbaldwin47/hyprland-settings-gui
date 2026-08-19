@@ -1,0 +1,5 @@
+entry: hyprland.conf
+All source= lines are relative (hyprland/*.conf, custom/*.conf) - no mapping needed.
+The tree also contains the upstream .lua port of every .conf at the same commit
+(hyprland.lua, hyprland/*.lua, custom/*.lua) - reference only, not hyprlang input.
+hyprlock/, hyprlock.conf, hypridle.conf omitted (not sourced by hyprland.conf).

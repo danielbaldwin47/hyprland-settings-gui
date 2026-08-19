@@ -1,0 +1,65 @@
+{
+  "_comment": "Pinned upstream sources for tests/corpus. Regenerate trees with tests/corpus/fetch.sh. 'paths' are sparse-checkout paths inside the repo; 'root' is the path that becomes tests/corpus/<rice>/ (~/.config/hypr equivalent); 'extra' maps other repo paths to <rice>/_home/<home-relative> so absolute source= lines can be resolved. 'exclude' lists extra rsync exclude patterns.",
+  "end-4": {
+    "repo": "https://github.com/end-4/dots-hyprland",
+    "commit": "f6b97c4649d5f4fa89208be2499f459e2ef7f003",
+    "root": "dots/.config/hypr",
+    "extra": {},
+    "note": "Last commit before 010f070eef (2026-05-11) removed hyprland.conf and finished the hyprland.lua migration. Tree contains both .conf and the parallel .lua port."
+  },
+  "hyde": {
+    "repo": "https://github.com/HyDE-Project/HyDE",
+    "commit": "a51460a7b1a822ee7194318b60a38850f711b923",
+    "root": "Configs/.config/hypr",
+    "extra": {
+      "Configs/.local/share/hyde/hyprland.conf": ".local/share/hyde/hyprland.conf",
+      "Configs/.local/share/hyde/migration/hypr": ".local/share/hyde/migration/hypr",
+      "Configs/.local/share/hypr": ".local/share/hypr"
+    },
+    "note": "Last master commit before b8cc647231 (2026-07-27, rc->master release) replaced hyprland.conf with hyprland.lua. Formerly prasanthrangan/hyprdots."
+  },
+  "jakoolit": {
+    "repo": "https://github.com/JaKooLit/Hyprland-Dots",
+    "commit": "c093e836764d62346390ba307c9163ca11d0229b",
+    "root": "config/hypr",
+    "extra": {},
+    "note": "main HEAD at capture time (2026-02-22); still hyprlang."
+  },
+  "ml4w": {
+    "repo": "https://github.com/mylinuxforwork/dotfiles",
+    "commit": "437a2eb26540bc66215f6a3a53af959095b5dc6d",
+    "root": "dotfiles/.config/hypr",
+    "extra": {},
+    "note": "Last commit before 66068ae99c (2026-05-19, 'conf files removed'). Tree contains both .conf and the parallel .lua port."
+  },
+  "hyprv": {
+    "repo": "https://github.com/SolDoesTech/HyprV4",
+    "commit": "c81cf650443d680bf7a589de6128d01020dd1bc6",
+    "root": "HyprV/hypr",
+    "extra": {},
+    "note": "SolDoesTech/HyprV no longer exists; HyprV4 is the latest generation. main HEAD (2024-01-15)."
+  },
+  "hyprland-default": {
+    "repo": "https://github.com/hyprwm/Hyprland",
+    "commit": "0002f148c9a4fe421a9d33c0faa5528cdc411e62",
+    "tag": "v0.54.0",
+    "root": "example",
+    "extra": {},
+    "note": "Upstream example/hyprland.conf shipped with v0.54.0.",
+    "exclude": [
+      "hyprland.desktop.in",
+      "hyprland.service",
+      "swaybg@.service",
+      "launch.json"
+    ]
+  },
+  "local": {
+    "repo": null,
+    "commit": null,
+    "root": "~/.config/hypr",
+    "extra": {
+      "~/repos/forest-shell/integration/hyprland": "repos/forest-shell/integration/hyprland"
+    },
+    "note": "Captured from the maintainer's box (Hyprland 0.56.2) with fetch.sh --local on 2026-08-19; sanitised (absolute /home/<user> -> ~), only files reachable via source= from hyprland.conf."
+  }
+}

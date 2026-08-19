@@ -1,0 +1,3 @@
+entry: hyprland.conf
+Path mapping: ~/.config/hypr -> .   (source = ~/.config/hypr/media-binds.conf, env_var.conf).
+Legacy (Jan 2024) syntax: windowrulev2, `bind = , XF86...`, no bindd. No LICENSE upstream.
