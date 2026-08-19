@@ -128,6 +128,46 @@ Worth confirming against #15/#10.
 Also confirmed live, first time on this box: **`hyprctl keyword` is refused under the Lua
 engine** — `"keyword can't work with non-legacy parsers. Use eval."`
 
+## The writer contract is not the `descriptions` text
+
+Exercising the app's own apply path against the nested Lua instance (four options: an int,
+another int, a gradient, a css-gap) failed on two of the four, and this is a schema-layer
+finding, not a prototype bug:
+
+```
+error setting 'general.col.active_border': invalid color "ff00ffcc 45deg"
+error setting 'general.gaps_in': css_gap type requires an integer or a table with
+  optional "top", "right", "bottom", "left" fields
+```
+
+`descriptions` prints the complex types via `IComplexConfigValue::toString()`, and **Lua
+will not read that text back**. A gradient string is parsed as a single colour, and a
+css-gap string is rejected outright. The writer must emit tables, per the stub's aliases
+(`HL.Gradient = string|{colors:string[], angle?:number}`, `HL.CssGap = integer|{top?,right?,bottom?,left?}`):
+
+```lua
+['general.col.active_border'] = { colors = { '0xff00ffcc' }, angle = 45 },
+['general.gaps_in']           = { top = 3, right = 3, bottom = 3, left = 3 },
+```
+
+With those, all four applied with `configerrors` empty and the values read back exactly.
+So the schema layer owes each type **three** representations, not one: the display value,
+the Lua literal, and the parse of what `getoption` returns — 19 of the 353 options
+(16 gradients + 3 css-gaps) have all three different.
+
+Related, and it contradicts an assumption in research #3 §4: **the `getoption` key is
+engine-dependent.** Under hyprlang, gradients/css-gaps/font-weights all come back as
+`"custom"` and the research noted the `"gradient"`/`"css"`/`"font_weight"` branches "never
+fire". Under the Lua engine they *do*:
+
+```json
+{"option": "general:col.active_border", "gradient": "ff00ffcc 45deg", "set": true}
+{"option": "general:gaps_in", "css": "3 3 3 3", "set": true}
+```
+
+A reader that only knows `int|float|str|vec2|custom` silently reads `None` for 21 options
+on a Lua box. Accept all eight keys.
+
 ## Curation policy
 
 The schema layer is **two files** — this prototype is evidence for the split proposed in

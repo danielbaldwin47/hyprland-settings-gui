@@ -46,7 +46,9 @@ def read_values(names):
             break
         obj, i = dec.raw_decode(out, i)
         v = None
-        for k in ("int", "float", "str", "vec2", "custom"):
+        # under hyprlang the complex types all come back as "custom"; under the Lua
+        # engine they arrive as "gradient" / "css" / "font_weight" instead.
+        for k in ("int", "float", "str", "vec2", "custom", "gradient", "css", "font_weight"):
             if k in obj:
                 v = obj[k]
                 break
@@ -76,6 +78,10 @@ def typed(rec, raw):
 
 
 def lua_literal(rec, value):
+    """Lua does NOT accept the `toString()` text that `descriptions` prints for the
+    complex types: a gradient string is parsed as a single colour and a css-gap string
+    is rejected outright. Gradient and css-gaps must be emitted as tables
+    (HL.Gradient = {colors, angle}, HL.CssGap = {top,right,bottom,left})."""
     t = rec["type"]
     if t == "bool":
         return "true" if value else "false"
@@ -85,6 +91,21 @@ def lua_literal(rec, value):
         return "{ %s, %s }" % (value[0], value[1])
     if t == "color":
         return "'0x%s'" % value if value != "-1" else "-1"
+    if t == "gradient":
+        parts = str(value).split()
+        angle = 0
+        if parts and parts[-1].endswith("deg"):
+            angle = int(float(parts[-1][:-3]))
+            parts = parts[:-1]
+        colors = ", ".join("'0x%s'" % p for p in parts)
+        return "{ colors = { %s }, angle = %d }" % (colors, angle)
+    if t == "css_gaps":
+        n = [int(float(x)) for x in str(value).split()] or [0]
+        while len(n) < 4:
+            n.append(n[-1])
+        return "{ top = %d, right = %d, bottom = %d, left = %d }" % tuple(n[:4])
+    if t == "font_weight":
+        return "'%s'" % value
     return "'%s'" % str(value).replace("'", "\\'")
 
 
