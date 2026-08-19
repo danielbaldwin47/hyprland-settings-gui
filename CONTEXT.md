@@ -6,7 +6,8 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | --- | --- |
 | **Option** | A single `hl.config` value (e.g. `decoration:rounding`) as reported by `hyprctl -j descriptions`: name, description, default, current, min/max, enum map. |
 | **Section** | A top-level grouping of options as Hyprland defines it (`general`, `decoration`, `input`, …) — 21 of them. A property of the config, not of the UI. |
-| **Page** | One destination in the sidebar; an `Adw.PreferencesPage`. A Page may cover one Section, several, or one Entity kind — the Page ↔ Section mapping is curated, not derived (see issue #7). |
+| **View** | One of the two sidebar arrangements the user switches between: **Tasks** (curated Pages, the default) and **Config** (one Page per Section, generated from the Schema). A View changes grouping, naming and order only — never which Options exist (issue #7). |
+| **Page** | One destination in the sidebar; an `Adw.PreferencesPage`. In the Config view a Page is exactly one Section or one Entity kind; in the Tasks view a Page may span several Sections, by a curated mapping. |
 | **Group** | A `PreferencesGroup` inside a Page: the titled block a handful of Rows sit in. |
 | **Row** | The generated widget for one Option or Entity field: title, dotted key as subtitle, typed control, and state — modified, inherit, advanced, restart-required, device-override, set-outside-the-app, unknown-to-this-version. |
 | **Advanced** | Visibility class in the Schema overlay: Rows hidden until the Advanced toggle is on (`debug`, `quirks`, `experimental`, `input-capture`, plus curated singles). |

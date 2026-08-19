@@ -23,6 +23,9 @@ a{color:var(--accent-fg);text-decoration:none} a:hover{color:#03488f}
 .hb .t{font-weight:700;font-size:15px;padding-left:6px}
 .iconbtn{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--dim);flex:none}
 .iconbtn.on{background:var(--btn2)}
+.viewseg{display:flex;gap:3px;padding:3px;margin:0 8px 6px;background:rgba(0,0,6,.07);border-radius:9px;flex:none}
+.viewseg div{flex:1;text-align:center;font-size:13px;padding:5px 0;border-radius:7px;color:var(--dim)}
+.viewseg div.sel{background:var(--view);color:var(--fg);font-weight:600;box-shadow:0 1px 2px rgba(0,0,6,.12)}
 .navlist{padding:0 8px 8px;display:flex;flex-direction:column;gap:2px;overflow:hidden}
 .navhdr{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2);padding:12px 10px 4px}
 .nav{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;color:var(--fg)}
@@ -72,7 +75,7 @@ a{color:var(--accent-fg);text-decoration:none} a:hover{color:#03488f}
 .kbd{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 8px;border-radius:6px;background:rgba(0,0,6,.08);box-shadow:inset 0 -1px 0 rgba(0,0,6,.10);font-size:13px;font-weight:600}
 .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:8px;background:rgba(0,0,6,.06);font-size:13px;color:var(--dim)}
 
-.sheet{width:1180px;height:1200px;background:#e7e7ea;padding:24px 26px;display:flex;flex-direction:column;gap:16px}
+.sheet{width:1180px;height:1360px;background:#e7e7ea;padding:24px 26px;display:flex;flex-direction:column;gap:16px}
 .sheethdr h2{margin:0;font-size:20px;font-weight:700}
 .sheethdr p{margin:4px 0 0;font-size:14px;color:var(--dim);max-width:900px}
 .cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;flex:1;min-height:0}
@@ -102,14 +105,18 @@ a{color:var(--accent-fg);text-decoration:none} a:hover{color:#03488f}
 </helmet>
 <div class="sheet">
   <div class="sheethdr">
-    <h2>Three ways to shape the sidebar</h2>
-    <p>353 options in 21 config sections, plus ten kinds of entity that are not options at all. The question is only how they are grouped and named — the row rendering, search and instant apply are identical in all three.</p>
+    <h2>Two views of the same app <span class="pill" style="vertical-align:middle;background:rgba(46,194,126,.18);color:#26714a">Decided</span></h2>
+    <p>353 options in 21 config sections, plus ten kinds of entity that are not options at all. <b>A and B both ship</b>, switched from the top of the sidebar and remembered: A for people who think in tasks, B for people who already think in <span class="mono">hyprland.conf</span> keys. Same rows, same search, same instant apply underneath — only the grouping, naming and ordering change.</p>
+  </div>
+  <div style="display:flex;align-items:center;gap:14px">
+    <div class="viewseg" style="margin:0;width:220px"><div class="sel">Tasks</div><div>Config</div></div>
+    <div style="font-size:13px;color:var(--dim)">Lives above the sidebar list; also in the primary menu. An app preference, not per-page state.</div>
   </div>
 
   <div class="cols">
 
     <div class="col">
-      <div class="colhdr"><h3>A · Task-first</h3><span class="pill adv">Recommended</span></div>
+      <div class="colhdr"><h3>A · Tasks</h3><span class="pill" style="background:rgba(46,194,126,.18);color:#26714a">Ships · default</span></div>
       <div class="mini">
         <div class="mh">Look</div>
         <div class="mi">General</div><div class="mi sel">Decoration</div><div class="mi">Animations</div><div class="mi">Layouts</div>
@@ -121,13 +128,13 @@ a{color:var(--accent-fg);text-decoration:none} a:hover{color:#03488f}
         <div class="mi">Displays<span class="c">2</span></div><div class="mi">Cursor</div><div class="mi">Startup<span class="c">6</span></div><div class="mi">Permissions</div><div class="mi">Rendering</div><div class="mi">Advanced<span class="c">27</span></div>
       </div>
       <div class="why">
-        <div><b>Why:</b> 19 pages, four groups, every page under ~45 rows. Options move to where the task is: <span class="mono">misc</span> is dissolved, <span class="mono">input</span> splits into Keyboard / Mouse / Gestures / Devices, entities sit next to the options they interact with.</div>
-        <div><b>Cost:</b> the page ↔ section mapping is hand-curated and has to be re-checked each Hyprland release; new options land in Advanced until they are placed.</div>
+        <div><b>For:</b> anyone who knows what they want to change but not what Hyprland calls it. 19 pages, four groups, every page under ~45 rows. <span class="mono">misc</span> is dissolved, <span class="mono">input</span> splits four ways, entities sit beside the options they interact with.</div>
+        <div><b>Curated:</b> the page ↔ section mapping is written by hand. An option Hyprland adds and nobody has placed still appears — under its own section's page, in a <i>New in 0.57</i> group — so the view is never wrong, only unpolished.</div>
       </div>
     </div>
 
     <div class="col">
-      <div class="colhdr"><h3>B · Mirror the config</h3></div>
+      <div class="colhdr"><h3>B · Config</h3><span class="pill" style="background:rgba(46,194,126,.18);color:#26714a">Ships</span></div>
       <div class="mini">
         <div class="mh">Options</div>
         <div class="mi mono">general<span class="c">23</span></div><div class="mi mono">decoration<span class="c">43</span></div><div class="mi mono">animations<span class="c">2</span></div><div class="mi mono sel">input<span class="c">60</span></div><div class="mi mono">gestures<span class="c">14</span></div><div class="mi mono">group<span class="c">47</span></div><div class="mi mono">misc<span class="c">40</span></div><div class="mi mono">binds<span class="c">14</span></div><div class="mi mono">xwayland<span class="c">4</span></div><div class="mi mono">opengl<span class="c">1</span></div><div class="mi mono">render<span class="c">17</span></div><div class="mi mono">cursor<span class="c">22</span></div><div class="mi mono">ecosystem<span class="c">3</span></div><div class="mi mono">layout<span class="c">2</span></div><div class="mi mono">dwindle<span class="c">11</span></div><div class="mi mono">master<span class="c">14</span></div><div class="mi mono">scrolling<span class="c">9</span></div><div class="mi mono">debug<span class="c">22</span></div>
@@ -137,13 +144,13 @@ a{color:var(--accent-fg);text-decoration:none} a:hover{color:#03488f}
         <div class="fade"></div>
       </div>
       <div class="why">
-        <div><b>Why:</b> the sidebar <i>is</i> <span class="mono">hyprctl descriptions</span> — 21 sections then one page per entity kind. Zero curation, nothing to re-check on upgrade, and the wiki, <span class="mono">hyprctl</span> and every forum post name things the same way the app does.</div>
-        <div><b>Cost:</b> 29+ items that scroll, a 60-row <span class="mono">input</span> page and a 40-row <span class="mono">misc</span> junk drawer; the app teaches Hyprland's internal layout rather than hiding it.</div>
+        <div><b>For:</b> anyone who already knows the config and just does not want to hand-edit Lua. The sidebar <i>is</i> <span class="mono">hyprctl descriptions</span> — 21 sections, then one page per entity kind, in source order.</div>
+        <div><b>Generated:</b> derived from the schema alone, so it cannot go stale and a new Hyprland version needs no work. It scrolls, and <span class="mono">input</span> is 60 rows — which is exactly what the config is.</div>
       </div>
     </div>
 
-    <div class="col">
-      <div class="colhdr"><h3>C · Few doors, search-first</h3></div>
+    <div class="col" style="opacity:.6">
+      <div class="colhdr"><h3>C · Few doors, search-first</h3><span class="pill">Dropped</span></div>
       <div class="mini">
         <div class="mi sel">Appearance</div>
         <div class="seg"><div class="sel">General</div><div>Decoration</div><div>Animations</div><div>Layouts</div></div>
@@ -155,15 +162,25 @@ a{color:var(--accent-fg);text-decoration:none} a:hover{color:#03488f}
         <div style="margin-top:auto;padding:10px 9px;font-size:12px;color:var(--dim)">Everything else is reached by typing — the search field is focused on launch and matches option names, titles, rules and monitors.</div>
       </div>
       <div class="why">
-        <div><b>Why:</b> six doors, no sidebar scrolling, and the smallest thing to design and keep coherent. Sub-navigation lives inside the page as a view switcher, the way GNOME Settings' Mouse panel does.</div>
-        <div><b>Cost:</b> pages become long and the second level is invisible until you open a door; people who don't search have to scroll a 100-row Appearance page. Discovery leans hard on a search index that still has to be built.</div>
+        <div><b>Was:</b> six doors, no sidebar scrolling, sub-navigation inside the page as a view switcher — the smallest surface to build.</div>
+        <div><b>Dropped:</b> it is A with worse discovery. The second level is invisible until you open a door, Appearance becomes a 100-row scroll, and everything hangs on a search index that does not exist yet. Nothing in it is lost — A's grouping is the same idea with the levels swapped.</div>
       </div>
     </div>
 
   </div>
 
   <div class="map">
-    <div style="font-weight:700;font-size:14px">Direction A in full — where the 21 config sections and the entities land</div>
+    <div style="font-weight:700;font-size:14px">What the two views share</div>
+    <div class="maprow" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 18px">
+      <div><b>One model</b><span style="white-space:normal">Both views render the same Schema and the same Rows. A view is a grouping and a naming, nothing more — no option exists in one view only.</span></div>
+      <div><b>One search</b><span style="white-space:normal">Search is view-independent and always shows the dotted key. Activating a result jumps to whichever page holds it in the current view.</span></div>
+      <div><b>Deep links</b><span style="white-space:normal">The dotted key is the address. B's page is always the key's own section, so a link, a wiki reference or an error message resolves in both views.</span></div>
+      <div><b>B is generated</b><span style="white-space:normal">B comes from the schema alone — it needs no curation and cannot drift, which is what makes it the safety net for A.</span></div>
+      <div><b>A degrades, never breaks</b><span style="white-space:normal">An unplaced or unknown option shows on its section's page in a <i>New in &lt;version&gt;</i> group, flagged, until someone curates it.</span></div>
+      <div><b>Release check</b><span style="white-space:normal">Each Hyprland release: regenerate the schema, diff against the last, place what is new, retire what is gone. Needs a written procedure — its own ticket.</span></div>
+    </div>
+    <div style="height:1px;background:var(--bd);margin:4px 0"></div>
+    <div style="font-weight:700;font-size:14px">View A in full — where the 21 config sections and the entities land</div>
     <div class="maprow">
       <div><b>General</b><span>general</span></div>
       <div><b>Decoration</b><span>decoration</span></div>
@@ -189,7 +206,7 @@ a{color:var(--accent-fg);text-decoration:none} a:hover{color:#03488f}
   </div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":1180,"height":1200}}'>
+<script data-dc-script data-props='{"$preview":{"width":1180,"height":1360}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }
