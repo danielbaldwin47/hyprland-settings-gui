@@ -1,0 +1,3 @@
+entry: hyprland.conf   (hyprwm/Hyprland example/hyprland.conf @ v0.54.0)
+No source= lines. screenShader.frag kept as an asset example. Non-config siblings
+(hyprland.desktop.in, *.service, launch.json) omitted.
