@@ -1,0 +1,136 @@
+<style>
+.bindrow{display:flex;align-items:center;gap:12px;padding:9px 14px;min-height:50px;border-top:1px solid var(--bd)}
+.bindrow:first-child{border-top:none}
+.grip{color:var(--dim2);flex:none}
+.accel{display:flex;gap:4px;align-items:center;width:210px;flex:none}
+.dispatch{display:flex;flex-direction:column;gap:1px;min-width:0}
+.dispatch b{font-weight:400}
+.dispatch small{font-size:13px;color:var(--dim)}
+.flagchip{font-size:11px;font-weight:700;padding:2px 6px;border-radius:5px;background:rgba(0,0,6,.07);color:var(--dim)}
+.filterbar{display:flex;align-items:center;gap:8px;padding:0 2px 2px}
+.searchentry{flex:1;height:34px;border-radius:8px;background:var(--view);border:1px solid var(--bd);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dim2)}
+.capture{width:150px;height:70px;border-radius:10px;border:2px dashed rgba(53,132,228,.5);background:rgba(53,132,228,.06);display:flex;align-items:center;justify-content:center;gap:5px}
+</style>
+<div class="win" style="width:1180px;height:980px">
+  <!--#sidebar shortcuts-->
+  <div class="content">
+    <div class="chb">
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></div>
+      <div class="title">Shortcuts</div>
+      <div class="btn sug"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3.5v9M3.5 8h9"/></svg>Add</div>
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="13" r="1.2" fill="currentColor" stroke="none"/></svg></div>
+    </div>
+    <div class="page">
+      <div class="clamp" style="max-width:700px">
+
+        <div class="grp">
+          <div class="filterbar">
+            <div class="searchentry"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>Filter by key or dispatcher</div>
+            <div class="chip">All 42</div>
+            <div class="chip">SUPER 31</div>
+            <div class="chip">Mouse 2</div>
+          </div>
+          <div class="list">
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">Return</span></div>
+              <div class="dispatch"><b>Run a command</b><small class="mono">exec · kitty</small></div>
+              <div class="sp"></div>
+            </div>
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">Shift</span><span class="kbd">Q</span></div>
+              <div class="dispatch"><b>Close window</b><small class="mono">killactive</small></div>
+              <div class="sp"></div>
+            </div>
+            <div class="bindrow" style="background:rgba(224,27,36,.05)">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">E</span></div>
+              <div class="dispatch"><b>Run a command</b><small style="color:#c01c28">Also used by “Toggle floating” — one of the two will never fire</small></div>
+              <div class="sp"></div>
+              <div class="flagchip">Conflict</div>
+            </div>
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">1</span></div>
+              <div class="dispatch"><b>Go to workspace</b><small class="mono">workspace · 1</small></div>
+              <div class="sp"></div>
+              <div class="flagchip">+ 9 similar</div>
+            </div>
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">Drag ➊</span></div>
+              <div class="dispatch"><b>Move window</b><small class="mono">movewindow · mouse bind</small></div>
+              <div class="sp"></div>
+              <div class="flagchip">bindm</div>
+            </div>
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">XF86AudioRaiseVolume</span></div>
+              <div class="dispatch"><b>Run a command</b><small class="mono">exec · wpctl set-volume @DEFAULT_SINK@ 5%+</small></div>
+              <div class="sp"></div>
+              <div class="flagchip">repeat</div>
+              <div class="flagchip">locked</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="grptitle">Submaps</div>
+          <div class="grpsub">A submap swallows every key until it is exited. Binds inside one live on their own page.</div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>resize</b><small class="mono">entered by Super + R · 5 binds</small></div>
+              <div class="sp"></div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--dim2)"><path d="m6 4 4 4-4 4"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="scrim">
+      <div class="dialog" style="width:520px">
+        <div class="chb" style="padding:0 8px">
+          <div class="btn" style="background:transparent">Cancel</div>
+          <div class="title">Edit shortcut</div>
+          <div class="btn sug">Apply</div>
+        </div>
+        <div style="padding:4px 18px 20px;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 0">
+            <div class="capture"><span class="kbd">Super</span><span class="kbd">Shift</span><span class="kbd">E</span></div>
+            <div style="font-size:13px;color:var(--dim)">Press the new combination. Esc cancels, Backspace clears.</div>
+          </div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>Action</b></div>
+              <div class="sp"></div>
+              <div class="combo">Run a command<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Command</b></div>
+              <div class="sp"></div>
+              <div class="mono" style="color:var(--dim)">nautilus --new-window</div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Repeat while held</b><small>bindr / e flag</small></div>
+              <div class="sp"></div>
+              <div class="sw"><i></i></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Works on the lock screen</b><small>l flag</small></div>
+              <div class="sp"></div>
+              <div class="sw"><i></i></div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:2px 2px 0">
+            <span class="pill warn">Conflict</span>
+            <div style="font-size:13.5px;color:var(--dim)">Super + E is already used by <b style="font-weight:600;color:var(--fg)">Toggle floating</b>.</div>
+            <div class="sp"></div>
+            <div class="btn">Replace</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

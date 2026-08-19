@@ -1,0 +1,98 @@
+<style>
+.canvas{position:relative;height:290px;background:var(--view);border:1px solid var(--bd);border-radius:12px;overflow:hidden;background-image:radial-gradient(rgba(0,0,6,.07) 1px,transparent 1px);background-size:16px 16px}
+.mon{position:absolute;border-radius:8px;background:#3a3a40;color:#fff;display:flex;flex-direction:column;justify-content:flex-end;padding:9px 11px;box-shadow:0 4px 12px rgba(0,0,6,.25)}
+.mon b{font-size:14px;font-weight:600}
+.mon small{font-size:12px;opacity:.7}
+.mon.sel{outline:2px solid var(--accent);outline-offset:2px}
+.snap{position:absolute;background:var(--accent);opacity:.85}
+.legend{position:absolute;left:12px;top:10px;font-size:12.5px;color:var(--dim2)}
+.alert{width:400px;padding:22px 22px 16px;text-align:center;display:flex;flex-direction:column;gap:8px}
+.alert h3{margin:0;font-size:17px;font-weight:700}
+.alert p{margin:0;font-size:14px;color:var(--dim)}
+.alertbtns{display:flex;gap:10px;margin-top:12px}
+.alertbtns > div{flex:1;justify-content:center}
+</style>
+<div class="win" style="width:1180px;height:980px">
+  <!--#sidebar displays-->
+  <div class="content">
+    <div class="chb">
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></div>
+      <div class="title">Displays</div>
+      <div class="chip">Profile: docked</div>
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="13" r="1.2" fill="currentColor" stroke="none"/></svg></div>
+    </div>
+    <div class="page">
+      <div class="clamp" style="max-width:720px">
+        <div class="grp">
+          <div class="canvas">
+            <div class="legend">Drag to arrange · edges snap</div>
+            <div class="mon sel" style="left:120px;top:70px;width:300px;height:169px"><b>DP-1</b><small>2560 × 1440 @ 165 Hz · scale 1.0</small></div>
+            <div class="mon" style="left:428px;top:150px;width:200px;height:113px"><b>eDP-1</b><small>1920 × 1080 @ 60 Hz · scale 1.25</small></div>
+            <div class="snap" style="left:424px;top:60px;width:2px;height:220px"></div>
+            <div class="snap" style="left:120px;top:261px;width:508px;height:2px"></div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="grptitle">DP-1 — Dell U2723QE</div>
+          <div class="grpsub mono">hl.monitor{ name = "DP-1", … }</div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>Enabled</b></div>
+              <div class="sp"></div>
+              <div class="sw on"><i></i></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Resolution</b></div>
+              <div class="sp"></div>
+              <div class="combo">2560 × 1440<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Refresh rate</b></div>
+              <div class="sp"></div>
+              <div class="combo">165.00 Hz<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Scale</b><small>Fractional scales other than 1, 1.25, 1.5, 2 can blur text</small></div>
+              <div class="sp"></div>
+              <div class="combo">100%<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Position</b><small class="mono">0 × 0 · set by dragging above</small></div>
+              <div class="sp"></div>
+              <div class="spin"><span>0</span><b>−</b><b>+</b></div>
+              <div class="spin"><span>0</span><b>−</b><b>+</b></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Rotation</b></div>
+              <div class="sp"></div>
+              <div class="combo">None<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Variable refresh rate</b><small class="mono">vrr</small></div>
+              <div class="sp"></div>
+              <div class="combo">Fullscreen only<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>10-bit colour</b><small class="mono">bitdepth 10</small></div>
+              <div class="sp"></div>
+              <div class="sw"><i></i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="scrim">
+      <div class="dialog alert">
+        <h3>Keep this display arrangement?</h3>
+        <p>DP-1 was set to 2560 × 1440 at 165 Hz. The previous arrangement comes back automatically if you do nothing.</p>
+        <p style="font-variant-numeric:tabular-nums;color:var(--fg);font-weight:600;margin-top:4px">Reverting in 12 s</p>
+        <div class="alertbtns">
+          <div class="btn">Revert now</div>
+          <div class="btn sug">Keep</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

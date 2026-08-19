@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+:root{
+  --win-bg:#fafafb; --view:#ffffff; --sidebar:#ebebed;
+  --fg:rgba(0,0,6,.8); --dim:rgba(0,0,6,.55); --dim2:rgba(0,0,6,.32);
+  --accent:#3584e4; --accent-fg:#0461be; --destr:#e01b24; --warn:#e5a50a; --ok:#2ec27e;
+  --bd:rgba(0,0,6,.10); --btn:rgba(0,0,6,.06); --btn2:rgba(0,0,6,.12);
+}
+*{box-sizing:border-box}
+body{margin:0;background:#c8c8cd;font-family:"Adwaita Sans",Cantarell,system-ui,sans-serif;font-size:15px;line-height:1.35;color:var(--fg);-webkit-font-smoothing:antialiased}
+a{color:var(--accent-fg);text-decoration:none} a:hover{color:#03488f}
+.win{background:var(--win-bg);border-radius:12px;overflow:hidden;display:flex;box-shadow:0 0 0 1px rgba(0,0,6,.13),0 20px 44px rgba(0,0,0,.30);position:relative}
+.sidebar{width:248px;background:var(--sidebar);display:flex;flex-direction:column;border-right:1px solid rgba(0,0,6,.07);flex:none}
+.hb{height:47px;display:flex;align-items:center;gap:6px;padding:0 8px;flex:none}
+.hb .t{font-weight:700;font-size:15px;padding-left:6px}
+.iconbtn{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--dim);flex:none}
+.iconbtn.on{background:var(--btn2)}
+.navlist{padding:0 8px 8px;display:flex;flex-direction:column;gap:2px;overflow:hidden}
+.navhdr{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2);padding:12px 10px 4px}
+.nav{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;color:var(--fg)}
+.nav.sel{background:rgba(0,0,6,.12);font-weight:600}
+.nav .c{margin-left:auto;font-size:12px;color:var(--dim2);font-variant-numeric:tabular-nums}
+.content{flex:1;display:flex;flex-direction:column;background:var(--win-bg);min-width:0}
+.chb{height:47px;display:flex;align-items:center;gap:6px;padding:0 8px;flex:none}
+.chb .title{font-weight:700;font-size:15px;margin:0 auto}
+.page{flex:1;overflow:hidden;padding:20px 0 28px}
+.clamp{max-width:620px;margin:0 auto;padding:0 12px;display:flex;flex-direction:column;gap:22px}
+.grp{display:flex;flex-direction:column;gap:8px}
+.grptitle{font-weight:700;font-size:15px;padding:0 2px}
+.grpsub{font-size:13px;color:var(--dim);padding:0 2px;margin-top:-6px}
+.list{background:var(--view);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:11px 14px;min-height:52px;border-top:1px solid var(--bd)}
+.row:first-child{border-top:none}
+.row .lbl{display:flex;flex-direction:column;gap:1px;min-width:0}
+.row .lbl b{font-weight:400}
+.row .lbl small{font-size:13px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp{flex:1}
+.mono{font-family:"Adwaita Mono","Source Code Pro",ui-monospace,monospace;font-size:12.5px}
+.sw{width:48px;height:26px;border-radius:13px;background:rgba(0,0,6,.16);position:relative;flex:none}
+.sw.on{background:var(--accent)}
+.sw i{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:10px;background:#fff;box-shadow:0 1px 2px rgba(0,0,6,.25)}
+.sw.on i{left:25px}
+.spin{display:flex;align-items:center;border:1px solid var(--bd);border-radius:8px;background:var(--view);height:34px;overflow:hidden;flex:none}
+.spin span{padding:0 10px;font-variant-numeric:tabular-nums;min-width:56px;text-align:right}
+.spin b{width:32px;align-self:stretch;display:flex;align-items:center;justify-content:center;font-weight:400;color:var(--dim);border-left:1px solid var(--bd)}
+.slider{display:flex;align-items:center;gap:10px;width:230px;flex:none}
+.track{flex:1;height:4px;border-radius:2px;background:rgba(0,0,6,.15);position:relative}
+.track i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent)}
+.track u{position:absolute;top:-7px;width:18px;height:18px;border-radius:9px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,6,.13),0 1px 3px rgba(0,0,6,.25)}
+.val{font-variant-numeric:tabular-nums;color:var(--dim);min-width:40px;text-align:right;font-size:14px}
+.combo{display:flex;align-items:center;gap:6px;color:var(--dim)}
+.btn{height:34px;padding:0 12px;border-radius:8px;background:var(--btn2);display:flex;align-items:center;gap:7px;font-size:14px;flex:none}
+.btn.sug{background:var(--accent);color:#fff}
+.btn.dstr{background:rgba(224,27,36,.12);color:#c01c28}
+.pill{font-size:11px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:6px;background:rgba(0,0,6,.08);color:var(--dim)}
+.pill.warn{background:rgba(229,165,10,.20);color:#8a5900}
+.pill.adv{background:rgba(53,132,228,.14);color:var(--accent-fg)}
+.toast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:#36363a;color:#fff;border-radius:12px;padding:8px 8px 8px 16px;display:flex;align-items:center;gap:14px;font-size:14px;box-shadow:0 6px 18px rgba(0,0,0,.3)}
+.toast .u{background:rgba(255,255,255,.14);border-radius:8px;padding:6px 12px}
+.banner{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#fdf3d6;border-bottom:1px solid rgba(0,0,6,.08);flex:none}
+.card{background:var(--view);border:1px solid var(--bd);border-radius:12px}
+.dialog{background:var(--win-bg);border-radius:12px;box-shadow:0 0 0 1px rgba(0,0,6,.14),0 24px 50px rgba(0,0,0,.35);overflow:hidden}
+.scrim{position:absolute;inset:0;background:rgba(0,0,6,.35);display:flex;align-items:center;justify-content:center}
+.kbd{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 8px;border-radius:6px;background:rgba(0,0,6,.08);box-shadow:inset 0 -1px 0 rgba(0,0,6,.10);font-size:13px;font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:8px;background:rgba(0,0,6,.06);font-size:13px;color:var(--dim)}
+
+.sheet{width:760px;height:1340px;background:#e7e7ea;padding:24px;display:flex;flex-direction:column;gap:16px}
+.sheethdr h2{margin:0;font-size:19px;font-weight:700}
+.sheethdr p{margin:4px 0 0;font-size:13.5px;color:var(--dim)}
+.n{width:26px;color:var(--dim2);font-size:12px;font-variant-numeric:tabular-nums;flex:none;text-align:right}
+.swatch{width:34px;height:30px;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(0,0,6,.18);flex:none}
+.entry{height:34px;border-radius:8px;background:var(--view);border:1px solid var(--bd);display:flex;align-items:center;padding:0 10px;width:180px;flex:none;color:var(--dim)}
+.reset{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--dim);background:var(--btn);flex:none}
+.off{opacity:.45}
+
+  </style>
+</helmet>
+<div class="sheet">
+  <div class="sheethdr">
+    <h2>The generated row</h2>
+    <p>Every one of the 353 options renders through this table — label, typed control, state. 292 are typed from <span class="mono">descriptions</span> + stubs alone; 61 get their widget from the curated overlay.</p>
+  </div>
+
+  <div class="grp">
+    <div class="grptitle">One row per value type</div>
+    <div class="list">
+      <div class="row"><div class="n">174</div><div class="lbl"><b>Toggle</b><small class="mono">Bool</small></div><div class="sp"></div><div class="sw on"><i></i></div></div>
+      <div class="row"><div class="n">52</div><div class="lbl"><b>Integer, bounded</b><small class="mono">Int with min/max</small></div><div class="sp"></div><div class="spin"><span>4</span><b>−</b><b>+</b></div></div>
+      <div class="row"><div class="n">33</div><div class="lbl"><b>Float, bounded</b><small class="mono">Float with min/max</small></div><div class="sp"></div><div class="slider" style="width:200px"><div class="track"><i style="width:64%"></i><u style="left:calc(64% - 9px)"></u></div><div class="val">0.64</div></div></div>
+      <div class="row"><div class="n">30</div><div class="lbl"><b>Enum</b><small class="mono">Int with a value → label map</small></div><div class="sp"></div><div class="combo">Follow mouse<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div></div>
+      <div class="row"><div class="n">3</div><div class="lbl"><b>Enum, open</b><small class="mono">String with known values + free entry</small></div><div class="sp"></div><div class="combo mono">lua:my-layout<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div></div>
+      <div class="row"><div class="n">22</div><div class="lbl"><b>Text</b><small class="mono">String — path, font, regex, xkb layout</small></div><div class="sp"></div><div class="entry mono">us,se</div></div>
+      <div class="row"><div class="n">6</div><div class="lbl"><b>Colour</b><small class="mono">Color — 8-digit RGBA</small></div><div class="sp"></div><div class="mono" style="color:var(--dim)">1a1a1aee</div><div class="swatch" style="background:#1a1a1a"></div></div>
+      <div class="row"><div class="n">16</div><div class="lbl"><b>Gradient</b><small class="mono">Gradient — 2+ stops and an angle</small></div><div class="sp"></div><div style="width:120px;height:26px;border-radius:7px;background:linear-gradient(45deg,#33ccff,#00ff99);box-shadow:inset 0 0 0 1px rgba(0,0,6,.18)"></div><span class="mono" style="color:var(--dim)">45°</span></div>
+      <div class="row"><div class="n">6</div><div class="lbl"><b>Two numbers</b><small class="mono">Vec2 — x and y</small></div><div class="sp"></div><div class="spin"><span>0</span><b>−</b><b>+</b></div><div class="spin"><span>0</span><b>−</b><b>+</b></div></div>
+      <div class="row"><div class="n">3</div><div class="lbl"><b>Gaps</b><small class="mono">CssGap — 1, 2 or 4 values</small></div><div class="sp"></div><div class="chip">Same on all sides</div><div class="spin"><span>5</span><b>−</b><b>+</b></div></div>
+      <div class="row"><div class="n">2</div><div class="lbl"><b>Font weight</b><small class="mono">FontWeight — named or numeric</small></div><div class="sp"></div><div class="combo">Semi-bold (600)<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div></div>
+    </div>
+  </div>
+
+  <div class="grp">
+    <div class="grptitle">State the row can be in</div>
+    <div class="grpsub">State is drawn on the row, never in a separate panel — there is no Apply button to hang it off.</div>
+    <div class="list">
+      <div class="row"><div class="n"></div><div class="lbl"><b>Changed from the default</b><small>Reset appears only here, and undo lands in a toast</small></div><div class="sp"></div><div class="reset"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8a5 5 0 1 1 1.6 3.7"/><path d="M2.6 4.6v3.2h3.2"/></svg></div><div class="spin"><span>10</span><b>−</b><b>+</b></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Unset — inherits</b><small>Sentinel values (−1, [[EMPTY]], [[Auto]]) become an explicit switch</small></div><div class="sp"></div><div class="chip">Inherit</div><div class="off"><div class="swatch" style="background:#8f8f94"></div></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Needs a restart</b><small>Reload is not enough — 8 options are like this</small></div><div class="sp"></div><span class="pill warn">Restart</span><div class="sw"><i></i></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Advanced</b><small>Hidden until Advanced is on — 27 options plus a few singles</small></div><div class="sp"></div><span class="pill adv">Advanced</span><div class="sw"><i></i></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Overridden per device</b><small>50 input options can differ per keyboard, mouse or touchpad</small></div><div class="sp"></div><div class="chip">2 devices override this</div><div class="sw on"><i></i></div></div>
+      <div class="row off"><div class="n"></div><div class="lbl"><b>Set outside the app</b><small>Written by user.lua or an external tool — shown, not editable</small></div><div class="sp"></div><div class="chip">from user.lua</div><div class="sw on"><i></i></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Unknown to this Hyprland</b><small>Present in the file but not in this version's schema</small></div><div class="sp"></div><span class="pill warn">Unknown</span><div class="entry mono" style="width:120px">true</div></div>
+    </div>
+  </div>
+
+  <div class="grp">
+    <div class="grptitle">Where the words come from</div>
+    <div class="list">
+      <div class="row"><div class="lbl"><b>Title</b><small>Curated overlay, falling back to a prettified key name</small></div></div>
+      <div class="row"><div class="lbl"><b>Subtitle</b><small class="mono">the dotted key, so the wiki and hyprctl stay findable</small></div></div>
+      <div class="row"><div class="lbl"><b>Help popover</b><small>The wiki row when it is longer than the built-in description, plus its anchor</small></div></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":760,"height":1340}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

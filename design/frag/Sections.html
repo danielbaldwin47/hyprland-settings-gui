@@ -1,0 +1,115 @@
+<style>
+.sheet{width:1180px;height:1200px;background:#e7e7ea;padding:24px 26px;display:flex;flex-direction:column;gap:16px}
+.sheethdr h2{margin:0;font-size:20px;font-weight:700}
+.sheethdr p{margin:4px 0 0;font-size:14px;color:var(--dim);max-width:900px}
+.cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;flex:1;min-height:0}
+.col{display:flex;flex-direction:column;gap:10px;min-height:0}
+.colhdr{display:flex;align-items:baseline;gap:8px}
+.colhdr h3{margin:0;font-size:16px;font-weight:700}
+.mini{background:var(--sidebar);border-radius:10px;box-shadow:0 0 0 1px rgba(0,0,6,.10);padding:8px;display:flex;flex-direction:column;gap:1px;flex:1;min-height:0;overflow:hidden;position:relative}
+.mi{height:26px;display:flex;align-items:center;gap:8px;padding:0 9px;border-radius:6px;font-size:13px}
+.mi.sel{background:rgba(0,0,6,.12);font-weight:600}
+.mi .c{margin-left:auto;font-size:11px;color:var(--dim2)}
+.mh{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2);padding:8px 9px 2px}
+.scrollcue{position:absolute;right:4px;top:40px;bottom:8px;width:4px;border-radius:2px;background:rgba(0,0,6,.10)}
+.scrollcue i{position:absolute;left:0;right:0;top:0;height:40%;border-radius:2px;background:rgba(0,0,6,.28)}
+.fade{position:absolute;left:0;right:0;bottom:0;height:46px;background:linear-gradient(to bottom,rgba(235,235,237,0),#ebebed)}
+.why{font-size:13px;color:var(--dim);display:flex;flex-direction:column;gap:6px}
+.why b{color:var(--fg)}
+.map{background:var(--view);border-radius:12px;box-shadow:0 0 0 1px rgba(0,0,6,.10);padding:14px 16px;display:flex;flex-direction:column;gap:8px;flex:none}
+.maprow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px 18px;font-size:12.5px}
+.maprow div{display:flex;gap:6px;min-width:0}
+.maprow b{font-weight:600;white-space:nowrap}
+.maprow span{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seg{display:flex;gap:3px;padding:2px;background:rgba(0,0,6,.07);border-radius:8px;margin:4px 4px 2px}
+.seg div{flex:1;text-align:center;font-size:11.5px;padding:4px 0;border-radius:6px;color:var(--dim)}
+.seg div.sel{background:var(--view);color:var(--fg);font-weight:600}
+</style>
+<div class="sheet">
+  <div class="sheethdr">
+    <h2>Three ways to shape the sidebar</h2>
+    <p>353 options in 21 config sections, plus ten kinds of entity that are not options at all. The question is only how they are grouped and named — the row rendering, search and instant apply are identical in all three.</p>
+  </div>
+
+  <div class="cols">
+
+    <div class="col">
+      <div class="colhdr"><h3>A · Task-first</h3><span class="pill adv">Recommended</span></div>
+      <div class="mini">
+        <div class="mh">Look</div>
+        <div class="mi">General</div><div class="mi sel">Decoration</div><div class="mi">Animations</div><div class="mi">Layouts</div>
+        <div class="mh">Windows</div>
+        <div class="mi">Windows &amp; Groups</div><div class="mi">Window Rules<span class="c">18</span></div><div class="mi">Workspaces<span class="c">4</span></div><div class="mi">Layer Rules<span class="c">3</span></div>
+        <div class="mh">Input</div>
+        <div class="mi">Keyboard</div><div class="mi">Mouse &amp; Touchpad</div><div class="mi">Gestures</div><div class="mi">Devices<span class="c">3</span></div><div class="mi">Shortcuts<span class="c">42</span></div>
+        <div class="mh">System</div>
+        <div class="mi">Displays<span class="c">2</span></div><div class="mi">Cursor</div><div class="mi">Startup<span class="c">6</span></div><div class="mi">Permissions</div><div class="mi">Rendering</div><div class="mi">Advanced<span class="c">27</span></div>
+      </div>
+      <div class="why">
+        <div><b>Why:</b> 19 pages, four groups, every page under ~45 rows. Options move to where the task is: <span class="mono">misc</span> is dissolved, <span class="mono">input</span> splits into Keyboard / Mouse / Gestures / Devices, entities sit next to the options they interact with.</div>
+        <div><b>Cost:</b> the page ↔ section mapping is hand-curated and has to be re-checked each Hyprland release; new options land in Advanced until they are placed.</div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="colhdr"><h3>B · Mirror the config</h3></div>
+      <div class="mini">
+        <div class="mh">Options</div>
+        <div class="mi mono">general<span class="c">23</span></div><div class="mi mono">decoration<span class="c">43</span></div><div class="mi mono">animations<span class="c">2</span></div><div class="mi mono sel">input<span class="c">60</span></div><div class="mi mono">gestures<span class="c">14</span></div><div class="mi mono">group<span class="c">47</span></div><div class="mi mono">misc<span class="c">40</span></div><div class="mi mono">binds<span class="c">14</span></div><div class="mi mono">xwayland<span class="c">4</span></div><div class="mi mono">opengl<span class="c">1</span></div><div class="mi mono">render<span class="c">17</span></div><div class="mi mono">cursor<span class="c">22</span></div><div class="mi mono">ecosystem<span class="c">3</span></div><div class="mi mono">layout<span class="c">2</span></div><div class="mi mono">dwindle<span class="c">11</span></div><div class="mi mono">master<span class="c">14</span></div><div class="mi mono">scrolling<span class="c">9</span></div><div class="mi mono">debug<span class="c">22</span></div>
+        <div class="mh">Entities</div>
+        <div class="mi mono">monitors</div><div class="mi mono">binds</div><div class="mi mono">windowrules</div>
+        <div class="scrollcue"><i></i></div>
+        <div class="fade"></div>
+      </div>
+      <div class="why">
+        <div><b>Why:</b> the sidebar <i>is</i> <span class="mono">hyprctl descriptions</span> — 21 sections then one page per entity kind. Zero curation, nothing to re-check on upgrade, and the wiki, <span class="mono">hyprctl</span> and every forum post name things the same way the app does.</div>
+        <div><b>Cost:</b> 29+ items that scroll, a 60-row <span class="mono">input</span> page and a 40-row <span class="mono">misc</span> junk drawer; the app teaches Hyprland's internal layout rather than hiding it.</div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="colhdr"><h3>C · Few doors, search-first</h3></div>
+      <div class="mini">
+        <div class="mi sel">Appearance</div>
+        <div class="seg"><div class="sel">General</div><div>Decoration</div><div>Animations</div><div>Layouts</div></div>
+        <div class="mi">Windows</div>
+        <div class="mi">Input</div>
+        <div class="mi">Displays</div>
+        <div class="mi">Startup &amp; System</div>
+        <div class="mi">Advanced<span class="c">27</span></div>
+        <div style="margin-top:auto;padding:10px 9px;font-size:12px;color:var(--dim)">Everything else is reached by typing — the search field is focused on launch and matches option names, titles, rules and monitors.</div>
+      </div>
+      <div class="why">
+        <div><b>Why:</b> six doors, no sidebar scrolling, and the smallest thing to design and keep coherent. Sub-navigation lives inside the page as a view switcher, the way GNOME Settings' Mouse panel does.</div>
+        <div><b>Cost:</b> pages become long and the second level is invisible until you open a door; people who don't search have to scroll a 100-row Appearance page. Discovery leans hard on a search index that still has to be built.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="map">
+    <div style="font-weight:700;font-size:14px">Direction A in full — where the 21 config sections and the entities land</div>
+    <div class="maprow">
+      <div><b>General</b><span>general</span></div>
+      <div><b>Decoration</b><span>decoration</span></div>
+      <div><b>Animations</b><span>animations + animation/curve entities</span></div>
+      <div><b>Layouts</b><span>layout, dwindle, master, scrolling</span></div>
+      <div><b>Windows &amp; Groups</b><span>group, misc window bits</span></div>
+      <div><b>Window Rules</b><span>windowrule entities</span></div>
+      <div><b>Workspaces</b><span>workspace-rule entities</span></div>
+      <div><b>Layer Rules</b><span>layerrule entities</span></div>
+      <div><b>Keyboard</b><span>input:kb_*, repeat, numlock</span></div>
+      <div><b>Mouse &amp; Touchpad</b><span>rest of input, incl. touchpad, tablet, touch</span></div>
+      <div><b>Gestures</b><span>gestures + gesture entities</span></div>
+      <div><b>Devices</b><span>device entities, 50 per-device overrides</span></div>
+      <div><b>Shortcuts</b><span>bind entities, submaps, binds</span></div>
+      <div><b>Displays</b><span>monitor entities</span></div>
+      <div><b>Cursor</b><span>cursor</span></div>
+      <div><b>Startup</b><span>autostart, env</span></div>
+      <div><b>Permissions</b><span>permission entities, ecosystem</span></div>
+      <div><b>Rendering</b><span>render, opengl, xwayland, misc render bits</span></div>
+      <div><b>Advanced</b><span>debug, quirks, experimental, input-capture</span></div>
+      <div><b>App preferences</b><span>managed dir, backups, bridge — a dialog, not a page</span></div>
+    </div>
+  </div>
+</div>
