@@ -47,4 +47,11 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | **Bridge module** | A tool-owned Lua module the Entrypoint requires (after generated Modules, before `user.lua`): `hyprtweaker/bridge/<tool>.lua` when the tool's output path is configurable, the tool's native path otherwise. Never rewritten by the app; options it controls are badged "set by \<tool\>". |
 | **Template pack** | The Lua template + config stanza the app installs into a template-driven tool (matugen, wallust, shell-switch) so it emits a Bridge module instead of `.conf`. |
 | **Instant apply** | Write-on-change; Hyprland reloads on save; per-option reset and undo instead of an Apply button. |
+| **Apply transaction** | One coalesced write cycle: render dirty Modules whole, syntax-gate, atomic-rename all, one explicit reload, Read-back. Serialized — one in flight, later edits coalesce (ADR-0010). |
+| **Read-back** | The confirm pass after a reload: `configerrors` + `getoption` of touched keys over the IPC socket. Doubles as the drift-badge scan. `configreloaded` means "reload started", not "apply done". |
+| **ApplyResult** | The structured outcome of an Apply transaction — ok, config errors, read-back mismatch, or timeout. Consumed by error surfacing (#31). |
+| **Eval preview** | Transient per-tick apply during a continuous gesture (slider, colour) via `eval 'hl.config{...}'` on the socket; wiped by any reload; made durable by the Apply transaction on release. |
+| **Restore-last-good** | Writing a Module's pre-write Snapshot bytes back through a normal Apply transaction. Mechanism in ADR-0010; firing policy in #31. |
+| **Undo step** | One user gesture as a model-level delta, on a global linear in-memory stack, replayed through the Apply pipeline. Dies with the session; the Journal is history, not undo. |
+| **Pending restart** | State of a restart-flagged Option after a write: applied to file, effective after Hyprland restart; Read-back skipped, Row badged. |
 | **Frontier / Map** | Wayfinder terms — see `docs/agents/issue-tracker.md`. |
