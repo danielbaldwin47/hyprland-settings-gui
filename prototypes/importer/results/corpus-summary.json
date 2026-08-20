@@ -1,0 +1,368 @@
+{
+ "hyprland-default": {
+  "files": 1,
+  "counts": {
+   "monitor": 1,
+   "env": 2,
+   "option": 33,
+   "curve": 5,
+   "animation": 17,
+   "dead_option": 1,
+   "gesture": 1,
+   "device": 1,
+   "bind": 48,
+   "window_rule": 3
+  },
+  "codes": {
+   "L24": 1,
+   "L25": 1,
+   "L5": 2,
+   "L14": 1
+  },
+  "vars": {
+   "definitions": 4,
+   "redefined": []
+  },
+  "rule_order": {
+   "named": 3,
+   "anonymous": 0,
+   "anonymous_before_named": false
+  },
+  "conf_verify_ok": false,
+  "conf_errors": [
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprland-default/hyprland.conf at line 182: config option <dwindle:pseudotile> does not exist."
+  ],
+  "lua_verify_ok": true,
+  "lua_errors": [],
+  "lua": "/home/daniel/.claude/jobs/8df8d093/tmp/out/hyprland-default/hyprland.lua",
+  "entry": "~/.config/hypr/hyprland.conf"
+ },
+ "end-4": {
+  "files": 17,
+  "counts": {
+   "env": 6,
+   "exec": 12,
+   "monitor": 1,
+   "gesture": 5,
+   "option": 82,
+   "dead_option": 2,
+   "curve": 9,
+   "animation": 14,
+   "window_rule": 62,
+   "workspace_rule": 1,
+   "layer_rule": 74,
+   "plugin_value": 1,
+   "submap": 3,
+   "bind": 197
+  },
+  "codes": {
+   "L27": 5,
+   "L12": 2,
+   "L25": 2,
+   "L24": 1,
+   "L14": 50,
+   "L21": 1,
+   "L22": 1,
+   "N1": 1,
+   "L5": 3
+  },
+  "vars": {
+   "definitions": 14,
+   "redefined": []
+  },
+  "rule_order": {
+   "named": 0,
+   "anonymous": 136,
+   "anonymous_before_named": false
+  },
+  "conf_verify_ok": false,
+  "conf_errors": [
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/end-4/hyprland/general.conf at line 74: config option <decoration:shadow:ignore_window> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/end-4/hyprland/general.conf at line 142: config option <misc:vfr> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/end-4/hyprland.conf at line 21: Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/end-4/hyprland/general.conf at line 74: config option <decoration:shadow:ignore_window> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/end-4/hyprland/general.conf at line 142: config option <misc:vfr> does not exist."
+  ],
+  "lua_verify_ok": true,
+  "lua_errors": [],
+  "lua": "/home/daniel/.claude/jobs/8df8d093/tmp/out/end-4/hyprland.lua",
+  "entry": "~/.config/hypr/hyprland.conf"
+ },
+ "hyde": {
+  "files": 22,
+  "counts": {
+   "env": 7,
+   "monitor": 1,
+   "option": 56,
+   "curve": 8,
+   "animation": 16,
+   "gesture": 3,
+   "window_rule": 13,
+   "layer_rule": 4,
+   "exec": 19,
+   "dead_option": 20,
+   "bind": 116
+  },
+  "codes": {
+   "L27": 22,
+   "L24": 7,
+   "L14": 1,
+   "L13": 2,
+   "L23": 2,
+   "L22": 1,
+   "L25": 20,
+   "L5": 4
+  },
+  "vars": {
+   "definitions": 224,
+   "redefined": [
+    "CODE_THEME",
+    "COLOR_SCHEME",
+    "CURSOR_SIZE",
+    "CURSOR_THEME",
+    "DOCUMENT_FONT",
+    "DOCUMENT_FONT_SIZE",
+    "FONT",
+    "FONT_SIZE",
+    "GTK_THEME",
+    "ICON_THEME",
+    "MONOSPACE_FONT",
+    "MONOSPACE_FONT_SIZE",
+    "SCREEN_SHADER_COMPILED",
+    "SDDM_THEME",
+    "WORKFLOW_DESCRIPTION",
+    "WORKFLOW_ICON",
+    "d",
+    "scp",
+    "svc",
+    "unt"
+   ]
+  },
+  "rule_order": {
+   "named": 7,
+   "anonymous": 10,
+   "anonymous_before_named": true
+  },
+  "conf_verify_ok": true,
+  "conf_errors": [],
+  "lua_verify_ok": true,
+  "lua_errors": [],
+  "lua": "/home/daniel/.claude/jobs/8df8d093/tmp/out/hyde/hyprland.lua",
+  "entry": "~/.config/hypr/hyprland.conf"
+ },
+ "jakoolit": {
+  "files": 20,
+  "counts": {
+   "exec": 16,
+   "bind": 156,
+   "skipped_bind": 1,
+   "dead_bind": 1,
+   "env": 16,
+   "device": 1,
+   "window_rule": 112,
+   "layer_rule": 4,
+   "dead_option": 2,
+   "option": 86,
+   "gesture": 4,
+   "curve": 7,
+   "animation": 10,
+   "monitor": 3
+  },
+  "codes": {
+   "BADDISP": 1,
+   "N4": 1,
+   "L5": 2,
+   "L14": 47,
+   "L25": 2,
+   "L12": 3,
+   "L24": 2,
+   "L19": 1
+  },
+  "vars": {
+   "definitions": 51,
+   "redefined": [
+    "Search_Engine",
+    "UserConfigs",
+    "UserScripts",
+    "edit",
+    "files",
+    "mainMod",
+    "scriptsDir",
+    "term"
+   ]
+  },
+  "rule_order": {
+   "named": 3,
+   "anonymous": 113,
+   "anonymous_before_named": true
+  },
+  "conf_verify_ok": false,
+  "conf_errors": [
+   "Config error in file ~/.config/hypr/configs/Keybinds.conf at line 96: Invalid dispatcher, requested \"togglesplit\" does not exist",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/jakoolit/hyprland.conf at line 14: Config error in file ~/.config/hypr/configs/Keybinds.conf at line 96: Invalid dispatcher, requested \"togglesplit\" does not exist",
+   "Config error in file ~/.config/hypr/configs/SystemSettings.conf at line 12: config option <dwindle:pseudotile> does not exist.",
+   "Config error in file ~/.config/hypr/configs/SystemSettings.conf at line 85: config option <misc:vfr> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/jakoolit/hyprland.conf at line 32: Config error in file ~/.config/hypr/configs/Keybinds.conf at line 96: Invalid dispatcher, requested \"togglesplit\" does not exist",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/jakoolit/hyprland.conf at line 14: Config error in file ~/.config/hypr/configs/Keybinds.conf at line 96: Invalid dispatcher, requested \"togglesplit\" does not exist",
+   "Config error in file ~/.config/hypr/configs/SystemSettings.conf at line 12: config option <dwindle:pseudotile> does not exist.",
+   "Config error in file ~/.config/hypr/configs/SystemSettings.conf at line 85: config option <misc:vfr> does not exist."
+  ],
+  "lua_verify_ok": true,
+  "lua_errors": [],
+  "lua": "/home/daniel/.claude/jobs/8df8d093/tmp/out/jakoolit/hyprland.lua",
+  "entry": "~/.config/hypr/hyprland.conf"
+ },
+ "ml4w": {
+  "files": 24,
+  "counts": {
+   "exec": 12,
+   "option": 43,
+   "bind": 110,
+   "dead_bind": 1,
+   "curve": 14,
+   "animation": 11,
+   "dead_option": 6,
+   "window_rule": 19,
+   "env": 19
+  },
+  "codes": {
+   "PARSE": 1,
+   "L23": 1,
+   "L22": 1,
+   "L24": 1,
+   "L5": 2,
+   "N4": 1,
+   "DEADOPT": 6
+  },
+  "vars": {
+   "definitions": 55,
+   "redefined": [
+    "on_surface",
+    "primary"
+   ]
+  },
+  "rule_order": {
+   "named": 19,
+   "anonymous": 0,
+   "anonymous_before_named": false
+  },
+  "conf_verify_ok": false,
+  "conf_errors": [
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/ml4w/hyprland.conf at line 16: source= globbing error: found no match"
+  ],
+  "lua_verify_ok": true,
+  "lua_errors": [],
+  "lua": "/home/daniel/.claude/jobs/8df8d093/tmp/out/ml4w/hyprland.lua",
+  "entry": "~/.config/hypr/hyprland.conf"
+ },
+ "hyprv": {
+  "files": 3,
+  "counts": {
+   "monitor": 1,
+   "exec": 11,
+   "option": 22,
+   "dead_option": 9,
+   "curve": 1,
+   "animation": 5,
+   "window_rule": 16,
+   "bind": 48,
+   "skipped_bind": 1,
+   "env": 4
+  },
+  "codes": {
+   "L22": 2,
+   "L24": 4,
+   "L25": 9,
+   "L13": 16,
+   "BADDISP": 1,
+   "L5": 2
+  },
+  "vars": {
+   "definitions": 2,
+   "redefined": []
+  },
+  "rule_order": {
+   "named": 0,
+   "anonymous": 16,
+   "anonymous_before_named": false
+  },
+  "conf_verify_ok": false,
+  "conf_errors": [
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 73: config option <decoration:blurls> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 75: config option <decoration:drop_shadow> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 76: config option <decoration:shadow_range> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 77: config option <decoration:shadow_render_power> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 78: config option <decoration:col.shadow> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 96: config option <dwindle:pseudotile> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 102: config option <master:new_is_master> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 107: config option <gestures:workspace_swipe> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 113: config option <device:epic mouse V1:sensitivity> does not exist.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 118: invalid field float: missing a value",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 119: invalid field float: missing a value",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 120: invalid field float: missing a value",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 121: invalid field float: missing a value",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 122: invalid field float: missing a value",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 123: invalid field float: missing a value",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 124: invalid field float: missing a value",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 130: windowrulev2 is deprecated. Correct syntax can be found on the wiki.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 131: windowrulev2 is deprecated. Correct syntax can be found on the wiki.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 132: windowrulev2 is deprecated. Correct syntax can be found on the wiki.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 133: windowrulev2 is deprecated. Correct syntax can be found on the wiki.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 134: windowrulev2 is deprecated. Correct syntax can be found on the wiki.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 135: windowrulev2 is deprecated. Correct syntax can be found on the wiki.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 136: windowrulev2 is deprecated. Correct syntax can be found on the wiki.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 137: windowrulev2 is deprecated. Correct syntax can be found on the wiki.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 138: windowrulev2 is deprecated. Correct syntax can be found on the wiki.",
+   "Config error in file /home/daniel/repos/hyprland-settings-gui/.claude/worktrees/prototype+hyprlang-importer/tests/corpus/hyprv/hyprland.conf at line 154: Invalid dispatcher, requested \"togglesplit\" does not exist"
+  ],
+  "lua_verify_ok": true,
+  "lua_errors": [],
+  "lua": "/home/daniel/.claude/jobs/8df8d093/tmp/out/hyprv/hyprland.lua",
+  "entry": "~/.config/hypr/hyprland.conf"
+ },
+ "local": {
+  "files": 11,
+  "counts": {
+   "bind": 68,
+   "dead_option": 2,
+   "gesture": 3,
+   "env": 14,
+   "option": 65,
+   "curve": 10,
+   "animation": 18,
+   "window_rule": 7,
+   "unbind": 1,
+   "exec": 1,
+   "permission": 1
+  },
+  "codes": {
+   "VIMDIR": 3,
+   "L5": 2,
+   "DEADOPT": 2,
+   "L12": 2,
+   "L24": 3,
+   "L14": 1,
+   "L6": 1
+  },
+  "vars": {
+   "definitions": 52,
+   "redefined": [
+    "error",
+    "primary",
+    "secondary",
+    "surface",
+    "tertiary"
+   ]
+  },
+  "rule_order": {
+   "named": 4,
+   "anonymous": 3,
+   "anonymous_before_named": true
+  },
+  "conf_verify_ok": true,
+  "conf_errors": [],
+  "lua_verify_ok": true,
+  "lua_errors": [],
+  "lua": "/home/daniel/.claude/jobs/8df8d093/tmp/out/local/hyprland.lua",
+  "entry": "~/.config/hypr/hyprland.conf"
+ }
+}
