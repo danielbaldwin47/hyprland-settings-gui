@@ -25,6 +25,8 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | **Snapshot / Journal** | Per-write Module copies + change log in `$XDG_STATE_HOME/hyprtweaker/`, pruned; migration takes a full-tree backup there. |
 | **Importer** | The hyprlang → Lua converter that reads a `hyprland.conf` tree (following `source=`) into the model. |
 | **Migration wizard** | The first-run flow around the Importer: detect, preview, back up, switch engine, verify, keep-or-rollback. |
-| **Bridge** | The mechanism keeping external `.conf`-emitting tools (matugen, wallust, noctalia, dms, shell-switch) effective under Lua. |
+| **Bridge** | The mechanism keeping external config-emitting tools effective under Lua: help each tool emit Lua directly (adopt upstream output, or install a Template pack), wire the `require`; never transpile on the fly (ADR-0006). v1 tools: matugen, noctalia, DMS, shell-switch, wallust. |
+| **Bridge module** | A tool-owned Lua module the Entrypoint requires (after generated Modules, before `user.lua`): `hyprtweaker/bridge/<tool>.lua` when the tool's output path is configurable, the tool's native path otherwise. Never rewritten by the app; options it controls are badged "set by \<tool\>". |
+| **Template pack** | The Lua template + config stanza the app installs into a template-driven tool (matugen, wallust, shell-switch) so it emits a Bridge module instead of `.conf`. |
 | **Instant apply** | Write-on-change; Hyprland reloads on save; per-option reset and undo instead of an Apply button. |
 | **Frontier / Map** | Wayfinder terms — see `docs/agents/issue-tracker.md`. |
