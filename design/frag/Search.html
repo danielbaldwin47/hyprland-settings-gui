@@ -1,0 +1,97 @@
+<style>
+.sentry{height:34px;border-radius:8px;background:var(--view);border:1px solid rgba(53,132,228,.9);box-shadow:0 0 0 2px rgba(53,132,228,.25);display:flex;align-items:center;gap:8px;padding:0 10px;flex:1;min-width:0}
+.res{display:flex;flex-direction:column;gap:1px;padding:8px 10px;border-radius:8px}
+.res.sel{background:rgba(0,0,6,.12)}
+.res b{font-weight:400;font-size:14.5px}
+.res small{font-size:12px;color:var(--dim)}
+.reshdr{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2);padding:12px 10px 4px}
+.flash{box-shadow:inset 0 0 0 2px var(--accent);background:rgba(53,132,228,.08)}
+</style>
+<div class="win" style="width:1180px;height:980px">
+  <div class="sidebar">
+    <div class="hb">
+      <div class="sentry"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--dim)"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><span>gap</span><span style="width:1px;height:17px;background:var(--fg);margin-left:1px"></span></div>
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 4 8 8M12 4l-8 8"/></svg></div>
+    </div>
+    <div class="navlist">
+      <div class="reshdr">Settings · 5</div>
+      <div class="res sel"><b>Gaps inside</b><small class="mono">general:gaps_in · General</small></div>
+      <div class="res"><b>Gaps outside</b><small class="mono">general:gaps_out · General</small></div>
+      <div class="res"><b>Gaps between workspaces</b><small class="mono">general:gaps_workspaces · General</small></div>
+      <div class="res"><b>Gaps when only one window</b><small class="mono">general:no_border_on_floating · General</small></div>
+      <div class="res"><b>Groupbar gaps</b><small class="mono">group:groupbar:gaps_in · Windows &amp; Groups</small></div>
+      <div class="reshdr">Rules &amp; entities · 2</div>
+      <div class="res"><b>Workspace 3</b><small>gapsin 0, gapsout 0 · Workspace Rules</small></div>
+      <div class="res"><b>waybar</b><small>no gaps around the bar · Layer Rules</small></div>
+      <div class="reshdr">Actions · 2</div>
+      <div class="res"><b>Reset every gap to its default</b><small>4 options change</small></div>
+      <div class="res"><b>Show gaps in the wiki</b><small>opens wiki.hypr.land</small></div>
+    </div>
+  </div>
+  <div class="content">
+    <div class="chb">
+      <div class="iconbtn on"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></div>
+      <div class="title">General</div>
+      <div class="chip">23 options</div>
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="13" r="1.2" fill="currentColor" stroke="none"/></svg></div>
+    </div>
+    <div class="page">
+      <div class="clamp">
+        <div class="grp">
+          <div class="grptitle">Layout</div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>Tiling layout</b><small class="mono">general:layout</small></div>
+              <div class="sp"></div>
+              <div class="combo">Dwindle<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div>
+            </div>
+            <div class="row flash">
+              <div class="lbl"><b>Gaps inside</b><small class="mono">general:gaps_in · top right bottom left</small></div>
+              <div class="sp"></div>
+              <div class="spin"><span>5</span><b>−</b><b>+</b></div>
+              <div class="btn" style="height:28px;padding:0 9px;font-size:13px">Per side…</div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Gaps outside</b><small class="mono">general:gaps_out</small></div>
+              <div class="sp"></div>
+              <div class="spin"><span>10</span><b>−</b><b>+</b></div>
+              <div class="btn" style="height:28px;padding:0 9px;font-size:13px">Per side…</div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Gaps between workspaces</b><small class="mono">general:gaps_workspaces</small></div>
+              <div class="sp"></div>
+              <div class="spin"><span>0</span><b>−</b><b>+</b></div>
+            </div>
+          </div>
+        </div>
+        <div class="grp">
+          <div class="grptitle">Borders</div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>Border thickness</b><small class="mono">general:border_size</small></div>
+              <div class="sp"></div>
+              <div class="spin"><span>2</span><b>−</b><b>+</b></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Active border</b><small class="mono">general:col.active_border · gradient, 45°</small></div>
+              <div class="sp"></div>
+              <div style="width:120px;height:26px;border-radius:7px;background:linear-gradient(45deg,#33ccff,#00ff99);box-shadow:inset 0 0 0 1px rgba(0,0,6,.18)"></div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--dim2)"><path d="m4 6 4 4 4-4"/></svg>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Inactive border</b><small class="mono">general:col.inactive_border</small></div>
+              <div class="sp"></div>
+              <div style="width:120px;height:26px;border-radius:7px;background:#595959;box-shadow:inset 0 0 0 1px rgba(0,0,6,.18)"></div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--dim2)"><path d="m4 6 4 4 4-4"/></svg>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Resize border on drag</b><small class="mono">general:extend_border_grab_area</small></div>
+              <div class="sp"></div>
+              <div class="spin"><span>15</span><b>−</b><b>+</b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
