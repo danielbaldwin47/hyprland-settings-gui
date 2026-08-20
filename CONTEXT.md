@@ -13,6 +13,12 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | **Row** | The generated widget for one Option or Entity field: title, dotted key as subtitle, typed control, and state — modified, inherit, advanced, restart-required, device-override, set-outside-the-app, unknown-to-this-version. |
 | **Advanced** | Visibility class in the Schema overlay: Rows hidden until the Advanced toggle is on (`debug`, `quirks`, `experimental`, `input-capture`, plus curated singles). |
 | **Entity** | A non-option config object with its own `hl.*` constructor: monitor, bind, window/layer/workspace rule, animation, curve, gesture, device, env, permission, autostart command. |
+| **Bind** | One keybind Entity: Trigger + Action + flags + optional description, owned by root or a Submap. Identity is list position — duplicates are legal and fire in order (ADR-0007). |
+| **Trigger** | The input half of a Bind: modifier set plus exactly one of keysym, key code, mouse button, wheel direction, switch, or catch-all. |
+| **Action** | The effect half of a Bind: a typed dispatcher call (name + arguments), or "Run command". Function-valued actions belong to user.lua and are read-only in the GUI. |
+| **Submap** | A named mode grouping Binds, with an optional reset target. A Submap no Bind enters is "unreachable". |
+| **Capture** | The dialog flow that records a Trigger from real input (system shortcuts inhibited), with manual text entry as fallback. |
+| **Conflict** | Two enabled Binds in the same Submap with the same Trigger. Warned and navigable — jump to, rebind, or disable the other — never blocked (duplicates are legal). |
 | **Schema** | The typed, documented, curated description of every Option and Entity field the UI is generated from — `descriptions` + Lua stubs + hand-curated overlay. |
 | **App dir** | `~/.config/hypr/hyprtweaker/` — the app-owned directory of generated Lua modules; the app rewrites these freely (formerly "managed dir"). |
 | **Module** | One generated Lua file in the App dir: one per Section (`options/<section>.lua`) or per Entity type (`binds.lua`, `monitors.lua`, …). |
