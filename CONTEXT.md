@@ -28,7 +28,11 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | **Monitor rule** | The per-output display Entity. Identity is the `output` string; new rules prefer `desc:` when unique, else the connector. `output = ""` is the **catch-all** ("Any other display"). |
 | **Arrangement canvas** | The drag surface of connected displays at logical size (scale- and rotation-aware, edge snapping). Disconnected-output rules live off-canvas in a "Not connected" group. |
 | **Confirm-or-revert** | The apply pattern for display-breaking changes: batch, apply, countdown; no confirmation restores the previous state (ADR-0008, prototyped in #7). |
-| **Schema** | The typed, documented, curated description of every Option and Entity field the UI is generated from — `descriptions` + Lua stubs + hand-curated overlay. |
+| **Schema** | The typed, documented, curated description of every Option and Entity field the UI is generated from — the Generated schema plus the Overlay. |
+| **Generated schema** | The machine-produced, per-Hyprland-version half of the Schema (`hyprland-<ver>.json`), built from `descriptions` + Lua stubs (ADR-0011). |
+| **Overlay** | The hand-curated, version-independent half of the Schema: nullability, widget choice, titles, grouping, visibility, restart flags. Completeness is CI-enforced (ADR-0011). |
+| **Engine** | The UI-free half of the app (`hyprtweaker.engine`): Schema loading, model, writer, importers, IPC, state. Never touches GTK; everything testable headless lives here (ADR-0011). |
+| **Harness** | The nested-headless-Hyprland integration rig (state diff + screenshot diff) proven in prototype #9; the importer/writer's end-to-end test bed (ADR-0011). |
 | **App dir** | `~/.config/hypr/hyprtweaker/` — the app-owned directory of generated Lua modules; the app rewrites these freely (formerly "managed dir"). |
 | **Module** | One generated Lua file in the App dir: one per Section (`options/<section>.lua`) or per Entity type (`binds.lua`, `monitors.lua`, …). |
 | **Entrypoint** | The generated `~/.config/hypr/hyprland.lua`: header + `require` list, regenerated when the Module set changes. `user.lua` is required last. |
