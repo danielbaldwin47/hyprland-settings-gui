@@ -58,4 +58,7 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | **Restore-last-good** | Writing a Module's pre-write Snapshot bytes back through a normal Apply transaction. Mechanism in ADR-0010; firing policy in #31. |
 | **Undo step** | One user gesture as a model-level delta, on a global linear in-memory stack, replayed through the Apply pipeline. Dies with the session; the Journal is history, not undo. |
 | **Pending restart** | State of a restart-flagged Option after a write: applied to file, effective after Hyprland restart; Read-back skipped, Row badged. |
+| **Retired** | State of an Option a newer Hyprland removed while the user still sets it: no longer emitted, value kept in the Manifest and restored if the option returns (downgrade or `renamed_from`), Row badged, one-time notice per release (ADR-0012). |
+| **Release check** | The per-Hyprland-release protocol (`docs/agents/hyprland-release-check.md`): regenerate the Generated schema, three-layer diff (schema / stub API / wiki), curate the Overlay, one PR. Handled = CI overlay completeness green + diff reviewed (ADR-0012). |
+| **Support window** | The Hyprland versions an app release ships Generated schemas for: latest + previous. Older versions ≥ 0.56 degrade to the nearest lower schema; newer-than-shipped versions are supplemented at runtime from live `descriptions`, flagged (ADR-0012). |
 | **Frontier / Map** | Wayfinder terms — see `docs/agents/issue-tracker.md`. |
