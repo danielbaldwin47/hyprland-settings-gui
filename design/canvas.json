@@ -1,0 +1,18 @@
+{
+  "artboards": [
+    { "file": "Sections.dc.html", "x": 0, "y": 0, "w": 1180, "h": 1360, "title": "IA — the two views" },
+    { "file": "Main.dc.html", "x": 1300, "y": 0, "w": 1180, "h": 980, "title": "Shell — generated options page" },
+    { "file": "RowTypes.dc.html", "x": 2600, "y": 0, "w": 760, "h": 1340, "title": "The generated row" },
+    { "file": "Search.dc.html", "x": 0, "y": 1480, "w": 1180, "h": 980, "title": "Search" },
+    { "file": "Keybinds.dc.html", "x": 1300, "y": 1480, "w": 1180, "h": 980, "title": "Shortcuts" },
+    { "file": "WindowRules.dc.html", "x": 2600, "y": 1480, "w": 1180, "h": 980, "title": "Window rules" },
+    { "file": "Monitors.dc.html", "x": 0, "y": 2580, "w": 1180, "h": 980, "title": "Displays" },
+    { "file": "Migration.dc.html", "x": 1300, "y": 2580, "w": 1280, "h": 1220, "title": "Migration wizard" }
+  ],
+  "annotations": [
+    { "id": "decide-here", "x": 0, "y": -140, "w": 560, "text": "Resolved: A (Tasks) and B (Config) both ship as views of the same app, switched from the top of the sidebar; C dropped.\nEvery other artboard is drawn in view A — switching to B only regroups and renames pages." },
+    { "id": "row-contract", "x": 2600, "y": -140, "w": 500, "text": "The row contract is the whole schema-driven app: 292 of 353 options render from generated data, 61 from the curated overlay. Identical in both views." },
+    { "id": "wizard-note", "x": 1300, "y": 2450, "w": 560, "text": "The wizard never edits hyprland.conf — it writes a Lua tree beside it, verifies over IPC, and keeps the old config as the rollback target." }
+  ],
+  "launch": { "view": "canvas" }
+}

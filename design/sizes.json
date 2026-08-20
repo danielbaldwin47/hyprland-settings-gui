@@ -1,0 +1,10 @@
+{
+  "Main": { "width": 1180, "height": 980 },
+  "Keybinds": { "width": 1180, "height": 980 },
+  "WindowRules": { "width": 1180, "height": 980 },
+  "Monitors": { "width": 1180, "height": 980 },
+  "Search": { "width": 1180, "height": 980 },
+  "Migration": { "width": 1280, "height": 1220 },
+  "RowTypes": { "width": 760, "height": 1340 },
+  "Sections": { "width": 1180, "height": 1360 }
+}

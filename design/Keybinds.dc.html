@@ -1,0 +1,255 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+:root{
+  --win-bg:#fafafb; --view:#ffffff; --sidebar:#ebebed;
+  --fg:rgba(0,0,6,.8); --dim:rgba(0,0,6,.55); --dim2:rgba(0,0,6,.32);
+  --accent:#3584e4; --accent-fg:#0461be; --destr:#e01b24; --warn:#e5a50a; --ok:#2ec27e;
+  --bd:rgba(0,0,6,.10); --btn:rgba(0,0,6,.06); --btn2:rgba(0,0,6,.12);
+}
+*{box-sizing:border-box}
+body{margin:0;background:#c8c8cd;font-family:"Adwaita Sans",Cantarell,system-ui,sans-serif;font-size:15px;line-height:1.35;color:var(--fg);-webkit-font-smoothing:antialiased}
+a{color:var(--accent-fg);text-decoration:none} a:hover{color:#03488f}
+.win{background:var(--win-bg);border-radius:12px;overflow:hidden;display:flex;box-shadow:0 0 0 1px rgba(0,0,6,.13),0 20px 44px rgba(0,0,0,.30);position:relative}
+.sidebar{width:248px;background:var(--sidebar);display:flex;flex-direction:column;border-right:1px solid rgba(0,0,6,.07);flex:none}
+.hb{height:47px;display:flex;align-items:center;gap:6px;padding:0 8px;flex:none}
+.hb .t{font-weight:700;font-size:15px;padding-left:6px}
+.iconbtn{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--dim);flex:none}
+.iconbtn.on{background:var(--btn2)}
+.viewseg{display:flex;gap:3px;padding:3px;margin:0 8px 6px;background:rgba(0,0,6,.07);border-radius:9px;flex:none}
+.viewseg div{flex:1;text-align:center;font-size:13px;padding:5px 0;border-radius:7px;color:var(--dim)}
+.viewseg div.sel{background:var(--view);color:var(--fg);font-weight:600;box-shadow:0 1px 2px rgba(0,0,6,.12)}
+.navlist{padding:0 8px 8px;display:flex;flex-direction:column;gap:2px;overflow:hidden}
+.navhdr{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2);padding:12px 10px 4px}
+.nav{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;color:var(--fg)}
+.nav.sel{background:rgba(0,0,6,.12);font-weight:600}
+.nav .c{margin-left:auto;font-size:12px;color:var(--dim2);font-variant-numeric:tabular-nums}
+.content{flex:1;display:flex;flex-direction:column;background:var(--win-bg);min-width:0}
+.chb{height:47px;display:flex;align-items:center;gap:6px;padding:0 8px;flex:none}
+.chb .title{font-weight:700;font-size:15px;margin:0 auto}
+.page{flex:1;overflow:hidden;padding:20px 0 28px}
+.clamp{max-width:620px;margin:0 auto;padding:0 12px;display:flex;flex-direction:column;gap:22px}
+.grp{display:flex;flex-direction:column;gap:8px}
+.grptitle{font-weight:700;font-size:15px;padding:0 2px}
+.grpsub{font-size:13px;color:var(--dim);padding:0 2px;margin-top:-6px}
+.list{background:var(--view);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:11px 14px;min-height:52px;border-top:1px solid var(--bd)}
+.row:first-child{border-top:none}
+.row .lbl{display:flex;flex-direction:column;gap:1px;min-width:0}
+.row .lbl b{font-weight:400}
+.row .lbl small{font-size:13px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp{flex:1}
+.mono{font-family:"Adwaita Mono","Source Code Pro",ui-monospace,monospace;font-size:12.5px}
+.sw{width:48px;height:26px;border-radius:13px;background:rgba(0,0,6,.16);position:relative;flex:none}
+.sw.on{background:var(--accent)}
+.sw i{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:10px;background:#fff;box-shadow:0 1px 2px rgba(0,0,6,.25)}
+.sw.on i{left:25px}
+.spin{display:flex;align-items:center;border:1px solid var(--bd);border-radius:8px;background:var(--view);height:34px;overflow:hidden;flex:none}
+.spin span{padding:0 10px;font-variant-numeric:tabular-nums;min-width:56px;text-align:right}
+.spin b{width:32px;align-self:stretch;display:flex;align-items:center;justify-content:center;font-weight:400;color:var(--dim);border-left:1px solid var(--bd)}
+.slider{display:flex;align-items:center;gap:10px;width:230px;flex:none}
+.track{flex:1;height:4px;border-radius:2px;background:rgba(0,0,6,.15);position:relative}
+.track i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent)}
+.track u{position:absolute;top:-7px;width:18px;height:18px;border-radius:9px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,6,.13),0 1px 3px rgba(0,0,6,.25)}
+.val{font-variant-numeric:tabular-nums;color:var(--dim);min-width:40px;text-align:right;font-size:14px}
+.combo{display:flex;align-items:center;gap:6px;color:var(--dim)}
+.btn{height:34px;padding:0 12px;border-radius:8px;background:var(--btn2);display:flex;align-items:center;gap:7px;font-size:14px;flex:none}
+.btn.sug{background:var(--accent);color:#fff}
+.btn.dstr{background:rgba(224,27,36,.12);color:#c01c28}
+.pill{font-size:11px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:6px;background:rgba(0,0,6,.08);color:var(--dim)}
+.pill.warn{background:rgba(229,165,10,.20);color:#8a5900}
+.pill.adv{background:rgba(53,132,228,.14);color:var(--accent-fg)}
+.toast{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);background:#36363a;color:#fff;border-radius:12px;padding:8px 8px 8px 16px;display:flex;align-items:center;gap:14px;font-size:14px;box-shadow:0 6px 18px rgba(0,0,0,.3)}
+.toast .u{background:rgba(255,255,255,.14);border-radius:8px;padding:6px 12px}
+.banner{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#fdf3d6;border-bottom:1px solid rgba(0,0,6,.08);flex:none}
+.card{background:var(--view);border:1px solid var(--bd);border-radius:12px}
+.dialog{background:var(--win-bg);border-radius:12px;box-shadow:0 0 0 1px rgba(0,0,6,.14),0 24px 50px rgba(0,0,0,.35);overflow:hidden}
+.scrim{position:absolute;inset:0;background:rgba(0,0,6,.35);display:flex;align-items:center;justify-content:center}
+.kbd{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 8px;border-radius:6px;background:rgba(0,0,6,.08);box-shadow:inset 0 -1px 0 rgba(0,0,6,.10);font-size:13px;font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:8px;background:rgba(0,0,6,.06);font-size:13px;color:var(--dim)}
+
+.bindrow{display:flex;align-items:center;gap:12px;padding:9px 14px;min-height:50px;border-top:1px solid var(--bd)}
+.bindrow:first-child{border-top:none}
+.grip{color:var(--dim2);flex:none}
+.accel{display:flex;gap:4px;align-items:center;width:210px;flex:none}
+.dispatch{display:flex;flex-direction:column;gap:1px;min-width:0}
+.dispatch b{font-weight:400}
+.dispatch small{font-size:13px;color:var(--dim)}
+.flagchip{font-size:11px;font-weight:700;padding:2px 6px;border-radius:5px;background:rgba(0,0,6,.07);color:var(--dim)}
+.filterbar{display:flex;align-items:center;gap:8px;padding:0 2px 2px}
+.searchentry{flex:1;height:34px;border-radius:8px;background:var(--view);border:1px solid var(--bd);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dim2)}
+.capture{width:150px;height:70px;border-radius:10px;border:2px dashed rgba(53,132,228,.5);background:rgba(53,132,228,.06);display:flex;align-items:center;justify-content:center;gap:5px}
+
+  </style>
+</helmet>
+<div class="win" style="width:1180px;height:980px">
+  <div class="sidebar">
+  <div class="hb">
+    <div class="t">Hyprland</div>
+    <div class="sp"></div>
+    <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></div>
+    <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/></svg></div>
+  </div>
+  <div class="viewseg"><div class="sel">Tasks</div><div>Config</div></div>
+  <div class="navlist">
+    <div class="navhdr">Look</div>
+    <div class="nav" id="nav-general"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M2 6h12"/></svg>General</div>
+    <div class="nav" id="nav-decoration"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="3.5"/><path d="M5.5 5.5h5"/></svg>Decoration</div>
+    <div class="nav" id="nav-animations"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12c3.5 0 3.5-8 7-8s3.5 4 5 4"/></svg>Animations</div>
+    <div class="nav" id="nav-layouts"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="5" height="11" rx="1.5"/><rect x="9" y="2.5" width="5" height="5" rx="1.5"/><rect x="9" y="8.5" width="5" height="5" rx="1.5"/></svg>Layouts</div>
+    <div class="navhdr">Windows</div>
+    <div class="nav" id="nav-windows"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="3" width="9" height="8" rx="1.5"/><path d="M5.5 13h9V5.5"/></svg>Windows &amp; Groups</div>
+    <div class="nav" id="nav-rules"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3.5h10M3 8h10M3 12.5h6"/></svg>Window Rules<span class="c">18</span></div>
+    <div class="nav" id="nav-workspaces"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="4" width="6" height="8" rx="1.5"/><rect x="8.5" y="4" width="6" height="8" rx="1.5"/></svg>Workspaces<span class="c">4</span></div>
+    <div class="nav" id="nav-layers"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2 2 5.5 8 9l6-3.5L8 2Z"/><path d="M2 10.5 8 14l6-3.5"/></svg>Layer Rules<span class="c">3</span></div>
+    <div class="navhdr">Input</div>
+    <div class="nav" id="nav-keyboard"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="4" width="13" height="8" rx="2"/><path d="M5 9.5h6"/></svg>Keyboard</div>
+    <div class="nav" id="nav-pointer"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4.5" y="1.5" width="7" height="13" rx="3.5"/><path d="M8 4.5v3"/></svg>Mouse &amp; Touchpad</div>
+    <div class="nav" id="nav-gestures"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9V3.5a1.2 1.2 0 0 1 2.4 0V8m0-1.5a1.2 1.2 0 0 1 2.4 0V9m0-1a1.2 1.2 0 0 1 2.2.6v2.9A3.5 3.5 0 0 1 9.5 14h-1a3.5 3.5 0 0 1-3.4-2.6L4 8.2"/></svg>Gestures</div>
+    <div class="nav" id="nav-devices"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="5" width="12" height="7" rx="2"/><path d="M5 5V3.5h6V5"/></svg>Devices<span class="c">3</span></div>
+    <div class="nav sel" id="nav-shortcuts"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4.5 2.5h7v11l-3.5-3-3.5 3v-11Z"/></svg>Shortcuts<span class="c">42</span></div>
+    <div class="navhdr">System</div>
+    <div class="nav" id="nav-displays"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="3" width="13" height="8.5" rx="1.5"/><path d="M6 14h4"/></svg>Displays<span class="c">2</span></div>
+    <div class="nav" id="nav-cursor"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2.5 12 8l-3.6.8L10 13l-1.8.8-1.6-4.2L4 12.5v-10Z"/></svg>Cursor</div>
+    <div class="nav" id="nav-startup"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5v7"/><path d="M4.6 4.6a5 5 0 1 0 6.8 0"/></svg>Startup<span class="c">6</span></div>
+    <div class="nav" id="nav-permissions"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1.8"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>Permissions</div>
+    <div class="nav" id="nav-rendering"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>Rendering</div>
+    <div class="nav" id="nav-advanced"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2.5 3 8l3 5.5M10 2.5 13 8l-3 5.5"/></svg>Advanced<span class="c">27</span></div>
+  </div>
+</div>
+  <div class="content">
+    <div class="chb">
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></div>
+      <div class="title">Shortcuts</div>
+      <div class="btn sug"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3.5v9M3.5 8h9"/></svg>Add</div>
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="13" r="1.2" fill="currentColor" stroke="none"/></svg></div>
+    </div>
+    <div class="page">
+      <div class="clamp" style="max-width:700px">
+
+        <div class="grp">
+          <div class="filterbar">
+            <div class="searchentry"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>Filter by key or dispatcher</div>
+            <div class="chip">All 42</div>
+            <div class="chip">SUPER 31</div>
+            <div class="chip">Mouse 2</div>
+          </div>
+          <div class="list">
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">Return</span></div>
+              <div class="dispatch"><b>Run a command</b><small class="mono">exec · kitty</small></div>
+              <div class="sp"></div>
+            </div>
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">Shift</span><span class="kbd">Q</span></div>
+              <div class="dispatch"><b>Close window</b><small class="mono">killactive</small></div>
+              <div class="sp"></div>
+            </div>
+            <div class="bindrow" style="background:rgba(224,27,36,.05)">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">E</span></div>
+              <div class="dispatch"><b>Run a command</b><small style="color:#c01c28">Also used by “Toggle floating” — one of the two will never fire</small></div>
+              <div class="sp"></div>
+              <div class="flagchip">Conflict</div>
+            </div>
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">1</span></div>
+              <div class="dispatch"><b>Go to workspace</b><small class="mono">workspace · 1</small></div>
+              <div class="sp"></div>
+              <div class="flagchip">+ 9 similar</div>
+            </div>
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">Super</span><span class="kbd">Drag ➊</span></div>
+              <div class="dispatch"><b>Move window</b><small class="mono">movewindow · mouse bind</small></div>
+              <div class="sp"></div>
+              <div class="flagchip">bindm</div>
+            </div>
+            <div class="bindrow">
+              <svg class="grip" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.2"/><circle cx="10" cy="4" r="1.2"/><circle cx="6" cy="8" r="1.2"/><circle cx="10" cy="8" r="1.2"/><circle cx="6" cy="12" r="1.2"/><circle cx="10" cy="12" r="1.2"/></svg>
+              <div class="accel"><span class="kbd">XF86AudioRaiseVolume</span></div>
+              <div class="dispatch"><b>Run a command</b><small class="mono">exec · wpctl set-volume @DEFAULT_SINK@ 5%+</small></div>
+              <div class="sp"></div>
+              <div class="flagchip">repeat</div>
+              <div class="flagchip">locked</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="grptitle">Submaps</div>
+          <div class="grpsub">A submap swallows every key until it is exited. Binds inside one live on their own page.</div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>resize</b><small class="mono">entered by Super + R · 5 binds</small></div>
+              <div class="sp"></div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--dim2)"><path d="m6 4 4 4-4 4"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="scrim">
+      <div class="dialog" style="width:520px">
+        <div class="chb" style="padding:0 8px">
+          <div class="btn" style="background:transparent">Cancel</div>
+          <div class="title">Edit shortcut</div>
+          <div class="btn sug">Apply</div>
+        </div>
+        <div style="padding:4px 18px 20px;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 0">
+            <div class="capture"><span class="kbd">Super</span><span class="kbd">Shift</span><span class="kbd">E</span></div>
+            <div style="font-size:13px;color:var(--dim)">Press the new combination. Esc cancels, Backspace clears.</div>
+          </div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>Action</b></div>
+              <div class="sp"></div>
+              <div class="combo">Run a command<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Command</b></div>
+              <div class="sp"></div>
+              <div class="mono" style="color:var(--dim)">nautilus --new-window</div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Repeat while held</b><small>bindr / e flag</small></div>
+              <div class="sp"></div>
+              <div class="sw"><i></i></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Works on the lock screen</b><small>l flag</small></div>
+              <div class="sp"></div>
+              <div class="sw"><i></i></div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:2px 2px 0">
+            <span class="pill warn">Conflict</span>
+            <div style="font-size:13.5px;color:var(--dim)">Super + E is already used by <b style="font-weight:600;color:var(--fg)">Toggle floating</b>.</div>
+            <div class="sp"></div>
+            <div class="btn">Replace</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1180,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

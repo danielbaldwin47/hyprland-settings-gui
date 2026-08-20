@@ -6,7 +6,12 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | --- | --- |
 | **hyprtweaker** | The app. Positioning: one more tool in your box, never a "manager" over your dots — user-facing copy avoids "manage(d)" wording (ADR-0005). |
 | **Option** | A single `hl.config` value (e.g. `decoration:rounding`) as reported by `hyprctl -j descriptions`: name, description, default, current, min/max, enum map. |
-| **Section** | A top-level grouping of options (`general`, `decoration`, `input`, …) and the navigation unit in the app's sidebar. |
+| **Section** | A top-level grouping of options as Hyprland defines it (`general`, `decoration`, `input`, …) — 21 of them. A property of the config, not of the UI. |
+| **View** | One of the two sidebar arrangements the user switches between: **Tasks** (curated Pages, the default) and **Config** (one Page per Section, generated from the Schema). A View changes grouping, naming and order only — never which Options exist (issue #7). |
+| **Page** | One destination in the sidebar; an `Adw.PreferencesPage`. In the Config view a Page is exactly one Section or one Entity kind; in the Tasks view a Page may span several Sections, by a curated mapping. |
+| **Group** | A `PreferencesGroup` inside a Page: the titled block a handful of Rows sit in. |
+| **Row** | The generated widget for one Option or Entity field: title, dotted key as subtitle, typed control, and state — modified, inherit, advanced, restart-required, device-override, set-outside-the-app, unknown-to-this-version. |
+| **Advanced** | Visibility class in the Schema overlay: Rows hidden until the Advanced toggle is on (`debug`, `quirks`, `experimental`, `input-capture`, plus curated singles). |
 | **Entity** | A non-option config object with its own `hl.*` constructor: monitor, bind, window/layer/workspace rule, animation, curve, gesture, device, env, permission, autostart command. |
 | **Schema** | The typed, documented, curated description of every Option and Entity field the UI is generated from — `descriptions` + Lua stubs + hand-curated overlay. |
 | **App dir** | `~/.config/hypr/hyprtweaker/` — the app-owned directory of generated Lua modules; the app rewrites these freely (formerly "managed dir"). |

@@ -1,0 +1,142 @@
+<style>
+.pop{position:absolute;right:12px;top:48px;width:322px;background:var(--view);border-radius:12px;box-shadow:0 0 0 1px rgba(0,0,6,.12),0 10px 28px rgba(0,0,6,.22);padding:14px;z-index:6;font-size:13.5px;color:var(--dim);display:flex;flex-direction:column;gap:8px}
+.pop b{color:var(--fg);font-weight:700;font-size:14px}
+.reset{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--dim);background:var(--btn);flex:none}
+.help{width:28px;height:28px;border-radius:14px;display:flex;align-items:center;justify-content:center;color:var(--dim2);flex:none}
+.help.on{background:var(--btn2);color:var(--fg)}
+.swatch{width:34px;height:34px;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(0,0,6,.18);flex:none}
+.exp{padding:11px 14px;display:flex;align-items:center;gap:12px;min-height:52px}
+.sub .row{background:rgba(0,0,6,.025);padding-left:26px}
+</style>
+<div class="win" style="width:1180px;height:980px">
+  <!--#sidebar decoration-->
+  <div class="content">
+    <div class="chb">
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></div>
+      <div class="title">Decoration</div>
+      <div class="chip">43 options</div>
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="13" r="1.2" fill="currentColor" stroke="none"/></svg></div>
+    </div>
+    <div class="page">
+      <div class="clamp">
+
+        <div class="grp">
+          <div class="grptitle">Shape</div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>Corner rounding</b><small class="mono">decoration:rounding · default 0</small></div>
+              <div class="sp"></div>
+              <div class="reset"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8a5 5 0 1 1 1.6 3.7"/><path d="M2.6 4.6v3.2h3.2"/></svg></div>
+              <div class="spin"><span>10</span><b>−</b><b>+</b></div>
+              <div class="help"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.4 6.2A1.7 1.7 0 0 1 9.6 7c0 1.1-1.6 1.3-1.6 2.4M8 11.6v.01"/></svg></div>
+            </div>
+            <div style="position:relative">
+              <div class="row">
+                <div class="lbl"><b>Rounding power</b><small class="mono">decoration:rounding_power · 1.0 – 10.0</small></div>
+                <div class="sp"></div>
+                <div class="slider"><div class="track"><i style="width:16%"></i><u style="left:calc(16% - 9px)"></u></div><div class="val">2.00</div></div>
+                <div class="help on"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.4 6.2A1.7 1.7 0 0 1 9.6 7c0 1.1-1.6 1.3-1.6 2.4M8 11.6v.01"/></svg></div>
+              </div>
+              <div class="pop">
+                <b>Rounding power</b>
+                <div>Adjusts the curve of the corner. 2.0 is a circular corner; higher values approach a squircle, like Apple's continuous corners.</div>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span class="pill">Float</span><span class="pill">Live</span>
+                  <div class="sp"></div>
+                  <a href="#">Open wiki ↗</a>
+                </div>
+              </div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Border is part of the window</b><small class="mono">decoration:border_part_of_window</small></div>
+              <div class="sp"></div>
+              <div class="sw on"><i></i></div>
+              <div class="help"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.4 6.2A1.7 1.7 0 0 1 9.6 7c0 1.1-1.6 1.3-1.6 2.4M8 11.6v.01"/></svg></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="grptitle">Opacity</div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>Active window</b><small class="mono">decoration:active_opacity</small></div>
+              <div class="sp"></div>
+              <div class="slider"><div class="track"><i style="width:100%"></i><u style="left:calc(100% - 9px)"></u></div><div class="val">1.00</div></div>
+              <div class="help"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.4 6.2A1.7 1.7 0 0 1 9.6 7c0 1.1-1.6 1.3-1.6 2.4M8 11.6v.01"/></svg></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Inactive windows</b><small class="mono">decoration:inactive_opacity · default 1.00</small></div>
+              <div class="sp"></div>
+              <div class="reset"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8a5 5 0 1 1 1.6 3.7"/><path d="M2.6 4.6v3.2h3.2"/></svg></div>
+              <div class="slider"><div class="track"><i style="width:92%"></i><u style="left:calc(92% - 9px)"></u></div><div class="val">0.92</div></div>
+              <div class="help"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.4 6.2A1.7 1.7 0 0 1 9.6 7c0 1.1-1.6 1.3-1.6 2.4M8 11.6v.01"/></svg></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Dim inactive windows</b><small class="mono">decoration:dim_inactive</small></div>
+              <div class="sp"></div>
+              <div class="sw on"><i></i></div>
+              <div class="help"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.4 6.2A1.7 1.7 0 0 1 9.6 7c0 1.1-1.6 1.3-1.6 2.4M8 11.6v.01"/></svg></div>
+            </div>
+            <div class="row" style="background:rgba(0,0,6,.025);padding-left:30px">
+              <div class="lbl"><b>Dim strength</b><small class="mono">decoration:dim_strength</small></div>
+              <div class="sp"></div>
+              <div class="slider"><div class="track"><i style="width:50%"></i><u style="left:calc(50% - 9px)"></u></div><div class="val">0.50</div></div>
+              <div class="help"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.4 6.2A1.7 1.7 0 0 1 9.6 7c0 1.1-1.6 1.3-1.6 2.4M8 11.6v.01"/></svg></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="grptitle">Blur</div>
+          <div class="list">
+            <div class="exp">
+              <div class="lbl"><b>Blur behind windows</b><small class="mono">decoration:blur:enabled · 12 more options</small></div>
+              <div class="sp"></div>
+              <div class="sw on"><i></i></div>
+              <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 10 4-4 4 4"/></svg></div>
+            </div>
+            <div class="sub">
+              <div class="row">
+                <div class="lbl"><b>Size</b><small class="mono">decoration:blur:size</small></div>
+                <div class="sp"></div>
+                <div class="spin"><span>8</span><b>−</b><b>+</b></div>
+              </div>
+              <div class="row">
+                <div class="lbl"><b>Passes</b><small class="mono">decoration:blur:passes</small></div>
+                <div class="sp"></div>
+                <div class="spin"><span>3</span><b>−</b><b>+</b></div>
+              </div>
+              <div class="row">
+                <div class="lbl"><b>Vibrancy</b><small class="mono">decoration:blur:vibrancy</small></div>
+                <div class="sp"></div>
+                <div class="slider"><div class="track"><i style="width:17%"></i><u style="left:calc(17% - 9px)"></u></div><div class="val">0.17</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grp">
+          <div class="grptitle">Shadow</div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>Draw shadows</b><small class="mono">decoration:shadow:enabled</small></div>
+              <div class="sp"></div>
+              <div class="sw on"><i></i></div>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Colour</b><small class="mono">decoration:shadow:color · rgba(1a1a1aee)</small></div>
+              <div class="sp"></div>
+              <div class="swatch" style="background:#1a1a1a"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    <div class="toast">
+      <div>Corner rounding set to 10</div>
+      <div class="u">Undo</div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,141 @@
+<style>
+.rule{display:flex;align-items:center;gap:12px;padding:10px 14px;min-height:56px;border-top:1px solid var(--bd)}
+.rule:first-child{border-top:none}
+.rule .idx{width:22px;text-align:right;color:var(--dim2);font-variant-numeric:tabular-nums;font-size:13px;flex:none}
+.match{display:flex;flex-direction:column;gap:3px;min-width:0;width:250px;flex:none}
+.effects{display:flex;flex-wrap:wrap;gap:5px;min-width:0}
+.eff{font-size:12px;padding:2px 8px;border-radius:6px;background:rgba(53,132,228,.12);color:var(--accent-fg);white-space:nowrap}
+.eff.neg{background:rgba(0,0,6,.07);color:var(--dim)}
+.tabs{display:flex;gap:4px;padding:2px;background:rgba(0,0,6,.07);border-radius:9px;width:max-content}
+.tab{padding:5px 14px;border-radius:7px;font-size:14px;color:var(--dim)}
+.tab.sel{background:var(--view);color:var(--fg);font-weight:600;box-shadow:0 1px 2px rgba(0,0,6,.12)}
+.field{height:34px;border-radius:8px;background:var(--view);border:1px solid var(--bd);display:flex;align-items:center;padding:0 10px;width:230px;flex:none}
+</style>
+<div class="win" style="width:1180px;height:980px">
+  <!--#sidebar rules-->
+  <div class="content">
+    <div class="chb">
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg></div>
+      <div class="title">Window Rules</div>
+      <div class="btn sug"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3.5v9M3.5 8h9"/></svg>Add</div>
+      <div class="iconbtn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="13" r="1.2" fill="currentColor" stroke="none"/></svg></div>
+    </div>
+    <div class="page">
+      <div class="clamp" style="max-width:720px">
+        <div class="grp">
+          <div class="grptitle">Rules, in order</div>
+          <div class="grpsub">Later rules win. Drag to reorder — the order is the order they are written to <span class="mono">rules.lua</span>.</div>
+          <div class="list">
+            <div class="rule">
+              <div class="idx">1</div>
+              <div class="match"><b style="font-weight:400">Any floating window</b><small class="mono" style="font-size:12.5px;color:var(--dim)">floating: true</small></div>
+              <div class="effects"><span class="eff">centre on open</span><span class="eff">opacity 0.95</span></div>
+              <div class="sp"></div>
+            </div>
+            <div class="rule">
+              <div class="idx">2</div>
+              <div class="match"><b style="font-weight:400">Picture-in-picture</b><small class="mono" style="font-size:12.5px;color:var(--dim)">title: ^(Picture-in-Picture)$</small></div>
+              <div class="effects"><span class="eff">float</span><span class="eff">pin</span><span class="eff">size 480 270</span><span class="eff">move 100%-500 100%-320</span></div>
+              <div class="sp"></div>
+            </div>
+            <div class="rule" style="background:rgba(53,132,228,.07)">
+              <div class="idx">3</div>
+              <div class="match"><b style="font-weight:400">Steam</b><small class="mono" style="font-size:12.5px;color:var(--dim)">class: ^(steam)$</small></div>
+              <div class="effects"><span class="eff">workspace 5 silent</span><span class="eff neg">no blur</span><span class="eff neg">no shadow</span></div>
+              <div class="sp"></div>
+              <span class="chip" style="height:24px">2 open windows match</span>
+            </div>
+            <div class="rule">
+              <div class="idx">4</div>
+              <div class="match"><b style="font-weight:400">Screen-share picker</b><small class="mono" style="font-size:12.5px;color:var(--dim)">class: ^(xdg-desktop-portal-hyprland)$</small></div>
+              <div class="effects"><span class="eff">float</span><span class="eff">stay focused</span><span class="eff neg">no animation</span></div>
+              <div class="sp"></div>
+            </div>
+            <div class="rule">
+              <div class="idx">5</div>
+              <div class="match"><b style="font-weight:400">Every window</b><small class="mono" style="font-size:12.5px;color:var(--dim)">class: .*</small></div>
+              <div class="effects"><span class="eff">suppress maximise events</span></div>
+              <div class="sp"></div>
+            </div>
+          </div>
+        </div>
+        <div class="grp">
+          <div class="grptitle">Other rule kinds</div>
+          <div class="list">
+            <div class="row">
+              <div class="lbl"><b>Layer rules</b><small>Bars, launchers and notification surfaces — 3 rules</small></div>
+              <div class="sp"></div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--dim2)"><path d="m6 4 4 4-4 4"/></svg>
+            </div>
+            <div class="row">
+              <div class="lbl"><b>Workspace rules</b><small>Per-workspace gaps, monitor and default layout — 4 rules</small></div>
+              <div class="sp"></div>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--dim2)"><path d="m6 4 4 4-4 4"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="scrim">
+      <div class="dialog" style="width:600px">
+        <div class="chb" style="padding:0 8px">
+          <div class="btn" style="background:transparent">Cancel</div>
+          <div class="title">Steam</div>
+          <div class="btn sug">Apply</div>
+        </div>
+        <div style="padding:4px 18px 20px;display:flex;flex-direction:column;gap:18px">
+          <div class="grp">
+            <div class="grptitle">Match</div>
+            <div class="list">
+              <div class="row">
+                <div class="lbl"><b>Window class</b><small class="mono">regex</small></div>
+                <div class="sp"></div>
+                <div class="field mono">^(steam)$</div>
+              </div>
+              <div class="row">
+                <div class="lbl"><b>Title</b></div>
+                <div class="sp"></div>
+                <div class="field" style="color:var(--dim2)">Any</div>
+              </div>
+              <div class="row">
+                <div class="lbl"><b>More conditions</b><small>initial class, workspace, floating, fullscreen, XWayland, focus… (18 in total)</small></div>
+                <div class="sp"></div>
+                <div class="btn">Add</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:4px 2px 0">
+              <div class="chip" style="background:rgba(46,194,126,.16);color:#26714a">Matches 2 open windows</div>
+              <a href="#" style="font-size:13.5px">Pick a window instead ↗</a>
+            </div>
+          </div>
+          <div class="grp">
+            <div class="grptitle">Then do this</div>
+            <div class="list">
+              <div class="row">
+                <div class="lbl"><b>Send to workspace</b></div>
+                <div class="sp"></div>
+                <div class="combo">5, silently<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div>
+              </div>
+              <div class="row">
+                <div class="lbl"><b>Blur behind</b></div>
+                <div class="sp"></div>
+                <div class="sw"><i></i></div>
+              </div>
+              <div class="row">
+                <div class="lbl"><b>Shadow</b></div>
+                <div class="sp"></div>
+                <div class="sw"><i></i></div>
+              </div>
+              <div class="row">
+                <div class="lbl"><b>More effects</b><small>float, size, move, opacity, pin, idle inhibit… (57 in total)</small></div>
+                <div class="sp"></div>
+                <div class="btn">Add</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

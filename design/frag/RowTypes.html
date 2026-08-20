@@ -1,0 +1,56 @@
+<style>
+.sheet{width:760px;height:1340px;background:#e7e7ea;padding:24px;display:flex;flex-direction:column;gap:16px}
+.sheethdr h2{margin:0;font-size:19px;font-weight:700}
+.sheethdr p{margin:4px 0 0;font-size:13.5px;color:var(--dim)}
+.n{width:26px;color:var(--dim2);font-size:12px;font-variant-numeric:tabular-nums;flex:none;text-align:right}
+.swatch{width:34px;height:30px;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(0,0,6,.18);flex:none}
+.entry{height:34px;border-radius:8px;background:var(--view);border:1px solid var(--bd);display:flex;align-items:center;padding:0 10px;width:180px;flex:none;color:var(--dim)}
+.reset{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--dim);background:var(--btn);flex:none}
+.off{opacity:.45}
+</style>
+<div class="sheet">
+  <div class="sheethdr">
+    <h2>The generated row</h2>
+    <p>Every one of the 353 options renders through this table — label, typed control, state. 292 are typed from <span class="mono">descriptions</span> + stubs alone; 61 get their widget from the curated overlay.</p>
+  </div>
+
+  <div class="grp">
+    <div class="grptitle">One row per value type</div>
+    <div class="list">
+      <div class="row"><div class="n">174</div><div class="lbl"><b>Toggle</b><small class="mono">Bool</small></div><div class="sp"></div><div class="sw on"><i></i></div></div>
+      <div class="row"><div class="n">52</div><div class="lbl"><b>Integer, bounded</b><small class="mono">Int with min/max</small></div><div class="sp"></div><div class="spin"><span>4</span><b>−</b><b>+</b></div></div>
+      <div class="row"><div class="n">33</div><div class="lbl"><b>Float, bounded</b><small class="mono">Float with min/max</small></div><div class="sp"></div><div class="slider" style="width:200px"><div class="track"><i style="width:64%"></i><u style="left:calc(64% - 9px)"></u></div><div class="val">0.64</div></div></div>
+      <div class="row"><div class="n">30</div><div class="lbl"><b>Enum</b><small class="mono">Int with a value → label map</small></div><div class="sp"></div><div class="combo">Follow mouse<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div></div>
+      <div class="row"><div class="n">3</div><div class="lbl"><b>Enum, open</b><small class="mono">String with known values + free entry</small></div><div class="sp"></div><div class="combo mono">lua:my-layout<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div></div>
+      <div class="row"><div class="n">22</div><div class="lbl"><b>Text</b><small class="mono">String — path, font, regex, xkb layout</small></div><div class="sp"></div><div class="entry mono">us,se</div></div>
+      <div class="row"><div class="n">6</div><div class="lbl"><b>Colour</b><small class="mono">Color — 8-digit RGBA</small></div><div class="sp"></div><div class="mono" style="color:var(--dim)">1a1a1aee</div><div class="swatch" style="background:#1a1a1a"></div></div>
+      <div class="row"><div class="n">16</div><div class="lbl"><b>Gradient</b><small class="mono">Gradient — 2+ stops and an angle</small></div><div class="sp"></div><div style="width:120px;height:26px;border-radius:7px;background:linear-gradient(45deg,#33ccff,#00ff99);box-shadow:inset 0 0 0 1px rgba(0,0,6,.18)"></div><span class="mono" style="color:var(--dim)">45°</span></div>
+      <div class="row"><div class="n">6</div><div class="lbl"><b>Two numbers</b><small class="mono">Vec2 — x and y</small></div><div class="sp"></div><div class="spin"><span>0</span><b>−</b><b>+</b></div><div class="spin"><span>0</span><b>−</b><b>+</b></div></div>
+      <div class="row"><div class="n">3</div><div class="lbl"><b>Gaps</b><small class="mono">CssGap — 1, 2 or 4 values</small></div><div class="sp"></div><div class="chip">Same on all sides</div><div class="spin"><span>5</span><b>−</b><b>+</b></div></div>
+      <div class="row"><div class="n">2</div><div class="lbl"><b>Font weight</b><small class="mono">FontWeight — named or numeric</small></div><div class="sp"></div><div class="combo">Semi-bold (600)<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m4 6 4 4 4-4"/></svg></div></div>
+    </div>
+  </div>
+
+  <div class="grp">
+    <div class="grptitle">State the row can be in</div>
+    <div class="grpsub">State is drawn on the row, never in a separate panel — there is no Apply button to hang it off.</div>
+    <div class="list">
+      <div class="row"><div class="n"></div><div class="lbl"><b>Changed from the default</b><small>Reset appears only here, and undo lands in a toast</small></div><div class="sp"></div><div class="reset"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8a5 5 0 1 1 1.6 3.7"/><path d="M2.6 4.6v3.2h3.2"/></svg></div><div class="spin"><span>10</span><b>−</b><b>+</b></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Unset — inherits</b><small>Sentinel values (−1, [[EMPTY]], [[Auto]]) become an explicit switch</small></div><div class="sp"></div><div class="chip">Inherit</div><div class="off"><div class="swatch" style="background:#8f8f94"></div></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Needs a restart</b><small>Reload is not enough — 8 options are like this</small></div><div class="sp"></div><span class="pill warn">Restart</span><div class="sw"><i></i></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Advanced</b><small>Hidden until Advanced is on — 27 options plus a few singles</small></div><div class="sp"></div><span class="pill adv">Advanced</span><div class="sw"><i></i></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Overridden per device</b><small>50 input options can differ per keyboard, mouse or touchpad</small></div><div class="sp"></div><div class="chip">2 devices override this</div><div class="sw on"><i></i></div></div>
+      <div class="row off"><div class="n"></div><div class="lbl"><b>Set outside the app</b><small>Written by user.lua or an external tool — shown, not editable</small></div><div class="sp"></div><div class="chip">from user.lua</div><div class="sw on"><i></i></div></div>
+      <div class="row"><div class="n"></div><div class="lbl"><b>Unknown to this Hyprland</b><small>Present in the file but not in this version's schema</small></div><div class="sp"></div><span class="pill warn">Unknown</span><div class="entry mono" style="width:120px">true</div></div>
+    </div>
+  </div>
+
+  <div class="grp">
+    <div class="grptitle">Where the words come from</div>
+    <div class="list">
+      <div class="row"><div class="lbl"><b>Title</b><small>Curated overlay, falling back to a prettified key name</small></div></div>
+      <div class="row"><div class="lbl"><b>Subtitle</b><small class="mono">the dotted key, so the wiki and hyprctl stay findable</small></div></div>
+      <div class="row"><div class="lbl"><b>Help popover</b><small>The wiki row when it is longer than the built-in description, plus its anchor</small></div></div>
+    </div>
+  </div>
+</div>
