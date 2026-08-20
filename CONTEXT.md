@@ -19,6 +19,15 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | **Submap** | A named mode grouping Binds, with an optional reset target. A Submap no Bind enters is "unreachable". |
 | **Capture** | The dialog flow that records a Trigger from real input (system shortcuts inhibited), with manual text entry as fallback. |
 | **Conflict** | Two enabled Binds in the same Submap with the same Trigger. Warned and navigable — jump to, rebind, or disable the other — never blocked (duplicates are legal). |
+| **Rule** | A window or layer rule Entity: Match + Effects + enabled + optional Label. Ordered — later Rules win per Effect; identity is list position (ADR-0008). |
+| **Match** | The set of typed match props a Rule tests (regex, bool, int, workspace selector, tag), each negatable. At least one is required. |
+| **Effect** | One typed property a Rule applies when its Match holds. Unknown/plugin effects pass through as raw key+value, never dropped. |
+| **Label** | A Rule's optional human name, emitted as `name`. Naming a Rule also makes it runtime-toggleable. |
+| **Pick a window / Pick a layer** | The helper that prefills a Match from a live open window (or layer namespace). Helper data only — never rule state. |
+| **Workspace rule** | A rule Entity whose identity is its workspace selector string — Hyprland merges duplicates, so the app enforces one per selector (ADR-0008). |
+| **Monitor rule** | The per-output display Entity. Identity is the `output` string; new rules prefer `desc:` when unique, else the connector. `output = ""` is the **catch-all** ("Any other display"). |
+| **Arrangement canvas** | The drag surface of connected displays at logical size (scale- and rotation-aware, edge snapping). Disconnected-output rules live off-canvas in a "Not connected" group. |
+| **Confirm-or-revert** | The apply pattern for display-breaking changes: batch, apply, countdown; no confirmation restores the previous state (ADR-0008, prototyped in #7). |
 | **Schema** | The typed, documented, curated description of every Option and Entity field the UI is generated from — `descriptions` + Lua stubs + hand-curated overlay. |
 | **App dir** | `~/.config/hypr/hyprtweaker/` — the app-owned directory of generated Lua modules; the app rewrites these freely (formerly "managed dir"). |
 | **Module** | One generated Lua file in the App dir: one per Section (`options/<section>.lua`) or per Entity type (`binds.lua`, `monitors.lua`, …). |
