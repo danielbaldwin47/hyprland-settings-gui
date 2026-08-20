@@ -1,0 +1,161 @@
+{
+ "options": [
+  {
+   "option": "group:groupbar:font_weight_active",
+   "conf": "600",
+   "lua": "invalid type (internal error)"
+  },
+  {
+   "option": "group:groupbar:font_weight_inactive",
+   "conf": "400",
+   "lua": "invalid type (internal error)"
+  }
+ ],
+ "binds": {
+  "conf_total": 116,
+  "lua_total": 116,
+  "order_identical": false
+ },
+ "bind_only_conf_sample": [
+  {
+   "locked": false,
+   "mouse": true,
+   "release": false,
+   "repeat": false,
+   "longPress": false,
+   "non_consuming": false,
+   "auto_consuming": false,
+   "has_description": true,
+   "modmask": 64,
+   "submap": "",
+   "submap_universal": "false",
+   "key": "mouse:272",
+   "keycode": 0,
+   "catch_all": false,
+   "description": "[Window Management|Move & Resize with mouse] hold to move window",
+   "allow_input_capture": false
+  },
+  {
+   "locked": false,
+   "mouse": true,
+   "release": false,
+   "repeat": false,
+   "longPress": false,
+   "non_consuming": false,
+   "auto_consuming": false,
+   "has_description": true,
+   "modmask": 64,
+   "submap": "",
+   "submap_universal": "false",
+   "key": "mouse:273",
+   "keycode": 0,
+   "catch_all": false,
+   "description": "[Window Management|Move & Resize with mouse] hold to resize window",
+   "allow_input_capture": false
+  },
+  {
+   "locked": false,
+   "mouse": true,
+   "release": false,
+   "repeat": false,
+   "longPress": false,
+   "non_consuming": false,
+   "auto_consuming": false,
+   "has_description": true,
+   "modmask": 64,
+   "submap": "",
+   "submap_universal": "false",
+   "key": "Z",
+   "keycode": 0,
+   "catch_all": false,
+   "description": "[Window Management|Move & Resize with mouse] hold to move window",
+   "allow_input_capture": false
+  }
+ ],
+ "bind_only_lua_sample": [
+  {
+   "locked": false,
+   "mouse": false,
+   "release": false,
+   "repeat": false,
+   "longPress": false,
+   "non_consuming": false,
+   "auto_consuming": false,
+   "has_description": true,
+   "modmask": 64,
+   "submap": "",
+   "submap_universal": "false",
+   "key": "mouse:272",
+   "keycode": 0,
+   "catch_all": false,
+   "description": "[Window Management|Move & Resize with mouse] hold to move window",
+   "allow_input_capture": false
+  },
+  {
+   "locked": false,
+   "mouse": false,
+   "release": false,
+   "repeat": false,
+   "longPress": false,
+   "non_consuming": false,
+   "auto_consuming": false,
+   "has_description": true,
+   "modmask": 64,
+   "submap": "",
+   "submap_universal": "false",
+   "key": "mouse:273",
+   "keycode": 0,
+   "catch_all": false,
+   "description": "[Window Management|Move & Resize with mouse] hold to resize window",
+   "allow_input_capture": false
+  },
+  {
+   "locked": false,
+   "mouse": false,
+   "release": false,
+   "repeat": false,
+   "longPress": false,
+   "non_consuming": false,
+   "auto_consuming": false,
+   "has_description": true,
+   "modmask": 64,
+   "submap": "",
+   "submap_universal": "false",
+   "key": "Z",
+   "keycode": 0,
+   "catch_all": false,
+   "description": "[Window Management|Move & Resize with mouse] hold to move window",
+   "allow_input_capture": false
+  }
+ ],
+ "monitors": {
+  "conf_total": 1,
+  "lua_total": 1,
+  "only_conf": [],
+  "only_lua": []
+ },
+ "animations": {
+  "conf_total": 35,
+  "lua_total": 35,
+  "only_conf": [],
+  "only_lua": []
+ },
+ "beziers": {
+  "conf_total": 6,
+  "lua_total": 6,
+  "only_conf": [],
+  "only_lua": []
+ },
+ "workspacerules": {
+  "conf_total": 0,
+  "lua_total": 0,
+  "only_conf": [],
+  "only_lua": []
+ },
+ "devices": {
+  "conf_total": 5,
+  "lua_total": 5,
+  "only_conf": [],
+  "only_lua": []
+ }
+}

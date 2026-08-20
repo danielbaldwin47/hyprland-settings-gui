@@ -1,0 +1,167 @@
+{
+ "config": "~/.config/hypr/hyprland.conf",
+ "files": [
+  "~/.config/hypr/colors.conf",
+  "~/.config/hypr/dms/cursor.conf",
+  "~/.config/hypr/ghibli-theme.conf",
+  "~/.config/hypr/hyprland-gui.conf",
+  "~/.config/hypr/hyprland.conf",
+  "~/.config/hypr/keybinds.conf",
+  "~/.config/hypr/noctalia/noctalia-colors.conf",
+  "~/.config/hypr/shell-switcher-binds.conf",
+  "~/.config/hypr/shell-switcher-startup.conf",
+  "~/repos/forest-shell/integration/hyprland/forest-binds.conf",
+  "~/repos/forest-shell/integration/hyprland/forest-rules.conf"
+ ],
+ "counts": {
+  "bind": 68,
+  "dead_option": 2,
+  "gesture": 3,
+  "env": 14,
+  "option": 65,
+  "curve": 10,
+  "animation": 18,
+  "window_rule": 7,
+  "unbind": 1,
+  "exec": 1,
+  "permission": 1
+ },
+ "vars": {
+  "definitions": 52,
+  "redefined": [
+   "error",
+   "primary",
+   "secondary",
+   "surface",
+   "tertiary"
+  ]
+ },
+ "rule_order": {
+  "named": 4,
+  "anonymous": 3,
+  "anonymous_before_named": true
+ },
+ "diagnostics": [
+  {
+   "level": "warn",
+   "code": "VIMDIR",
+   "message": "bind 'SUPER + CTRL + left': movewindow: direction 'h' is invalid in both engines (legacy Math::fromChar rejects it); remapped to 'l'",
+   "file": "~/.config/hypr/keybinds.conf",
+   "line": 61,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "VIMDIR",
+   "message": "bind 'SUPER + CTRL + up': movewindow: direction 'k' is invalid in both engines (legacy Math::fromChar rejects it); remapped to 'u'",
+   "file": "~/.config/hypr/keybinds.conf",
+   "line": 63,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "VIMDIR",
+   "message": "bind 'SUPER + CTRL + down': movewindow: direction 'j' is invalid in both engines (legacy Math::fromChar rejects it); remapped to 'd'",
+   "file": "~/.config/hypr/keybinds.conf",
+   "line": 64,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L5",
+   "message": "bindm has no Lua `mouse` opt; encoded through the hl.dsp.window.drag()/resize() dispatchers",
+   "file": "~/.config/hypr/keybinds.conf",
+   "line": 67,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L5",
+   "message": "bindm has no Lua `mouse` opt; encoded through the hl.dsp.window.drag()/resize() dispatchers",
+   "file": "~/.config/hypr/keybinds.conf",
+   "line": 68,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "DEADOPT",
+   "message": "orphan key `workspace_swipe` outside any category \u2014 invalid in hyprlang too; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 37,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "DEADOPT",
+   "message": "orphan key `workspace_swipe_fingers` outside any category \u2014 invalid in hyprlang too; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 41,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L12",
+   "message": "gesture `dispatcher` action has no Lua string form; converted to a callback around hl.dispatch",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 55,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L12",
+   "message": "gesture `dispatcher` action has no Lua string form; converted to a callback around hl.dispatch",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 58,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L24",
+   "message": "animations:enabled: bool word 'yes, please :)' normalised to true",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 166,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L14",
+   "message": "windowrule block: effect 'float': bool word 'yes' normalised to true (Lua rejects on/yes)",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 298,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L6",
+   "message": "`unbind` is string-matched under Lua; it only cancels a bind emitted with the identical canonical key string ('SUPER + Q')",
+   "file": "~/.config/hypr/hyprland-gui.conf",
+   "line": 23,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L24",
+   "message": "decoration:blur:enabled: bool word 'no' normalised to false",
+   "file": "~/.config/hypr/ghibli-theme.conf",
+   "line": 29,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L24",
+   "message": "animations:enabled: bool word 'yes' normalised to true",
+   "file": "~/.config/hypr/ghibli-theme.conf",
+   "line": 34,
+   "text": ""
+  }
+ ],
+ "codes": {
+  "VIMDIR": 3,
+  "L5": 2,
+  "DEADOPT": 2,
+  "L12": 2,
+  "L24": 3,
+  "L14": 1,
+  "L6": 1
+ }
+}

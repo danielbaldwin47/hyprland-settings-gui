@@ -1,0 +1,311 @@
+{
+ "config": "~/.config/hypr/hyprland.conf",
+ "files": [
+  "~/.config/hypr/env_var.conf",
+  "~/.config/hypr/hyprland.conf",
+  "~/.config/hypr/media-binds.conf"
+ ],
+ "counts": {
+  "monitor": 1,
+  "exec": 11,
+  "option": 22,
+  "dead_option": 9,
+  "curve": 1,
+  "animation": 5,
+  "window_rule": 16,
+  "bind": 48,
+  "skipped_bind": 1,
+  "env": 4
+ },
+ "vars": {
+  "definitions": 2,
+  "redefined": []
+ },
+ "rule_order": {
+  "named": 0,
+  "anonymous": 16,
+  "anonymous_before_named": false
+ },
+ "diagnostics": [
+  {
+   "level": "warn",
+   "code": "L22",
+   "message": "`exec` ran on the start event at first launch under the legacy engine; top-level hl.exec_cmd spawns during config parse",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 20,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L22",
+   "message": "`exec` ran on the start event at first launch under the legacy engine; top-level hl.exec_cmd spawns during config parse",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 25,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L24",
+   "message": "input:touchpad:natural_scroll: bool word 'no' normalised to false",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 38,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L24",
+   "message": "misc:disable_hyprland_logo: bool word 'yes' normalised to true",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 58,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L25",
+   "message": "unknown option `decoration:blurls` \u2014 not in 0.56.2 `descriptions`; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 73,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L25",
+   "message": "unknown option `decoration:drop_shadow` \u2014 not in 0.56.2 `descriptions`; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 75,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L25",
+   "message": "unknown option `decoration:shadow_range` \u2014 not in 0.56.2 `descriptions`; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 76,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L25",
+   "message": "unknown option `decoration:shadow_render_power` \u2014 not in 0.56.2 `descriptions`; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 77,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L25",
+   "message": "unknown option `decoration:col.shadow` \u2014 not in 0.56.2 `descriptions`; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 78,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L24",
+   "message": "animations:enabled: bool word 'yes' normalised to true",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 82,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L25",
+   "message": "unknown option `dwindle:pseudotile` \u2014 not in 0.56.2 `descriptions`; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 96,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L24",
+   "message": "dwindle:preserve_split: bool word 'yes' normalised to true",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 97,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L25",
+   "message": "unknown option `master:new_is_master` \u2014 not in 0.56.2 `descriptions`; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 102,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L25",
+   "message": "unknown option `gestures:workspace_swipe` \u2014 not in 0.56.2 `descriptions`; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 107,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L25",
+   "message": "unknown option `device:epic mouse V1:sensitivity` \u2014 not in 0.56.2 `descriptions`; commented out",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 113,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrule syntax ('float,^(pavucontrol)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 118,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrule syntax ('float,^(blueman-manager)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 119,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrule syntax ('float,^(nm-connection-editor)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 120,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrule syntax ('float,^(chromium)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 121,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrule syntax ('float,^(thunar)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 122,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrule syntax ('float, title:^(btop)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 123,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrule syntax ('float, title:^(update-sys)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 124,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrulev2 syntax ('opacity 0.8 0.8,class:^(kitty)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 130,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrulev2 syntax ('animation popin,class:^(kitty)$,title:^(update-sys)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 131,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrulev2 syntax ('animation popin,class:^(thunar)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 132,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrulev2 syntax ('opacity 0.8 0.8,class:^(thunar)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 133,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrulev2 syntax ('opacity 0.8 0.8,class:^(VSCodium)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 134,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrulev2 syntax ('animation popin,class:^(chromium)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 135,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrulev2 syntax ('move cursor -3% -105%,class:^(wofi)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 136,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrulev2 syntax ('noanim,class:^(wofi)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 137,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L13",
+   "message": "pre-0.54 windowrulev2 syntax ('opacity 0.8 0.6,class:^(wofi)$') \u2014 0.56.2 rejects it outright; converted with an UNVERIFIED rename table",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 138,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "BADDISP",
+   "message": "bind 'SUPER + J': unknown dispatcher 'togglesplit'",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 154,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L5",
+   "message": "bindm has no Lua `mouse` opt; encoded through the hl.dsp.window.drag()/resize() dispatchers",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 194,
+   "text": ""
+  },
+  {
+   "level": "warn",
+   "code": "L5",
+   "message": "bindm has no Lua `mouse` opt; encoded through the hl.dsp.window.drag()/resize() dispatchers",
+   "file": "~/.config/hypr/hyprland.conf",
+   "line": 195,
+   "text": ""
+  }
+ ],
+ "codes": {
+  "L22": 2,
+  "L24": 4,
+  "L25": 9,
+  "L13": 16,
+  "BADDISP": 1,
+  "L5": 2
+ }
+}

@@ -1,0 +1,73 @@
+{
+ "end-4": {
+  "conf": {
+   "binds": 197,
+   "errors": 4,
+   "error": null
+  },
+  "ours": {
+   "binds": 197,
+   "errors": 0,
+   "error": null
+  },
+  "upstream": {
+   "binds": 191,
+   "errors": 0,
+   "error": null
+  },
+  "binds_by_submap": {
+   "conf": {
+    "global": 196,
+    "virtual-machine": 1
+   },
+   "ours": {
+    "global": 196,
+    "virtual-machine": 1
+   },
+   "upstream": {
+    "": 190,
+    "virtual-machine": 1
+   }
+  },
+  "key_overlap_ours_vs_conf": 153,
+  "key_overlap_upstream_vs_conf": 1,
+  "key_overlap_ours_vs_upstream": 1,
+  "option_diffs_ours_vs_conf": 2,
+  "option_diffs_upstream_vs_conf": 8,
+  "option_diffs_ours_vs_upstream": 6
+ },
+ "ml4w": {
+  "conf": {
+   "binds": 111,
+   "errors": 1,
+   "error": null
+  },
+  "ours": {
+   "binds": 110,
+   "errors": 0,
+   "error": null
+  },
+  "upstream": {
+   "binds": 89,
+   "errors": 0,
+   "error": null
+  },
+  "binds_by_submap": {
+   "conf": {
+    "": 111
+   },
+   "ours": {
+    "": 110
+   },
+   "upstream": {
+    "": 89
+   }
+  },
+  "key_overlap_ours_vs_conf": 108,
+  "key_overlap_upstream_vs_conf": 87,
+  "key_overlap_ours_vs_upstream": 87,
+  "option_diffs_ours_vs_conf": 2,
+  "option_diffs_upstream_vs_conf": 8,
+  "option_diffs_ours_vs_upstream": 6
+ }
+}

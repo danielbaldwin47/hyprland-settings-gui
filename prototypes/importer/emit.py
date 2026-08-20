@@ -493,13 +493,15 @@ class Converter:
             self._warn("BADFLAG", f"bind flags {flags!r}: unknown letter(s) "
                                   f"{''.join(unknown)}")
         mouse = "m" in flags
-        nargs = 3 if mouse else 4 + ("d" in flags) + ("k" in flags)
+        # `binddm = MODS, key, DESC, movewindow` is real (HyDE keybindings.conf:74),
+        # so the description field counts even for a mouse bind.
+        nargs = (3 + ("d" in flags)) if mouse else 4 + ("d" in flags) + ("k" in flags)
         parts = [p.strip() for p in ev.value.split(",", nargs - 1)]
         while len(parts) < nargs:
             parts.append("")
         idx = 2
         desc = devices = None
-        if "d" in flags and not mouse:
+        if "d" in flags:
             desc = parts[idx]
             idx += 1
         if "k" in flags and not mouse:
@@ -525,7 +527,7 @@ class Converter:
                                             ("list", [Raw(str(lit(n))) for n in names])]))))
 
         if mouse:
-            action = parts[2]
+            action = parts[idx]
             self._warn("L5", "bindm has no Lua `mouse` opt; encoded through the "
                              "hl.dsp.window.drag()/resize() dispatchers")
             w = []
