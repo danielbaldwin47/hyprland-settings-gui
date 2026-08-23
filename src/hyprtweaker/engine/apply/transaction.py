@@ -59,11 +59,13 @@ SETTLE_SECONDS = 0.25
 mismatch.
 
 `configreloaded` fires about 11 ms *before* the new values are readable (measured, ADR-0010),
-so the first `getoption` after it can legitimately still be answering with the old value. A
-false mismatch is the expensive direction -- ADR-0016 wires it to auto-revert, which would
-undo a change that had in fact applied -- so a disagreeing key is re-read for a short window
-before it counts. An agreeing key is never re-read, which keeps the common path at one
-round-trip per key."""
+so the first `getoption` after it can legitimately still be answering with the old value.
+
+A false mismatch is the expensive direction. ADR-0016 badges an unexplained one on the Row
+as "didn't apply" and raises the Banner, so the user is told a correct change failed; and
+the transaction never counts as `confirmed`, so its Snapshot never becomes the Module's
+last-known-good. A disagreeing key is therefore re-read for a short window before it counts.
+An agreeing key is never re-read, which keeps the common path at one round-trip per key."""
 
 SETTLE_POLL_SECONDS = 0.01
 """Gap between Read-back re-reads. A round-trip is 0.4 ms, so this paces rather than costs."""
@@ -207,7 +209,7 @@ class ApplyTransaction:
                 if errors:
                     return outcome(ApplyOutcome.CONFIG_ERRORS, errors=errors)
 
-                mismatches = await self._read_back(options)
+                mismatches, unconfirmed = await self._read_back(options)
             except IpcTimeout as error:
                 return outcome(ApplyOutcome.TIMEOUT, detail=str(error))
             except IpcError as error:
@@ -216,49 +218,80 @@ class ApplyTransaction:
             self._in_flight = False
 
         if mismatches:
-            return outcome(ApplyOutcome.READ_BACK_MISMATCH, mismatches=mismatches)
-        return outcome(ApplyOutcome.OK)
+            return outcome(
+                ApplyOutcome.READ_BACK_MISMATCH,
+                mismatches=mismatches,
+                unconfirmed=unconfirmed,
+            )
+        # Unconfirmed keys leave the outcome OK on purpose: nothing is known to be wrong,
+        # and ADR-0016 reverts on mismatch.
+        return outcome(ApplyOutcome.OK, unconfirmed=unconfirmed)
 
-    async def _read_back(self, options: Sequence[ResolvedOption]) -> tuple[Mismatch, ...]:
-        """Confirm each key against the live compositor, restart-flagged ones excepted.
+    async def _read_back(
+        self, options: Sequence[ResolvedOption]
+    ) -> tuple[tuple[Mismatch, ...], tuple[str, ...]]:
+        """What disagreed with the model, and what could not be asked about at all.
 
-        A restart-flagged Option cannot be confirmed at all: the value is on file and the
+        A restart-flagged Option is not confirmed at all: the value is on file and the
         running compositor will keep reporting the old one until it restarts, so reading it
         back would manufacture a mismatch on every correct write (ADR-0010 §Restart-flagged).
+
+        Keys the compositor will not answer usefully about come back as `unconfirmed` rather
+        than as mismatches -- see `ApplyResult.unconfirmed` for why the difference matters.
         """
         outstanding = [option for option in options if option.restart is None]
         if not outstanding:
-            return ()
+            return (), ()
 
+        unconfirmed: dict[str, None] = {}
         deadline = asyncio.get_running_loop().time() + self._settle_timeout
         while True:
             found: list[Mismatch] = []
+            again: list[ResolvedOption] = []
             for option in outstanding:
-                mismatch = await self._compare(option)
+                try:
+                    reply = await self._client.getoption(option.name)
+                    mismatch = self._compare(option, reply)
+                except MalformedReply as error:
+                    # Not a reply at all: 0.56.2 answers `invalid type (internal error)` for
+                    # both font-weight Options. No evidence either way about what the config
+                    # holds -- and unlike a value still settling, it will not un-break, so
+                    # this key is not asked again.
+                    _log.warning("read-back could not read %s: %s", option.name, error)
+                    unconfirmed[option.name] = None
+                    continue
+                except NoSuchOption as error:
+                    # Retried, unlike the above: the key can be transiently absent while the
+                    # reload is still re-registering options, which is the same skew the
+                    # settle window exists for. Still absent at the deadline means the
+                    # running Hyprland genuinely lacks it (ADR-0012 version drift).
+                    _log.warning("read-back could not read %s: %s", option.name, error)
+                    unconfirmed[option.name] = None
+                    again.append(option)
+                    continue
+
+                # It answered, so whatever an earlier round could not read, it can now.
+                unconfirmed.pop(option.name, None)
                 if mismatch is not None:
                     found.append(mismatch)
+                    again.append(option)
 
-            if not found or asyncio.get_running_loop().time() >= deadline:
-                return tuple(found)
+            if not again or asyncio.get_running_loop().time() >= deadline:
+                return tuple(found), tuple(unconfirmed)
 
-            # Still settling: re-ask only about the keys that disagreed.
-            outstanding = [
-                option for option in outstanding if option.name in {m.name for m in found}
-            ]
+            # Still settling: re-ask only about the keys that did not settle.
+            outstanding = again
             await asyncio.sleep(SETTLE_POLL_SECONDS)
 
-    async def _compare(self, option: ResolvedOption) -> Mismatch | None:
-        """The model's value for one Option against the live one. `None` means they agree."""
+    def _compare(self, option: ResolvedOption, reply: OptionReply) -> Mismatch | None:
+        """The model's value for one Option against the live one. `None` means they agree.
+
+        Raises `MalformedReply` when the live config sets the key and the reply about it
+        cannot be read: that is the caller's "unconfirmed" branch, and routing it through the
+        exception the command client already raises for the same condition keeps one path
+        instead of two.
+        """
         expected = self._model.get(option.name)
-        try:
-            reply = await self._client.getoption(option.name)
-        except (NoSuchOption, MalformedReply) as error:
-            # The running Hyprland does not have this key, or answers about it in a shape
-            # this Option's parser cannot read. Both are version drift (ADR-0012) rather
-            # than a value disagreement, and both leave the app with no live value to show
-            # -- but neither is a reason to abandon the other keys in the transaction.
-            _log.warning("read-back could not read %s: %s", option.name, error)
-            return Mismatch(option.name, expected, UNREADABLE, live_set=False)
 
         if expected is UNSET:
             # Reset to Hyprland's default: the model emits nothing, so the live config must
@@ -281,6 +314,13 @@ class ApplyTransaction:
             return Mismatch(option.name, expected, UNREADABLE, live_set=False)
 
         live = self._live_value(option, reply)
+        if live is UNREADABLE and reply.set_by_user:
+            # The live config sets the key and the reply about it is unreadable, so there is
+            # nothing to disagree with. Calling that a mismatch would badge the Row "didn't
+            # apply" for a write that did.
+            raise MalformedReply(
+                f"getoption {option.name} answered nothing readable as {option.type}"
+            )
         if reply.set_by_user and values_match(expected, live):
             return None
         return Mismatch(option.name, expected, live, live_set=reply.set_by_user)
@@ -289,9 +329,11 @@ class ApplyTransaction:
     def _live_value(option: ResolvedOption, reply: OptionReply) -> Any:
         """The reply as a model value, or `UNREADABLE` if this Option's parser refused it.
 
-        Refusing is a Hyprland-version surprise (ADR-0012), and it is reported as a
-        mismatch with no live value rather than raised: the other keys in the same
-        transaction are still worth confirming.
+        Refusing is a Hyprland-version surprise. What the caller does with `UNREADABLE`
+        depends on what was being asked: for a key the model no longer sets, "the live
+        config sets *something* here" is the whole finding and the unreadable value only
+        costs the badge its detail; for a key the model does set, there is nothing left to
+        compare and the key is unconfirmed.
         """
         try:
             return parse_getoption(option, dict(reply.payload))
