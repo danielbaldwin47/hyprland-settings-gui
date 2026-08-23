@@ -56,7 +56,9 @@ pytest, three tiers; the engine carries the coverage, the UI stays thin:
    - Round-trip: import → write → re-import must be identical
    - Fixtures: `tests/corpus/` rices + synthetic fixtures for grammar edges the corpus lacks (`source=` globs, `{{ }}` arithmetic, sentinel values, `# hyprlang` directives)
 2. **Static (per-commit, when Hyprland present)** — `Hyprland --verify-config` over every written Lua output; no compositor needed.
-3. **Integration (on demand / nightly)** — prototype #9's nested-headless-Hyprland harness promoted to `tests/integration/`: state diff via `hyprctl -j` + screenshot diff. Marked `-m hyprland`, auto-skipped when no Hyprland binary; too slow (~45 s/config) for per-commit.
+3. **Integration (on demand)** — prototype #9's nested-headless-Hyprland harness promoted to `tests/integration/`: state diff via `hyprctl -j` + screenshot diff. Marked `-m hyprland`, auto-skipped when no Hyprland binary; too slow (~45 s/config) for per-commit.
+
+   **"nightly" dropped, amended during #55.** A nested Hyprland needs a **host Wayland session**: `HYPRLAND_HEADLESS_ONLY=1` is not sufficient on its own — backend creation fails with `CBackend::create() failed!` even when a DRM render node is passed explicitly, because the DRM backend wants a *seat*, and on a developer box the login session already owns it. A stock GitHub `ubuntu-latest` runner has neither, so a nightly job would skip 100% of the compositor tests and report green — worse than no job, because it would read as coverage. The tier therefore runs on demand, and `HYPRTWEAKER_REQUIRE_HARNESS=1` turns the skip into a hard failure for any environment that is *supposed* to be able to host it. Nightly remains desirable and is blocked on a virtual seat in CI (`seatd` + `vkms`, or nesting inside a headless sway/cage); until that spike lands, on-demand is the honest cadence.
 
 ### Build & conventions
 
@@ -78,5 +80,6 @@ pytest, three tiers; the engine carries the coverage, the UI stays thin:
 - **Two distributions (engine lib + app)** — rejected: one audience (ADR-0004), one repo, no consumer for a standalone engine; the seam is a package boundary, not a release boundary.
 - **Blueprint for the static shell** — rejected for now: one more toolchain dep for a small hand-written surface; generated UI can't use it anyway.
 - **Runtime schema generation on the user's machine** — rejected: needs a running Hyprland of that exact version at first launch, unreproducible bug reports, and the Overlay must be curated against a known option list anyway.
-- **Integration tests per-commit** — rejected: ~45 s/config × 7 rices is minutes per push; nightly + on-demand keeps the harness honest without stalling the loop.
+- **Integration tests per-commit** — rejected: ~45 s/config × 7 rices is minutes per push; on-demand keeps the harness honest without stalling the loop.
+- **Integration tests nightly in CI** — rejected on discovery (amended during #55): the runner has no seat, so the job could only ever skip. See tier 3 above; revisit if the virtual-seat spike succeeds.
 - **mypy across the UI** — rejected: PyGObject stubs are perpetually partial; the cost lands on the layer with the least logic.
