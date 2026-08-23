@@ -93,6 +93,7 @@ def render_entrypoint(
     bridges: Sequence[str],
     user: str | None,
     app_version: str,
+    quarantined: Sequence[str] = (),
 ) -> str:
     """The generated `hyprland.lua`: a header and a require list, in the one right order.
 
@@ -108,6 +109,12 @@ def render_entrypoint(
 
     Only files that exist are required: Hyprland's `require` is protected, and asking for a
     `user.lua` the user never created would add an error to every reload.
+
+    `quarantined` names requires the caller has already left out of the lists above
+    (ADR-0016 §Quarantine). They are re-stated here as commented-out `require` lines, which
+    is the whole reason this takes them at all: the file is the user's to read, and a
+    `user.lua` that has silently stopped loading is indistinguishable from one the app never
+    noticed. The comment says what happened and that it is reversible.
     """
     lines = [
         GENERATED_BANNER.format(version=app_version),
@@ -129,5 +136,11 @@ def render_entrypoint(
     )
     block("External tools. Owned by the tool, not by hyprtweaker.", bridges)
     block("Your own Lua. Required last, so it wins. Never rewritten.", [user] if user else [])
+
+    if quarantined:
+        lines.append("-- Disabled by hyprtweaker because it stopped the config from loading.")
+        lines.append("-- Nothing in these files was changed. Re-enable them in Settings.")
+        lines.extend(f'-- require("{path}")' for path in sorted(quarantined))
+        lines.append("")
 
     return "\n".join(lines).rstrip("\n") + "\n"

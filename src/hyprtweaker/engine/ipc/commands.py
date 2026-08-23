@@ -1,4 +1,4 @@
-"""The command socket: the four things the app asks Hyprland to do or tell it.
+"""The command socket: the five things the app asks Hyprland to do or tell it.
 
 `hyprctl` is a 20 ms process spawn around a 0.4 ms socket round-trip (measured, ADR-0010),
 and instant apply cannot afford it on every slider tick -- so this speaks the wire protocol
@@ -11,6 +11,7 @@ flag this module uses is `j` for JSON; without a flag the reply is human-readabl
     j/getoption general:gaps_in  ->  {"option": "general:gaps_in", "custom": "6 6 6 6",
                                       "set": true }
     j/configerrors               ->  [\\n\\t""\\n]\\n
+    j/binds                      ->  [ {"modmask": 64, "key": "C", ...}, ... ]
     reload                       ->  ok
 
 Two shapes of that are worth stating up front, because both have bitten:
@@ -113,7 +114,7 @@ class CommandClient:
         self._instance = instance
         self._timeout = timeout
 
-    # --- the four commands ----------------------------------------------------------------
+    # --- the five commands ----------------------------------------------------------------
 
     async def getoption(self, name: str) -> OptionReply:
         """Read one Option's live value. `name` is the colon form: `input:touchpad:tap`.
@@ -152,6 +153,29 @@ class CommandClient:
         # Clean answers as `[""]`, not `[]` -- the joined-errors string is what gets
         # serialised, and an empty one still occupies an element.
         return tuple(str(line) for line in payload if str(line).strip())
+
+    async def bind_count(self) -> int:
+        """How many keybinds the live config declares. ADR-0016's emergency probe.
+
+        Zero is the state the ADR singles out: a broken `binds` Module is *silently absent*
+        at runtime, so the config loads, the app's other values apply, and the user is left
+        with no way to open a terminal -- Hyprland's own emergency mode. "Stranded user beats
+        hand-edit sanctity" is a policy that needs this number to fire on, and there is no
+        other way to ask: `configerrors` names the file that failed, never the consequence.
+
+        A count rather than the binds themselves. The Keybinds editor (#64) will want the
+        list and can ask for it then; recovery only ever compares against zero, and parsing
+        several hundred bind objects to answer a yes/no question would be work spent on a
+        path that runs while the user's config is already broken.
+
+        Only asked when a reload reported errors (`transaction.py`), so the common clean
+        apply never pays for it.
+        """
+        reply = await self._request("binds", json_output=True)
+        payload = _parse_json(reply, "binds")
+        if not isinstance(payload, list):
+            raise MalformedReply(f"binds answered {payload!r}")
+        return len(payload)
 
     async def eval(self, code: str) -> EvalReply:
         """Run Lua in the live config state -- the Eval preview tier (ADR-0010).

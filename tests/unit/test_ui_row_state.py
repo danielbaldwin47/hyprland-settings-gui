@@ -29,6 +29,7 @@ from hyprtweaker.ui.rows.state import (
     NO_VALUE,
     PENDING_RESTART_PILL,
     RESTART_PILL,
+    UNAPPLIED_PILL,
     default_label,
     help_content,
     no_value_label,
@@ -53,10 +54,12 @@ class FakeContext:
         *,
         live: bool = True,
         pending_restart: frozenset[str] = frozenset(),
+        unapplied: frozenset[str] = frozenset(),
     ) -> None:
         self.schema: Schema = SCHEMA
         self.live = live
         self.pending_restart = pending_restart
+        self.unapplied = unapplied
         self.model = ConfigModel(SCHEMA)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
@@ -184,6 +187,19 @@ def test_a_restart_flagged_option_that_was_written_badges_pending_restart() -> N
 
     assert _pills(SCHEMA["xwayland:enabled"], context) == (PENDING_RESTART_PILL,)
     assert _pills(SCHEMA["render:cm_enabled"], context) == (RESTART_PILL,)
+
+
+def test_a_value_that_did_not_take_badges_the_row() -> None:
+    """ADR-0016's one Row-scoped error state: "an unexplained read-back mismatch (value
+    didn't take, no error, no override) badges the Row 'didn't apply'".
+
+    Everything else error surfacing knows is file-scoped and belongs to the Banner; this one
+    names a key, so it belongs on the key.
+    """
+    context = FakeContext(unapplied=frozenset({"decoration:rounding"}))
+
+    assert _pills(SCHEMA["decoration:rounding"], context) == (UNAPPLIED_PILL,)
+    assert _pills(SCHEMA["general:gaps_in"], context) == (), "only the key that failed"
 
 
 def test_an_advanced_restart_flagged_option_wears_both_pills_in_order() -> None:

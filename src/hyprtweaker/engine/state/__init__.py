@@ -21,20 +21,24 @@ The Prefs file arrives with #71.
 from __future__ import annotations
 
 from .journal import (
+    JOURNAL_FORMAT_VERSION,
     MAX_ENTRIES,
     Draft,
     Journal,
     JournalEntry,
+    LastKnownGood,
     ModuleChange,
 )
 from .manifest import FORMAT_VERSION, Manifest, ModuleRecord, content_hash, is_damaged
 
 __all__ = [
     "FORMAT_VERSION",
+    "JOURNAL_FORMAT_VERSION",
     "MAX_ENTRIES",
     "Draft",
     "Journal",
     "JournalEntry",
+    "LastKnownGood",
     "Manifest",
     "ModuleChange",
     "ModuleRecord",

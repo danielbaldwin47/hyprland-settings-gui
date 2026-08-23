@@ -62,6 +62,24 @@ NO_SUCH_OPTION = "no such option"
 NO_CONFIG_ERRORS = '[\n\t""\n]\n'
 """Captured on a clean config: one empty string, not an empty array."""
 
+BINDS = (
+    "[\n"
+    '{\n    "locked": false,\n    "mouse": false,\n    "modmask": 64,\n'
+    '    "submap": "",\n    "key": "C",\n    "keycode": 0,\n'
+    '    "dispatcher": "killactive",\n    "arg": ""\n}\n'
+    "]\n"
+)
+"""Captured off a live Hyprland 0.56.2 (trimmed to the keys that carry meaning).
+
+The shape is what matters here and it is the shape the app relies on: `j/binds` answers a
+JSON **array**, so a bind count is its length. Verified against a running compositor rather
+than read off the docs -- `configerrors` next door answers `[""]` when it is empty, and an
+assumption that `binds` did something similar would have made "zero binds" unreachable."""
+
+NO_BINDS = "[]\n"
+"""Hyprland's emergency mode, from source: `binds.lua` failed to load, so nothing declared a
+single keybind. The state ADR-0016 lets the app overwrite a hand edit for."""
+
 CONFIG_ERRORS = (
     "[\n"
     '\t"/home/user/.config/hypr/hyprtweaker/options/general.lua:3: '
@@ -85,6 +103,7 @@ EVAL_UNSUPPORTED = UNSUPPORTED_EVAL
 live precisely because the refusal happens before anything is evaluated."""
 
 CONVERSATION: Mapping[str, str] = {
+    "j/binds": BINDS,
     "j/getoption general:gaps_in": GAPS_IN,
     "j/getoption general:layout": LAYOUT,
     "j/getoption misc:disable_autoreload": AUTORELOAD,
@@ -156,7 +175,7 @@ def model_conversation(model: ConfigModel, **overrides: str) -> dict[str, str]:
     Read-back agrees. A test that wants one of those to go wrong passes `overrides` --
     keyed by wire request, e.g. `**{"j/configerrors": CONFIG_ERRORS}`.
     """
-    conversation = {"reload": OK, "j/configerrors": NO_CONFIG_ERRORS}
+    conversation = {"reload": OK, "j/configerrors": NO_CONFIG_ERRORS, "j/binds": BINDS}
     for option, value in model.set_options():
         # An explicitly-null Option is emitted as its curated null value, and what Hyprland
         # then reports for that marker is its own business -- so the fake reports the marker

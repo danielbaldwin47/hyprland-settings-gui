@@ -49,9 +49,56 @@ class ModuleSet:
     bridges: tuple[str, ...]
     user: str | None
 
+    quarantined: tuple[str, ...] = ()
+    """Requires held out of the four tiers above, and present on disk (ADR-0016).
+
+    Carried rather than discarded because the Entrypoint states them as commented-out lines:
+    a `user.lua` that stopped loading has to be legible as a decision in the file itself,
+    not as an absence. Only ever names files that exist -- quarantining something that is
+    not there would put a comment in the config about a file the user never had.
+    """
+
+    @property
+    def foreign(self) -> tuple[str, ...]:
+        """Every require the app does not own: `legacy`, the Bridges, `user`.
+
+        The three tiers Quarantine may touch, and the ones the Writer must never rewrite.
+        """
+        return tuple(
+            name for name in (self.legacy, self.user, *self.bridges) if name is not None
+        )
+
+    def require_for(self, path: str) -> str | None:
+        """The foreign `require` a printed error path names, or `None` for none of them.
+
+        Matched by suffix against the requires this app would actually emit, never derived
+        from the printed path by stripping a prefix -- the path Hyprland printed is the one
+        it opened, which may have travelled through a symlinked dotfile directory or a `$HOME`
+        resolved differently (`ownership.py` documents the same hazard). A quarantine recorded
+        under a name the Entrypoint never emits would be a Banner claiming a file is disabled
+        while the config went on loading it.
+        """
+        for require in self.foreign:
+            if path == f"{require}.lua" or path.endswith(f"/{require}.lua"):
+                return require
+        return None
+
     @classmethod
-    def discover(cls, paths: ConfigPaths, module_paths: Sequence[str]) -> ModuleSet:
-        """The require order for `module_paths` plus whatever else is on disk."""
+    def discover(
+        cls,
+        paths: ConfigPaths,
+        module_paths: Sequence[str],
+        quarantined: Sequence[str] = (),
+    ) -> ModuleSet:
+        """The require order for `module_paths` plus whatever else is on disk.
+
+        `quarantined` names require paths ADR-0016's Quarantine has disabled. They are
+        dropped from the tiers the app does not own -- `legacy`, the Bridges, `user` -- and
+        never from the generated Modules: those are rendered from the model, so leaving one
+        out would put the Entrypoint and the model permanently at odds. A quarantine naming a
+        generated Module is therefore ignored rather than obeyed.
+        """
+        disabled = frozenset(quarantined)
         generated = []
         if paths.vars_lua.is_file():
             # First: the imported `$variable` table the other Modules read.
@@ -67,12 +114,17 @@ class ModuleSet:
             if paths.bridge_dir.is_dir()
             else []
         )
+        legacy = paths.require_path(paths.legacy_lua) if paths.legacy_lua.is_file() else None
+        user = paths.require_path(paths.user_lua) if paths.user_lua.is_file() else None
 
+        foreign = (legacy, user, *bridges)
+        held = [name for name in foreign if name is not None and name in disabled]
         return cls(
             modules=tuple(generated),
-            legacy=paths.require_path(paths.legacy_lua) if paths.legacy_lua.is_file() else None,
-            bridges=tuple(bridges),
-            user=paths.require_path(paths.user_lua) if paths.user_lua.is_file() else None,
+            legacy=None if legacy in disabled else legacy,
+            bridges=tuple(name for name in bridges if name not in disabled),
+            user=None if user in disabled else user,
+            quarantined=tuple(sorted(held)),
         )
 
 
@@ -194,6 +246,7 @@ class Writer:
             bridges=module_set.bridges,
             user=module_set.user,
             app_version=self._app_version,
+            quarantined=module_set.quarantined,
         )
 
     # --- writing ------------------------------------------------------------------------
@@ -211,8 +264,13 @@ class Writer:
         Nothing reaches disk until every rendered file has passed the syntax gate: a
         half-written Module set is worse than no write at all.
         """
+        manifest = self._manifest_for(model)
+
         rendered = self.render_modules(model)
-        module_set = ModuleSet.discover(self._paths, list(rendered))
+        # Read before the Entrypoint is rendered, because Quarantine is a fact about which
+        # requires the Entrypoint may emit -- a write that discovered the require list first
+        # would regenerate the very line the user disabled.
+        module_set = ModuleSet.discover(self._paths, list(rendered), manifest.quarantined)
         entrypoint_text = self.render_entrypoint(module_set)
 
         gate_ran = syntax.gate_available()
@@ -220,11 +278,6 @@ class Writer:
             syntax.gate(text, name)
         syntax.gate(entrypoint_text, ENTRYPOINT_NAME)
 
-        manifest = Manifest.load(
-            self._paths.manifest,
-            app_version=self._app_version,
-            schema_version=model.schema.hyprland_version,
-        )
         if manifest_is_damaged(self._paths.manifest):
             # The record was lost, so every file already here is unaccounted for. Recorded
             # from now on by name rather than by hash: there is no hash to record, and this
@@ -300,7 +353,119 @@ class Writer:
             syntax_gate_ran=gate_ran,
         )
 
+    # --- recovery writes (ADR-0016) -----------------------------------------------------
+
+    def restore(
+        self,
+        model: ConfigModel,
+        module: str,
+        data: bytes,
+        options: Sequence[str] = (),
+    ) -> bool:
+        """Lay a Snapshot's bytes back down as `module`, and record them as the app's own.
+
+        The one write in this class that does **not** come from the model, and it is the
+        write ADR-0016's Restore last good is made of. It exists because the model cannot
+        produce these bytes: they are what a *previous* model rendered, and the app cannot
+        read its own Lua back to reconstruct that one (#62). What closes the loop is the
+        caller -- a restore is followed by a reload and a re-read of `options`, which brings
+        the model into step with the bytes rather than the other way round. Without that
+        second half the next edit would re-render the broken version straight over this.
+
+        **Overwrites a hand edit on purpose.** Every other path in this class stands down
+        from a file an editor touched; this one is only ever reached because the user chose
+        Restore last good, or because they are stranded without keybinds (§Zero-binds). The
+        overwritten bytes are not lost -- the Journal snapshotted them, which is what makes
+        the ADR willing to spend them.
+
+        Recording the hash is what makes the restored file the app's own again. It has to
+        be: leaving the old record would make the file it just wrote read as hand-edited, so
+        the very next write would stand down from it and the user's recovery would be frozen
+        in place.
+
+        Returns whether the bytes on disk actually changed.
+        """
+        path = self._paths.file_for(module)
+        if path in self._paths.protected:
+            raise ProtectedFile(f"{path} is never rewritten by hyprtweaker")
+
+        text = data.decode("utf-8")
+        # Gated like anything else. These bytes parsed once -- a confirmed transaction wrote
+        # them -- but "nothing reaches disk ungated" is cheaper to keep than to reason about,
+        # and a Snapshot store is a file tree a user can corrupt like any other.
+        syntax.gate(text, module)
+
+        changed = self._write_if_changed(path, text)
+        self._record_one(model, module, ModuleRecord.of(text, options))
+        return changed
+
+    def regenerate_entrypoint(self, model: ConfigModel) -> bool:
+        """Rewrite `hyprland.lua` from the Module set, whatever is in it now.
+
+        ADR-0016's Entrypoint recovery, and the reason that class gets a one-click Fix while
+        a broken Module gets a Banner: the Entrypoint holds no user decisions at all. It is
+        derived entirely from which files exist and which requires are quarantined, so
+        regenerating it can lose nothing -- there is no hand edit here worth the name, only a
+        file that has stopped doing its one job.
+
+        Unconditional, unlike `write`, which stands down from a hand-edited Entrypoint. That
+        is the whole point: a hand edit is exactly how the Entrypoint gets broken in the
+        first place (the app syntax-gates its own writes), so a recovery that respected it
+        would refuse in precisely the case it exists for.
+        """
+        manifest = self._manifest_for(model)
+        rendered = self.render_modules(model)
+        module_set = ModuleSet.discover(self._paths, list(rendered), manifest.quarantined)
+        text = self.render_entrypoint(module_set)
+        syntax.gate(text, ENTRYPOINT_NAME)
+
+        changed = self._write_if_changed(self._paths.entrypoint, text)
+        self._save(replace(manifest, entrypoint=ModuleRecord.of(text)))
+        return changed
+
+    def set_quarantine(self, model: ConfigModel, requires: Sequence[str]) -> bool:
+        """Record exactly `requires` as quarantined and regenerate the Entrypoint.
+
+        One call for both halves, because they are one act: the Manifest is where the
+        decision lives and the Entrypoint is where it takes effect, and an install that
+        recorded one without the other would either keep loading a file it believes it
+        disabled or keep excluding one it believes it re-enabled.
+
+        Reversal is this same call with the name removed -- which is what makes the ADR's
+        "one-click re-enable" one click rather than an undo path of its own.
+        """
+        self._save(self._manifest_for(model).with_quarantine(requires))
+        return self.regenerate_entrypoint(model)
+
     # --- internals ----------------------------------------------------------------------
+
+    def _manifest_for(self, model: ConfigModel) -> Manifest:
+        return Manifest.load(
+            self._paths.manifest,
+            app_version=self._app_version,
+            schema_version=model.schema.hyprland_version,
+        )
+
+    def _record_one(self, model: ConfigModel, module: str, record: ModuleRecord) -> None:
+        """Replace one file's Manifest record, leaving every other claim untouched.
+
+        Loaded and saved rather than held, because the Manifest on disk is the shared truth
+        and a recovery write is not the only thing that edits it. Reading it fresh is what
+        keeps a restore from reverting a record an Apply transaction wrote a moment earlier.
+        """
+        manifest = self._manifest_for(model)
+        if module == ENTRYPOINT_NAME:
+            updated = replace(manifest, entrypoint=record)
+        else:
+            updated = replace(manifest, modules={**manifest.modules, module: record})
+        # A restored file is accounted for again, so it is no longer unverifiable.
+        self._save(
+            replace(updated, unverified=tuple(n for n in updated.unverified if n != module))
+        )
+
+    def _save(self, manifest: Manifest) -> None:
+        self._paths.app_dir.mkdir(parents=True, exist_ok=True)
+        self._write_if_changed(self._paths.manifest, manifest.render())
 
     def _everything_here(self, rendered: dict[str, str]) -> tuple[str, ...]:
         """Every file this write would touch that already exists -- the lost-record answer.

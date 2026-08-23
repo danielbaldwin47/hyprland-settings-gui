@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from ..ipc import (
@@ -81,6 +82,145 @@ SETTLE_POLL_SECONDS = 0.01
 """Gap between Read-back re-reads. A round-trip is 0.4 ms, so this paces rather than costs."""
 
 
+@dataclass(frozen=True, slots=True)
+class ReloadReport:
+    """What one explicit reload produced, before anyone decides what it means.
+
+    Deliberately not an `ApplyResult`: a reload is a step, and the same step ends an Apply
+    transaction and a Restore. Handing back the raw findings lets each caller reach its own
+    verdict -- an apply goes on to Read-back its keys, a restore goes on to re-read the model
+    -- without either having to unpick an outcome the other decided.
+    """
+
+    failed: ApplyOutcome | None = None
+    """`TIMEOUT` or `COMPOSITOR_GONE` when the reload never happened; `None` when it did."""
+
+    errors: tuple[str, ...] = ()
+    binds: int | None = None
+    """Bind count, probed only when `errors` is non-empty. `None` means never asked."""
+
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """The reload happened and Hyprland reported nothing wrong with the config."""
+        return self.failed is None and not self.errors
+
+
+class Reloader:
+    """One explicit `reload`, plus the two questions that always follow it.
+
+    Shared by every path that reloads -- the Apply transaction and ADR-0016's Restore -- for
+    a reason that is correctness rather than tidiness. `in_flight` is how a `configreloaded`
+    event is told apart from somebody else's (ADR-0010 correlates by the flag, because the
+    event carries no payload). A restore that reloaded behind its own flag would have its own
+    reload read as a *foreign* one, triggering the full re-read-and-drift-scan against a
+    config the app was in the middle of putting back.
+
+    So there is one flag, and it belongs to the thing that does the reloading.
+    """
+
+    def __init__(
+        self,
+        *,
+        client: CommandClient,
+        events: EventStream,
+        timeout: float = RELOAD_TIMEOUT_SECONDS,
+    ) -> None:
+        self._client = client
+        self._events = events
+        self._timeout = timeout
+        self._in_flight = False
+
+    @property
+    def in_flight(self) -> bool:
+        """True from arming the reload wait until the caller has finished confirming.
+
+        Deliberately narrower than "a transaction is running": the window that matters is
+        the one in which a `configreloaded` could be ours. Rendering and writing cannot
+        produce one -- an atomic rename is invisible to Hyprland's watcher -- so counting
+        them in would swallow a genuine foreign reload for no gain.
+        """
+        return self._in_flight
+
+    def confirming(self) -> _Confirming:
+        """Hold `in_flight` open across the caller's own confirmation step."""
+        return _Confirming(self)
+
+    def set_in_flight(self, value: bool) -> None:
+        """Raise or drop the correlation flag. `confirming()` is the way to call this."""
+        self._in_flight = value
+
+    async def reload(self) -> ReloadReport:
+        """Reload once and report what the config now says. Never raises.
+
+        Assumes the caller is already inside `confirming()`: the flag has to stay up past
+        the `configerrors` read, and only the caller knows when its own confirmation is done.
+        """
+        # Armed before the cause. A listener that subscribes after asking for the reload
+        # misses the event for it, and Hyprland's stream cannot be re-armed after the fact --
+        # the wait would then always time out on a perfectly good apply.
+        with self._events.arm(RELOAD_STARTED) as reloaded:
+            try:
+                await self._client.reload()
+            except IpcTimeout as error:
+                return ReloadReport(failed=ApplyOutcome.TIMEOUT, detail=str(error))
+            except IpcError as error:
+                return ReloadReport(failed=ApplyOutcome.COMPOSITOR_GONE, detail=str(error))
+
+            if await reloaded.wait(self._timeout) is None:
+                return ReloadReport(
+                    failed=ApplyOutcome.TIMEOUT,
+                    detail=(
+                        f"no {RELOAD_STARTED} within {self._timeout}s; "
+                        f"the Modules are on disk but may not have been applied"
+                    ),
+                )
+
+        try:
+            # First, and before anything else touches the socket: the list is cleared by the
+            # next reload and by any `eval`.
+            errors = await self._client.configerrors()
+        except IpcTimeout as error:
+            return ReloadReport(failed=ApplyOutcome.TIMEOUT, detail=str(error))
+        except IpcError as error:
+            return ReloadReport(failed=ApplyOutcome.COMPOSITOR_GONE, detail=str(error))
+
+        # Only when something is wrong, and never on the clean path: the probe is one more
+        # round trip, and the only question it answers -- is the user stranded without
+        # keybinds? -- cannot arise from a reload that parsed.
+        return ReloadReport(errors=errors, binds=await self._bind_count() if errors else None)
+
+    async def _bind_count(self) -> int | None:
+        """How many binds the broken config still declares, or `None` if it would not say.
+
+        Never allowed to change the outcome. The errors are already in hand and are the
+        thing worth reporting; a probe that failed and took the whole result down with it
+        would replace a precise "Hyprland rejected this, here are the lines" with a vague
+        "the compositor stopped responding". `None` reads as "not asked", which is what keeps
+        the emergency restore from firing on a probe that never answered.
+        """
+        try:
+            return await self._client.bind_count()
+        except IpcError as error:
+            _log.warning("could not count binds after a failed reload: %s", error)
+            return None
+
+
+class _Confirming:
+    """`in_flight` held up for the length of a `with` block."""
+
+    def __init__(self, reloader: Reloader) -> None:
+        self._reloader = reloader
+
+    def __enter__(self) -> _Confirming:
+        self._reloader.set_in_flight(True)
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self._reloader.set_in_flight(False)
+
+
 class ApplyTransaction:
     """The whole render-write-reload-confirm cycle, reusable across applies.
 
@@ -99,26 +239,28 @@ class ApplyTransaction:
         journal: Journal | None = None,
         reload_timeout: float = RELOAD_TIMEOUT_SECONDS,
         settle_timeout: float = SETTLE_SECONDS,
+        reloader: Reloader | None = None,
     ) -> None:
+        """`reloader` is shared with the Restore path when there is one (see `Reloader`)."""
         self._model = model
         self._writer = writer
         self._client = client
         self._events = events
         self._journal = journal
-        self._reload_timeout = reload_timeout
         self._settle_timeout = settle_timeout
-        self._in_flight = False
+        self._reloader = reloader or Reloader(
+            client=client, events=events, timeout=reload_timeout
+        )
+
+    @property
+    def reloader(self) -> Reloader:
+        """The reload step, so a Restore can run behind the same in-flight flag."""
+        return self._reloader
 
     @property
     def in_flight(self) -> bool:
-        """True from arming the reload wait until Read-back is done.
-
-        Deliberately narrower than "a transaction is running": the window that matters is
-        the one in which a `configreloaded` could be ours. Rendering and writing cannot
-        produce one -- an atomic rename is invisible to Hyprland's watcher -- so counting
-        them in would swallow a genuine foreign reload for no gain.
-        """
-        return self._in_flight
+        """True from arming the reload wait until Read-back is done."""
+        return self._reloader.in_flight
 
     async def run(self, keys: Sequence[str]) -> ApplyResult:
         """Apply the model, then confirm `keys` against the live compositor.
@@ -129,8 +271,8 @@ class ApplyTransaction:
         transaction would spend 140 ms confirming values nobody changed.
 
         Hand-edited Modules are left alone and reported on `result.skipped`, never
-        overwritten. Carrying the user's answer to the ADR-0016 Banner back in is #60's,
-        along with the Banner that asks the question.
+        overwritten. What the user may then do about it is the recovery matrix's
+        (`recovery.py`), raised on the Banner.
         """
         names = tuple(keys)
         try:
@@ -185,6 +327,11 @@ class ApplyTransaction:
         rewritten, because the Module set changing is a change to the config as much as a
         value is, and a rollback that restored Modules to a state the Entrypoint no longer
         requires would restore nothing the compositor reads.
+
+        The Options each Module carries are recorded alongside its digest, from the same
+        model walk that rendered it. That is what makes a Snapshot restorable rather than
+        merely readable: Restore last good has to put the model back too, and the app cannot
+        learn what a Module sets by reading it (#62).
         """
         if draft is None:
             return
@@ -196,6 +343,7 @@ class ApplyTransaction:
             outcome=str(result.outcome),
             confirmed=result.confirmed,
             changed=names,
+            options=self._writer.module_options(self._model),
         )
 
     @staticmethod
@@ -235,42 +383,21 @@ class ApplyTransaction:
                 kind, keys=names, write=write, pending_restart=pending_restart, **extra
             )
 
-        self._in_flight = True
-        try:
-            # Armed before the cause. A listener that subscribes after asking for the reload
-            # misses the event for it, and Hyprland's stream cannot be re-armed after the
-            # fact -- the wait would then always time out on a perfectly good apply.
-            with self._events.arm(RELOAD_STARTED) as reloaded:
-                try:
-                    await self._client.reload()
-                except IpcTimeout as error:
-                    return outcome(ApplyOutcome.TIMEOUT, detail=str(error))
-                except IpcError as error:
-                    return outcome(ApplyOutcome.COMPOSITOR_GONE, detail=str(error))
-
-                if await reloaded.wait(self._reload_timeout) is None:
-                    return outcome(
-                        ApplyOutcome.TIMEOUT,
-                        detail=(
-                            f"no {RELOAD_STARTED} within {self._reload_timeout}s; "
-                            f"the Modules are on disk but may not have been applied"
-                        ),
-                    )
+        with self._reloader.confirming():
+            report = await self._reloader.reload()
+            if report.failed is not None:
+                return outcome(report.failed, detail=report.detail)
+            if report.errors:
+                return outcome(
+                    ApplyOutcome.CONFIG_ERRORS, errors=report.errors, binds=report.binds
+                )
 
             try:
-                # First, and before anything else touches the socket: the list is cleared by
-                # the next reload and by any `eval`.
-                errors = await self._client.configerrors()
-                if errors:
-                    return outcome(ApplyOutcome.CONFIG_ERRORS, errors=errors)
-
                 mismatches, unconfirmed = await self._read_back(options)
             except IpcTimeout as error:
                 return outcome(ApplyOutcome.TIMEOUT, detail=str(error))
             except IpcError as error:
                 return outcome(ApplyOutcome.COMPOSITOR_GONE, detail=str(error))
-        finally:
-            self._in_flight = False
 
         if mismatches:
             return outcome(

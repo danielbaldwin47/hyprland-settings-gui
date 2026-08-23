@@ -36,6 +36,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol
 
@@ -58,6 +59,22 @@ class Transaction(Protocol):
     async def run(self, keys: Sequence[str]) -> ApplyResult: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _Priority:
+    """One recovery job waiting at the front of the queue.
+
+    Carries its own `operation` because ADR-0016 has two recoveries with different mechanics
+    -- auto-revert re-applies the model, Restore last good writes Snapshot bytes and never
+    renders -- and both have to run under this one lock: each ends in a reload, and
+    `configerrors` is a single global slot that two of them could not be attributed to.
+    `None` means the queue's own transaction, which is what auto-revert wants.
+    """
+
+    operation: Transaction | None
+    keys: tuple[str, ...]
+    waiter: asyncio.Future[ApplyResult]
+
+
 class ApplyQueue:
     """Marks Options dirty, and turns bursts of that into single Apply transactions."""
 
@@ -71,7 +88,7 @@ class ApplyQueue:
         """`on_result` sees every transaction, including ones nobody is awaiting.
 
         A debounced `touch` has no caller left to hand a result to by the time it applies,
-        so the callback is the only way error surfacing (#60) hears about the apply that a
+        so the callback is the only way error surfacing hears about the apply that a
         slider drag ended in.
         """
         self._transaction = transaction
@@ -80,7 +97,7 @@ class ApplyQueue:
 
         self._dirty: set[str] = set()
         self._waiters: list[asyncio.Future[ApplyResult]] = []
-        self._priority: list[tuple[tuple[str, ...], asyncio.Future[ApplyResult]]] = []
+        self._priority: list[_Priority] = []
         self._immediate = False
         self._deadline = 0.0
         self._busy = False
@@ -119,7 +136,7 @@ class ApplyQueue:
             with suppress(asyncio.CancelledError):
                 await worker
 
-        for waiter in (*self._waiters, *(future for _keys, future in self._priority)):
+        for waiter in (*self._waiters, *(job.waiter for job in self._priority)):
             if not waiter.done():
                 waiter.cancel()
         self._waiters.clear()
@@ -177,10 +194,29 @@ class ApplyQueue:
         dirty set is left for the batch behind it. Still serialized, because a reload is a
         reload: "priority" is about which transaction runs next, never about running two.
         """
+        return await self._enqueue_priority(None, tuple(names))
+
+    async def run_now(self, operation: Transaction, keys: Sequence[str] = ()) -> ApplyResult:
+        """Run `operation` ahead of anything waiting, under this queue's lock.
+
+        The other half of ADR-0016's "admit a priority restore transaction": auto-revert
+        re-applies the model and can therefore borrow this queue's own transaction, but
+        Restore last good writes Snapshot bytes and must *not* render -- an Apply transaction
+        would overwrite the very bytes it is restoring, before the reload. So the operation
+        comes from the caller and the serialization comes from here.
+
+        `keys` is what the result reports itself as accountable for; the operation is free to
+        ignore it and derive its own.
+        """
+        return await self._enqueue_priority(operation, tuple(keys))
+
+    async def _enqueue_priority(
+        self, operation: Transaction | None, keys: tuple[str, ...]
+    ) -> ApplyResult:
         if self._closed:
             raise RuntimeError("this ApplyQueue is closed")
         waiter: asyncio.Future[ApplyResult] = asyncio.get_running_loop().create_future()
-        self._priority.append((tuple(names), waiter))
+        self._priority.append(_Priority(operation, keys, waiter))
         self._idle.clear()
         self._work_available.set()
         # Wakes a worker part-way through a debounce wait, exactly as a commit gesture does.
@@ -272,7 +308,7 @@ class ApplyQueue:
 
     async def _run_priority(self) -> None:
         """Take the front recovery job and run it, leaving the dirty set where it is."""
-        keys, waiter = self._priority.pop(0)
+        job = self._priority.pop(0)
         if not self._priority and not self._dirty:
             self._work_available.clear()
         if not self._immediate:
@@ -281,16 +317,20 @@ class ApplyQueue:
             self._commit_now.clear()
         self._running_priority = True
         try:
-            await self._run_once(keys, [waiter])
+            await self._run_once(job.keys, [job.waiter], operation=job.operation)
         finally:
             self._running_priority = False
 
     async def _run_once(
-        self, keys: tuple[str, ...], waiters: list[asyncio.Future[ApplyResult]]
+        self,
+        keys: tuple[str, ...],
+        waiters: list[asyncio.Future[ApplyResult]],
+        *,
+        operation: Transaction | None = None,
     ) -> None:
         self._busy = True
         try:
-            result = await self._transaction.run(keys)
+            result = await (operation or self._transaction).run(keys)
         except asyncio.CancelledError:
             for waiter in waiters:
                 if not waiter.done():

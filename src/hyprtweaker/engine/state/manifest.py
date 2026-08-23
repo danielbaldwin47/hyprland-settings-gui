@@ -33,14 +33,18 @@ from typing import Any
 
 from ..paths import ENTRYPOINT_NAME, ConfigPaths
 
-FORMAT_VERSION = 3
-"""Bumped from 1 when `ModuleRecord`'s `bytes` key became `size` (#51, pre-release), and
-from 2 when a record gained the `options` it carries (#56, still pre-release).
+FORMAT_VERSION = 4
+"""Bumped from 1 when `ModuleRecord`'s `bytes` key became `size` (#51, pre-release), from
+2 when a record gained the `options` it carries (#56, still pre-release), and from 3 when
+the Manifest gained `quarantined` (#60, still pre-release).
 
 An older file therefore reads as damaged rather than as a Manifest whose every record
 happens to be unparseable -- which would look exactly like an empty App dir. That is the
-right reading for both bumps: a version 2 record cannot say which Options it wrote, and
-guessing "all of the Section's" is exactly the over-claim `options` exists to end.
+right reading for all three bumps: a version 2 record cannot say which Options it wrote,
+and guessing "all of the Section's" is exactly the over-claim `options` exists to end; a
+version 3 file cannot say which requires are quarantined, and reading it as "none are"
+would silently re-enable a `user.lua` the user disabled because it was breaking their
+config -- putting the error back without ever saying so.
 """
 
 
@@ -140,6 +144,24 @@ class Manifest:
     unaccounted files as freshly authored, and the second write would overwrite them all.
     """
 
+    quarantined: tuple[str, ...] = ()
+    """`require` paths the Entrypoint currently leaves out -- ADR-0016's Quarantine.
+
+    Require paths (`user`, `bridge/matugen`), not file paths: they are what the Entrypoint
+    emits and what `ModuleSet` carries, so quarantining is one membership test where the
+    require list is built rather than a path comparison where it is rendered.
+
+    In the Manifest rather than in the Prefs file (#71), because this is a fact about the
+    *config on disk* and not a preference. The generated Entrypoint physically lacks the
+    line, so a user reading `hyprland.lua` sees something the app has to be able to explain
+    -- and an install whose Prefs were thrown away would otherwise regenerate the require,
+    silently undoing a recovery the user chose and putting the broken file back.
+
+    Only ever holds foreign requires. An app-owned Module is recovered by *fixing* it --
+    Restore last good, or the next write -- and leaving out a Module the model still renders
+    would put the model and the Entrypoint permanently at odds.
+    """
+
     @classmethod
     def load(cls, path: Path, *, app_version: str, schema_version: str) -> Manifest:
         """Read the Manifest, or return an empty one when it is missing or unreadable.
@@ -167,6 +189,7 @@ class Manifest:
 
         migration = payload.get("migration")
         raw_unverified = payload.get("unverified")
+        raw_quarantined = payload.get("quarantined")
         return cls(
             app_version=str(payload.get("app_version", app_version)),
             schema_version=str(payload.get("schema_version", schema_version)),
@@ -176,6 +199,11 @@ class Manifest:
             unverified=(
                 tuple(str(name) for name in raw_unverified)
                 if isinstance(raw_unverified, list)
+                else ()
+            ),
+            quarantined=(
+                tuple(sorted({str(name) for name in raw_quarantined}))
+                if isinstance(raw_quarantined, list)
                 else ()
             ),
         )
@@ -190,6 +218,7 @@ class Manifest:
                 name: record.as_json() for name, record in sorted(self.modules.items())
             },
             "unverified": list(self.unverified),
+            "quarantined": list(self.quarantined),
             "migration": self.migration,
         }
 
@@ -216,9 +245,13 @@ class Manifest:
             self, modules=dict(modules), entrypoint=entrypoint, unverified=unverified
         )
 
+    def with_quarantine(self, requires: Sequence[str]) -> Manifest:
+        """The Manifest with exactly `requires` quarantined. Sorted, so writes are stable."""
+        return replace(self, quarantined=tuple(sorted(set(requires))))
+
     def path_for(self, name: str, paths: ConfigPaths) -> Path:
         """Where a recorded name lives -- the Entrypoint is the one outside the App dir."""
-        return paths.entrypoint if name == ENTRYPOINT_NAME else paths.app_dir / name
+        return paths.file_for(name)
 
     def hand_edited(self, paths: ConfigPaths) -> tuple[str, ...]:
         """Every app-owned file the app cannot show it wrote in its current form.

@@ -61,6 +61,7 @@ NO_VALUE: Final = _NoValue.TOKEN
 ADVANCED_PILL: Final = "Advanced"
 RESTART_PILL: Final = "Restart"
 PENDING_RESTART_PILL: Final = "Pending restart"
+UNAPPLIED_PILL: Final = "Didn't apply"
 
 _UNLABELLED_NULL: Final = "Not set"
 """What a nullable Option with no curated `null_label` falls back to.
@@ -332,6 +333,9 @@ class RowContext(Protocol):
     @property
     def pending_restart(self) -> frozenset[str]: ...
 
+    @property
+    def unapplied(self) -> frozenset[str]: ...
+
     def value_of(self, option: ResolvedOption) -> OptionValue: ...
 
     def effective_value(self, option: ResolvedOption) -> Any: ...
@@ -421,6 +425,20 @@ def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:
                 "Shown because “Show advanced settings” is on."
                 if option.visibility is Visibility.ADVANCED
                 else "A low-level setting: shown only here, in the Config view.",
+            )
+        )
+
+    if option.name in context.unapplied:
+        # ADR-0016: "An unexplained read-back mismatch (value didn't take, no error, no
+        # override) badges the Row 'didn't apply' and joins the Banner." The one Row badge
+        # error surfacing is allowed, and only for the *unexplained* case -- a value
+        # `user.lua` overrode on purpose is the drift badge's business, and a value Hyprland
+        # complained about by name is the Banner's. This is the case with no explanation at
+        # all: the app wrote the key and the live config does not set it.
+        pills.append(
+            Pill(
+                UNAPPLIED_PILL,
+                "This was written to your config, but Hyprland is not using it.",
             )
         )
 

@@ -23,7 +23,7 @@ questions are two lookups rather than one inference.
 *plus* the newest confirmed entry for every Module, whether or not it still fits. The pin is
 ADR-0016's consequence stated as code: "pruning must never drop the newest confirmed Snapshot
 of a Module", because dropping it silently retires that Module's Last known good and leaves
-Restore-last-good with nothing to restore. Snapshot files are then garbage-collected against
+Restore last good with nothing to restore. Snapshot files are then garbage-collected against
 exactly what the retained entries reference, so the store is bounded by the entry count and
 never by how long the app has been running.
 
@@ -37,23 +37,30 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..paths import ENTRYPOINT_NAME, ConfigPaths
+from ..paths import ConfigPaths
 from .manifest import content_hash
 
 _log = logging.getLogger(__name__)
 
-JOURNAL_FORMAT_VERSION = 1
+JOURNAL_FORMAT_VERSION = 2
 """Stamped on every line. A line from a future format is skipped rather than guessed at.
 
 Spelled out rather than `FORMAT_VERSION`, because `manifest.py` already has one of those in
 this package and the two version different files -- the same reason `engine.schema` carries
-`SCHEMA_FORMAT_VERSION` and `OVERLAY_FORMAT_VERSION` rather than one ambiguous name."""
+`SCHEMA_FORMAT_VERSION` and `OVERLAY_FORMAT_VERSION` rather than one ambiguous name.
+
+Bumped from 1 when `ModuleChange` gained `options` (#60, pre-release). A version 1 line
+carries bytes but cannot say which Options those bytes set, and Restore last good needs
+exactly that to put the model back -- see `LastKnownGood`. Reading such a line as "sets
+nothing" would restore the file and leave the model claiming values the restored bytes do
+not contain, so the old lines are skipped and those Modules simply have no Last known good
+until the next confirmed write establishes one."""
 
 MAX_ENTRIES = 200
 """How many transactions the Journal keeps before the oldest are dropped.
@@ -84,8 +91,26 @@ class ModuleChange:
     before: str | None
     after: str | None
 
+    options: tuple[str, ...] = ()
+    """The Options the `after` bytes set, in the order the Module emits them.
+
+    Recorded because Restore last good has to put the *model* back as well as the file, and
+    the app cannot read its own Lua to find out what it just restored (#62). Without this
+    the only available answer is the Module's current recorded option set, which is the set
+    at the time of the *failure* rather than at the time of the good write -- so an Option
+    added since would be re-read, found unset, and quietly dropped from a Module that never
+    had it, while one removed since would be left in the model with no bytes behind it.
+
+    Empty for a Module the transaction deleted, and for the Entrypoint, which sets none.
+    """
+
     def as_json(self) -> dict[str, Any]:
-        return {"module": self.module, "before": self.before, "after": self.after}
+        return {
+            "module": self.module,
+            "before": self.before,
+            "after": self.after,
+            "options": list(self.options),
+        }
 
     @classmethod
     def from_json(cls, payload: Any) -> ModuleChange | None:
@@ -94,7 +119,13 @@ class ModuleChange:
         before, after = payload.get("before"), payload.get("after")
         if not isinstance(before, str | None) or not isinstance(after, str | None):
             return None
-        return cls(module=payload["module"], before=before, after=after)
+        options = payload.get("options")
+        return cls(
+            module=payload["module"],
+            before=before,
+            after=after,
+            options=tuple(str(name) for name in options) if isinstance(options, list) else (),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +195,25 @@ class JournalEntry:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class LastKnownGood:
+    """One Module as a confirmed transaction last left it -- what a restore puts back.
+
+    Both halves of the restore travel together because neither is usable alone: the bytes
+    are what goes on disk, and `options` is what the caller re-reads off the compositor
+    afterwards to bring the model back into step with them. Splitting them would invite a
+    caller to restore the file and leave the model describing the broken version.
+    """
+
+    module: str
+    data: bytes
+    options: tuple[str, ...]
+    """The Options these bytes set. Empty is a real answer for the Entrypoint."""
+
+    at: str
+    """When the confirming transaction ran, for the sentence the Banner shows."""
+
+
 class Draft:
     """One transaction's pre-write bytes, held until the transaction has an outcome.
 
@@ -205,6 +255,7 @@ class Draft:
         outcome: str,
         confirmed: bool,
         changed: Iterable[str],
+        options: Mapping[str, Sequence[str]] | None = None,
     ) -> JournalEntry | None:
         """Record what happened. `changed` names the files this write actually replaced.
 
@@ -213,11 +264,16 @@ class Draft:
         `after` bytes are read back off disk rather than taken from what the Writer rendered:
         the claim being stored is "this is what the Module holds", and the only honest source
         for that is the file.
+
+        `options` maps a Module to the Options its new bytes set -- `Writer.module_options`,
+        the same walk that produced the rendering. A Module absent from it set none, which is
+        the honest reading for a deleted Module and for the Entrypoint alike.
         """
         names = sorted(set(changed))
         if not names:
             return None
 
+        carried = options or {}
         changes: list[ModuleChange] = []
         for module in names:
             before = self._before.get(module)
@@ -227,6 +283,9 @@ class Draft:
                     module=module,
                     before=self._journal.store(before),
                     after=self._journal.store(after),
+                    # Only for a Module that still exists: naming Options against a file the
+                    # transaction deleted would claim bytes set values that are not there.
+                    options=tuple(carried.get(module, ())) if after is not None else (),
                 )
             )
 
@@ -342,26 +401,37 @@ class Journal:
             found.append(entry)
         return tuple(found)
 
-    def last_known_good(self, module: str) -> bytes | None:
-        """The newest bytes of `module` that a confirmed transaction left behind.
+    def last_known_good(self, module: str) -> LastKnownGood | None:
+        """The newest state of `module` that a confirmed transaction left behind.
 
         ADR-0016's Last known good, and the reason `confirmed` is recorded at all. `None`
         means the app has never confirmed a write to this Module in the retained history --
-        which Restore-last-good must treat as "there is nothing to restore to" rather than
+        which Restore last good must treat as "there is nothing to restore to" rather than
         as "restore whatever is newest", because the newest may be exactly what broke.
 
         A Module the transaction *deleted* answers `None` too: its confirmed state is
         absence, and there are no bytes that spell that.
 
-        The *write-back* half of ADR-0010's Restore-last-good -- putting these bytes on disk
-        through a normal Apply transaction -- is not here, and cannot honestly be until #62.
-        The Writer renders Modules whole from the model, so laying down bytes the model did
-        not produce would leave the two disagreeing, and the next edit would re-render over
-        the restore. Turning bytes back into model values is reading the app's own Lua, which
-        is #62's; ADR-0016's firing policy and the Banner that offers the action are #60's.
+        Bytes **and** the Options they set, because restoring is two halves and the app
+        cannot derive the second from the first: it does not read its own Lua (#62). The
+        bytes go back on disk; the Options are what the caller re-reads off the compositor
+        afterwards to put the model back in step with them. Handing back bytes alone would
+        leave the caller guessing from the *current* Manifest record -- the option set at the
+        moment of the failure, not of the good write.
         """
-        digest = self.last_known_good_digest(module)
-        return self.snapshot(digest) if digest is not None else None
+        for entry in reversed(self.entries()):
+            if not entry.confirmed:
+                continue
+            change = entry.change(module)
+            if change is None or change.after is None:
+                continue
+            data = self.snapshot(change.after)
+            if data is None:
+                # Pruned or never stored. Older entries may still hold a usable one, and a
+                # missing blob is not evidence that this Module has no Last known good.
+                continue
+            return LastKnownGood(module=module, data=data, options=change.options, at=entry.at)
+        return None
 
     def last_known_good_digest(self, module: str) -> str | None:
         return self._digest(module, lambda entry: entry.confirmed, lambda change: change.after)
@@ -483,7 +553,4 @@ class Journal:
     # --- internals ----------------------------------------------------------------------
 
     def _path_for(self, module: str) -> Path:
-        """Where an app-owned name lives. The Entrypoint is the one outside the App dir."""
-        if module == ENTRYPOINT_NAME:
-            return self._paths.entrypoint
-        return self._paths.app_dir / module
+        return self._paths.file_for(module)

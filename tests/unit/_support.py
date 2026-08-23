@@ -138,10 +138,10 @@ def section_conversation(*sections: str, **set_values: Any) -> dict[str, str]:
     covering only the interesting keys would have the session fall over on the first
     uninteresting one -- and pass or fail for the wrong reason.
     """
-    from _fake_hyprland import NO_CONFIG_ERRORS, OK, option_reply
+    from _fake_hyprland import BINDS, NO_CONFIG_ERRORS, OK, option_reply
 
     schema = sample_schema()
-    conversation = {"reload": OK, "j/configerrors": NO_CONFIG_ERRORS}
+    conversation = {"reload": OK, "j/configerrors": NO_CONFIG_ERRORS, "j/binds": BINDS}
     for section in sections:
         for option in schema.section(section):
             value = set_values.get(option.name)

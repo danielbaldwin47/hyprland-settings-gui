@@ -10,9 +10,11 @@ the load-bearing one: switching Section stays instant, and "every Section builds
 the shipped Schema" becomes a fact about the running app instead of a claim about code that
 may never have run (the UI smoke tier asserts exactly this).
 
-Errors get a Banner, not a Row badge (ADR-0016). This window raises it for one condition --
-there is no compositor, so nothing can be applied -- and the Banner's own error dialog, the
-full `configerrors` attribution, and Quarantine are #60.
+Errors get a Banner, not a Row badge (ADR-0016). There is exactly one, it covers every
+unhealthy state there is -- no compositor, config errors, an Entrypoint refusal, an active
+Quarantine -- and *which* of those it says is `Session.health`'s judgement rather than this
+window's. Its button opens the one error dialog, whose per-file buttons come from the
+recovery matrix; this window only wires them to the session methods that perform them.
 
 Toasts carry the two things instant apply cannot say by simply happening: that the last
 gesture can be taken back, and that one was taken back for you. The first is the undo toast,
@@ -33,7 +35,14 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio, GLib, Graphene, Gtk  # noqa: E402
 
-from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult, UndoStep  # noqa: E402
+from hyprtweaker.engine.apply import (  # noqa: E402
+    Action,
+    ApplyOutcome,
+    ApplyResult,
+    Problem,
+    UndoStep,
+)
+from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.schema import Schema  # noqa: E402
 from hyprtweaker.session import AutoRevert, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.errors import error_dialog  # noqa: E402
@@ -54,6 +63,13 @@ Wired twice on purpose -- a `GtkShortcutController` on the window, and the appli
 accelerator when there is an application. The controller is what makes the keystroke work at
 all (and what the UI tier can drive); the accelerator is what makes the menu item show
 "Ctrl+Z" beside itself."""
+
+SEVERE_BANNER_CLASS = "error"
+"""libadwaita's own red styling, for ADR-0016's "Red Banner".
+
+A style class rather than a colour, so it follows the user's theme and their accent choice
+-- a hard-coded red is the one thing that would look wrong in every theme but the one it was
+picked in."""
 
 UNDO_TOAST_SECONDS = 4
 """Long enough to notice and reach, short enough not to sit over the Row that just changed."""
@@ -104,6 +120,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._stack = Gtk.Stack(vexpand=True)
         self._banner = Adw.Banner(revealed=False)
+        self._banner.connect("button-clicked", self._on_banner_clicked)
         # The one surface a failed apply reports through. It has to exist before
         # `_build_content` wraps the body in it, and before the first `show_result`.
         self._toasts = Adw.ToastOverlay()
@@ -225,14 +242,43 @@ class MainWindow(Adw.ApplicationWindow):
         self.sync()
 
     def sync(self) -> None:
-        """Make every control agree with the model, and the Banner with the connection."""
+        """Make every control agree with the model, and the Banner with the session's health.
+
+        One Banner for every unhealthy state there is (ADR-0016 §Surfacing) -- no compositor,
+        config errors, an Entrypoint refusal, an active Quarantine. Which sentence wins is
+        `Session.health`'s judgement, not this method's: it is a decision with rules worth
+        testing, and a window is the one place in this app a test cannot reach without a
+        display.
+        """
         for page in self._pages:
             page.refresh()
 
-        reason = self._session.offline_reason
-        self._banner.set_title("" if reason is None else f"{reason} — settings are read-only.")
-        self._banner.set_revealed(reason is not None)
+        self.sync_banner()
         self._undo_action.set_enabled(self._session.can_undo)
+
+    def sync_banner(self) -> None:
+        """Make the one Banner agree with `Session.health`, and nothing else.
+
+        Split out of `sync` because it runs on a different schedule. Every finished Apply
+        transaction can change the health -- that is how a rejected write raises the Banner --
+        but a full `sync` refreshes all 353 Rows, which is far too much to spend per apply on
+        a config that is usually fine.
+        """
+        health = self._session.health
+        self._banner.set_title(health.title)
+        self._banner.set_revealed(health.unhealthy)
+        # libadwaita shows the button whenever the label is non-empty, so clearing it is how
+        # a Banner with nothing to open loses its button rather than keeping a dead one.
+        self._banner.set_button_label(health.button or "")
+        # Off, because these titles carry file names: a path containing an ampersand is not
+        # markup, and a Banner that tried to parse it as markup would render nothing at all.
+        self._banner.set_use_markup(False)
+        # ADR-0016's red Banner, for the states where the config is not doing what the user
+        # believes it is: an Entrypoint refusal, no keybinds, or a recovery that gave up.
+        if health.severe:
+            self._banner.add_css_class(SEVERE_BANNER_CLASS)
+        else:
+            self._banner.remove_css_class(SEVERE_BANNER_CLASS)
 
     def show_result(self, result: ApplyResult) -> None:
         """What a finished Apply transaction changes about the view.
@@ -242,19 +288,35 @@ class MainWindow(Adw.ApplicationWindow):
         refused wants no pill at all (`ApplyResult.pending_restart` only names keys whose
         bytes actually landed -- ADR-0010).
 
-        Then the failure line, if there was a failure. A *successful* transaction gets
-        nothing from here -- instant apply's whole promise is that the change is the feedback
-        (ADR-0003) -- and the offer to undo it arrives separately, through `offer_undo`, from
-        the session that knows whether a gesture was actually recorded. One toast, never two:
-        a failure withdraws any offer still on screen, because a change that did not land is
-        not a change to take back.
+        Then the Banner, which is the load-bearing one: a rejected write is exactly how the
+        app's own transaction discovers the config is broken, and without this the Banner
+        would only ever appear on a startup or a foreign reload -- leaving the state ADR-0016
+        exists to surface invisible in the one case the user just caused.
+
+        Then a failure toast, but only for a failure the Banner has nothing to say about.
+        ADR-0016 is explicit that toasts are "only for transient auto-revert events", and
+        both kinds of failure the Banner *does* carry are excluded here: a config error,
+        which belongs to the Banner and its dialog because they can offer to fix it, and a
+        read-back mismatch, which raises the Banner and badges its Row. What is left for a
+        toast is the handful of failures that never reached the compositor at all -- a
+        refused write, a full disk -- which would otherwise happen in silence.
+
+        A *successful* transaction gets no toast: instant apply's whole promise is that the
+        change is the feedback (ADR-0003), and the offer to undo it arrives separately through
+        `offer_undo`. One toast, never two: a failure withdraws any offer still on screen,
+        because a change that did not land is not a change to take back.
         """
-        for name in result.pending_restart:
+        # Both the keys that gained a "Pending restart" pill and the ones that gained -- or
+        # just lost -- a "Didn't apply" one. The losers matter as much: a badge left on a key
+        # that has since applied would be the app reporting a failure that is over.
+        for name in {*result.pending_restart, *result.keys}:
             self._refresh_chrome_for(name)
         self._undo_action.set_enabled(self._session.can_undo)
+        self.sync_banner()
 
         if not result.ok:
             self._dismiss_undo()
+        if not result.ok and not result.errors and not result.mismatches:
             self._toasts.add_toast(Adw.Toast(title=_result_summary(result), timeout=5))
 
     def show_revert(self, revert: AutoRevert) -> None:
@@ -270,8 +332,100 @@ class MainWindow(Adw.ApplicationWindow):
         toast = Adw.Toast(title=_revert_summary(revert), timeout=8)
         if revert.errors:
             toast.set_button_label("Details")
-            toast.connect("button-clicked", lambda *_: error_dialog(self, revert.errors))
+            # The same dialog the Banner opens, with no actions on it. By the time this can
+            # be clicked the app has already put the file back, so every recovery it could
+            # offer would be a recovery from a recovery.
+            toast.connect(
+                "button-clicked", lambda *_: error_dialog(self, recovery_plan(revert.errors))
+            )
         self._toasts.add_toast(toast)
+
+    # --- recovery (ADR-0016) ------------------------------------------------------------------
+
+    def _on_banner_clicked(self, _banner: Adw.Banner) -> None:
+        """The Banner's one button: open the errors, or lift a Quarantine.
+
+        Two jobs on one button because there is only one Banner and the states are mutually
+        exclusive in practice -- a Quarantine the user has already fixed has no errors left to
+        show, and a config that is erroring has something more urgent to offer than a toggle.
+        `Health.button` is what decides which, and it is the same object that wrote the label.
+        """
+        health = self._session.health
+        if health.recovery.unhealthy:
+            self.show_errors()
+            return
+        # One call for all of them: two releases would be two Entrypoint rewrites racing
+        # each other through the queue.
+        if health.quarantined:
+            self._session.release_quarantine(*health.quarantined)
+
+    def show_errors(self) -> Adw.AlertDialog:
+        """Open the one error dialog over the current problems. Returned for the UI tier."""
+        return error_dialog(self, self._session.recovery, on_action=self._on_recovery_action)
+
+    def _on_recovery_action(self, action: Action, problem: Problem) -> None:
+        """Perform one of the dialog's per-class actions.
+
+        A dispatch table and nothing else. Which actions a problem offers is the matrix's
+        decision (`recovery.py`), performing them is the session's, and this is only the wire
+        between the button and the method -- so a window cannot invent a recovery the ADR
+        does not sanction.
+        """
+        if action is Action.OPEN_FILE:
+            self._open_file(problem)
+        elif action is Action.RESTORE_LAST_GOOD and problem.module is not None:
+            self._session.restore_last_good(problem.module)
+        elif action is Action.REGENERATE:
+            self._session.regenerate_entrypoint()
+        elif action is Action.QUARANTINE:
+            self._confirm_quarantine(problem)
+
+    def _confirm_quarantine(self, problem: Problem) -> None:
+        """Ask before disabling somebody else's file (ADR-0016 §Quarantine).
+
+        The consent gate, and the ADR is explicit that there is one: the app is about to stop
+        loading a file the user wrote, and doing that silently would be indistinguishable
+        from the app having broken it. The dialog says what will happen and that it is one
+        click to undo.
+        """
+        require = self._session.quarantine_target(problem)
+        if require is None:
+            return
+
+        name = f"{require}.lua"
+        dialog = Adw.AlertDialog(
+            heading=f"Disable {name} until it is fixed?",
+            body=(
+                f"Hyprland will stop loading {name}, so the rest of your config can work "
+                f"again. The file is not changed, and you can turn it back on at any time."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("disable", f"Disable {name}")
+        dialog.set_response_appearance("disable", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", self._on_quarantine_response, require)
+        dialog.present(self)
+
+    def _on_quarantine_response(
+        self, _dialog: Adw.AlertDialog, response: str, require: str
+    ) -> None:
+        if response == "disable":
+            self._session.quarantine(require)
+
+    def _open_file(self, problem: Problem) -> None:
+        """Hand the broken file to whatever opens `.lua` on this machine.
+
+        The file, not the file-and-line: there is no portable way to tell an arbitrary
+        desktop handler to jump to a line. The dialog carries the `file:line` prefix verbatim
+        for exactly that reason -- ADR-0016 keeps the lines unreworded because they are "what
+        they paste into an editor's go-to-line box".
+        """
+        path = self._session.file_for(problem)
+        if path is None:
+            return
+        Gtk.FileLauncher(file=Gio.File.new_for_path(str(path))).launch(self, None, None)
 
     # --- undo -------------------------------------------------------------------------------
 
@@ -519,8 +673,9 @@ def _sidebar_row(section: str, title: str, count: int) -> Gtk.ListBoxRow:
 
 
 #: What each unhappy `ApplyOutcome` means to a person. The enum's own spelling is a wire
-#: value -- "read-back-mismatch" is not a sentence to show a user -- and #60 replaces this
-#: with the full error dialog and its per-Ownership-class actions.
+#: value -- "read-back-mismatch" is not a sentence to show a user. This is the *toast* line
+#: for a transaction that failed without config errors; anything with `configerrors` behind it
+#: goes to the Banner and its dialog instead.
 _FAILURE_TEXT = {
     ApplyOutcome.CONFIG_ERRORS: "Hyprland rejected the change.",
     ApplyOutcome.READ_BACK_MISMATCH: "The change was written but did not take effect.",
