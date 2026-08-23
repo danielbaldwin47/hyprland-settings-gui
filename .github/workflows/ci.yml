@@ -117,3 +117,22 @@ jobs:
               importlib.import_module(name)
           print(f"imported {len(names)} installed modules")
           PY
+      - name: The Schema loads from the install prefix, not just from a checkout
+        # `schema_dir()` finds the checkout copy first, so every schema test would pass
+        # even with the data install completely broken. Running against the installed
+        # tree from an unrelated directory is the only way that shows up.
+        run: |
+          # Absolute, because the `cd` below would strand a relative PYTHONPATH.
+          PKG_INIT="$(find "$PWD/_install" -path '*/hyprtweaker/__init__.py' | head -1)"
+          export PYTHONPATH="$(dirname "$(dirname "$PKG_INIT")")"
+          export XDG_DATA_DIRS="$PWD/_install/usr/share"
+          cd /tmp
+          python3 - <<'PY'
+          from hyprtweaker.engine.schema import load_schema, schema_dir
+          print(f"schema dir: {schema_dir()}")
+          schema = load_schema()
+          assert len(schema) > 300, f"only {len(schema)} options in the installed schema"
+          for option in schema:
+              assert option.title and option.widget and option.visibility
+          print(f"resolved {len(schema)} options for Hyprland {schema.hyprland_version}")
+          PY

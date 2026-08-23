@@ -10,15 +10,19 @@ source lists against what is actually on disk.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src"
+from _support import ROOT, SRC, assert_lists_match
+
 MESON_BUILD = SRC / "meson.build"
 
 
 def declared_sources() -> set[str]:
-    """The `src/hyprtweaker/...` paths named by `package_sources` in src/meson.build."""
+    """The `src/hyprtweaker/...` paths named by `package_sources` in src/meson.build.
+
+    A dict of per-package lists, so it needs its own two-level walk rather than
+    `_support.meson_quoted_names` -- the package name and the file name both matter, and
+    only their join is a path.
+    """
     text = MESON_BUILD.read_text()
 
     block = re.search(r"package_sources\s*=\s*\{(.*?)^\}", text, re.DOTALL | re.MULTILINE)
@@ -38,17 +42,8 @@ def actual_sources() -> set[str]:
     return {str(path.relative_to(SRC)) for path in (SRC / "hyprtweaker").rglob("*.py")}
 
 
-def test_every_python_source_is_installed() -> None:
-    missing = actual_sources() - declared_sources()
-    assert not missing, (
-        "these files exist but src/meson.build does not install them "
-        f"(add them to package_sources): {sorted(missing)}"
-    )
-
-
-def test_no_installed_source_is_missing_from_disk() -> None:
-    stale = declared_sources() - actual_sources()
-    assert not stale, f"src/meson.build installs files that no longer exist: {sorted(stale)}"
+def test_every_python_source_is_installed_and_no_more() -> None:
+    assert_lists_match(declared_sources(), actual_sources(), MESON_BUILD)
 
 
 def test_version_matches_between_build_and_package() -> None:

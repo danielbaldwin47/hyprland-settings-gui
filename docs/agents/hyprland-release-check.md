@@ -16,6 +16,8 @@ Build the new version's Generated schema:
 
 Done when the file exists and the generator reported all three sources consumed (or the degradation is noted).
 
+Confirm it on the same machine with `pytest tests/integration -m hyprland`, which reruns the generator against the live compositor and fails if the committed schema is not what comes out. It is the only tier that can check this — CI has no Hyprland — so running it here is the check, not a formality.
+
 ## 2. Diff
 
 Compare against the previous newest schema, at three layers:

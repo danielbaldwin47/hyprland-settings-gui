@@ -13,6 +13,7 @@ project(
 python = import('python').find_installation('python3', modules: ['gi'])
 
 subdir('src')
+subdir('data')
 subdir('tests')
 
 # Dev loop (ADR-0011):
