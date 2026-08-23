@@ -267,8 +267,9 @@ def test_no_dependency_is_gated_by_an_option_the_advanced_switch_can_hide() -> N
 
     `reveal_option` can only show a Row that was built, so a controller in a non-default
     tier would give the badge somewhere to point and no way to get there until Search's
-    one-off reveal lands (#67). Every one of the 75 controllers is `default` today; this is
-    the test that notices if a later curation pass changes that.
+    one-off reveal lands (#67). All 17 Options that gate the Overlay's 75 `depends_on`
+    entries are `default` today; this is the test that notices if a curation pass changes
+    that.
     """
     for option in SCHEMA:
         if option.depends_on is None:

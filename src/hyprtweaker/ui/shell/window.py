@@ -27,6 +27,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Graphene, Gtk  # noqa: E402
 
 from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult  # noqa: E402
+from hyprtweaker.engine.schema import Schema  # noqa: E402
 from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
@@ -343,7 +344,7 @@ def _scroll_into_view(row: Gtk.Widget) -> None:
     adjustment.set_value(min(max(target, adjustment.get_lower()), highest))
 
 
-def _dependents(schema: Any) -> dict[str, tuple[str, ...]]:
+def _dependents(schema: Schema) -> dict[str, tuple[str, ...]]:
     """Controlling Option -> the Options whose `depends_on` names it.
 
     The reverse of what the Schema stores, built once at startup: an edit has to find the
