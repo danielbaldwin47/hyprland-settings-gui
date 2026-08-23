@@ -333,6 +333,16 @@ class Session:
         business. `Mismatch.unapplied` is the loud shape -- the model sets the key and the
         live config sets nothing, which means the Module never ran."""
 
+        self._overridden: tuple[str, ...] = ()
+        """Keys whose live value disagrees with the model because something later won.
+
+        The quiet counterpart of `_unapplied`: the value did not take, but for a reason the
+        app can name. ADR-0005 fixes the mechanism -- "after each reload the app compares
+        `get_config`/`getoption` against its model and badges diverging options" -- so this
+        comes from the Read-back the transaction already does, never from reading
+        `user.lua` itself. ADR-0018 rejects that: running the user's own code to answer a
+        question about a badge is consent-and-safety weight no badge earns."""
+
         self._rescued: tuple[str, ...] = ()
         """Modules the emergency restore overwrote without asking, so the Banner can say so."""
 
@@ -390,6 +400,18 @@ class Session:
         would be telling the user about a value that has since applied perfectly well.
         """
         return frozenset(self._unapplied)
+
+    @property
+    def overridden(self) -> frozenset[str]:
+        """Keys the live config sets to something other than what the model asked for.
+
+        `user.lua` is required last (ADR-0005), so a key it sets beats the Module the app
+        wrote -- the Row wears the "Overridden" pill rather than pretending the edit took.
+        Replaced per transaction for the same reason `unapplied` is: it describes the last
+        write, and a badge outliving the write that earned it would be a lie about a value
+        that has since applied perfectly well.
+        """
+        return frozenset(self._overridden)
 
     @property
     def paths(self) -> ConfigPaths:
@@ -972,6 +994,11 @@ class Session:
         """
         self._recovery = plan(errors, written=written, binds=binds)
         self._unapplied = tuple(mismatch.name for mismatch in mismatches if mismatch.unapplied)
+        # The other half of the same Read-back, and ADR-0005's drift badge: a key the live
+        # config sets to something else is one `user.lua` or a Bridge won on purpose.
+        self._overridden = tuple(
+            mismatch.name for mismatch in mismatches if mismatch.overridden
+        )
         # Cleared with the rest: the rescue notice belongs to the reload that prompted it.
         # `_restore_transaction` re-raises it *after* observing its own result, which is what
         # lets the notice outlive the restore that earned it without outliving anything else.

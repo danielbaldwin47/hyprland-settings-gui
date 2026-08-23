@@ -62,6 +62,7 @@ ADVANCED_PILL: Final = "Advanced"
 RESTART_PILL: Final = "Restart"
 PENDING_RESTART_PILL: Final = "Pending restart"
 UNAPPLIED_PILL: Final = "Didn't apply"
+OVERRIDDEN_PILL: Final = "Overridden"
 
 _UNLABELLED_NULL: Final = "Not set"
 """What a nullable Option with no curated `null_label` falls back to.
@@ -336,6 +337,9 @@ class RowContext(Protocol):
     @property
     def unapplied(self) -> frozenset[str]: ...
 
+    @property
+    def overridden(self) -> frozenset[str]: ...
+
     def value_of(self, option: ResolvedOption) -> OptionValue: ...
 
     def effective_value(self, option: ResolvedOption) -> Any: ...
@@ -439,6 +443,24 @@ def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:
             Pill(
                 UNAPPLIED_PILL,
                 "This was written to your config, but Hyprland is not using it.",
+            )
+        )
+
+    if option.name in context.overridden:
+        # The sibling of "Didn't apply", and the reason that one is only for the
+        # *unexplained* mismatch: this value did not take either, but for a reason the app
+        # can name. `user.lua` is required last, so it wins on purpose -- that is the
+        # escape hatch working, not a fault, and the Row says so rather than badging it as
+        # a failure (ADR-0005; deferred here from #57 until there was a reader for it).
+        pills.append(
+            Pill(
+                OVERRIDDEN_PILL,
+                # Deliberately does not name `user.lua` outright: a Bridge module is loaded
+                # after the app's Modules too and wins the same way, and telling someone to
+                # go edit a file that is not the culprit is worse than saying less. Naming
+                # the file needs Ownership class, which the Banner has and a Row does not.
+                "Something loaded after the app's own settings sets this too, so its "
+                "value wins -- usually your user.lua.",
             )
         )
 

@@ -30,6 +30,7 @@ from hyprtweaker.engine.importer.keywords import (
     SpecialCategory,
     UnparsedLine,
 )
+from hyprtweaker.engine.importer.lua import Consent, import_lua, lua_binary
 from hyprtweaker.engine.schema import load_schema
 from hyprtweaker.engine.writer.modules import render_module
 
@@ -266,15 +267,16 @@ class TestLossClassification:
 
 
 class TestFixpoint:
-    """import -> write -> re-import.
+    """import -> write -> re-import, closed.
 
-    The middle leg is checkable today; the last one is not. Re-importing what the Writer
-    produced means reading Lua, and the Lua importer is #62 -- which is blocked by this
-    ticket, so it cannot be borrowed. What is checked here is everything up to that seam:
-    the mapping is deterministic, and the model it produces renders to byte-identical Lua
-    however many times it is written. Those two are what make the missing leg a *check*
-    rather than a *risk*: a non-deterministic mapper or an unstable writer would fail the
-    round trip no matter how the re-import behaved.
+    All three legs are checkable now that the Lua importer of #62 exists: the mapping is
+    deterministic, the model renders to byte-identical Lua however many times it is
+    written, and reading that Lua back gives the same model it was written from.
+
+    The last leg covers Options only, and will until Entity Modules land (#64). The Writer
+    renders `hl.config` and nothing else today, so there are no bind or rule modules to
+    read back yet -- what the Lua importer does with those is asserted in
+    `test_importer_lua_mapping.py` against configs written by hand.
     """
 
     def test_mapping_the_same_tree_twice_gives_the_same_model(self, imports, schema) -> None:  # type: ignore[no-untyped-def]
@@ -298,6 +300,37 @@ class TestFixpoint:
                 first = render_module(items, app_version="0.0.0-test")
                 second = render_module(items, app_version="0.0.0-test")
                 assert first == second, f"{rice}/{section} did not render stably"
+
+    @pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter installed")
+    def test_writing_a_model_and_reading_it_back_gives_the_same_model(  # type: ignore[no-untyped-def]
+        self, imports, schema, tmp_path
+    ) -> None:
+        """The leg this class waited on #62 for: Lua out, Lua in, nothing moved.
+
+        The one that would catch a writer emitting a value shape its own reader cannot
+        take -- a gradient written as text, a css-gap written as four bare numbers -- which
+        no amount of write-side determinism would show, because both writes would be
+        identically wrong.
+        """
+        for rice, result in imports.items():
+            sections = [
+                render_module(result.model.section(section), app_version="0.0.0-test")
+                for section in result.model.sections()
+            ]
+            entry = tmp_path / rice / "hyprland.lua"
+            entry.parent.mkdir(parents=True, exist_ok=True)
+            entry.write_text("\n".join(sections), encoding="utf-8")
+
+            reimported = import_lua(
+                entry, schema, consent=Consent(evaluate=True), env=dict(CORPUS_ENV)
+            )
+            assert reimported.loss.clean, (
+                f"{rice}: re-reading our own output reported "
+                f"{[item.code for item in reimported.loss]}"
+            )
+            written = {option.name: value for option, value in result.model.set_options()}
+            read_back = {option.name: value for option, value in reimported.model.set_options()}
+            assert read_back == written, f"{rice}: the model did not survive the round trip"
 
     def test_entity_order_is_the_source_order_every_time(self, imports, schema) -> None:  # type: ignore[no-untyped-def]
         """Position is identity for Binds and Rules (ADR-0007, ADR-0008), so an order that

@@ -40,6 +40,7 @@ class FakeSession:
         self.live = live
         self.pending_restart: frozenset[str] = frozenset()
         self.unapplied: frozenset[str] = frozenset()
+        self.overridden: frozenset[str] = frozenset()
         self.model = ConfigModel(SCHEMA)
         self.applied: list[str] = []
 

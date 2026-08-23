@@ -121,6 +121,16 @@ class LossCode(StrEnum):
     LEGACY_DISPATCH_CALL = "L29"
     UNSUPPORTED_KEYWORD = "L30"
     UNPARSED_LINE = "L31"
+    # Added here: the Lua importer evaluates rather than parses, so its losses are about
+    # what running the file did, not about what a line said (ADR-0009).
+    SCRIPT_TO_LEGACY = "L32"
+    FOREIGN_GLOBAL = "L33"
+    EXTERNAL_STATE = "L34"
+    PASSTHROUGH_RUN = "L35"
+    EVAL_ERROR = "L36"
+    CONFIG_TIME_QUERY = "L37"
+    UNMODELLED_CALL = "L38"
+    UNEXTRACTABLE_SCRIPT = "L39"
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +233,32 @@ LOSS_CODES: dict[LossCode, LossSpec] = {
     ),
     LossCode.UNPARSED_LINE: LossSpec(
         "Line the parser could not read, carried over verbatim", LossClass.NEEDS_REVIEW
+    ),
+    LossCode.SCRIPT_TO_LEGACY: LossSpec(
+        "Script construct preserved verbatim in legacy.lua and shown read-only",
+        LossClass.INFO,
+    ),
+    LossCode.FOREIGN_GLOBAL: LossSpec(
+        "Preserved script reads a global this import cannot carry over", LossClass.NEEDS_REVIEW
+    ),
+    LossCode.EXTERNAL_STATE: LossSpec(
+        "Config read external state at import; the imported copy will not re-read it",
+        LossClass.BREAKAGE,
+    ),
+    LossCode.PASSTHROUGH_RUN: LossSpec(
+        "Config was evaluated with its side effects allowed, by consent",
+        LossClass.NEEDS_REVIEW,
+    ),
+    LossCode.EVAL_ERROR: LossSpec("Config raised while being evaluated", LossClass.BREAKAGE),
+    LossCode.CONFIG_TIME_QUERY: LossSpec(
+        "Config asked the compositor about live state, answered with a stand-in",
+        LossClass.NEEDS_REVIEW,
+    ),
+    LossCode.UNMODELLED_CALL: LossSpec(
+        "hl.* call has no model representation and was kept aside", LossClass.NEEDS_REVIEW
+    ),
+    LossCode.UNEXTRACTABLE_SCRIPT: LossSpec(
+        "Script construct could not be read back out of its source file", LossClass.BREAKAGE
     ),
 }
 
