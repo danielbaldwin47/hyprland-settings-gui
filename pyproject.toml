@@ -29,6 +29,7 @@ files = [
     "src/hyprtweaker/engine",
     "src/hyprtweaker/session.py",
     "src/hyprtweaker/ui/pages/plan.py",
+    "src/hyprtweaker/ui/rows/state.py",
 ]
 mypy_path = "src"
 python_version = "3.11"

@@ -60,5 +60,5 @@ Shown: **Model**, **Rules**, **Custom keymap file** appear with Advanced pills o
 ## Implementation notes for the Row factory (`ui/rows/`)
 
 - The factory must expose each Row's inner control so the dependency badge can desensitise it directly — the prototype walked the widget tree; the real factory returns the handle.
-- "Modified" uses the per-type is-default check (float epsilon, sentinel normalisation) — string equality on rendered text is wrong for 19/353 options (see Value representations, CONTEXT.md).
+- "Modified" is the ADR-0005 tri-state: the Option is modified exactly when the model emits it. (Superseded the per-type is-default check during #57 — see the amendment on ADR-0013 §6. The check was prototype #8's only option because #8 had no model; comparing values would hide the reset arrow on an Option deliberately set to today's default, which is the one Row that most needs it.)
 - Pills are `GtkLabel` with a `.pill` style class; summaries `.value-summary` + `dim-label`.

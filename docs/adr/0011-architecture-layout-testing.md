@@ -65,7 +65,7 @@ pytest, three tiers; the engine carries the coverage, the UI stays thin:
 ### Build & conventions
 
 - **meson** is the canonical build now (GNOME convention; grows into desktop file/icons/gresource install later — distribution packaging itself remains an open map item). Dev loop: `meson devenv`.
-- `pyproject.toml` carries Python tooling: **ruff** (lint + format), **mypy** on `engine/` plus the toolkit-free modules above it (`session.py`, `ui/pages/plan.py`; amended during #56 — the exemption was earned by PyGObject's partial stubs and `gi`-dynamic code, neither of which applies to a module that never imports `gi`), pytest config.
+- `pyproject.toml` carries Python tooling: **ruff** (lint + format), **mypy** on `engine/` plus the toolkit-free modules above it (`session.py`, `ui/pages/plan.py`, `ui/rows/state.py`; amended during #56 and again during #57 — the exemption was earned by PyGObject's partial stubs and `gi`-dynamic code, neither of which applies to a module that never imports `gi`, so every UI module that decides rather than draws joins this list), pytest config.
 - GitHub Actions CI: ruff + mypy + unit tests + overlay completeness test.
 - Commit style unchanged.
 

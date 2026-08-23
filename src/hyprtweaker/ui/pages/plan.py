@@ -19,9 +19,24 @@ Nothing here imports `gi`.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 
 from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, humanise
+
+
+class View(enum.StrEnum):
+    """The two sidebar arrangements (`CONTEXT.md`), as far as visibility is concerned.
+
+    Only the Config view exists today -- the Tasks view and its switcher are #71 -- but the
+    rule that separates them is ADR-0013's and belongs here rather than in whatever builds
+    the Tasks sidebar later: the `hidden` tier is Config-view-only, so `debug:manual_crash`
+    can never surface on a curated Page however the Advanced switch is set.
+    """
+
+    CONFIG = "config"
+    TASKS = "tasks"
+
 
 _SEGMENT_TITLES = {
     "col": "Colors",
@@ -50,14 +65,21 @@ def _segment_title(segment: str) -> str:
     return _SEGMENT_TITLES.get(segment) or humanise(segment)
 
 
-def is_visible(option: ResolvedOption, *, show_advanced: bool) -> bool:
+def is_visible(
+    option: ResolvedOption, *, show_advanced: bool, view: View = View.CONFIG
+) -> bool:
     """Whether the Advanced switch lets this Option render right now.
 
-    Both non-default tiers gate on the one global switch (ADR-0013 §5). They differ only in
-    the *Tasks* view, where `hidden` never appears at all -- a distinction this planner does
-    not have to know, because it only ever plans the Config view.
+    Both non-default tiers gate on the one global switch (ADR-0013 §5), and they differ in
+    exactly one way: `hidden` -- `debug`, `quirks`, `experimental`, `input-capture` -- is
+    Config-view-only, so no amount of switch-flipping puts "Crash Hyprland" on a curated
+    Tasks Page. Search reaches every tier regardless and reveals its hit one-off (ADR-0017).
     """
-    return option.visibility is Visibility.DEFAULT or show_advanced
+    if option.visibility is Visibility.DEFAULT:
+        return True
+    if not show_advanced:
+        return False
+    return option.visibility is not Visibility.HIDDEN or view is View.CONFIG
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +109,13 @@ class PagePlan:
         return sum(len(group.options) for group in self.groups)
 
 
-def plan_section(schema: Schema, section: str, *, show_advanced: bool = False) -> PagePlan:
+def plan_section(
+    schema: Schema,
+    section: str,
+    *,
+    show_advanced: bool = False,
+    view: View = View.CONFIG,
+) -> PagePlan:
     """Plan one Section's Page.
 
     Ordering is Hyprland's own declaration order throughout -- Groups appear in the order
@@ -96,7 +124,11 @@ def plan_section(schema: Schema, section: str, *, show_advanced: bool = False) -
     `order` is a position *within* a Group, which is why it only ever breaks the tie.
     """
     options = schema.section(section)
-    visible = [option for option in options if is_visible(option, show_advanced=show_advanced)]
+    visible = [
+        option
+        for option in options
+        if is_visible(option, show_advanced=show_advanced, view=view)
+    ]
 
     grouped: dict[str, list[ResolvedOption]] = {}
     for option in visible:
@@ -130,6 +162,6 @@ def plan_config_view(schema: Schema, *, show_advanced: bool = False) -> tuple[Pa
     flips is a Section the user cannot learn exists.
     """
     return tuple(
-        plan_section(schema, section, show_advanced=show_advanced)
+        plan_section(schema, section, show_advanced=show_advanced, view=View.CONFIG)
         for section in schema.section_names
     )

@@ -71,7 +71,9 @@ package_sources = {
   ],
   'hyprtweaker/ui/rows': [
     '__init__.py',
+    'chrome.py',
     'factory.py',
+    'state.py',
   ],
   'hyprtweaker/ui/shell': [
     '__init__.py',

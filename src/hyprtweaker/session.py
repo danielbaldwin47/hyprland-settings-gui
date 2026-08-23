@@ -98,6 +98,7 @@ class Session:
         self._applier: Applier | None = None
         self._offline_reason: str | None = _NOT_CONNECTED_YET
         self._closing = False
+        self._pending_restart: set[str] = set()
 
     # --- what the UI reads ------------------------------------------------------------------
 
@@ -119,17 +120,38 @@ class Session:
         """Why this session is read-only, in one line fit for the Banner."""
         return self._offline_reason
 
+    @property
+    def pending_restart(self) -> frozenset[str]:
+        """Options this session wrote that need a restart before they take effect.
+
+        "Applied to file, effective after Hyprland restart" (`CONTEXT.md`), which is a claim
+        about a *file*: only keys an Apply transaction actually laid down get in here, never
+        keys that were merely edited and refused. The Row badges from this (ADR-0013).
+
+        Accumulated for the life of the session and never cleared, because the event that
+        would clear it -- Hyprland restarting -- takes the session with it: the event stream
+        drops and the session goes read-only. A `hyprctl reload` is *not* that event, and
+        forgetting on one would tell the user a pending change had landed when it had not.
+        """
+        return frozenset(self._pending_restart)
+
     def value_of(self, option: ResolvedOption) -> OptionValue:
         """The model's value: a value, `None` for explicit null, or `UNSET`."""
         return self._model.get(option.name)
 
     def effective_value(self, option: ResolvedOption) -> Any:
-        """What the Row should show: the set value, else Hyprland's own default.
+        """What Hyprland is currently doing: the set value, else its own default.
 
         An Unset Option is not blank -- the compositor applies its default, and a control
         that renders empty would state that the setting has no value (prototype #8's
-        blank-row defect). `None` still means "no value", which is a state the Row renders
-        as the curated `null_label` rather than as emptiness.
+        blank-row defect).
+
+        Not the same question as "what should the Row display", which is
+        `ui/rows/state.shown_value` and differs in one deliberate way: this answers `None`
+        or a sentinel-shaped value verbatim, because a dependency asking "is the controlling
+        Option set to `custom`?" wants the raw comparison. A control asking what to *show*
+        wants "Device default", and folding those two into one function would make one of
+        them lie.
         """
         value = self._model.get(option.name)
         return option.default if value is UNSET else value
@@ -342,6 +364,7 @@ class Session:
         self.set_read_only("Hyprland is no longer running")
 
     def _applied(self, result: ApplyResult) -> None:
+        self._pending_restart.update(result.pending_restart)
         if self.on_applied is not None:
             self.on_applied(result)
 

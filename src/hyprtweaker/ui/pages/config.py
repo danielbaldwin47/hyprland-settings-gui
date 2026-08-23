@@ -25,6 +25,7 @@ class ConfigPage:
     def __init__(self, plan: PagePlan, factory: RowFactory) -> None:
         self._plan = plan
         self._rows: list[OptionRow] = []
+        self._by_name: dict[str, OptionRow] = {}
 
         self._page = Adw.PreferencesPage(title=plan.title)
         for group_plan in plan.groups:
@@ -32,6 +33,7 @@ class ConfigPage:
             for option in group_plan.options:
                 row = factory.build(option)
                 self._rows.append(row)
+                self._by_name[option.name] = row
                 group.add(row.widget)
             self._page.add(group)
 
@@ -50,20 +52,30 @@ class ConfigPage:
     def rows(self) -> tuple[OptionRow, ...]:
         return tuple(self._rows)
 
+    def row(self, name: str) -> OptionRow | None:
+        """The Row for one Option name, if this Page built it.
+
+        `None` covers the Option the Advanced switch is currently withholding -- which is
+        why the dependency badge has to ask rather than assume.
+        """
+        return self._by_name.get(name)
+
     def refresh(self) -> None:
-        """Re-read the model into every control on this Page."""
+        """Re-read the model into every control on this Page, chrome included."""
         for row in self._rows:
             row.refresh()
+            row.chrome.refresh()
 
-    def set_editable(self, editable: bool) -> None:
-        """Make only the controls insensitive, never the Rows (ADR-0013 §3).
+    def refresh_chrome(self) -> None:
+        """Re-decide the suffix strips without touching the controls.
 
-        A read-only session still has to be *readable*: dimming whole Rows takes their
-        titles and descriptions down to near-unreadable, which is the same mistake the ADR
-        rejects for dependency-disabled Rows.
+        The cheap half of `refresh`, and the one an edit needs: a write changes which Rows
+        count as modified and which dependencies are met, but not what any control should be
+        displaying -- and rewriting a control the user is mid-gesture on is how a spinner
+        fights back.
         """
         for row in self._rows:
-            row.control.set_sensitive(editable)
+            row.chrome.refresh()
 
 
 def _withheld_group(plan: PagePlan) -> Adw.PreferencesGroup:

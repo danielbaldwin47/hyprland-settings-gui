@@ -13,7 +13,9 @@ from _support import SAMPLE_VERSION, SCHEMA_DIR
 from hyprtweaker.engine.schema import Visibility, load_schema
 from hyprtweaker.ui.pages.plan import (
     PagePlan,
+    View,
     group_title,
+    is_visible,
     plan_config_view,
     plan_section,
 )
@@ -63,6 +65,36 @@ def test_with_advanced_off_exactly_the_non_default_tiers_are_withheld() -> None:
 
     assert shown == expected
     assert sum(plan.withheld for plan in plans) == len(SCHEMA) - len(expected)
+
+
+def test_the_hidden_tier_is_config_view_only_however_the_switch_is_set() -> None:
+    """ADR-0013 §5. `debug`, `quirks`, `experimental` and `input-capture` are the tier the
+    Advanced switch alone must not be able to put on a curated Tasks Page -- "Crash
+    Hyprland" is not a setting to meet while looking for a wallpaper.
+    """
+    hidden = next(o for o in SCHEMA if o.visibility is Visibility.HIDDEN)
+    advanced = next(o for o in SCHEMA if o.visibility is Visibility.ADVANCED)
+
+    assert not is_visible(hidden, show_advanced=True, view=View.TASKS)
+    assert is_visible(hidden, show_advanced=True, view=View.CONFIG)
+    assert is_visible(advanced, show_advanced=True, view=View.TASKS)
+    assert not is_visible(advanced, show_advanced=False, view=View.TASKS)
+
+
+def test_a_tasks_page_withholds_the_hidden_tier_it_never_shows() -> None:
+    """Withheld, not lost: the count is what an empty Page uses to explain itself."""
+    plan = plan_section(SCHEMA, "debug", show_advanced=True, view=View.TASKS)
+
+    assert plan.groups == ()
+    assert plan.withheld == len(SCHEMA.section("debug"))
+
+
+def test_the_config_view_is_planned_as_the_config_view() -> None:
+    """The one caller today, stated rather than left to a default."""
+    plans = plan_config_view(SCHEMA, show_advanced=True)
+    shown = {name for plan in plans for name in all_options(plan)}
+
+    assert shown == {option.name for option in SCHEMA}
 
 
 # --- shape ------------------------------------------------------------------------------------
