@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from ..schema import GetOptionKey, OptionType, ResolvedOption
 
@@ -58,7 +58,7 @@ class Color:
             raise ValueError(f"colour out of 32-bit range: {self.argb}")
 
     @classmethod
-    def parse(cls, text: object) -> Color:
+    def parse(cls, raw: object) -> Color:
         """Read every colour spelling Hyprland accepts (`ParserUtils.cpp:23-131`).
 
         Note the two conventions in play: a bare or `0x`-prefixed hex8 is **ARGB** (what
@@ -66,16 +66,16 @@ class Color:
         Confusing them turns an opaque colour transparent, which is why the caller never
         gets to hand-roll this.
         """
-        if isinstance(text, Color):
-            return text
-        if isinstance(text, bool):
-            raise ValueError(f"not a colour: {text!r}")
-        if isinstance(text, int):
-            return cls(text)
+        if isinstance(raw, Color):
+            return raw
+        if isinstance(raw, bool):
+            raise ValueError(f"not a colour: {raw!r}")
+        if isinstance(raw, int):
+            return cls(raw)
 
-        if not isinstance(text, str):
-            raise ValueError(f"not a colour: {text!r}")
-        value = text.strip()
+        if not isinstance(raw, str):
+            raise ValueError(f"not a colour: {raw!r}")
+        value = raw.strip()
 
         if (match := _HEX8.match(value)) is not None:
             return cls(int(match.group(1), 16))
@@ -99,7 +99,7 @@ class Color:
         if value.isdigit():
             return cls(int(value))
 
-        raise ValueError(f"not a colour: {text!r}")
+        raise ValueError(f"not a colour: {raw!r}")
 
     @classmethod
     def _from_css(cls, digits: str) -> Color:
@@ -170,14 +170,14 @@ class Gradient:
             raise ValueError("a gradient needs at least one colour")
 
     @classmethod
-    def parse(cls, text: object) -> Gradient:
+    def parse(cls, raw: object) -> Gradient:
         """Read the `descriptions`/hyprlang form: colours space-separated, `<n>deg` last."""
-        if isinstance(text, Gradient):
-            return text
-        if isinstance(text, Color):
-            return cls((text,))
-        if isinstance(text, str):
-            tokens = text.split()
+        if isinstance(raw, Gradient):
+            return raw
+        if isinstance(raw, Color):
+            return cls((raw,))
+        if isinstance(raw, str):
+            tokens = raw.split()
             if not tokens:
                 raise ValueError("empty gradient")
 
@@ -186,11 +186,11 @@ class Gradient:
                 angle = float(match.group(1))
                 tokens = tokens[:-1]
             if not tokens:
-                raise ValueError(f"gradient has an angle but no colours: {text!r}")
+                raise ValueError(f"gradient has an angle but no colours: {raw!r}")
 
             return cls(tuple(Color.parse(token) for token in tokens), angle)
 
-        raise ValueError(f"not a gradient: {text!r}")
+        raise ValueError(f"not a gradient: {raw!r}")
 
     @classmethod
     def from_getoption(cls, payload: object) -> Gradient:
@@ -241,21 +241,21 @@ class CssGaps:
         return cls(gap, gap, gap, gap)
 
     @classmethod
-    def parse(cls, text: object) -> CssGaps:
+    def parse(cls, raw: object) -> CssGaps:
         """CSS shorthand: 1 value = all sides, 2 = vertical/horizontal, 3 = t/h/b, 4 = TRBL."""
-        if isinstance(text, CssGaps):
-            return text
-        if isinstance(text, bool):
-            raise ValueError(f"not css gaps: {text!r}")
-        if isinstance(text, int):
-            return cls.uniform(text)
+        if isinstance(raw, CssGaps):
+            return raw
+        if isinstance(raw, bool):
+            raise ValueError(f"not css gaps: {raw!r}")
+        if isinstance(raw, int):
+            return cls.uniform(raw)
 
-        if isinstance(text, str):
-            parts = [int(float(part)) for part in text.replace(",", " ").split()]
-        elif isinstance(text, list | tuple):
-            parts = [int(part) for part in text]
+        if isinstance(raw, str):
+            parts = [int(float(part)) for part in raw.replace(",", " ").split()]
+        elif isinstance(raw, list | tuple):
+            parts = [int(part) for part in raw]
         else:
-            raise ValueError(f"not css gaps: {text!r}")
+            raise ValueError(f"not css gaps: {raw!r}")
 
         match parts:
             case [all_sides]:
@@ -267,7 +267,7 @@ class CssGaps:
             case [top, right, bottom, left]:
                 return cls(top, right, bottom, left)
             case _:
-                raise ValueError(f"css gaps take 1-4 values, got {len(parts)}: {text!r}")
+                raise ValueError(f"css gaps take 1-4 values, got {len(parts)}: {raw!r}")
 
     @classmethod
     def from_getoption(cls, payload: object) -> CssGaps:
@@ -306,19 +306,19 @@ class Vec2:
     y: float
 
     @classmethod
-    def parse(cls, text: object) -> Vec2:
-        if isinstance(text, Vec2):
-            return text
-        if isinstance(text, list | tuple):
-            if len(text) != 2:
-                raise ValueError(f"a vec2 takes 2 numbers, got {len(text)}: {text!r}")
-            return cls(float(text[0]), float(text[1]))
-        if isinstance(text, str):
-            parts = text.replace(",", " ").split()
+    def parse(cls, raw: object) -> Vec2:
+        if isinstance(raw, Vec2):
+            return raw
+        if isinstance(raw, list | tuple):
+            if len(raw) != 2:
+                raise ValueError(f"a vec2 takes 2 numbers, got {len(raw)}: {raw!r}")
+            return cls(float(raw[0]), float(raw[1]))
+        if isinstance(raw, str):
+            parts = raw.replace(",", " ").split()
             if len(parts) != 2:
-                raise ValueError(f"a vec2 takes 2 numbers, got {len(parts)}: {text!r}")
+                raise ValueError(f"a vec2 takes 2 numbers, got {len(parts)}: {raw!r}")
             return cls(float(parts[0]), float(parts[1]))
-        raise ValueError(f"not a vec2: {text!r}")
+        raise ValueError(f"not a vec2: {raw!r}")
 
     @classmethod
     def from_getoption(cls, payload: object) -> Vec2:
@@ -353,17 +353,17 @@ class FontWeight:
             raise ValueError("font weight name is empty")
 
     @classmethod
-    def parse(cls, text: object) -> FontWeight:
-        if isinstance(text, FontWeight):
-            return text
-        if isinstance(text, bool):
-            raise ValueError(f"not a font weight: {text!r}")
-        if isinstance(text, int):
-            return cls(text)
-        if isinstance(text, str):
-            value = text.strip()
+    def parse(cls, raw: object) -> FontWeight:
+        if isinstance(raw, FontWeight):
+            return raw
+        if isinstance(raw, bool):
+            raise ValueError(f"not a font weight: {raw!r}")
+        if isinstance(raw, int):
+            return cls(raw)
+        if isinstance(raw, str):
+            value = raw.strip()
             return cls(int(value)) if value.isdigit() else cls(value)
-        raise ValueError(f"not a font weight: {text!r}")
+        raise ValueError(f"not a font weight: {raw!r}")
 
     @classmethod
     def from_getoption(cls, payload: object) -> FontWeight:
@@ -412,21 +412,21 @@ def _number(value: float) -> str:
     return repr(float(value))
 
 
-_PARSERS = {
-    OptionType.COLOR: Color.parse,
-    OptionType.GRADIENT: Gradient.parse,
-    OptionType.CSS_GAPS: CssGaps.parse,
-    OptionType.VEC2: Vec2.parse,
-    OptionType.FONT_WEIGHT: FontWeight.parse,
-}
+ComplexValue = Color | Gradient | CssGaps | Vec2 | FontWeight
+"""The five Option types Hyprland spells non-obviously enough to need their own class."""
 
-_GETOPTION_PARSERS = {
-    OptionType.COLOR: Color.from_getoption,
-    OptionType.GRADIENT: Gradient.from_getoption,
-    OptionType.CSS_GAPS: CssGaps.from_getoption,
-    OptionType.VEC2: Vec2.from_getoption,
-    OptionType.FONT_WEIGHT: FontWeight.from_getoption,
+COMPLEX_TYPES: dict[OptionType, type[ComplexValue]] = {
+    OptionType.COLOR: Color,
+    OptionType.GRADIENT: Gradient,
+    OptionType.CSS_GAPS: CssGaps,
+    OptionType.VEC2: Vec2,
+    OptionType.FONT_WEIGHT: FontWeight,
 }
+"""One table, not three, so a sixth complex type is one line rather than a hunt.
+
+Each class is the whole answer for its type: `parse` for display text, `from_getoption` for
+an IPC reply, `lua` and `__str__` for the two ways back out.
+"""
 
 
 def parse_value(option_type: OptionType, raw: Any) -> Any:
@@ -437,8 +437,8 @@ def parse_value(option_type: OptionType, raw: Any) -> Any:
     type. Rejecting early is the point -- a string in an `int` option is a config error at
     the next reload, and finding it at set time names the option instead.
     """
-    if (parser := _PARSERS.get(option_type)) is not None:
-        return parser(raw)
+    if (complex_type := COMPLEX_TYPES.get(option_type)) is not None:
+        return complex_type.parse(raw)
 
     match option_type:
         case OptionType.BOOL:
@@ -485,32 +485,52 @@ def _parse_int(raw: Any) -> int:
     raise ValueError(f"not an integer: {raw!r}")
 
 
+def _scalar_spelling(value: Any) -> str | None:
+    """The spelling booleans and numbers share between display text and Lua source.
+
+    Both worlds write `true` and `45` identically, so the two representations only diverge
+    below this point -- at strings (quoted or not) and at the five complex types.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return _number(value)
+    return None
+
+
 def display_text(value: Any) -> str:
     """The `descriptions`/hyprlang spelling of a model value.
 
     Round-trips with `parse_value`, which is what lets a schema default, an imported
     `.conf` line and a UI edit be compared as text without caring where each came from.
     """
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float):
-        return _number(value)
-    if isinstance(value, str):
-        return value
-    return str(value)
+    scalar = _scalar_spelling(value)
+    if scalar is not None:
+        return scalar
+    return value if isinstance(value, str) else str(value)
+
+
+@runtime_checkable
+class LuaValue(Protocol):
+    """Anything that knows its own Lua literal -- the five types in `COMPLEX_TYPES`.
+
+    A Protocol rather than a base class: these are frozen slotted dataclasses whose only
+    shared behaviour *is* this one method, and it names the contract for mypy instead of
+    leaving the writer to guess with `hasattr`.
+    """
+
+    def lua(self) -> str: ...
 
 
 def lua_literal(value: Any) -> str:
     """The Lua source form of a model value -- what the writer puts in a Module."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float):
-        return _number(value)
+    scalar = _scalar_spelling(value)
+    if scalar is not None:
+        return scalar
     if isinstance(value, str):
         return lua_string(value)
-    if hasattr(value, "lua"):
-        literal: str = value.lua()
-        return literal
+    if isinstance(value, LuaValue):
+        return value.lua()
     raise TypeError(f"no Lua literal for {value!r}")
 
 
@@ -566,6 +586,6 @@ def parse_getoption(option: ResolvedOption, payload: dict[str, Any]) -> Any:
         raise KeyError(f"getoption reply for {option.name} has no {key!r} key: {payload!r}")
 
     raw = payload[key]
-    if (parser := _GETOPTION_PARSERS.get(option.type)) is not None:
-        return parser(raw)
+    if (complex_type := COMPLEX_TYPES.get(option.type)) is not None:
+        return complex_type.from_getoption(raw)
     return parse_value(option.type, raw)

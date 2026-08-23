@@ -46,6 +46,16 @@ def module_relpath(option: ResolvedOption) -> str:
     return f"{OPTIONS_DIR}/{module_stem(option)}.lua"
 
 
+def is_option_module(relpath: str) -> bool:
+    """Whether an App-dir-relative path is one of the Modules *this* writer owns.
+
+    The inverse of `module_relpath`, and its neighbour so that moving `options/` is one
+    edit. Entity Modules (`binds.lua`, `monitors.lua`, ... -- #64 and later) live beside
+    them and are emphatically not this writer's to prune.
+    """
+    return relpath.startswith(f"{OPTIONS_DIR}/") and relpath.endswith(".lua")
+
+
 def render_module(
     items: Sequence[tuple[ResolvedOption, Any]],
     *,

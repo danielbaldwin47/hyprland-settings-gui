@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.state import FORMAT_VERSION, Manifest, ModuleRecord, content_hash
 
 VERSIONS = {"app_version": "0.1.0", "schema_version": "0.56.2"}
@@ -85,7 +88,7 @@ class TestDamagedFiles:
         path = tmp_path / "manifest.json"
         path.write_text(
             '{"format_version": 1, "modules": {"a.lua": {"sha256": 5}, '
-            '"b.lua": {"sha256": "ab", "bytes": 2}}}',
+            '"b.lua": {"sha256": "ab", "size": 2}}}',
             encoding="utf-8",
         )
 
@@ -93,10 +96,16 @@ class TestDamagedFiles:
 
 
 class TestHandEditDetection:
-    def test_it_names_only_the_changed_modules(self, tmp_path: Path) -> None:
+    @pytest.fixture
+    def paths(self, tmp_path: Path) -> ConfigPaths:
+        config = ConfigPaths.rooted_at(tmp_path)
+        config.app_dir.mkdir(parents=True)
+        return config
+
+    def test_it_names_only_the_changed_modules(self, paths: ConfigPaths) -> None:
         untouched, edited = "hl.config({})\n", "hl.config({ a = 1 })\n"
-        (tmp_path / "a.lua").write_text(untouched, encoding="utf-8")
-        (tmp_path / "b.lua").write_text("-- someone else\n", encoding="utf-8")
+        (paths.app_dir / "a.lua").write_text(untouched, encoding="utf-8")
+        (paths.app_dir / "b.lua").write_text("-- someone else\n", encoding="utf-8")
 
         manifest = Manifest(
             **VERSIONS,
@@ -106,10 +115,25 @@ class TestHandEditDetection:
             },
         )
 
-        assert manifest.hand_edited(tmp_path) == ("b.lua",)
+        assert manifest.hand_edited(paths) == ("b.lua",)
 
-    def test_a_deleted_module_counts_as_edited(self, tmp_path: Path) -> None:
+    def test_a_deleted_module_counts_as_edited(self, paths: ConfigPaths) -> None:
         """Deletion is a change the app should surface, not silently undo."""
         manifest = Manifest(**VERSIONS, modules={"gone.lua": ModuleRecord.of("x")})
 
-        assert manifest.hand_edited(tmp_path) == ("gone.lua",)
+        assert manifest.hand_edited(paths) == ("gone.lua",)
+
+    def test_a_hand_edited_entrypoint_is_detected_too(self, paths: ConfigPaths) -> None:
+        """ADR-0016's Entrypoint refusal: the stored hash has to be compared to something."""
+        text = "-- generated\n"
+        paths.entrypoint.write_text("-- mine now\n", encoding="utf-8")
+        manifest = Manifest(**VERSIONS, entrypoint=ModuleRecord.of(text))
+
+        assert manifest.hand_edited(paths) == ("hyprland.lua",)
+
+    def test_an_untouched_entrypoint_is_not_reported(self, paths: ConfigPaths) -> None:
+        text = "-- generated\n"
+        paths.entrypoint.write_text(text, encoding="utf-8")
+        manifest = Manifest(**VERSIONS, entrypoint=ModuleRecord.of(text))
+
+        assert manifest.hand_edited(paths) == ()

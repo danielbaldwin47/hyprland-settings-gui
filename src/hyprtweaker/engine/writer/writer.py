@@ -22,15 +22,15 @@ this; the Writer stays synchronous and ignorant of the compositor.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import paths as paths_module
 from ..model.options import ConfigModel
-from ..paths import ConfigPaths
+from ..paths import ENTRYPOINT_NAME, ConfigPaths
 from ..state.manifest import Manifest, ModuleRecord
 from . import syntax
-from .modules import module_relpath, render_entrypoint, render_module
+from .modules import is_option_module, module_relpath, render_entrypoint, render_module
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +48,32 @@ class ModuleSet:
     bridges: tuple[str, ...]
     user: str | None
 
+    @classmethod
+    def discover(cls, paths: ConfigPaths, module_paths: Sequence[str]) -> ModuleSet:
+        """The require order for `module_paths` plus whatever else is on disk."""
+        generated = []
+        if paths.vars_lua.is_file():
+            # First: the imported `$variable` table the other Modules read.
+            generated.append(paths.require_path(paths.vars_lua))
+        generated += [paths.require_path(paths.app_dir / name) for name in sorted(module_paths)]
+
+        bridges = (
+            sorted(
+                paths.require_path(path)
+                for path in paths.bridge_dir.glob("*.lua")
+                if path.is_file()
+            )
+            if paths.bridge_dir.is_dir()
+            else []
+        )
+
+        return cls(
+            modules=tuple(generated),
+            legacy=paths.require_path(paths.legacy_lua) if paths.legacy_lua.is_file() else None,
+            bridges=tuple(bridges),
+            user=paths.require_path(paths.user_lua) if paths.user_lua.is_file() else None,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class WriteResult:
@@ -58,7 +84,22 @@ class WriteResult:
     removed: tuple[str, ...]
     entrypoint_written: bool
     hand_edited: tuple[str, ...]
-    """Modules whose bytes on disk did not match the Manifest *before* this write."""
+    """App-owned files whose bytes on disk did not match the Manifest before this write."""
+
+    skipped: tuple[str, ...] = ()
+    """Files this write would have changed but left alone because they were hand-edited.
+
+    The model and the disk now disagree for these, on purpose. Resolving that is a user
+    decision -- adopt-into-legacy or overwrite (ADR-0005) -- surfaced by the Banner
+    (ADR-0016), so the Writer reports rather than picks.
+    """
+
+    syntax_gate_ran: bool = True
+    """False when no `luac` was on this machine, so nothing was actually parse-checked.
+
+    The gate degrades rather than blocking a save (`syntax.gate_available`), but a caller
+    that assumed a guarantee it did not get would be worse than one that knows.
+    """
 
     @property
     def changed(self) -> bool:
@@ -90,47 +131,21 @@ class Writer:
         values the user has since reset.
         """
         rendered: dict[str, str] = {}
+        sources: dict[str, str] = {}
         for section in model.sections():
             items = model.section(section)
-            rendered[module_relpath(items[0][0])] = render_module(
-                items, app_version=self._app_version
-            )
+            relpath = module_relpath(items[0][0])
+            if relpath in rendered:
+                # Two Sections sharing a Lua root would silently drop a whole Module's
+                # worth of settings. Clean on 0.56.2; a future release must not make it
+                # true quietly.
+                raise ValueError(
+                    f"Sections {sources[relpath]!r} and {section!r} both render to "
+                    f"{relpath}; one of them would be lost"
+                )
+            sources[relpath] = section
+            rendered[relpath] = render_module(items, app_version=self._app_version)
         return rendered
-
-    def discover_module_set(self, module_paths: list[str]) -> ModuleSet:
-        """Turn the rendered Module list plus what is on disk into the require order."""
-        app_dir = self._paths.app_dir
-
-        generated = []
-        if self._paths.vars_lua.is_file():
-            # First: the imported `$variable` table the other Modules read.
-            generated.append(self._paths.require_path(self._paths.vars_lua))
-        generated += [self._paths.require_path(app_dir / name) for name in sorted(module_paths)]
-
-        bridges = (
-            sorted(
-                self._paths.require_path(path)
-                for path in self._paths.bridge_dir.glob("*.lua")
-                if path.is_file()
-            )
-            if self._paths.bridge_dir.is_dir()
-            else []
-        )
-
-        return ModuleSet(
-            modules=tuple(generated),
-            legacy=(
-                self._paths.require_path(self._paths.legacy_lua)
-                if self._paths.legacy_lua.is_file()
-                else None
-            ),
-            bridges=tuple(bridges),
-            user=(
-                self._paths.require_path(self._paths.user_lua)
-                if self._paths.user_lua.is_file()
-                else None
-            ),
-        )
 
     def render_entrypoint(self, module_set: ModuleSet) -> str:
         return render_entrypoint(
@@ -143,43 +158,73 @@ class Writer:
 
     # --- writing ------------------------------------------------------------------------
 
-    def write(self, model: ConfigModel) -> WriteResult:
-        """Render, gate, and land the whole Module set plus the Entrypoint."""
+    def write(self, model: ConfigModel, *, overwrite_hand_edits: bool = False) -> WriteResult:
+        """Render, gate, and land the whole Module set plus the Entrypoint.
+
+        Files an editor got to first are **skipped**, not rewritten. ADR-0005 makes that a
+        user's choice -- "on mismatch the app warns and offers adopt-into-legacy or
+        overwrite" -- and ADR-0016 spells out the recovery: a Banner offering
+        restore-last-known-good or open-in-editor, never an automatic write. So the default
+        reports and stands down; `overwrite_hand_edits=True` is the caller carrying the
+        user's answer back in.
+
+        Nothing reaches disk until every rendered file has passed the syntax gate: a
+        half-written Module set is worse than no write at all.
+        """
         rendered = self.render_modules(model)
-        module_set = self.discover_module_set(list(rendered))
+        module_set = ModuleSet.discover(self._paths, list(rendered))
         entrypoint_text = self.render_entrypoint(module_set)
 
-        # Gate everything before anything lands: a half-written set is worse than no write.
+        gate_ran = syntax.gate_available()
         for name, text in sorted(rendered.items()):
             syntax.gate(text, name)
-        syntax.gate(entrypoint_text, paths_module.ENTRYPOINT_NAME)
+        syntax.gate(entrypoint_text, ENTRYPOINT_NAME)
 
         manifest = Manifest.load(
             self._paths.manifest,
             app_version=self._app_version,
             schema_version=model.schema.hyprland_version,
         )
-        hand_edited = manifest.hand_edited(self._paths.app_dir)
+        hand_edited = manifest.hand_edited(self._paths)
+        off_limits: frozenset[str] = (
+            frozenset() if overwrite_hand_edits else frozenset(hand_edited)
+        )
 
         self._paths.options_dir.mkdir(parents=True, exist_ok=True)
 
         written: list[str] = []
         unchanged: list[str] = []
+        skipped: list[str] = []
         for name, text in sorted(rendered.items()):
-            if self._write_if_changed(self._paths.app_dir / name, text):
+            if name in off_limits:
+                skipped.append(name)
+            elif self._write_if_changed(self._paths.app_dir / name, text):
                 written.append(name)
             else:
                 unchanged.append(name)
 
-        removed = self._prune(manifest, keep=set(rendered))
-        entrypoint_written = self._write_if_changed(self._paths.entrypoint, entrypoint_text)
+        removed = self._prune(manifest, keep=set(rendered), off_limits=off_limits)
 
+        if ENTRYPOINT_NAME in off_limits:
+            skipped.append(ENTRYPOINT_NAME)
+            entrypoint_written = False
+        else:
+            entrypoint_written = self._write_if_changed(self._paths.entrypoint, entrypoint_text)
+
+        # The Manifest records what is on disk, so a skipped file keeps the hash it had --
+        # overwriting it with the hash of bytes nobody wrote would erase the hand edit.
+        records = {
+            name: manifest.modules[name] if name in off_limits else ModuleRecord.of(text)
+            for name, text in rendered.items()
+        }
         manifest = manifest.with_versions(
             app_version=self._app_version,
             schema_version=model.schema.hyprland_version,
         ).with_modules(
-            {name: ModuleRecord.of(text) for name, text in rendered.items()},
-            ModuleRecord.of(entrypoint_text),
+            records,
+            manifest.entrypoint
+            if ENTRYPOINT_NAME in off_limits
+            else ModuleRecord.of(entrypoint_text),
         )
         self._write_if_changed(self._paths.manifest, manifest.render())
 
@@ -189,6 +234,8 @@ class Writer:
             removed=tuple(removed),
             entrypoint_written=entrypoint_written,
             hand_edited=hand_edited,
+            skipped=tuple(sorted(skipped)),
+            syntax_gate_ran=gate_ran,
         )
 
     # --- internals ----------------------------------------------------------------------
@@ -213,16 +260,19 @@ class Writer:
         os.replace(temporary, path)
         return True
 
-    def _prune(self, manifest: Manifest, keep: set[str]) -> list[str]:
+    def _prune(
+        self, manifest: Manifest, keep: set[str], off_limits: frozenset[str]
+    ) -> list[str]:
         """Delete Modules the model no longer produces.
 
         Scoped to `options/` and to files the Manifest says the app wrote: a Module the app
         never claimed is somebody else's, and deleting it would be exactly the "manager over
-        your dots" behaviour the app refuses (ADR-0005).
+        your dots" behaviour the app refuses (ADR-0005). A hand-edited Module is somebody
+        else's too now, so deleting it is as wrong as overwriting it.
         """
         removed: list[str] = []
         for name in sorted(manifest.modules):
-            if name in keep or not name.startswith(f"{paths_module.OPTIONS_DIR}/"):
+            if name in keep or name in off_limits or not is_option_module(name):
                 continue
             path = self._paths.app_dir / name
             if path.is_file():

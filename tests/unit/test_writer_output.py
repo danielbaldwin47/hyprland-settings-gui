@@ -7,6 +7,7 @@ reload not happening. The App dir is a throwaway `tmp_path`, so these run anywhe
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,8 +15,9 @@ from _support import SAMPLE_APP_VERSION, sample_model
 
 from hyprtweaker.engine.model import ConfigModel
 from hyprtweaker.engine.paths import ConfigPaths
+from hyprtweaker.engine.schema import Schema
 from hyprtweaker.engine.state import Manifest
-from hyprtweaker.engine.writer import ProtectedFile, Writer
+from hyprtweaker.engine.writer import ProtectedFile, Writer, gate_available
 
 
 @pytest.fixture
@@ -82,6 +84,36 @@ class TestWhatLands:
         assert result.removed == ("options/misc.lua",)
         assert not (paths.app_dir / "options" / "misc.lua").exists()
         assert result.entrypoint_written, "the require list changed, so it must be rewritten"
+
+    def test_two_sections_sharing_a_lua_root_is_refused_not_silently_dropped(
+        self, writer: Writer, model: ConfigModel
+    ) -> None:
+        """Clean on 0.56.2 (21 Sections, 21 stems). A future release must not break it quietly.
+
+        The failure mode without this guard is the worst kind: one Section's Module
+        overwrites the other's in the dict, and a whole page of settings vanishes from the
+        config with nothing written anywhere to say so.
+        """
+        general = model.schema["general:gaps_in"]
+        impostor = replace(general, name="ghost:gaps_in", section="ghost")
+        collided = Schema(
+            hyprland_version=model.schema.hyprland_version, options=(general, impostor)
+        )
+
+        clash = ConfigModel(collided)
+        clash.set("general:gaps_in", 5)
+        clash.set("ghost:gaps_in", 5)
+
+        with pytest.raises(ValueError, match="would be lost"):
+            writer.render_modules(clash)
+
+
+class TestSyntaxGateReporting:
+    def test_a_write_says_whether_the_gate_actually_ran(
+        self, writer: Writer, model: ConfigModel
+    ) -> None:
+        """The gate degrades without `luac`; a caller assuming otherwise would be worse off."""
+        assert writer.write(model).syntax_gate_ran is gate_available()
 
 
 class TestProtectedFiles:
@@ -220,10 +252,71 @@ class TestManifest:
     ) -> None:
         """ADR-0016: the recovery is a banner offering restore-or-adopt, never a clobber."""
         writer.write(model)
+        edited = paths.options_dir / "general.lua"
+        edited.write_text("-- mine now\n", encoding="utf-8")
+
+        model.set("general:gaps_in", 99)
+        result = writer.write(model)
+
+        assert result.hand_edited == ("options/general.lua",)
+        assert result.skipped == ("options/general.lua",)
+        assert edited.read_text(encoding="utf-8") == "-- mine now\n"
+
+    def test_the_manifest_keeps_the_skipped_module_s_old_hash(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """Recording bytes nobody wrote would erase the very edit that was just detected."""
+        writer.write(model)
+        before = json.loads(paths.manifest.read_text(encoding="utf-8"))["modules"]
         (paths.options_dir / "general.lua").write_text("-- mine now\n", encoding="utf-8")
 
+        model.set("general:gaps_in", 99)
+        writer.write(model)
+
+        after = json.loads(paths.manifest.read_text(encoding="utf-8"))["modules"]
+        assert after["options/general.lua"] == before["options/general.lua"]
+        assert writer.write(model).hand_edited == ("options/general.lua",)
+
+    def test_the_caller_can_carry_the_user_s_overwrite_answer_back_in(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """ADR-0005 offers "adopt-into-legacy or overwrite" -- the Writer does not choose."""
+        writer.write(model)
+        edited = paths.options_dir / "general.lua"
+        edited.write_text("-- mine now\n", encoding="utf-8")
+
+        result = writer.write(model, overwrite_hand_edits=True)
+
+        assert result.skipped == ()
+        assert "hl.config(" in edited.read_text(encoding="utf-8")
+
+    def test_a_hand_edited_module_is_not_pruned_either(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """Deleting somebody's edit is as wrong as overwriting it."""
+        writer.write(model)
+        edited = paths.options_dir / "misc.lua"
+        edited.write_text("-- mine now\n", encoding="utf-8")
+
+        model.unset("misc:force_default_wallpaper")
         result = writer.write(model)
-        assert result.hand_edited == ("options/general.lua",)
+
+        assert result.removed == ()
+        assert edited.is_file()
+
+    def test_a_hand_edited_entrypoint_is_left_alone(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """ADR-0016 Entrypoint refusal: a banner, never a silent regeneration."""
+        writer.write(model)
+        paths.entrypoint.write_text("-- mine now\n", encoding="utf-8")
+
+        model.set("decoration:rounding", 12)
+        result = writer.write(model)
+
+        assert "hyprland.lua" in result.hand_edited
+        assert not result.entrypoint_written
+        assert paths.entrypoint.read_text(encoding="utf-8") == "-- mine now\n"
 
     def test_migration_provenance_survives_a_later_write(
         self, writer: Writer, paths: ConfigPaths, model: ConfigModel

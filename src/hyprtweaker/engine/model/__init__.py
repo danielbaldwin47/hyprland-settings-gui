@@ -32,12 +32,16 @@ from .options import (
     UnknownOption,
 )
 from .values import (
+    COMPLEX_TYPES,
     Color,
+    ComplexValue,
     CssGaps,
     FontWeight,
     Gradient,
+    LuaValue,
     Vec2,
     display_text,
+    has_emittable_null,
     lua_literal,
     lua_literal_for,
     lua_string,
@@ -46,17 +50,21 @@ from .values import (
 )
 
 __all__ = [
+    "COMPLEX_TYPES",
     "UNSET",
     "Color",
+    "ComplexValue",
     "ConfigModel",
     "CssGaps",
     "FontWeight",
     "Gradient",
+    "LuaValue",
     "NotNullable",
     "OptionValue",
     "UnknownOption",
     "Vec2",
     "display_text",
+    "has_emittable_null",
     "lua_literal",
     "lua_literal_for",
     "lua_string",

@@ -1,21 +1,24 @@
 """The static verify gate: `Hyprland --verify-config` over what the Writer produces.
 
-ADR-0011 tier 2. `luac -p` proves the output *parses*; only this proves Hyprland *accepts*
-it -- that every value is spelled the way its own parser reads. The two are not the same
-check, and the gap between them is where the expensive bugs live: a gradient written as
-`descriptions` text parses perfectly as Lua and is rejected as a config.
+**ADR-0011 tier 2** -- "Static (per-commit, when Hyprland present)". It is in `testpaths`
+and carries no marker, so a plain `pytest` on a developer box with Hyprland runs it and one
+without skips it. Deliberately *not* tier 3: `--verify-config` needs no compositor and
+finishes in well under a second, so gating it behind `-m hyprland` would mean the check
+that catches the most damaging class of writer bug never ran on the machine best able to
+run it.
 
-It has already earned its place. The first run of this test found five Options whose
-curated "no value" was `-1` -- valid Lua, valid hyprlang, and `invalid color "-1"` to the
-Lua engine. Nothing in the unit tier could have seen that.
+`luac -p` proves the output *parses*; only this proves Hyprland *accepts* it -- that every
+value is spelled the way its own parser reads. The gap between the two is where the
+expensive bugs live: a gradient written as `descriptions` text parses perfectly as Lua and
+is rejected as a config.
 
-Run it explicitly::
+It earned its place immediately. The first run found five Options whose curated "no value"
+was `-1` -- valid Lua, valid hyprlang, and `invalid color "-1"` to the Lua engine. Nothing
+in the unit tier could have seen that.
 
-    pytest tests/integration -m hyprland
-
-`--verify-config` *executes* the config with live bindings, so the compositor environment
-is stripped first: without that, a verify run can reach the session the developer is
-sitting in (prototype #30 FINDINGS §"sandbox").
+`--verify-config` *executes* the config with live bindings, so the compositor environment is
+stripped first: without that, a verify run can reach the session the developer is sitting in
+(prototype #30 FINDINGS §"sandbox").
 """
 
 from __future__ import annotations
@@ -39,7 +42,9 @@ from hyprtweaker.engine.writer import Writer  # noqa: E402
 SCHEMA_DIR = ROOT / "data" / "schema"
 VERIFY_TIMEOUT_SECONDS = 180
 
-pytestmark = pytest.mark.hyprland
+pytestmark = pytest.mark.skipif(
+    shutil.which("Hyprland") is None, reason="no Hyprland binary on this machine"
+)
 
 
 def verify(entrypoint: Path, runtime_dir: Path) -> subprocess.CompletedProcess[str]:
@@ -81,9 +86,6 @@ def write_everything(root: Path, version: str) -> tuple[ConfigPaths, int, int]:
 
 
 def test_every_written_output_is_a_config_hyprland_accepts(tmp_path: Path) -> None:
-    if shutil.which("Hyprland") is None:
-        pytest.skip("no Hyprland binary on this machine")
-
     paths, emitted, total = write_everything(tmp_path, "0.56.2")
     runtime_dir = tmp_path / "run"
     runtime_dir.mkdir()
@@ -103,9 +105,6 @@ def test_the_options_lua_cannot_express_are_the_only_ones_left_out(tmp_path: Pat
     The five omissions are the colour and gradient fallbacks whose only Lua spelling is
     absence (`values.has_emittable_null`). Everything else is written.
     """
-    if shutil.which("Hyprland") is None:
-        pytest.skip("no Hyprland binary on this machine")
-
     _, emitted, total = write_everything(tmp_path, "0.56.2")
 
     assert (total - emitted) == 5, f"{total - emitted} Options were skipped, expected 5"

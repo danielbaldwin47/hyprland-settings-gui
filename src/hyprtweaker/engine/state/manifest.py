@@ -24,6 +24,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from ..paths import ENTRYPOINT_NAME, ConfigPaths
+
 FORMAT_VERSION = 1
 
 
@@ -39,12 +41,13 @@ class ModuleRecord:
     """One app-written file as the app last left it."""
 
     sha256: str
-    bytes: int
+    size: int
+    """Length in bytes. A cheap first comparison, and a sanity check on the digest."""
 
     @classmethod
     def of(cls, text: str) -> ModuleRecord:
         data = text.encode("utf-8")
-        return cls(sha256=content_hash(data), bytes=len(data))
+        return cls(sha256=content_hash(data), size=len(data))
 
     def matches(self, path: Path) -> bool:
         """True when the file on disk is byte-for-byte what the app wrote."""
@@ -52,19 +55,19 @@ class ModuleRecord:
             data = path.read_bytes()
         except OSError:
             return False
-        return len(data) == self.bytes and content_hash(data) == self.sha256
+        return len(data) == self.size and content_hash(data) == self.sha256
 
     def as_json(self) -> dict[str, Any]:
-        return {"sha256": self.sha256, "bytes": self.bytes}
+        return {"sha256": self.sha256, "size": self.size}
 
     @classmethod
     def from_json(cls, payload: Any) -> ModuleRecord | None:
         if not isinstance(payload, dict):
             return None
-        digest, size = payload.get("sha256"), payload.get("bytes")
+        digest, size = payload.get("sha256"), payload.get("size")
         if not isinstance(digest, str) or not isinstance(size, int):
             return None
-        return cls(sha256=digest, bytes=size)
+        return cls(sha256=digest, size=size)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,14 +145,21 @@ class Manifest:
         """The Manifest after a write: a fresh Module set, provenance carried over."""
         return replace(self, modules=dict(modules), entrypoint=entrypoint)
 
-    def hand_edited(self, app_dir: Path) -> tuple[str, ...]:
-        """The recorded Modules whose bytes on disk are not the bytes the app wrote.
+    def hand_edited(self, paths: ConfigPaths) -> tuple[str, ...]:
+        """Every app-owned file whose bytes on disk are not the bytes the app wrote.
+
+        Includes the Entrypoint, which lives beside the App dir rather than inside it: a
+        hand-edited `hyprland.lua` is the one ADR-0016 calls Entrypoint refusal, and storing
+        its hash without ever comparing it would be dead data.
 
         A missing file counts as edited -- someone deleted it, which is a change the app
         should surface rather than silently re-create.
         """
-        return tuple(
+        edited = [
             name
             for name, record in sorted(self.modules.items())
-            if not record.matches(app_dir / name)
-        )
+            if not record.matches(paths.app_dir / name)
+        ]
+        if self.entrypoint is not None and not self.entrypoint.matches(paths.entrypoint):
+            edited.append(ENTRYPOINT_NAME)
+        return tuple(edited)

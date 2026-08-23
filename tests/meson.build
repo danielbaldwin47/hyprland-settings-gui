@@ -30,6 +30,17 @@ else
     protocol: 'exitcode',
   )
 
+  # ADR-0011 tier 2: `Hyprland --verify-config` over every written Lua output. No
+  # compositor needed, and it skips itself where no Hyprland binary exists -- so it is
+  # cheap enough to be a normal part of `meson test` and a PKGBUILD check().
+  test(
+    'static',
+    pytest,
+    args: ['-q', meson.current_source_dir() / 'static'],
+    env: test_env,
+    protocol: 'exitcode',
+  )
+
   # Skips itself when GTK, libadwaita or a display is missing; set
   # HYPRTWEAKER_REQUIRE_UI=1 to make that a failure instead (tests/ui/conftest.py).
   test(

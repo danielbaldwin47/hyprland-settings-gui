@@ -24,7 +24,13 @@ Typical use::
 from __future__ import annotations
 
 from .lua import insert, render_table, table_key
-from .modules import module_relpath, module_stem, render_entrypoint, render_module
+from .modules import (
+    is_option_module,
+    module_relpath,
+    module_stem,
+    render_entrypoint,
+    render_module,
+)
 from .syntax import LuaSyntaxError, gate, gate_available
 from .writer import ModuleSet, ProtectedFile, Writer, WriteResult
 
@@ -37,6 +43,7 @@ __all__ = [
     "gate",
     "gate_available",
     "insert",
+    "is_option_module",
     "module_relpath",
     "module_stem",
     "render_entrypoint",
