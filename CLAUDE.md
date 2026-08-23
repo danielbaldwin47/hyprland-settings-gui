@@ -16,6 +16,10 @@ Default triage vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `rea
 
 On a new Hyprland release (`Release check: Hyprland <ver>` issue), follow `docs/agents/hyprland-release-check.md`.
 
+### Self-landing
+
+Agents merge their own PRs — pre-authorized, background agents included. Gates and merge steps: `docs/agents/self-landing.md`.
+
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
