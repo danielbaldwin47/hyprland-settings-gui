@@ -67,8 +67,8 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
             self.calls.append(("quarantine", require))
             return True
 
-        def release_quarantine(self, require: str) -> bool:
-            self.calls.append(("release", require))
+        def release_quarantine(self, *requires: str) -> bool:
+            self.calls.append(("release", requires))
             return True
 
     Adw.init()
@@ -80,7 +80,20 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
     )
     session.calls = []
     app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
-    return session, MainWindow(session, application=app)
+    window = MainWindow(session, application=app)
+
+    # Toasts are counted at the door: `AdwToastOverlay` exposes no queue to read back, and
+    # "did this raise a toast?" is a real question for ADR-0016's toasts-only-for-auto-revert
+    # rule.
+    window._toast_log = []
+    raise_toast = window._toasts.add_toast
+
+    def counted(toast: Any) -> None:
+        window._toast_log.append(toast.get_title())
+        raise_toast(toast)
+
+    window._toasts.add_toast = counted
+    return session, window
 
 
 def banners(widget: Any) -> list[Any]:
@@ -140,6 +153,70 @@ def test_the_banner_shows_the_sessions_line_and_button(tmp_path: Path) -> None:
     assert banner.get_revealed()
     assert banner.get_title() == session.health.title
     assert banner.get_button_label() == "Details"
+
+
+def test_a_rejected_apply_raises_the_banner_by_itself(tmp_path: Path) -> None:
+    """The app's own transaction is how a user most often discovers the config is broken.
+
+    Regression: the Banner used to depend on a full `sync()`, which nothing called after an
+    apply -- so a rejected write raised a toast and left the Banner hidden until some
+    unrelated state change happened to refresh it.
+    """
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+
+    _session, window = build_window(tmp_path, (APP_ERROR,))
+    (banner,) = banners(window)
+    # Hidden by hand, so what follows can only be `show_result`'s doing. Under the defect it
+    # stayed hidden: nothing between an apply and the Banner ever called `sync`.
+    banner.set_revealed(False)
+
+    window.show_result(ApplyResult(ApplyOutcome.CONFIG_ERRORS, errors=(APP_ERROR,)))
+
+    assert banner.get_revealed()
+    assert banner.get_button_label() == "Details"
+
+
+def test_a_config_error_does_not_also_toast(tmp_path: Path) -> None:
+    """ADR-0016: "Toasts only for transient auto-revert events."
+
+    An error with a file behind it belongs to the Banner, which can offer to fix it. A toast
+    would be a second surface saying the same thing and offering nothing.
+    """
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+
+    _session, window = build_window(tmp_path, (APP_ERROR,))
+
+    window.show_result(ApplyResult(ApplyOutcome.CONFIG_ERRORS, errors=(APP_ERROR,)))
+
+    assert _toast_count(window) == 0
+
+
+def test_a_failure_with_no_config_errors_still_toasts(tmp_path: Path) -> None:
+    """A refused write never reached the compositor, so no Banner state describes it."""
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+
+    _session, window = build_window(tmp_path)
+
+    window.show_result(ApplyResult(ApplyOutcome.WRITE_FAILED, detail="disk full"))
+
+    assert _toast_count(window) == 1
+
+
+def test_a_severe_state_makes_the_banner_red(tmp_path: Path) -> None:
+    """ADR-0016 asks for a "Red Banner" on an Entrypoint refusal."""
+    _session, window = build_window(tmp_path, (ENTRYPOINT_ERROR,))
+    window.sync()
+
+    (banner,) = banners(window)
+    assert "error" in banner.get_css_classes()
+
+
+def test_an_ordinary_error_leaves_the_banner_plain(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path, (APP_ERROR,))
+    window.sync()
+
+    (banner,) = banners(window)
+    assert "error" not in banner.get_css_classes()
 
 
 def test_a_healthy_session_hides_the_banner(tmp_path: Path) -> None:
@@ -258,7 +335,24 @@ def test_the_banner_button_lifts_a_quarantine_when_there_is_nothing_to_show(
     assert banner.get_button_label() == "Re-enable"
     banner.emit("button-clicked")
 
-    assert session.calls == [("release", "user")]
+    assert session.calls == [("release", ("user",))]
+
+
+def test_two_quarantines_are_lifted_in_one_rewrite(tmp_path: Path) -> None:
+    """Two calls would be two Entrypoint rewrites racing each other through the queue."""
+    session, window = build_window(tmp_path, quarantined=("bridge/matugen", "user"))
+    window.sync()
+
+    (banner,) = banners(window)
+    banner.emit("button-clicked")
+
+    assert session.calls == [("release", ("bridge/matugen", "user"))]
+
+
+def _toast_count(window: Any) -> int:
+    """How many toasts the window has raised. The overlay does not expose a queue, so the
+    stub counts them at the door."""
+    return len(window._toast_log)
 
 
 def _click(dialog: Any, label: str) -> None:

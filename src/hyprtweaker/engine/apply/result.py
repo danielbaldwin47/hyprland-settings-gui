@@ -185,17 +185,6 @@ class ApplyResult:
     """Human-readable "why", for the outcomes whose cause is an exception message."""
 
     @property
-    def stranded(self) -> bool:
-        """Config errors *and* no keybinds: Hyprland's emergency mode (ADR-0016).
-
-        The one condition that lets the app overwrite a hand edit without asking. Both
-        halves are required -- errors alone is an ordinary unhealthy state, and a config
-        that genuinely declares no binds is a legitimate (if unusual) choice that nothing
-        went wrong in.
-        """
-        return self.outcome is ApplyOutcome.CONFIG_ERRORS and self.binds == 0
-
-    @property
     def ok(self) -> bool:
         """Nothing is known to have gone wrong -- so there is nothing to tell the user.
 

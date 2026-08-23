@@ -147,6 +147,10 @@ class Reloader:
         """Hold `in_flight` open across the caller's own confirmation step."""
         return _Confirming(self)
 
+    def set_in_flight(self, value: bool) -> None:
+        """Raise or drop the correlation flag. `confirming()` is the way to call this."""
+        self._in_flight = value
+
     async def reload(self) -> ReloadReport:
         """Reload once and report what the config now says. Never raises.
 
@@ -210,11 +214,11 @@ class _Confirming:
         self._reloader = reloader
 
     def __enter__(self) -> _Confirming:
-        self._reloader._in_flight = True
+        self._reloader.set_in_flight(True)
         return self
 
     def __exit__(self, *_: Any) -> None:
-        self._reloader._in_flight = False
+        self._reloader.set_in_flight(False)
 
 
 class ApplyTransaction:

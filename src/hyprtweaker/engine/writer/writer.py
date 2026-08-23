@@ -58,6 +58,31 @@ class ModuleSet:
     not there would put a comment in the config about a file the user never had.
     """
 
+    @property
+    def foreign(self) -> tuple[str, ...]:
+        """Every require the app does not own: `legacy`, the Bridges, `user`.
+
+        The three tiers Quarantine may touch, and the ones the Writer must never rewrite.
+        """
+        return tuple(
+            name for name in (self.legacy, self.user, *self.bridges) if name is not None
+        )
+
+    def require_for(self, path: str) -> str | None:
+        """The foreign `require` a printed error path names, or `None` for none of them.
+
+        Matched by suffix against the requires this app would actually emit, never derived
+        from the printed path by stripping a prefix -- the path Hyprland printed is the one
+        it opened, which may have travelled through a symlinked dotfile directory or a `$HOME`
+        resolved differently (`ownership.py` documents the same hazard). A quarantine recorded
+        under a name the Entrypoint never emits would be a Banner claiming a file is disabled
+        while the config went on loading it.
+        """
+        for require in self.foreign:
+            if path == f"{require}.lua" or path.endswith(f"/{require}.lua"):
+                return require
+        return None
+
     @classmethod
     def discover(
         cls,
@@ -239,11 +264,7 @@ class Writer:
         Nothing reaches disk until every rendered file has passed the syntax gate: a
         half-written Module set is worse than no write at all.
         """
-        manifest = Manifest.load(
-            self._paths.manifest,
-            app_version=self._app_version,
-            schema_version=model.schema.hyprland_version,
-        )
+        manifest = self._manifest_for(model)
 
         rendered = self.render_modules(model)
         # Read before the Entrypoint is rendered, because Quarantine is a fact about which
@@ -364,7 +385,7 @@ class Writer:
 
         Returns whether the bytes on disk actually changed.
         """
-        path = self._path_for(module)
+        path = self._paths.file_for(module)
         if path in self._paths.protected:
             raise ProtectedFile(f"{path} is never rewritten by hyprtweaker")
 
@@ -417,12 +438,6 @@ class Writer:
         return self.regenerate_entrypoint(model)
 
     # --- internals ----------------------------------------------------------------------
-
-    def _path_for(self, module: str) -> Path:
-        """Where an app-owned name lives. The Entrypoint is the one outside the App dir."""
-        if module == ENTRYPOINT_NAME:
-            return self._paths.entrypoint
-        return self._paths.app_dir / module
 
     def _manifest_for(self, model: ConfigModel) -> Manifest:
         return Manifest.load(

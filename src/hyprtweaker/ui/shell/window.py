@@ -64,6 +64,13 @@ accelerator when there is an application. The controller is what makes the keyst
 all (and what the UI tier can drive); the accelerator is what makes the menu item show
 "Ctrl+Z" beside itself."""
 
+SEVERE_BANNER_CLASS = "error"
+"""libadwaita's own red styling, for ADR-0016's "Red Banner".
+
+A style class rather than a colour, so it follows the user's theme and their accent choice
+-- a hard-coded red is the one thing that would look wrong in every theme but the one it was
+picked in."""
+
 UNDO_TOAST_SECONDS = 4
 """Long enough to notice and reach, short enough not to sit over the Row that just changed."""
 
@@ -246,14 +253,32 @@ class MainWindow(Adw.ApplicationWindow):
         for page in self._pages:
             page.refresh()
 
+        self.sync_banner()
+        self._undo_action.set_enabled(self._session.can_undo)
+
+    def sync_banner(self) -> None:
+        """Make the one Banner agree with `Session.health`, and nothing else.
+
+        Split out of `sync` because it runs on a different schedule. Every finished Apply
+        transaction can change the health -- that is how a rejected write raises the Banner --
+        but a full `sync` refreshes all 353 Rows, which is far too much to spend per apply on
+        a config that is usually fine.
+        """
         health = self._session.health
         self._banner.set_title(health.title)
         self._banner.set_revealed(health.unhealthy)
-        self._banner.set_button_label(health.button or "")
         # libadwaita shows the button whenever the label is non-empty, so clearing it is how
         # a Banner with nothing to open loses its button rather than keeping a dead one.
+        self._banner.set_button_label(health.button or "")
+        # Off, because these titles carry file names: a path containing an ampersand is not
+        # markup, and a Banner that tried to parse it as markup would render nothing at all.
         self._banner.set_use_markup(False)
-        self._undo_action.set_enabled(self._session.can_undo)
+        # ADR-0016's red Banner, for the states where the config is not doing what the user
+        # believes it is: an Entrypoint refusal, no keybinds, or a recovery that gave up.
+        if health.severe:
+            self._banner.add_css_class(SEVERE_BANNER_CLASS)
+        else:
+            self._banner.remove_css_class(SEVERE_BANNER_CLASS)
 
     def show_result(self, result: ApplyResult) -> None:
         """What a finished Apply transaction changes about the view.
@@ -263,19 +288,34 @@ class MainWindow(Adw.ApplicationWindow):
         refused wants no pill at all (`ApplyResult.pending_restart` only names keys whose
         bytes actually landed -- ADR-0010).
 
-        Then the failure line, if there was a failure. A *successful* transaction gets
-        nothing from here -- instant apply's whole promise is that the change is the feedback
-        (ADR-0003) -- and the offer to undo it arrives separately, through `offer_undo`, from
-        the session that knows whether a gesture was actually recorded. One toast, never two:
-        a failure withdraws any offer still on screen, because a change that did not land is
-        not a change to take back.
+        Then the Banner, which is the load-bearing one: a rejected write is exactly how the
+        app's own transaction discovers the config is broken, and without this the Banner
+        would only ever appear on a startup or a foreign reload -- leaving the state ADR-0016
+        exists to surface invisible in the one case the user just caused.
+
+        Then a failure toast, but only for a failure with **no** config errors behind it.
+        ADR-0016 is explicit that toasts are "only for transient auto-revert events", and an
+        error with a file attached belongs to the Banner and its dialog, which can actually
+        offer to fix it. What is left for a toast is the handful of failures that never
+        reached the compositor at all -- a refused write, a full disk -- which would otherwise
+        happen in silence.
+
+        A *successful* transaction gets no toast: instant apply's whole promise is that the
+        change is the feedback (ADR-0003), and the offer to undo it arrives separately through
+        `offer_undo`. One toast, never two: a failure withdraws any offer still on screen,
+        because a change that did not land is not a change to take back.
         """
-        for name in result.pending_restart:
+        # Both the keys that gained a "Pending restart" pill and the ones that gained -- or
+        # just lost -- a "Didn't apply" one. The losers matter as much: a badge left on a key
+        # that has since applied would be the app reporting a failure that is over.
+        for name in {*result.pending_restart, *result.keys}:
             self._refresh_chrome_for(name)
         self._undo_action.set_enabled(self._session.can_undo)
+        self.sync_banner()
 
         if not result.ok:
             self._dismiss_undo()
+        if not result.ok and not result.errors:
             self._toasts.add_toast(Adw.Toast(title=_result_summary(result), timeout=5))
 
     def show_revert(self, revert: AutoRevert) -> None:
@@ -313,8 +353,10 @@ class MainWindow(Adw.ApplicationWindow):
         if health.recovery.unhealthy:
             self.show_errors()
             return
-        for require in health.quarantined:
-            self._session.release_quarantine(require)
+        # One call for all of them: two releases would be two Entrypoint rewrites racing
+        # each other through the queue.
+        if health.quarantined:
+            self._session.release_quarantine(*health.quarantined)
 
     def show_errors(self) -> Adw.AlertDialog:
         """Open the one error dialog over the current problems. Returned for the UI tier."""

@@ -147,14 +147,6 @@ class Recovery:
         return bool(self.problems)
 
     @property
-    def lines(self) -> tuple[str, ...]:
-        """Every error line, in report order. What the error dialog lists."""
-        return tuple(line for problem in self.problems for line in problem.lines)
-
-    def by_action(self, action: Action) -> tuple[Problem, ...]:
-        return tuple(problem for problem in self.problems if problem.offers(action))
-
-    @property
     def entrypoint_refused(self) -> bool:
         """Whether the Entrypoint itself failed -- the red-Banner case.
 

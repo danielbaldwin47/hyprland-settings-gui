@@ -23,7 +23,7 @@ questions are two lookups rather than one inference.
 *plus* the newest confirmed entry for every Module, whether or not it still fits. The pin is
 ADR-0016's consequence stated as code: "pruning must never drop the newest confirmed Snapshot
 of a Module", because dropping it silently retires that Module's Last known good and leaves
-Restore-last-good with nothing to restore. Snapshot files are then garbage-collected against
+Restore last good with nothing to restore. Snapshot files are then garbage-collected against
 exactly what the retained entries reference, so the store is bounded by the entry count and
 never by how long the app has been running.
 
@@ -43,7 +43,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..paths import ENTRYPOINT_NAME, ConfigPaths
+from ..paths import ConfigPaths
 from .manifest import content_hash
 
 _log = logging.getLogger(__name__)
@@ -553,7 +553,4 @@ class Journal:
     # --- internals ----------------------------------------------------------------------
 
     def _path_for(self, module: str) -> Path:
-        """Where an app-owned name lives. The Entrypoint is the one outside the App dir."""
-        if module == ENTRYPOINT_NAME:
-            return self._paths.entrypoint
-        return self._paths.app_dir / module
+        return self._paths.file_for(module)

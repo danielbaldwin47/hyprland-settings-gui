@@ -61,6 +61,27 @@ async def settle(session: Session, runner: Runner) -> None:
     await runner.settle()
 
 
+def break_once(fake: FakeHyprland, errors: str, binds: str) -> None:
+    """Report a broken config for exactly one `configerrors` read, then be healthy again.
+
+    What a recovery that *works* looks like from outside: the reload the app is reacting to
+    is broken, and the reload its restore performs is not. A fake that stayed broken would
+    measure the escalation path instead.
+    """
+    clean_errors = fake.conversation["j/configerrors"]
+    clean_binds = fake.conversation["j/binds"]
+    armed = [True]
+
+    def hook(request: str, _seen: int) -> None:
+        if request != "j/configerrors":
+            return
+        fake.conversation["j/configerrors"] = errors if armed[0] else clean_errors
+        fake.conversation["j/binds"] = binds if armed[0] else clean_binds
+        armed[0] = False
+
+    fake.on_request = hook
+
+
 async def foreign_reload(fake: FakeHyprland, session: Session, runner: Runner) -> None:
     """Push a `configreloaded` nobody asked for, and wait for the app to finish reacting.
 
@@ -308,6 +329,115 @@ def test_the_overwritten_hand_edit_is_preserved_in_the_journal(tmp_path: Path) -
     )
 
 
+def test_the_banner_reports_what_the_emergency_overwrote(tmp_path: Path) -> None:
+    """ADR-0016: the overwritten hand edit is "preserved in the Journal and reported in the
+    Banner". Quietly keeping the edit and quietly taking it are different promises."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+
+        (app_dir(tmp_path) / GENERAL_MODULE).write_bytes(b"-- hand edited, and broken\n")
+        break_once(fake, APP_ERROR, NO_BINDS)
+        await foreign_reload(fake, session, runner)
+
+        title = session.health.title
+        assert "general.lua" in title
+        assert "history" in title, "the user has to be told their edit was kept"
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_an_emergency_restore_that_does_not_help_stops_rather_than_looping(
+    tmp_path: Path,
+) -> None:
+    """ADR-0016: "if the restore transaction itself errors ... stop auto-writing until the
+    user acts".
+
+    The emergency fires on a *state* -- errors plus zero binds -- and its own restore ends in
+    a reload that re-observes that state. Without a gate the app would restore, find itself
+    stranded again, and restore again, forever.
+    """
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+
+        (app_dir(tmp_path) / GENERAL_MODULE).write_bytes(b"-- hand edited, and broken\n")
+        # Stays broken however many times the app tries: the error is somewhere else.
+        fake.conversation["j/configerrors"] = APP_ERROR
+        fake.conversation["j/binds"] = NO_BINDS
+        await foreign_reload(fake, session, runner)
+
+        reloads = fake.requests.count("reload")
+        await foreign_reload(fake, session, runner)
+
+        assert session.recovery_halted
+        assert fake.requests.count("reload") - reloads <= 1, "it must not keep hammering"
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+# --- read-back mismatch and timeout ----------------------------------------------------------
+
+
+def test_a_value_that_did_not_take_joins_the_banner(tmp_path: Path) -> None:
+    """ADR-0016: an unexplained read-back mismatch "joins the Banner".
+
+    The loud shape: the model sets the key, the live config sets nothing, and no error says
+    why -- which means the Module never ran.
+    """
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+
+        # The compositor accepts the reload but reports the key as never set.
+        fake.conversation[f"j/getoption {ROUNDING}"] = (
+            '{"option": "decoration:rounding", "int": 0, "set": false }'
+        )
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+
+        assert session.health.unhealthy
+        assert ROUNDING in session.health.unapplied
+        assert "did not take effect" in session.health.title
+        assert not session.recovery.unhealthy, "no configerrors -- this is the quiet failure"
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_timeout_re_polls_once_and_raises_the_banner_for_what_it_finds(
+    tmp_path: Path,
+) -> None:
+    """ADR-0016 §Timeout: "re-poll once; if still unconfirmed, treat as a foreign-unknown
+    state -- full re-read, Banner if errors"."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+
+        # The reload never announces itself, so the transaction times out; by the time the
+        # app looks again, the config is visibly broken.
+        fake.reload_emits_event = False
+        fake.conversation["j/configerrors"] = USER_ERROR
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+
+        assert session.recovery.unhealthy, "the re-poll found what the timeout could not"
+        assert session.health.button == "Details"
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
 def test_binds_present_leaves_a_hand_edit_alone(tmp_path: Path) -> None:
     """The consent gate is up in every case but the emergency."""
 
@@ -538,6 +668,29 @@ def test_config_errors_never_reach_a_rows_chrome(tmp_path: Path) -> None:
         state = row_state(option, session)
 
         assert state.pills == (), "an error is file-scoped; the Banner carries it"
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_a_value_that_did_not_take_does_badge_its_row(tmp_path: Path) -> None:
+    """The one carve-out ADR-0016 makes: an unexplained mismatch is *key*-scoped, unlike a
+    config error, so it belongs on the Row as well as on the Banner."""
+    from hyprtweaker.ui.rows.state import UNAPPLIED_PILL, row_state
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+
+        fake.conversation[f"j/getoption {ROUNDING}"] = (
+            '{"option": "decoration:rounding", "int": 0, "set": false }'
+        )
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+
+        state = row_state(session.schema[ROUNDING], session)
+        assert [pill.label for pill in state.pills] == [UNAPPLIED_PILL]
 
     run_with_fake(
         scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)

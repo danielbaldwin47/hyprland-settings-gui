@@ -116,6 +116,17 @@ class ConfigPaths:
         """Files the app must never rewrite, whatever a caller asks for (ADR-0005)."""
         return frozenset({self.user_lua, self.legacy_lua})
 
+    def file_for(self, name: str) -> Path:
+        """Where an app-owned name lives. The Entrypoint is the one outside the App dir.
+
+        The single answer to a question four separate places were each answering for
+        themselves -- the Manifest recording a hash, the Journal reading Snapshot bytes, the
+        Writer restoring them, and the Session opening a file for the user. They must agree:
+        a Journal that snapshotted `hyprtweaker/hyprland.lua` while the Writer wrote
+        `hyprland.lua` would restore a file nothing requires.
+        """
+        return self.entrypoint if name == ENTRYPOINT_NAME else self.app_dir / name
+
     def require_path(self, path: Path) -> str:
         """The `require("...")` argument for a module file, relative to the hypr dir.
 

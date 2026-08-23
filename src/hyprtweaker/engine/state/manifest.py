@@ -249,12 +249,9 @@ class Manifest:
         """The Manifest with exactly `requires` quarantined. Sorted, so writes are stable."""
         return replace(self, quarantined=tuple(sorted(set(requires))))
 
-    def is_quarantined(self, require: str) -> bool:
-        return require in self.quarantined
-
     def path_for(self, name: str, paths: ConfigPaths) -> Path:
         """Where a recorded name lives -- the Entrypoint is the one outside the App dir."""
-        return paths.entrypoint if name == ENTRYPOINT_NAME else paths.app_dir / name
+        return paths.file_for(name)
 
     def hand_edited(self, paths: ConfigPaths) -> tuple[str, ...]:
         """Every app-owned file the app cannot show it wrote in its current form.

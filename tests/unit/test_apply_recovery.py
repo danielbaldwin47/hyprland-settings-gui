@@ -139,7 +139,9 @@ def test_a_require_failure_has_no_line_to_open_at() -> None:
 def test_lines_are_reported_verbatim() -> None:
     """The `file:line` prefix is the only evidence of whose file failed -- never reworded."""
     raw = error(APP_MODULE, 7, "unknown config key 'general.nope'")
-    assert plan([raw]).lines == (raw,)
+
+    (problem,) = plan([raw]).problems
+    assert problem.lines == (raw,)
 
 
 # --- the emergency gate --------------------------------------------------------------------
@@ -210,11 +212,12 @@ def test_an_ordinary_module_error_is_not_a_refusal() -> None:
     assert not plan([error(APP_MODULE)]).entrypoint_refused
 
 
-def test_by_action_finds_every_problem_offering_one_recovery() -> None:
+def test_only_foreign_files_offer_quarantine() -> None:
+    """The app can disable somebody else's file; its own it fixes instead."""
     recovery = plan([error(USER_LUA), error(BRIDGE), error(APP_MODULE)])
 
-    quarantinable = recovery.by_action(Action.QUARANTINE)
-    assert [problem.path for problem in quarantinable] == [USER_LUA, BRIDGE]
+    quarantinable = [p.path for p in recovery.problems if p.offers(Action.QUARANTINE)]
+    assert quarantinable == [USER_LUA, BRIDGE]
 
 
 def test_blank_lines_are_not_problems() -> None:
