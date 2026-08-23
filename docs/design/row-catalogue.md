@@ -75,4 +75,7 @@ Shown: **Model**, **Rules**, **Custom keymap file** appear with Advanced pills o
 - **Continuous vs discrete is a property of the widget, not of the type.** The only control
   in the generated Rows that moves under a held pointer is the gradient's angle slider, so
   it is the only one wired to the Eval preview tier (ADR-0010); a colour dialog is modal and
-  a spin button is discrete, and both commit through the normal Apply path.
+  a spin button is discrete, and both commit through the normal Apply path. *Contested:* the
+  colour half of this convention conflicts with ADR-0010 §Eval preview as written — whether
+  colour dialogs join the Eval tier or stay modal-commit is open in #93; this bullet records
+  what shipped, not a settled ruling.
