@@ -27,11 +27,18 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..model.options import ConfigModel
-from ..paths import ENTRYPOINT_NAME, ConfigPaths
+from ..paths import BINDS_MODULE, ENTRYPOINT_NAME, ConfigPaths
 from ..state.manifest import Manifest, ModuleRecord
 from ..state.manifest import is_damaged as manifest_is_damaged
 from . import syntax
-from .modules import is_option_module, module_relpath, render_entrypoint, render_module
+from .binds import render_binds_module
+from .modules import (
+    ENTITY_MODULES,
+    is_generated_module,
+    module_relpath,
+    render_entrypoint,
+    render_module,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +205,10 @@ class Writer:
                 )
             sources[relpath] = section
             rendered[relpath] = render_module(items, app_version=self._app_version)
+
+        binds = render_binds_module(model.entities, app_version=self._app_version)
+        if binds is not None:
+            rendered[BINDS_MODULE] = binds
         return rendered
 
     def module_options(self, model: ConfigModel) -> dict[str, tuple[str, ...]]:
@@ -230,6 +241,7 @@ class Writer:
         render a single line of Lua.
         """
         names = set(self.module_options(model))
+        names.update(ENTITY_MODULES)
         if self._paths.options_dir.is_dir():
             names.update(
                 path.relative_to(self._paths.app_dir).as_posix()
@@ -525,7 +537,7 @@ class Writer:
         """
         removed: list[str] = []
         for name in sorted(manifest.modules):
-            if name in keep or name in off_limits or not is_option_module(name):
+            if name in keep or name in off_limits or not is_generated_module(name):
                 continue
             path = self._paths.app_dir / name
             if path.is_file():

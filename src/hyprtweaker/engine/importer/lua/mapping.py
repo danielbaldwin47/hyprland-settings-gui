@@ -92,6 +92,53 @@ def _table(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in value.items()} if isinstance(value, Mapping) else {}
 
 
+def dispatcher_from_value(value: Any) -> DispatcherCall | None:
+    """A recorded `hl.dsp.*` factory result as a `DispatcherCall`, or `None`.
+
+    Module level rather than a `_Mapper` method because the writer reads its own
+    `binds.lua` back through the same sandbox (ADR-0007, #64): a second copy of this would
+    be a second place for the written form and the read form to drift apart.
+    """
+    if not isinstance(value, Mapping) or not isinstance(value.get("__dsp"), str):
+        return None
+    raw = value.get("args")
+    if isinstance(raw, Mapping):
+        return DispatcherCall(path=str(value["__dsp"]), args=_table(raw))
+    if isinstance(raw, list):
+        if len(raw) == 1 and isinstance(raw[0], Mapping):
+            return DispatcherCall(path=str(value["__dsp"]), args=_table(raw[0]))
+        return DispatcherCall(path=str(value["__dsp"]), positional=tuple(raw))
+    return DispatcherCall(path=str(value["__dsp"]))
+
+
+def bind_options_from_value(value: Any) -> BindOptions:
+    """A recorded `HL.BindOptions` table as `BindOptions`.
+
+    The device list is read from `list` -- the stub's spelling (`device: {inclusive?:
+    boolean, list?: string[]}`) and the one `BindOptions.as_table` emits. `names` is
+    accepted too because it is what this reader looked for before the writer existed, and a
+    config imported by an older build should not lose its device list on the next read.
+    """
+    table = _table(value)
+    flags = {name: bool(table[name]) for name in BIND_FLAGS if name in table}
+    description = table.get("description") or table.get("desc")
+    device = table.get("device")
+    bind_device = None
+    if isinstance(device, Mapping):
+        names = device.get("list")
+        if not isinstance(names, list):
+            names = device.get("names")
+        bind_device = BindDevice(
+            inclusive=bool(device.get("inclusive", True)),
+            names=tuple(str(name) for name in names) if isinstance(names, list) else (),
+        )
+    return BindOptions(
+        description=str(description) if isinstance(description, str) else "",
+        device=bind_device,
+        **flags,
+    )
+
+
 def _has_function(value: Any) -> bool:
     """Whether a captured value carries a closure anywhere inside it."""
     if isinstance(value, Mapping):
@@ -422,34 +469,10 @@ class _Mapper:
         )
 
     def _dispatcher(self, value: Any) -> DispatcherCall | None:
-        if not isinstance(value, Mapping) or not isinstance(value.get("__dsp"), str):
-            return None
-        raw = value.get("args")
-        if isinstance(raw, Mapping):
-            return DispatcherCall(path=str(value["__dsp"]), args=_table(raw))
-        if isinstance(raw, list):
-            if len(raw) == 1 and isinstance(raw[0], Mapping):
-                return DispatcherCall(path=str(value["__dsp"]), args=_table(raw[0]))
-            return DispatcherCall(path=str(value["__dsp"]), positional=tuple(raw))
-        return DispatcherCall(path=str(value["__dsp"]))
+        return dispatcher_from_value(value)
 
     def _bind_options(self, value: Any) -> BindOptions:
-        table = _table(value)
-        flags = {name: bool(table[name]) for name in BIND_FLAGS if name in table}
-        description = table.get("description")
-        device = table.get("device")
-        bind_device = None
-        if isinstance(device, Mapping):
-            names = device.get("names")
-            bind_device = BindDevice(
-                inclusive=bool(device.get("inclusive", True)),
-                names=tuple(str(name) for name in names) if isinstance(names, list) else (),
-            )
-        return BindOptions(
-            description=str(description) if isinstance(description, str) else "",
-            device=bind_device,
-            **flags,
-        )
+        return bind_options_from_value(value)
 
     def _map_unbind(self, call: Call) -> None:
         args = _positional(call)

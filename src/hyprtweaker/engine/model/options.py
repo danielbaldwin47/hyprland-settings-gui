@@ -26,6 +26,7 @@ from collections.abc import Iterator
 from typing import Any, Final
 
 from ..schema import ResolvedOption, Schema
+from .entities import EntitySet
 from .values import display_text, has_emittable_null, parse_value
 
 
@@ -67,10 +68,30 @@ class ConfigModel:
     def __init__(self, schema: Schema) -> None:
         self._schema = schema
         self._values: dict[str, Any] = {}
+        self._entities = EntitySet()
 
     @property
     def schema(self) -> Schema:
         return self._schema
+
+    @property
+    def entities(self) -> EntitySet:
+        """The non-Option half of the config -- Binds, Rules, monitor rules (ADR-0007).
+
+        Held here, beside the Option values, because "the model" is what the Writer renders
+        and what the Apply transaction applies, and an Entity that lived somewhere else
+        would need every one of those seams widened to carry it. Mutable and edited in
+        place: for Binds and Rules position *is* identity, so reordering the list is the
+        edit, not a re-keying.
+
+        Empty for a model nobody has imported into, which is why attaching it here changes
+        nothing for existing callers -- an empty `EntitySet` renders no Modules at all.
+        """
+        return self._entities
+
+    def adopt_entities(self, entities: EntitySet) -> None:
+        """Replace the Entity half wholesale -- what an Importer hands back (ADR-0009)."""
+        self._entities = entities
 
     # --- reading ------------------------------------------------------------------------
 
