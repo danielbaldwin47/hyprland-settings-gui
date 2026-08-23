@@ -26,6 +26,8 @@ auto-revert (ADR-0016), which is the only event the ADR reserves a toast for out
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import gi
@@ -43,12 +45,48 @@ from hyprtweaker.engine.apply import (  # noqa: E402
     UndoStep,
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
+from hyprtweaker.engine.ipc import CommandClient, Instance, NoInstance  # noqa: E402
+from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
+from hyprtweaker.engine.migration.export import render as export_render  # noqa: E402
+from hyprtweaker.engine.migration.flow import MigrationFlow, fresh_start  # noqa: E402
+from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
+from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
 from hyprtweaker.engine.schema import Schema  # noqa: E402
 from hyprtweaker.session import AutoRevert, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.errors import error_dialog  # noqa: E402
+from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
+    MigrationDialog,
+    export_dialog,
+    import_dialog,
+    migration_dialog,
+)
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
+
+IMPORT_ACTION = "import-config"
+EXPORT_ACTION = "export-config"
+
+READ_ONLY_REASON = {
+    ConfigKind.LEGACY_CONF: "You are still on hyprland.conf -- settings can't be saved yet.",
+    ConfigKind.FOREIGN_LUA: (
+        "Your hyprland.lua was not written here -- settings can't be saved until it is "
+        "imported."
+    ),
+}
+"""Why the app is read-only, in the user's terms (ADR-0009).
+
+Shown, dismissible, and not repeated: "no nagging beyond that". The app is still worth
+opening on an unmigrated box, which is why the pages render at all.
+"""
+
+
+def _discard(coro: Any) -> None:
+    """Throw away a coroutine nobody can run. See `MainWindow._spawn`."""
+    close = getattr(coro, "close", None)
+    if close is not None:
+        close()
+
 
 UNDO_ACTION = "undo"
 UNDO_ACCELERATOR = "<Control>z"
@@ -92,10 +130,22 @@ dialog answers, and that file is #71."""
 class MainWindow(Adw.ApplicationWindow):
     """The Config view over one `Session`."""
 
-    def __init__(self, session: Session, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        spawn: Callable[[Any], None] | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
 
         self._session = session
+        self._spawn = spawn or _discard
+        """How the wizard runs its coroutines (the switch, the rollback countdown).
+
+        Defaults to discarding them, which is what a bare window -- the UI smoke tier builds
+        one -- can honestly offer: the migration's live half needs the asyncio/GLib bridge
+        the application owns, and pretending otherwise would leave a switch half-done."""
         self._factory = RowFactory(
             session,
             on_edited=self._on_option_edited,
@@ -168,6 +218,13 @@ class MainWindow(Adw.ApplicationWindow):
         menu = Gio.Menu()
         menu.append("Undo", f"win.{UNDO_ACTION}")
         menu.append("Show advanced settings", f"win.{SHOW_ADVANCED_ACTION}")
+
+        interop = Gio.Menu()
+        interop.append("Import...", f"win.{IMPORT_ACTION}")
+        interop.append("Export...", f"win.{EXPORT_ACTION}")
+        # A section of its own: Import and Export are about somebody else's config coming in
+        # or this one going out, which is a different kind of act from changing a setting.
+        menu.append_section(None, interop)
         return Gtk.MenuButton(
             icon_name="open-menu-symbolic",
             menu_model=menu,
@@ -187,6 +244,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.add_action(undo)
         self._undo_action = undo
 
+        for name, handler in (
+            (IMPORT_ACTION, self._on_import),
+            (EXPORT_ACTION, self._on_export),
+        ):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", handler)
+            self.add_action(action)
+
         controller = Gtk.ShortcutController(scope=Gtk.ShortcutScope.MANAGED)
         controller.add_shortcut(
             Gtk.Shortcut(
@@ -201,6 +266,123 @@ class MainWindow(Adw.ApplicationWindow):
             # Only the label, and only when there is an application to ask: a window built
             # bare -- which is how the smoke tier builds one -- has no accel map to write to.
             application.set_accels_for_action(f"win.{UNDO_ACTION}", [UNDO_ACCELERATOR])
+
+    # --- migration, import and export ----------------------------------------------------
+
+    def migration_flow(self, source: Path | None = None) -> MigrationFlow:
+        """A flow over this session's paths and schema, wired to the live compositor if any.
+
+        The client is built here rather than borrowed from the Session because migration is
+        the one caller of `reload full-reset`, and because a first-run wizard commonly runs
+        while the Session itself is read-only -- there is no live model to apply through yet.
+        """
+        try:
+            client: CommandClient | None = CommandClient(Instance.current())
+        except NoInstance:
+            # No compositor to talk to. The wizard still detects, previews and writes; the
+            # config simply takes effect at next login instead of now.
+            client = None
+
+        flow = MigrationFlow(
+            paths=self._session.paths,
+            schema=self._session.schema,
+            app_version=self._session.app_version,
+            client=client,
+        )
+        if source is not None:
+            flow.detect()
+            flow.build_preview(source)
+        return flow
+
+    def show_migration(self, source: Path | None = None) -> MigrationDialog:
+        """Open the wizard. Returned so the UI tier can assert on what it is showing."""
+        return migration_dialog(
+            self,
+            self.migration_flow(source),
+            spawn=self._spawn,
+            on_finished=lambda _decision: self.sync(),
+        )
+
+    def route_first_run(self) -> Detection:
+        """ADR-0009's four cases, decided once at startup and acted on.
+
+        Returns the detection so the caller -- and the smoke tier -- can see which way it
+        went without inspecting dialogs.
+        """
+        session = self._session
+        pending = sentinel_read(session.paths)
+        if pending is not None:
+            self._offer_rollback(pending)
+            return detect(
+                session.paths,
+                app_version=session.app_version,
+                schema_version=session.schema.hyprland_version,
+            )
+
+        detection = detect(
+            session.paths,
+            app_version=session.app_version,
+            schema_version=session.schema.hyprland_version,
+        )
+        if detection.kind is ConfigKind.FRESH:
+            fresh_start(session.paths, session.schema, app_version=session.app_version)
+        elif detection.offers_import:
+            # Read-only until the offered import is accepted: there is nowhere honest to
+            # write while the live session is reading a file this app does not own.
+            session.set_read_only(READ_ONLY_REASON[detection.kind])
+            GLib.idle_add(self._present_offer, detection)
+        return detection
+
+    def _present_offer(self, detection: Detection) -> bool:
+        self.show_migration()
+        return GLib.SOURCE_REMOVE
+
+    def _offer_rollback(self, pending: Sentinel) -> Adw.AlertDialog:
+        """A switch nobody confirmed. Treat it as failed and offer to undo it (ADR-0009)."""
+        dialog = Adw.AlertDialog(
+            heading="A configuration switch was not finished",
+            body=(
+                "The app closed part-way through switching your configuration, so it was "
+                "never confirmed. Rolling back puts you on the configuration you had before."
+            ),
+        )
+        dialog.add_response("keep", "Keep it")
+        dialog.add_response("roll-back", "Roll back")
+        dialog.set_response_appearance("roll-back", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("roll-back")
+        dialog.set_close_response("roll-back")
+        dialog.connect("response", self._on_rollback_response, pending)
+        dialog.present(self)
+        return dialog
+
+    def _on_rollback_response(
+        self, _dialog: Adw.AlertDialog, response: str, pending: Sentinel
+    ) -> None:
+        flow = self.migration_flow()
+        if response == "keep":
+            flow.keep()
+        else:
+            self._spawn(flow.roll_back_live(pending))
+
+    def _on_import(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        import_dialog(self, self.show_migration)
+
+    def _on_export(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        export_dialog(self, self._write_export)
+
+    def _write_export(self, target: Path) -> None:
+        result = export_render(
+            self._session.model,
+            self._session.paths,
+            app_version=self._session.app_version,
+        )
+        result.write(target)
+        note = (
+            f"Exported to {target.name}"
+            if not result.missing
+            else f"Exported to {target.name}, without {len(result.missing)} unreadable file(s)"
+        )
+        self._toasts.add_toast(Adw.Toast(title=note))
 
     # --- the Config view ---------------------------------------------------------------------
 

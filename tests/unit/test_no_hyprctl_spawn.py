@@ -34,6 +34,14 @@ MAY_SPAWN = {
         "bytecode -- a compiler, not the compositor, and it is never run on user input "
         "outside the importer"
     ),
+    "migration/flow.py": (
+        "`Hyprland --verify-config` over the staged tree -- the wizard's static gate "
+        "(ADR-0009). It parses a config without a compositor, which is the whole point: "
+        "it is what proves the converted config loads *before* the live session is asked "
+        "to switch to it. Run with the session's instance signature and display stripped "
+        "from its environment, because --verify-config executes the config with live "
+        "bindings and would otherwise reach the session the user is sitting in"
+    ),
 }
 """Engine modules allowed to start a process, and why.
 

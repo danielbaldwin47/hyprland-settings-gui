@@ -59,6 +59,14 @@ package_sources = {
     'events.py',
     'instance.py',
   ],
+  'hyprtweaker/engine/migration': [
+    '__init__.py',
+    'backup.py',
+    'detect.py',
+    'export.py',
+    'flow.py',
+    'sentinel.py',
+  ],
   'hyprtweaker/engine/model': [
     '__init__.py',
     'entities.py',
@@ -90,6 +98,7 @@ package_sources = {
   'hyprtweaker/ui/dialogs': [
     '__init__.py',
     'errors.py',
+    'migration.py',
   ],
   'hyprtweaker/ui/pages': [
     '__init__.py',
