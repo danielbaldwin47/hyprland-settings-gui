@@ -29,6 +29,7 @@ from pathlib import Path
 from ..model.options import ConfigModel
 from ..paths import ENTRYPOINT_NAME, ConfigPaths
 from ..state.manifest import Manifest, ModuleRecord
+from ..state.manifest import is_damaged as manifest_is_damaged
 from . import syntax
 from .modules import is_option_module, module_relpath, render_entrypoint, render_module
 
@@ -185,7 +186,11 @@ class Writer:
             app_version=self._app_version,
             schema_version=model.schema.hyprland_version,
         )
-        hand_edited = manifest.hand_edited(self._paths)
+        hand_edited = (
+            self._everything_here(rendered)
+            if manifest_is_damaged(self._paths.manifest)
+            else manifest.hand_edited(self._paths)
+        )
         off_limits: frozenset[str] = (
             frozenset() if overwrite_hand_edits else frozenset(hand_edited)
         )
@@ -214,9 +219,21 @@ class Writer:
         # The Manifest records what is on disk, so a skipped file keeps the hash it had --
         # overwriting it with the hash of bytes nobody wrote would erase the hand edit.
         records = {
-            name: manifest.modules[name] if name in off_limits else ModuleRecord.of(text)
+            name: manifest.modules.get(name, ModuleRecord.of(text))
+            if name in off_limits
+            else ModuleRecord.of(text)
             for name, text in rendered.items()
         }
+        # A hand-edited Module the model no longer renders was spared by `_prune`, so its
+        # record has to survive too. Dropping it would leave an orphan file that nothing
+        # requires, nothing reports, and no later "overwrite" answer could ever reach.
+        records.update(
+            {
+                name: record
+                for name, record in manifest.modules.items()
+                if name in off_limits and name not in records
+            }
+        )
         manifest = manifest.with_versions(
             app_version=self._app_version,
             schema_version=model.schema.hyprland_version,
@@ -239,6 +256,22 @@ class Writer:
         )
 
     # --- internals ----------------------------------------------------------------------
+
+    def _everything_here(self, rendered: dict[str, str]) -> tuple[str, ...]:
+        """Every file this write would touch that already exists -- the no-Manifest answer.
+
+        Reached only when a Manifest file is there but will not parse: the app wrote in this
+        directory and lost its record, so it cannot vouch for a single byte of it. Refusing
+        to overwrite on a guess is the same call as for a real hand edit, and it lands the
+        user in the same place -- a Banner offering overwrite (ADR-0016) -- rather than
+        quietly replacing files it can no longer account for.
+        """
+        return tuple(
+            sorted(
+                [name for name in rendered if (self._paths.app_dir / name).is_file()]
+                + ([ENTRYPOINT_NAME] if self._paths.entrypoint.is_file() else [])
+            )
+        )
 
     def _write_if_changed(self, path: Path, text: str) -> bool:
         """Write `text` atomically unless the file already holds exactly those bytes."""

@@ -12,8 +12,14 @@
   every later write, because the Importer records it once and the writer must not lose it.
 
 The file is plain JSON with a `format_version`, read defensively: a corrupt or truncated
-Manifest degrades to "everything looks hand-edited", which is annoying but safe, rather
-than to a crash on startup.
+Manifest never crashes the app. It does not read as "nothing was ever written" either --
+that would make every hand edit invisible and therefore silently overwritable, now that
+`hand_edited` gates the writer. `is_damaged` is the distinction that keeps that honest:
+
+- **absent** -- a fresh App dir. Nothing was written here, so there is nothing to protect.
+- **present but unreadable** -- the app wrote here and lost its record. It can vouch for
+  nothing in the directory, so the writer treats the whole set as hand-edited rather than
+  overwriting on a guess.
 """
 
 from __future__ import annotations
@@ -26,7 +32,29 @@ from typing import Any
 
 from ..paths import ENTRYPOINT_NAME, ConfigPaths
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+"""Bumped from 1 when `ModuleRecord`'s `bytes` key became `size` (#51, pre-release).
+
+An older file therefore reads as damaged rather than as a Manifest whose every record
+happens to be unparseable -- which would look exactly like an empty App dir.
+"""
+
+
+def is_damaged(path: Path) -> bool:
+    """True when a Manifest file exists but cannot be read as one.
+
+    Deliberately distinct from *absent*. Both make `load` return an empty Manifest, but they
+    mean opposite things to a writer about to overwrite files: no Manifest is a fresh
+    directory, an unreadable one is a directory full of files the app can no longer account
+    for.
+    """
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return not isinstance(payload, dict) or payload.get("format_version") != FORMAT_VERSION
 
 
 def content_hash(data: bytes | str) -> str:
@@ -85,10 +113,10 @@ class Manifest:
     def load(cls, path: Path, *, app_version: str, schema_version: str) -> Manifest:
         """Read the Manifest, or return an empty one when it is missing or unreadable.
 
-        Unreadable is treated as missing on purpose. The alternative -- refusing to start --
-        turns a truncated write from an unrelated crash into a bricked app, and every
-        consequence of an empty Manifest (modules read as hand-edited) is a prompt, not a
-        loss.
+        Never raises: refusing to start would turn a truncated write from an unrelated crash
+        into a bricked app. Callers that are about to *overwrite* files need more than an
+        empty Manifest, though -- they need to know whether it was empty because there was
+        nothing, or because the record was lost. That is `is_damaged`.
         """
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))

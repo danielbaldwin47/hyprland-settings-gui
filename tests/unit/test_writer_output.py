@@ -304,6 +304,55 @@ class TestManifest:
         assert result.removed == ()
         assert edited.is_file()
 
+    def test_a_spared_module_stays_in_the_manifest_and_stays_reportable(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """A record dropped here would leave an orphan no answer could ever reach.
+
+        The Module is no longer rendered *and* hand-edited, so it is neither written nor
+        pruned. If it also fell out of the Manifest, the next write would report nothing,
+        and even an explicit "overwrite" could not find it to clean up.
+        """
+        writer.write(model)
+        edited = paths.options_dir / "misc.lua"
+        edited.write_text("-- mine now\n", encoding="utf-8")
+        model.unset("misc:force_default_wallpaper")
+        writer.write(model)
+
+        assert (
+            "options/misc.lua"
+            in json.loads(paths.manifest.read_text(encoding="utf-8"))["modules"]
+        )
+        assert writer.write(model).hand_edited == ("options/misc.lua",)
+        assert writer.write(model, overwrite_hand_edits=True).removed == ("options/misc.lua",)
+
+    def test_a_damaged_manifest_protects_the_app_dir_instead_of_ignoring_it(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """A lost record is not the same as nothing having been written.
+
+        Reading a corrupt Manifest as "no modules" would make every hand edit invisible and
+        therefore silently overwritable -- the exact loss the hash exists to prevent.
+        """
+        writer.write(model)
+        paths.manifest.write_text('{"format_version": 1, "modu', encoding="utf-8")
+        edited = paths.options_dir / "general.lua"
+        edited.write_text("-- mine now\n", encoding="utf-8")
+
+        result = writer.write(model)
+
+        assert "options/general.lua" in result.hand_edited
+        assert edited.read_text(encoding="utf-8") == "-- mine now\n"
+
+    def test_an_absent_manifest_protects_nothing(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """A fresh App dir has nothing to vouch for, so a first run must not stall."""
+        result = writer.write(model)
+
+        assert result.hand_edited == ()
+        assert result.skipped == ()
+
     def test_a_hand_edited_entrypoint_is_left_alone(
         self, writer: Writer, paths: ConfigPaths, model: ConfigModel
     ) -> None:

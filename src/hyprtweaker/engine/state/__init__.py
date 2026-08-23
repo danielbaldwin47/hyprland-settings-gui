@@ -9,6 +9,6 @@ Snapshots and the Journal arrive with #59, the Prefs file with #71.
 
 from __future__ import annotations
 
-from .manifest import FORMAT_VERSION, Manifest, ModuleRecord, content_hash
+from .manifest import FORMAT_VERSION, Manifest, ModuleRecord, content_hash, is_damaged
 
-__all__ = ["FORMAT_VERSION", "Manifest", "ModuleRecord", "content_hash"]
+__all__ = ["FORMAT_VERSION", "Manifest", "ModuleRecord", "content_hash", "is_damaged"]

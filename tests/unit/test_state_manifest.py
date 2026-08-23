@@ -12,7 +12,13 @@ from pathlib import Path
 import pytest
 
 from hyprtweaker.engine.paths import ConfigPaths
-from hyprtweaker.engine.state import FORMAT_VERSION, Manifest, ModuleRecord, content_hash
+from hyprtweaker.engine.state import (
+    FORMAT_VERSION,
+    Manifest,
+    ModuleRecord,
+    content_hash,
+    is_damaged,
+)
 
 VERSIONS = {"app_version": "0.1.0", "schema_version": "0.56.2"}
 
@@ -74,7 +80,7 @@ class TestDamagedFiles:
     ) -> None:
         """An unrelated crash mid-write must not brick the app on next launch."""
         path = tmp_path / "manifest.json"
-        path.write_text('{"format_version": 1, "modu', encoding="utf-8")
+        path.write_text('{"format_version": 2, "modu', encoding="utf-8")
 
         assert Manifest.load(path, **VERSIONS).modules == {}
 
@@ -87,12 +93,46 @@ class TestDamagedFiles:
     def test_a_malformed_module_entry_is_dropped_not_fatal(self, tmp_path: Path) -> None:
         path = tmp_path / "manifest.json"
         path.write_text(
-            '{"format_version": 1, "modules": {"a.lua": {"sha256": 5}, '
+            f'{{"format_version": {FORMAT_VERSION}, "modules": {{"a.lua": {{"sha256": 5}}, '
             '"b.lua": {"sha256": "ab", "size": 2}}}',
             encoding="utf-8",
         )
 
         assert set(Manifest.load(path, **VERSIONS).modules) == {"b.lua"}
+
+
+class TestIsDamaged:
+    """Absent and unreadable both `load` as empty, and mean opposite things to a writer."""
+
+    def test_absent_is_not_damaged(self, tmp_path: Path) -> None:
+        """A fresh App dir: nothing was written here, so there is nothing to protect."""
+        assert not is_damaged(tmp_path / "nope.json")
+
+    def test_readable_is_not_damaged(self, tmp_path: Path) -> None:
+        path = tmp_path / "manifest.json"
+        path.write_text(Manifest(**VERSIONS).render(), encoding="utf-8")
+
+        assert not is_damaged(path)
+
+    def test_truncated_is_damaged(self, tmp_path: Path) -> None:
+        path = tmp_path / "manifest.json"
+        path.write_text('{"format_version": 2, "modu', encoding="utf-8")
+
+        assert is_damaged(path)
+
+    def test_an_older_format_is_damaged_not_merely_empty(self, tmp_path: Path) -> None:
+        """Why the `bytes` -> `size` rename bumped the version.
+
+        Left at 1, an older file would parse to zero records and read as an empty App dir --
+        indistinguishable from a first run, and so freely overwritable.
+        """
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            '{"format_version": 1, "modules": {"a.lua": {"sha256": "ab", "bytes": 2}}}',
+            encoding="utf-8",
+        )
+
+        assert is_damaged(path)
 
 
 class TestHandEditDetection:
