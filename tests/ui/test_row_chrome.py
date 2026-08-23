@@ -207,6 +207,29 @@ def test_a_read_only_session_dims_the_control_even_with_the_dependency_met() -> 
     assert not row.control.get_sensitive()
 
 
+def test_a_read_only_session_dims_the_reset_arrow_too() -> None:
+    """It would otherwise be a visible, clickable button whose write the session drops --
+    the arrow stays up afterwards, looking like it failed rather than like it was refused."""
+    session = FakeSession(live=False)
+    session.model.set(GAPS_IN, 12)
+    row = build_row(GAPS_IN, session)
+
+    assert row.chrome.reset.get_visible()
+    assert not row.chrome.reset.get_sensitive()
+
+
+def test_a_dependency_disabled_row_keeps_a_usable_reset_arrow() -> None:
+    session = FakeSession()
+    session.model.set(GRAB_AREA, 30)
+    row = build_row(GRAB_AREA, session)
+
+    assert not row.control.get_sensitive()
+    assert row.chrome.reset.get_sensitive()
+
+    row.chrome.reset.emit("clicked")
+    assert session.model.get(GRAB_AREA) is UNSET
+
+
 # --- honest placeholders ----------------------------------------------------------------------
 
 

@@ -140,12 +140,18 @@ class Session:
         return self._model.get(option.name)
 
     def effective_value(self, option: ResolvedOption) -> Any:
-        """What the Row should show: the set value, else Hyprland's own default.
+        """What Hyprland is currently doing: the set value, else its own default.
 
         An Unset Option is not blank -- the compositor applies its default, and a control
         that renders empty would state that the setting has no value (prototype #8's
-        blank-row defect). `None` still means "no value", which is a state the Row renders
-        as the curated `null_label` rather than as emptiness.
+        blank-row defect).
+
+        Not the same question as "what should the Row display", which is
+        `ui/rows/state.shown_value` and differs in one deliberate way: this answers `None`
+        or a sentinel-shaped value verbatim, because a dependency asking "is the controlling
+        Option set to `custom`?" wants the raw comparison. A control asking what to *show*
+        wants "Device default", and folding those two into one function would make one of
+        them lie.
         """
         value = self._model.get(option.name)
         return option.default if value is UNSET else value

@@ -19,7 +19,6 @@ whose dependency is unmet is a Row the user most needs to be able to read.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 
 import gi
 
@@ -29,6 +28,7 @@ gi.require_version("Gdk", "4.0")
 
 from gi.repository import Adw, Gdk, Gtk, Pango  # noqa: E402
 
+from hyprtweaker.engine.schema import ResolvedOption  # noqa: E402
 from hyprtweaker.ui.rows.state import (  # noqa: E402
     HelpContent,
     RowContext,
@@ -53,11 +53,13 @@ class RowChrome:
     runs, so rebuilding it per model change would be work with no possible result.
     """
 
+    _state: RowState
+
     def __init__(
         self,
         row: Adw.ActionRow,
         control: Gtk.Widget,
-        option: Any,
+        option: ResolvedOption,
         context: RowContext,
         *,
         on_reset: Callable[[str], None],
@@ -99,7 +101,9 @@ class RowChrome:
         row.add_suffix(self._reset)
         row.add_suffix(self._help)
 
-        self._state = row_state(option, context)
+        # Built by `refresh`, which is also what puts the strip in its opening state --
+        # there is no moment where a Row is on screen wearing chrome nobody decided.
+        self.refresh()
 
     # --- what the Page and the tests read ---------------------------------------------------
 
@@ -150,6 +154,7 @@ class RowChrome:
             self._dependency.set_tooltip_text(badge.tooltip)
 
         self._reset.set_visible(state.modified)
+        self._reset.set_sensitive(state.resettable)
         self._reset.set_tooltip_text(state.reset_tooltip)
 
         self._control.set_sensitive(state.editable)

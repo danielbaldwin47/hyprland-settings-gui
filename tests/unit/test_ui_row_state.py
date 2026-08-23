@@ -187,6 +187,7 @@ def test_an_advanced_restart_flagged_option_wears_both_pills_in_order() -> None:
 
 # --- dependency badges ------------------------------------------------------------------------
 
+GAPS_IN = "general:gaps_in"
 GRAB_AREA = "general:extend_border_grab_area"
 RESIZE_ON_BORDER = "general:resize_on_border"
 
@@ -261,6 +262,23 @@ def test_every_dependency_in_the_overlay_points_at_an_option_that_exists() -> No
             assert SCHEMA.get(option.depends_on.option) is not None, option.name
 
 
+def test_no_dependency_is_gated_by_an_option_the_advanced_switch_can_hide() -> None:
+    """What makes the badge's navigation unconditional in practice.
+
+    `reveal_option` can only show a Row that was built, so a controller in a non-default
+    tier would give the badge somewhere to point and no way to get there until Search's
+    one-off reveal lands (#67). Every one of the 75 controllers is `default` today; this is
+    the test that notices if a later curation pass changes that.
+    """
+    for option in SCHEMA:
+        if option.depends_on is None:
+            continue
+        controlling = SCHEMA[option.depends_on.option]
+        assert controlling.visibility is Visibility.DEFAULT, (
+            f"{option.name} is gated by {controlling.name}, which the Advanced switch hides"
+        )
+
+
 # --- modified, reset, and the read-only session -----------------------------------------------
 
 
@@ -286,6 +304,30 @@ def test_a_read_only_session_leaves_every_control_uneditable() -> None:
     context = FakeContext(live=False)
 
     assert not row_state(SCHEMA["general:gaps_in"], context).editable
+
+
+def test_a_read_only_session_cannot_reset_either() -> None:
+    """`Session._refuse` would drop the write, so an enabled arrow would do nothing at all
+    -- and then still be sitting there, having apparently failed."""
+    context = FakeContext(live=False)
+    context.model.set(GAPS_IN, 12)
+
+    state = row_state(SCHEMA[GAPS_IN], context)
+    assert state.modified
+    assert not state.resettable
+
+
+def test_a_dependency_disabled_row_can_still_be_reset() -> None:
+    """The other direction, and it is not symmetric: an unmet dependency dims the control
+    because the value is inert, but the value is still *in the config* and taking it back
+    out is a perfectly good edit."""
+    context = FakeContext()
+    context.model.set(GRAB_AREA, 30)
+
+    state = row_state(SCHEMA[GRAB_AREA], context)
+    assert state.dependency is not None
+    assert not state.editable
+    assert state.resettable
 
 
 # --- the help popover -------------------------------------------------------------------------

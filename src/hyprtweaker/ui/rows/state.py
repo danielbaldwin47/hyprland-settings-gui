@@ -90,17 +90,11 @@ def shown_value(option: ResolvedOption, value: OptionValue) -> Any:
 
 
 def _spells_no_value(option: ResolvedOption, value: Any) -> bool:
-    """Whether a concrete value *is* this Option's curated "no value".
-
-    Booleans are excluded on both sides: `False == 0` in Python, and an Option whose null
-    spelling is `0` would otherwise swallow a real `False`.
-    """
+    """Whether a concrete value *is* this Option's curated "no value"."""
     null_value = option.null_value
     if not option.nullable or null_value is None:
         return False
-    if isinstance(value, bool) or isinstance(null_value, bool):
-        return False
-    return bool(value == null_value)
+    return _same_value(value, null_value)
 
 
 def no_value_label(option: ResolvedOption) -> str:
@@ -199,12 +193,25 @@ class RowState:
     """`None` when the Option has no `depends_on`, or when it is satisfied."""
 
     modified: bool
-    """Whether the model emits this Option at all -- ADR-0005's tri-state, not `!=`."""
+    """Whether the model emits this Option at all -- ADR-0005's tri-state, not `!=`.
+
+    Not a comparison against the default, and deliberately so: an Option set to exactly
+    today's default is still set, still survives upstream changing that default, and still
+    needs the arrow that takes the decision back (ADR-0013 §6 as amended during #57)."""
 
     reset_tooltip: str
     editable: bool
     """Whether the *control* may be used. Never the Row: a Row the user cannot edit still
     has to be readable, so only the control is dimmed (ADR-0013 §3)."""
+
+    resettable: bool
+    """Whether the reset arrow may be *clicked*, which is a different question from
+    `editable` in both directions.
+
+    A dependency-disabled Row is still resettable -- the value is in the config either way,
+    unmet dependency or not, and taking it back out is a legitimate edit. A read-only
+    session is not: `Session._refuse` would drop the write, and an arrow that silently does
+    nothing is worse than one visibly greyed out beside a Banner saying why."""
 
 
 class RowContext(Protocol):
@@ -239,6 +246,7 @@ def row_state(option: ResolvedOption, context: RowContext) -> RowState:
         # Two independent reasons to dim, and they compose: a read-only session (no
         # compositor to apply to) and an unmet dependency.
         editable=context.live and dependency is None,
+        resettable=context.live,
     )
 
 
@@ -273,7 +281,7 @@ def unmet_dependency(option: ResolvedOption, context: RowContext) -> DependencyB
         # nothing to navigate to, so the Row is simply editable.
         return None
 
-    if _agree(context.effective_value(controlling), dependency.value):
+    if _same_value(context.effective_value(controlling), dependency.value):
         return None
 
     return DependencyBadge(
@@ -284,11 +292,18 @@ def unmet_dependency(option: ResolvedOption, context: RowContext) -> DependencyB
     )
 
 
-def _agree(actual: Any, required: Any) -> bool:
-    """Equality that will not let `True` pass for `1`, which two `depends_on` entries need."""
-    if isinstance(actual, bool) != isinstance(required, bool):
+def _same_value(left: Any, right: Any) -> bool:
+    """Equality that will not let `True` pass for `1`, or `False` for `0`.
+
+    `bool` is an `int` in Python, and this module compares model values against two
+    different kinds of curated constant where that bites: a `depends_on` wanting the number
+    `1` (`input:tablettool:eraser_button_mode`) beside seventy-four wanting `True`, and a
+    `null_value` of `-1` or `""` on Options that hold real booleans elsewhere. One rule for
+    both, so the two cannot drift into disagreeing about what "the same value" means.
+    """
+    if isinstance(left, bool) != isinstance(right, bool):
         return False
-    return bool(actual == required)
+    return bool(left == right)
 
 
 def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:

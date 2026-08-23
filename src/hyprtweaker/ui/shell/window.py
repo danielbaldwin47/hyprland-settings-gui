@@ -216,13 +216,12 @@ class MainWindow(Adw.ApplicationWindow):
         out the Page's scroller honestly reports a height of zero and any scroll into it is
         a no-op (measured -- upper goes 0 -> 5846 across one idle).
         """
-        for page in self._pages:
-            row = page.row(name)
-            if row is None:
-                continue
-            self._select_section(page.plan.section)
-            GLib.idle_add(self._put_on_screen, row, priority=GLib.PRIORITY_LOW)
+        found = self._find(name)
+        if found is None:
             return
+        page, row = found
+        self._select_section(page.plan.section)
+        GLib.idle_add(self._put_on_screen, row, priority=GLib.PRIORITY_LOW)
 
     def _put_on_screen(self, row: OptionRow) -> bool:
         """Scroll a Row into view and leave the keyboard on it.
@@ -253,11 +252,22 @@ class MainWindow(Adw.ApplicationWindow):
             self._refresh_chrome_for(dependent)
 
     def _refresh_chrome_for(self, name: str) -> None:
+        found = self._find(name)
+        if found is not None:
+            found[1].chrome.refresh()
+
+    def _find(self, name: str) -> tuple[ConfigPage, OptionRow] | None:
+        """The Page and Row for one Option name, or `None` when no Page built it.
+
+        `None` is the ordinary case, not an error: the Advanced switch withholds a quarter
+        of the Schema, and both callers -- refreshing chrome after an edit, and revealing a
+        Row a badge names -- have nothing to do about a Row that is not on screen.
+        """
         for page in self._pages:
             row = page.row(name)
             if row is not None:
-                row.chrome.refresh()
-                return
+                return page, row
+        return None
 
     def _on_section_selected(self, _list: Gtk.ListBox, row: Gtk.ListBoxRow | None) -> None:
         if row is None:

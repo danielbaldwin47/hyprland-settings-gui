@@ -35,6 +35,8 @@ A generated Row is: **title, description as subtitle, typed control, and a fixed
 
 6. **Per-row reset**: a suffix `edit-undo-symbolic` icon button, visible only when the Option is modified (per-type is-default check: float epsilon, sentinel normalisation). Tooltip "Reset to default: \<value\>". Reset means **Unset** (stop emitting; ADR-0005 tri-state), not write-the-default-value.
 
+   *Amended during #57 — "modified" is the tri-state, not a comparison.* The per-type is-default check above is prototype #8 heritage: #8 had no model, so the only way to ask "has this been touched?" was to compare the value against the default, and that comparison needed float epsilon and sentinel normalisation to be honest. The real model answers the question directly — an Option is modified exactly when the model emits it (`ConfigModel.is_set`). The two disagree in one case, and ADR-0005 settles it in favour of the tri-state: an Option deliberately set to today's default *is* modified, keeps its value when upstream changes the default, and must offer the reset that takes that decision back. A comparison would hide the arrow on exactly that Row. The rest of this clause stands unchanged.
+
 7. **Wiki link**: inside the per-row ⓘ popover, which holds — help text, dotted key (selectable), default value, and "Learn more on the wiki" (`help_url`, section anchor). No extra link chrome on the Row itself.
 
 ## Consequences

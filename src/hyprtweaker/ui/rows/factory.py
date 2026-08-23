@@ -146,8 +146,8 @@ class RowFactory:
         else:
             row = self._read_only(option)
 
+        # Only the values: the chrome decided itself when `_row` built it.
         row.refresh()
-        row.chrome.refresh()
         return row
 
     # --- the shape every Row shares -----------------------------------------------------------
@@ -186,7 +186,7 @@ class RowFactory:
             control,
             option,
             self._session,
-            on_reset=self._reset,
+            on_reset=self._unset,
             navigate=self._navigate,
         )
         return row, chrome
@@ -201,12 +201,12 @@ class RowFactory:
         self._session.touch_option(option.name, value)
         self._edited(option.name)
 
-    def _unset(self, option: ResolvedOption) -> None:
-        self._session.unset_option(option.name)
-        self._edited(option.name)
+    def _unset(self, name: str) -> None:
+        """Back to Unset, so Hyprland's own default applies (ADR-0013 §6).
 
-    def _reset(self, name: str) -> None:
-        """The reset arrow: back to Unset, so Hyprland's own default applies (ADR-0013 §6)."""
+        Both ways of asking for that -- clearing a non-nullable entry, and the reset arrow
+        -- land here, because they are the same gesture with different chrome.
+        """
         self._session.unset_option(name)
         self._edited(name)
 
@@ -285,6 +285,13 @@ class RowFactory:
         writes it to the model -- verified against GTK 4 here rather than assumed. A stack
         with a button on the other page has no such seam, and it also answers the question
         the placeholder alone leaves open: how the user gets a number in the first place.
+
+        Clicking the placeholder *writes*, and that is deliberate rather than incidental.
+        Under instant apply there is no other kind of gesture (ADR-0003), and revealing the
+        spinner without writing would be worse: the Row would show a number the config does
+        not contain, and the next refresh would snap it back to the placeholder mid-edit. So
+        the click means exactly what its tooltip says -- "click to set a value" -- and the
+        reset arrow it raises is one click back to "Device default".
         """
         if not option.nullable:
             return spin
@@ -335,8 +342,10 @@ class RowFactory:
             # instead of showing an empty field (ADR-0013 §2). This is the basic entry Row's
             # own convention, not #57's honest-sentinel work -- the alternative is not "no
             # placeholder" but a field showing `[[EMPTY]]`, which is the falsehood prototype
-            # #8 measured as its most damaging defect class.
-            placeholder_text=option.null_label or "",
+            # #8 measured as its most damaging defect class. Through `no_value_label` rather
+            # than off `null_label` directly, so a Row that lost its curation reads "Not
+            # set" here exactly as it does everywhere else, instead of going blank again.
+            placeholder_text=no_value_label(option) if option.nullable else "",
         )
         row, chrome = self._row(option, entry)
 
@@ -361,7 +370,7 @@ class RowFactory:
                 # Cleared, and this Option has a curated spelling for "no value".
                 self._set(option, None)
             else:
-                self._unset(option)
+                self._unset(option.name)
 
         # Enter and losing focus, the two moments a typed value is decided. Committing per
         # keystroke would reload the compositor once per character.
