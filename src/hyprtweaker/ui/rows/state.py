@@ -455,7 +455,12 @@ def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:
         pills.append(
             Pill(
                 OVERRIDDEN_PILL,
-                "Your own user.lua sets this too, and it is loaded last -- so its value wins.",
+                # Deliberately does not name `user.lua` outright: a Bridge module is loaded
+                # after the app's Modules too and wins the same way, and telling someone to
+                # go edit a file that is not the culprit is worse than saying less. Naming
+                # the file needs Ownership class, which the Banner has and a Row does not.
+                "Something loaded after the app's own settings sets this too, so its "
+                "value wins -- usually your user.lua.",
             )
         )
 

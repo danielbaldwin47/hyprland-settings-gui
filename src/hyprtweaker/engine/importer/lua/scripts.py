@@ -118,6 +118,11 @@ def lua_value(value: Any, scripts: ScriptSource | None = None) -> str:
 
     `scripts` lets a captured function inside a value render as its extracted body, which
     is what makes a "hybrid" call -- `hl.bind(keys, function() ... end)` -- reproducible.
+
+    Deliberately not `model/values.lua_literal`: that renders *model* values, which are
+    typed objects that know their own literal. What arrives here is JSON the recorder
+    produced -- plain dicts and lists, plus the `__fn` and `__dsp` markers that have no
+    model counterpart at all -- so the two have no shared input type to factor over.
     """
     if value is None:
         return "nil"
