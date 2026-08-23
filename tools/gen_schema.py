@@ -55,6 +55,22 @@ def hyprland_version() -> str:
     return match.group(1)
 
 
+def hyprland_commit() -> str | None:
+    """The compositor's build commit, so a schema names the exact tree it came from.
+
+    Recorded rather than the local input paths: provenance exists so a release check can
+    reproduce the file, and one machine's `/tmp` scratch directory tells nobody anything.
+    """
+    try:
+        output = subprocess.run(
+            ["hyprctl", "version"], capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    match = re.search(r"at commit ([0-9a-f]{7,40})", output)
+    return match.group(1) if match else None
+
+
 def read_descriptions(path: Path | None) -> str:
     if path is not None:
         return path.read_text(encoding="utf-8")
@@ -112,22 +128,15 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     options = tuple(
-        build_option(record, order, version, stub_types, facts)
-        for order, record in enumerate(records)
+        build_option(record, order, stub_types, facts) for order, record in enumerate(records)
     )
 
     provenance: dict[str, Any] = {
-        "descriptions": str(args.descriptions)
-        if args.descriptions
-        else "hyprctl -j descriptions",
-        "stub": str(args.stub),
-        "source": (
-            str(args.source)
-            if args.source
-            else f"github:hyprwm/Hyprland@{args.source_ref}"
-            if args.source_ref
-            else None
-        ),
+        "hyprland_version": version,
+        "hyprland_commit": hyprland_commit(),
+        "descriptions": "hyprctl -j descriptions",
+        "stub": "hl.meta.lua",
+        "source_ref": args.source_ref or ("local checkout" if args.source else None),
         "degraded": facts.is_empty,
         "option_count": len(options),
     }

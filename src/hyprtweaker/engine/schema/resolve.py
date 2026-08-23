@@ -35,8 +35,10 @@ SCHEMA_DIR_ENV = "HYPRTWEAKER_SCHEMA_DIR"
 OVERLAY_FILENAME = "overlay.json"
 _SCHEMA_FILENAME = re.compile(r"^hyprland-(\d+(?:\.\d+)*)\.json$")
 
+_COLOUR_PARENT = "col"
+"""The subsection whose leaves are colours without ever saying so."""
+
 _ABBREVIATIONS = {
-    "col": "Color",
     "kb": "Keyboard",
     "vrr": "VRR",
     "hdr": "HDR",
@@ -75,15 +77,15 @@ def derive_title(option: GeneratedOption) -> str:
     title = title[:1].upper() + title[1:]
 
     # `general:col.active_border` is a colour, and its leaf never says so.
-    if parent in _ABBREVIATIONS and parent == "col":
+    if parent == _COLOUR_PARENT:
         title = f"{title} color"
 
     return title
 
 
-def _merge_range(generated: GeneratedOption, entry: OverlayEntry | None) -> Range | None:
+def _merge_range(generated: GeneratedOption, entry: OverlayEntry) -> Range | None:
     """Overlay bounds win; anything it leaves out falls back to the generated bounds."""
-    curated = entry.range if entry is not None else None
+    curated = entry.range
 
     low = curated.min if curated is not None and curated.min is not None else generated.min
     high = curated.max if curated is not None and curated.max is not None else generated.max
@@ -100,69 +102,65 @@ def resolve_option(
     entry: OverlayEntry | None,
     section: SectionOverlay | None,
 ) -> ResolvedOption:
-    """Apply one Overlay entry (and its Section defaults) to one generated record."""
-    nullable = generated.sentinel_default
-    if entry is not None and entry.nullable is not None:
-        nullable = entry.nullable
+    """Apply one Overlay entry (and its Section defaults) to one generated record.
+
+    An absent entry is an empty one, so every field below reads as a plain override
+    rather than repeating the same `is not None` guard twenty times. It is also what the
+    ADR-0012 supplement path hands in: an Option a newer Hyprland added, which no shipped
+    Overlay has an entry for, still has to resolve.
+    """
+    entry = entry or OverlayEntry()
+    section = section or SectionOverlay()
+
+    nullable = generated.sentinel_default if entry.nullable is None else entry.nullable
 
     # What the writer emits to mean "unset". Explicit curation wins; otherwise it is
     # whatever `descriptions` printed for the sentinel default.
-    null_value: Any = None
-    if entry is not None and entry.null_value is not None:
-        null_value = entry.null_value
-    elif generated.sentinel_default:
+    null_value: Any = entry.null_value
+    if null_value is None and generated.sentinel_default:
         null_value = generated.default_raw
 
-    visibility = Visibility.DEFAULT
-    if section is not None and section.visibility is not None:
-        visibility = section.visibility
-    if entry is not None and entry.visibility is not None:
-        visibility = entry.visibility
+    # A Section sets the floor, a per-Option tier overrides it.
+    visibility = entry.visibility or section.visibility or Visibility.DEFAULT
 
     # The Row subtitle is the description, curated `help` overriding it when the upstream
     # text is terse, wrong, or just repeats the enum list (ADR-0013).
-    description = generated.description
-    if entry is not None and entry.help:
-        description = entry.help
+    description = entry.help or generated.description
 
-    known_values = entry.known_values if entry is not None else None
+    known_values = entry.known_values
     if known_values is None and generated.choices:
         known_values = KnownValues(values=generated.choices)
-
-    help_url = entry.help_url if entry is not None and entry.help_url else None
-    if help_url is None and section is not None:
-        help_url = section.help_url
 
     return ResolvedOption(
         name=generated.name,
         lua_key=generated.lua_key,
         section=generated.section,
         path=generated.path,
-        order=entry.order if entry is not None and entry.order is not None else generated.order,
+        order=generated.order,
         type=generated.type,
-        widget=entry.widget if entry is not None and entry.widget else generated.widget,
-        title=entry.title if entry is not None and entry.title else derive_title(generated),
+        widget=entry.widget or generated.widget,
+        title=entry.title or derive_title(generated),
         description=description,
         default=generated.default,
         default_raw=generated.default_raw,
         nullable=nullable,
-        null_label=entry.null_label if entry is not None else None,
+        null_label=entry.null_label,
         null_value=null_value,
         getoption_key=generated.getoption_key,
         visibility=visibility,
         range=_merge_range(generated, entry),
         map=generated.map,
-        labels=entry.labels if entry is not None else None,
+        labels=entry.labels,
         known_values=known_values,
         vec2_range=generated.vec2_range,
-        unit=entry.unit if entry is not None else None,
-        depends_on=entry.depends_on if entry is not None else None,
-        restart=entry.restart if entry is not None else None,
-        help_url=help_url,
-        group=entry.group if entry is not None else None,
+        unit=entry.unit,
+        depends_on=entry.depends_on,
+        restart=entry.restart,
+        help_url=entry.help_url or section.help_url,
+        group=entry.group,
+        group_order=entry.order,
         device_overridable=generated.device_overridable,
         refresh=generated.refresh,
-        since=generated.since,
         curation_flags=generated.curation_flags,
     )
 

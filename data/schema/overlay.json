@@ -94,7 +94,9 @@
     "general:float_gaps": {
       "title": "Floating window gaps",
       "unit": "px",
-      "help": "Gaps around floating windows. Set to -1 to reuse the outer gaps."
+      "nullable": true,
+      "null_label": "Same as outer gaps",
+      "null_value": -1
     },
     "general:gaps_workspaces": { "title": "Workspace gaps", "unit": "px" },
     "general:col.inactive_border": { "title": "Inactive border colour" },

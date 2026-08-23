@@ -13,7 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .types import CurationFlag, GeneratedOption, OptionType, Vec2Range, Widget
+from .types import (
+    CurationFlag,
+    GeneratedOption,
+    GetOptionKey,
+    OptionType,
+    Vec2Range,
+    Widget,
+)
 
 SCHEMA_FORMAT_VERSION = 1
 """Bumped when the record shape changes, so a stale file fails loudly instead of oddly."""
@@ -52,7 +59,7 @@ def _option_to_json(option: GeneratedOption) -> dict[str, Any]:
         "default": option.default,
         "default_raw": option.default_raw,
         "sentinel_default": option.sentinel_default,
-        "getoption_key": option.getoption_key,
+        "getoption_key": option.getoption_key.value,
     }
 
     # Optional keys are omitted rather than emitted as null: a 353-record file where every
@@ -76,8 +83,6 @@ def _option_to_json(option: GeneratedOption) -> dict[str, Any]:
         payload["device_overridable"] = True
     if option.refresh:
         payload["refresh"] = list(option.refresh)
-    if option.since:
-        payload["since"] = option.since
     if option.curation_flags:
         payload["curation_flags"] = [flag.value for flag in option.curation_flags]
 
@@ -112,7 +117,7 @@ def _option_from_json(payload: dict[str, Any]) -> GeneratedOption:
         default=payload["default"],
         default_raw=payload["default_raw"],
         sentinel_default=bool(payload["sentinel_default"]),
-        getoption_key=str(payload["getoption_key"]),
+        getoption_key=GetOptionKey(payload["getoption_key"]),
         min=payload.get("min"),
         max=payload.get("max"),
         map={str(key): int(value) for key, value in enum_map.items()} if enum_map else None,
@@ -120,7 +125,6 @@ def _option_from_json(payload: dict[str, Any]) -> GeneratedOption:
         vec2_range=vec2_range,
         device_overridable=bool(payload.get("device_overridable", False)),
         refresh=tuple(str(bit) for bit in payload.get("refresh", ())),
-        since=str(payload.get("since", "")),
         curation_flags=tuple(CurationFlag(flag) for flag in payload.get("curation_flags", ())),
     )
 

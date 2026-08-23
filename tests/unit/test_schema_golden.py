@@ -16,20 +16,30 @@ test into a silent behaviour change. Read the diff first.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
+from _support import ROOT, SCHEMA_DIR
 
-from hyprtweaker.engine.schema import ResolvedOption, Schema
-from hyprtweaker.engine.schema import generated as generated_module
-from hyprtweaker.engine.schema import overlay as overlay_module
+from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
 from hyprtweaker.engine.schema.resolve import available_versions
 
-ROOT = Path(__file__).resolve().parents[2]
-SCHEMA_DIR = ROOT / "data" / "schema"
 GOLDEN_DIR = ROOT / "tests" / "golden"
 
-COLUMNS = ("name", "type", "widget", "nullable", "visibility", "depends_on", "title")
+# Every curated field a Row reads, so dropping a `null_label`, a `labels` map or a
+# clamped `range` shows up as a diff rather than as a wrong widget in the app.
+COLUMNS = (
+    "name",
+    "type",
+    "widget",
+    "nullable",
+    "null_label",
+    "visibility",
+    "depends_on",
+    "range",
+    "labels",
+    "unit",
+    "title",
+)
 
 
 def _row(option: ResolvedOption) -> str:
@@ -38,14 +48,38 @@ def _row(option: ResolvedOption) -> str:
         if option.depends_on is not None
         else "-"
     )
+    bounds = "-"
+    if option.range is not None:
+        parts = [
+            f"{key}={value}"
+            for key, value in (
+                ("min", option.range.min),
+                ("max", option.range.max),
+                ("step", option.range.step),
+                ("soft_max", option.range.soft_max),
+            )
+            if value is not None
+        ]
+        bounds = ",".join(parts) or "-"
+
+    labels = (
+        "/".join(f"{key}={value}" for key, value in option.labels.items())
+        if option.labels
+        else "-"
+    )
+
     return " | ".join(
         (
             option.name,
             option.type.value,
             option.widget.value,
             "null" if option.nullable else "-",
+            option.null_label or "-",
             option.visibility.value,
             dependency,
+            bounds,
+            labels,
+            option.unit or "-",
             option.title,
         )
     )
@@ -58,10 +92,8 @@ def render(schema: Schema) -> str:
 
 
 def load_schema_for(version: str) -> Schema:
-    return Schema.merge(
-        generated_module.load(SCHEMA_DIR / f"hyprland-{version}.json"),
-        overlay_module.load(SCHEMA_DIR / "overlay.json"),
-    )
+    """Through `load_schema` -- the Engine API the acceptance criterion names."""
+    return load_schema(version, SCHEMA_DIR)
 
 
 @pytest.mark.parametrize("version", available_versions(SCHEMA_DIR))

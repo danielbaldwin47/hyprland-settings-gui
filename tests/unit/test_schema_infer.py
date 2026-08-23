@@ -164,9 +164,9 @@ def test_a_narrow_map_less_int_is_an_enum_in_disguise() -> None:
         OptionType.INT,
         Widget.INT_RANGE,
         record(default=0, min=0, max=2, map=None),
-        False,
-        False,
-        None,
+        sentinel_default=False,
+        declared_negative_one=False,
+        vec2_range=None,
     )
     assert CurationFlag.NEEDS_LABELS in flags
 
@@ -176,9 +176,9 @@ def test_a_wide_int_range_is_a_quantity_not_an_enum() -> None:
         OptionType.INT,
         Widget.INT_RANGE,
         record(default=1, min=0, max=20, map=None),
-        False,
-        False,
-        None,
+        sentinel_default=False,
+        declared_negative_one=False,
+        vec2_range=None,
     )
     assert CurationFlag.NEEDS_LABELS not in flags
 
@@ -189,9 +189,9 @@ def test_an_int_with_a_map_needs_no_labels() -> None:
         OptionType.INT,
         Widget.ENUM_MAP,
         record(default=0, min=0, max=2, map=[{"off": 0}]),
-        False,
-        False,
-        None,
+        sentinel_default=False,
+        declared_negative_one=False,
+        vec2_range=None,
     )
     assert CurationFlag.NEEDS_LABELS not in flags
 
@@ -199,7 +199,12 @@ def test_an_int_with_a_map_needs_no_labels() -> None:
 def test_every_plain_string_row_asks_for_a_decision() -> None:
     """25 of the 28 plain strings are really pickers (research #3 §3.3)."""
     flags = curation_flags(
-        OptionType.STRING, Widget.STRING, record(default="x"), False, False, None
+        OptionType.STRING,
+        Widget.STRING,
+        record(default="x"),
+        sentinel_default=False,
+        declared_negative_one=False,
+        vec2_range=None,
     )
     assert CurationFlag.NEEDS_WIDGET in flags
 
@@ -207,10 +212,20 @@ def test_every_plain_string_row_asks_for_a_decision() -> None:
 def test_a_vec2_without_source_bounds_needs_a_range() -> None:
     shape = record(default=[0, 0])
     assert CurationFlag.NEEDS_RANGE in curation_flags(
-        OptionType.VEC2, Widget.VEC2, shape, False, False, None
+        OptionType.VEC2,
+        Widget.VEC2,
+        shape,
+        sentinel_default=False,
+        declared_negative_one=False,
+        vec2_range=None,
     )
     assert CurationFlag.NEEDS_RANGE not in curation_flags(
-        OptionType.VEC2, Widget.VEC2, shape, False, False, Vec2Range(-1, -1, 1, 1)
+        OptionType.VEC2,
+        Widget.VEC2,
+        shape,
+        sentinel_default=False,
+        declared_negative_one=False,
+        vec2_range=Vec2Range(-1, -1, 1, 1),
     )
 
 
@@ -243,7 +258,6 @@ def test_enum_maps_are_sorted_by_value() -> None:
     option = build_option(
         record("misc:vrr", default=0, min=0, max=3, map=[{"on": 1}, {"off": 0}, {"fs": 2}]),
         order=0,
-        version="0.56.2",
         stub_types={},
         facts=SourceFacts(),
     )
@@ -257,7 +271,6 @@ def test_choices_fall_back_to_the_description_bracket_list() -> None:
             "general:layout", default="dwindle", description="use. [dwindle/master/monocle]"
         ),
         order=0,
-        version="0.56.2",
         stub_types={},
         facts=SourceFacts(),
     )
@@ -269,7 +282,6 @@ def test_source_choices_beat_the_description() -> None:
     option = build_option(
         record("input:accel_profile", default="x", description="[a/b]"),
         order=0,
-        version="0.56.2",
         stub_types={},
         facts=SourceFacts(str_choices={"input:accel_profile": ("adaptive", "flat")}),
     )
@@ -280,7 +292,6 @@ def test_path_and_section_come_from_the_lua_key() -> None:
     option = build_option(
         record("input:touchpad:tap-to-click", default=True),
         order=7,
-        version="0.56.2",
         stub_types={},
         facts=SourceFacts(),
     )

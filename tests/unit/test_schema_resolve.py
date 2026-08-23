@@ -9,6 +9,7 @@ import pytest
 
 from hyprtweaker.engine.schema import (
     GeneratedOption,
+    GetOptionKey,
     KnownValues,
     OptionType,
     Overlay,
@@ -41,7 +42,7 @@ def option(name: str = "general:border_size", **fields: object) -> GeneratedOpti
         "default": 1,
         "default_raw": 1,
         "sentinel_default": False,
-        "getoption_key": "int",
+        "getoption_key": GetOptionKey.INT,
     }
     defaults.update(fields)
     return GeneratedOption(**defaults)  # type: ignore[arg-type]
@@ -284,7 +285,7 @@ def test_schema_lookup_and_sections() -> None:
     assert schema.section("debug")[0].visibility is Visibility.HIDDEN
 
 
-def test_load_schema_reads_the_shipped_files(tmp_path: Path) -> None:
+def test_load_schema_reads_the_shipped_files() -> None:
     """End to end through the public entry point the app actually calls."""
     repo_schema = Path(__file__).resolve().parents[2] / "data" / "schema"
     schema = load_schema("0.56.2", repo_schema)

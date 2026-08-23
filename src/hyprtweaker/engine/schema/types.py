@@ -67,6 +67,28 @@ class Widget(enum.StrEnum):
     FLOAT_LIST = "float-list"
 
 
+class GetOptionKey(enum.StrEnum):
+    """Which `hyprctl -j getoption` JSON key carries an Option's value.
+
+    The last three fire only under the Lua config manager. Research #3 swept `getoption`
+    under hyprlang, where Gradient/CssGap/FontWeight all come back as `custom`, and
+    concluded those branches never fire; prototype #8 caught them firing live on the
+    engine this app targets. A reader must still accept `custom` as a fallback for the
+    three, but these are the keys to expect.
+    """
+
+    INT = "int"
+    FLOAT = "float"
+    STR = "str"
+    VEC2 = "vec2"
+    GRADIENT = "gradient"
+    CSS = "css"
+    FONT_WEIGHT = "font_weight"
+
+    CUSTOM = "custom"
+    """The hyprlang answer for the three complex types. Accepted on read, never expected."""
+
+
 class Visibility(enum.StrEnum):
     """Disclosure tier (ADR-0013).
 
@@ -194,8 +216,7 @@ class GeneratedOption:
     """Exactly what `descriptions` printed, sentinels and all."""
 
     sentinel_default: bool
-    getoption_key: str
-    """Which `hyprctl -j getoption` JSON key carries this Option: int|float|str|vec2|custom."""
+    getoption_key: GetOptionKey
 
     min: float | None = None
     max: float | None = None
@@ -204,7 +225,6 @@ class GeneratedOption:
     vec2_range: Vec2Range | None = None
     device_overridable: bool = False
     refresh: tuple[str, ...] = ()
-    since: str = ""
     curation_flags: tuple[CurationFlag, ...] = ()
 
 
@@ -228,8 +248,18 @@ class OverlayEntry:
     visibility: Visibility | None = None
     group: str | None = None
     order: int | None = None
+    """Position *within* `group`. Never the Option's position in its Section -- that is
+    Hyprland's own declaration order, which no curation should silently rewrite."""
+
     deprecated_in: str | None = None
+    """Set by a release check when a Hyprland release removes the Option.
+
+    The Overlay is version-independent and entries outlive the schemas they describe, so
+    a removed Option's entry stays and keeps serving older schemas in the support window
+    (ADR-0012; `docs/agents/hyprland-release-check.md` §3)."""
+
     renamed_from: str | None = None
+    """The Option's previous name, so a rename migrates the user's value silently."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +289,8 @@ class ResolvedOption:
     section: str
     path: tuple[str, ...]
     order: int
+    """Hyprland's own declaration order, which orders Sections and the Config view."""
+
     type: OptionType
     widget: Widget
     title: str
@@ -270,7 +302,7 @@ class ResolvedOption:
     nullable: bool
     null_label: str | None
     null_value: Any
-    getoption_key: str
+    getoption_key: GetOptionKey
     visibility: Visibility
     range: Range | None = None
     map: dict[str, int] | None = None
@@ -282,9 +314,12 @@ class ResolvedOption:
     restart: Restart | None = None
     help_url: str | None = None
     group: str | None = None
+    group_order: int | None = None
+    """Position within `group`, kept separate from `order` so curating a Page's shape can
+    never reorder a Section."""
+
     device_overridable: bool = False
     refresh: tuple[str, ...] = ()
-    since: str = ""
     curation_flags: tuple[CurationFlag, ...] = field(default=())
 
     @property

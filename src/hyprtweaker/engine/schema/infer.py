@@ -20,6 +20,7 @@ from .sources import SourceFacts, lua_key_for
 from .types import (
     CurationFlag,
     GeneratedOption,
+    GetOptionKey,
     OptionType,
     Vec2Range,
     Widget,
@@ -114,31 +115,23 @@ def infer_widget(
             return Widget.ENUM_STRING if choices else Widget.STRING
 
 
-def getoption_key(option_type: OptionType) -> str:
-    """Which `hyprctl -j getoption` JSON key carries this type under the Lua engine.
-
-    Deliberately the *Lua* engine's answer. Research #3 §4 swept `getoption` under
-    hyprlang, where Gradient/CssGap/FontWeight all come back as `custom` and concluded the
-    `gradient`/`css`/`font_weight` branches "never fire". Under the Lua config manager they
-    do fire, which prototype #8 caught live. A reader that only knows the hyprlang answer
-    silently reads `None` for 21 options on the engine this app targets -- so readers must
-    accept `custom` as a fallback for these three, but this is the key to expect.
-    """
+def getoption_key(option_type: OptionType) -> GetOptionKey:
+    """Which `hyprctl -j getoption` JSON key carries this type under the Lua engine."""
     match option_type:
         case OptionType.BOOL | OptionType.INT | OptionType.COLOR:
-            return "int"
+            return GetOptionKey.INT
         case OptionType.FLOAT:
-            return "float"
+            return GetOptionKey.FLOAT
         case OptionType.STRING:
-            return "str"
+            return GetOptionKey.STR
         case OptionType.VEC2:
-            return "vec2"
+            return GetOptionKey.VEC2
         case OptionType.GRADIENT:
-            return "gradient"
+            return GetOptionKey.GRADIENT
         case OptionType.CSS_GAPS:
-            return "css"
+            return GetOptionKey.CSS
         case OptionType.FONT_WEIGHT:
-            return "font_weight"
+            return GetOptionKey.FONT_WEIGHT
 
 
 def normalise_default(
@@ -176,6 +169,7 @@ def curation_flags(
     option_type: OptionType,
     widget: Widget,
     record: dict[str, Any],
+    *,
     sentinel_default: bool,
     declared_negative_one: bool,
     vec2_range: Vec2Range | None,
@@ -228,7 +222,6 @@ def curation_flags(
 def build_option(
     record: dict[str, Any],
     order: int,
-    version: str,
     stub_types: dict[str, str],
     facts: SourceFacts,
 ) -> GeneratedOption:
@@ -283,13 +276,12 @@ def build_option(
         vec2_range=vec2_range,
         device_overridable=name in facts.device_overridable,
         refresh=facts.refresh.get(name, ()),
-        since=version,
         curation_flags=curation_flags(
             option_type,
             widget,
             record,
-            sentinel,
-            declared_negative_one,
-            vec2_range,
+            sentinel_default=sentinel,
+            declared_negative_one=declared_negative_one,
+            vec2_range=vec2_range,
         ),
     )
