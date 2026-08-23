@@ -121,6 +121,8 @@ structured `{name, args}` — the same shape as ADR-0007's typed dispatcher Acti
 
 ## Files
 
-`prototypes/lua-importer/`: `runner.lua`, `import_lua.py`, `emit_model.py`,
+Prototype code lives on the throwaway branch
+[`prototype/lua-importer`](https://github.com/danielbaldwin47/hyprland-settings-gui/tree/prototype/lua-importer/prototypes/lua-importer)
+(main keeps only this findings doc): `runner.lua`, `import_lua.py`, `emit_model.py`,
 `analyze_globals.py`, `run_all.py`, `fixtures/hyde/` (upstream GPL-3.0 fixture, pinned
 `b8cc6472`), `results/` (captured models + generated Lua).
