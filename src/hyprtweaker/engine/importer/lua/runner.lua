@@ -29,6 +29,7 @@ local record = {
   queries = {},   -- hl.* live-state queries answered with a stand-in
   shell = {},     -- os.execute / io.popen / os.remove / os.rename
   iowrites = {},  -- io.open in a write mode
+  reads = {},     -- io.open in a read mode: state the imported copy will not re-read
   requires = {},  -- files evaluated, in order
   prints = {},
   errors = {},
@@ -356,7 +357,12 @@ local sandbox_io = {
         lines = function() return function() return nil end end,
       }
     end
-    return real_io.open(path, mode) -- reads are allowed under both policies
+    -- Reads are allowed under both policies -- refusing them would not make anything
+    -- safer, only make the import wrong. But a config that reads state outside its own
+    -- tree (a theme cache, a generated colour file) has baked that state into the import
+    -- and will not re-read it afterwards, so the read is recorded for the Loss report.
+    record.reads[#record.reads + 1] = { path = tostring(path), src = select(1, callsite()) }
+    return real_io.open(path, mode)
   end,
   lines = function(...) return real_io.lines(...) end,
   read = function() return nil end,
@@ -418,6 +424,9 @@ local function list_lua_modules(dir)
     return {}
   end
   local names = {}
+  -- Recorded like any other shell-out: this one is the importer's own, not the config's,
+  -- but an unrecorded process start is exactly the thing this file promises not to do.
+  note_shell("importer.listdir", dir)
   local p = real_io.popen("ls -1 '" .. basedir .. "/" .. dir .. "' 2>/dev/null")
   if not p then return names end
   for f in p:lines() do

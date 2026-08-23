@@ -17,7 +17,7 @@ Three modules, one direction of flow:
 
 from __future__ import annotations
 
-from .mapping import import_lua, map_recording, overridden_options
+from .mapping import import_lua, map_recording
 from .sandbox import (
     Call,
     Consent,
@@ -44,6 +44,5 @@ __all__ = [
     "import_lua",
     "lua_binary",
     "map_recording",
-    "overridden_options",
     "render_legacy",
 ]

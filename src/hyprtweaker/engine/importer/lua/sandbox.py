@@ -148,6 +148,14 @@ class FileWrite:
 
 
 @dataclass(frozen=True, slots=True)
+class FileRead:
+    """A file the config read while loading -- state it has now baked in."""
+
+    path: str
+    src: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Recording:
     """Everything one evaluation saw. Inert data: the mapper never re-runs anything."""
 
@@ -156,6 +164,7 @@ class Recording:
     queries: tuple[Query, ...] = ()
     shell: tuple[ShellUse, ...] = ()
     writes: tuple[FileWrite, ...] = ()
+    reads: tuple[FileRead, ...] = ()
     requires: tuple[str, ...] = ()
     prints: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
@@ -271,6 +280,10 @@ def _decode(payload: dict[str, Any], *, policy: Policy, basedir: Path) -> Record
                 policy=str(item.get("policy") or ""),
             )
             for item in records("iowrites")
+        ),
+        reads=tuple(
+            FileRead(path=str(item.get("path", "")), src=str(item.get("src") or ""))
+            for item in records("reads")
         ),
         requires=strings("requires"),
         prints=strings("prints"),

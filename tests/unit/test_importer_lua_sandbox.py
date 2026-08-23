@@ -262,3 +262,33 @@ def test_a_wildcard_require_cannot_smuggle_a_shell_command(tmp_path) -> None:  #
     evaluate(entry, consent=GRANTED)
 
     assert not target.exists(), "a crafted require name reached the shell"
+
+
+def test_passthrough_really_does_let_an_effect_through(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The other half of the consent story, and worth proving rather than assuming: a
+    policy that silently blocked everything would look identical from the report."""
+    target = tmp_path / "written-under-passthrough"
+    entry = write(tmp_path, f'io.open({str(target)!r}, "w"):close()\n')
+
+    recording = evaluate(entry, consent=Consent(evaluate=True, passthrough=True))
+
+    assert target.exists(), "passthrough did not pass the effect through"
+    assert recording.policy is Policy.PASSTHROUGH
+    assert [w.path for w in recording.writes] == [str(target)]
+
+
+def test_the_wildcard_listing_is_recorded_even_though_it_is_ours(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The importer shells out once on its own behalf, to list a directory a wildcard
+    `require` names. An unrecorded process start would be a hole in the sandbox's account
+    of itself, so it is recorded -- under its own kind, since it is not the config's doing.
+    """
+    (tmp_path / "parts").mkdir()
+    (tmp_path / "parts" / "one.lua").write_text(
+        "hl.config({ decoration = { rounding = 3 } })\n", encoding="utf-8"
+    )
+    entry = write(tmp_path, 'require("./parts/*")\n')
+
+    recording = evaluate(entry, consent=GRANTED)
+
+    assert recording.calls, "the wildcard require loaded nothing"
+    assert "importer.listdir" in {use.kind for use in recording.shell}

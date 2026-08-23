@@ -51,7 +51,6 @@ from hyprtweaker.engine.apply import (
     plan,
     read_state,
 )
-from hyprtweaker.engine.importer.lua import Consent, overridden_options
 from hyprtweaker.engine.ipc import (
     CommandClient,
     EventStream,
@@ -334,17 +333,15 @@ class Session:
         business. `Mismatch.unapplied` is the loud shape -- the model sets the key and the
         live config sets nothing, which means the Module never ran."""
 
-        self._overridden: frozenset[str] = frozenset()
-        """Options `user.lua` sets, so the Row can say the escape hatch is winning.
+        self._overridden: tuple[str, ...] = ()
+        """Keys whose live value disagrees with the model because something later won.
 
         The quiet counterpart of `_unapplied`: the value did not take, but for a reason the
-        app can name. Read by evaluating `user.lua` under the Lua importer's sandbox --
-        the file is a program, so nothing short of running it knows what it sets, and the
-        app must never rewrite it to find out."""
-
-        self._user_lua_stamp: tuple[int, int] | None = None
-        """`(mtime_ns, size)` of the `user.lua` last read, so an unchanged file is not
-        re-evaluated on every reload."""
+        app can name. ADR-0005 fixes the mechanism -- "after each reload the app compares
+        `get_config`/`getoption` against its model and badges diverging options" -- so this
+        comes from the Read-back the transaction already does, never from reading
+        `user.lua` itself. ADR-0018 rejects that: running the user's own code to answer a
+        question about a badge is consent-and-safety weight no badge earns."""
 
         self._rescued: tuple[str, ...] = ()
         """Modules the emergency restore overwrote without asking, so the Banner can say so."""
@@ -406,35 +403,15 @@ class Session:
 
     @property
     def overridden(self) -> frozenset[str]:
-        """Options `user.lua` sets, which therefore win over anything the app writes.
+        """Keys the live config sets to something other than what the model asked for.
 
-        `user.lua` is required last (ADR-0005), so a key it sets is a key the GUI cannot
-        change -- the Row wears the "Overridden" pill rather than pretending the edit took.
+        `user.lua` is required last (ADR-0005), so a key it sets beats the Module the app
+        wrote -- the Row wears the "Overridden" pill rather than pretending the edit took.
+        Replaced per transaction for the same reason `unapplied` is: it describes the last
+        write, and a badge outliving the write that earned it would be a lie about a value
+        that has since applied perfectly well.
         """
-        return self._overridden
-
-    def refresh_overrides(self) -> None:
-        """Re-read `user.lua` to learn which Options it sets.
-
-        Skipped when the file has not changed since the last read: evaluation spawns a Lua
-        interpreter, and every reload would otherwise pay for it. Any failure leaves the
-        previous answer in place -- a badge the app cannot compute is a missing badge,
-        never a broken window.
-        """
-        path = self._paths.user_lua
-        try:
-            stat = path.stat()
-        except OSError:
-            self._user_lua_stamp = None
-            self._overridden = frozenset()
-            return
-        stamp = (stat.st_mtime_ns, stat.st_size)
-        if stamp == self._user_lua_stamp:
-            return
-        self._user_lua_stamp = stamp
-        self._overridden = overridden_options(
-            path, self._schema, consent=Consent(evaluate=True)
-        )
+        return frozenset(self._overridden)
 
     @property
     def paths(self) -> ConfigPaths:
@@ -1017,10 +994,11 @@ class Session:
         """
         self._recovery = plan(errors, written=written, binds=binds)
         self._unapplied = tuple(mismatch.name for mismatch in mismatches if mismatch.unapplied)
-        # Every reload the app hears about funnels through here, which makes this the one
-        # place the drift badge can be kept honest: a reload is exactly when `user.lua`
-        # may have started -- or stopped -- winning.
-        self.refresh_overrides()
+        # The other half of the same Read-back, and ADR-0005's drift badge: a key the live
+        # config sets to something else is one `user.lua` or a Bridge won on purpose.
+        self._overridden = tuple(
+            mismatch.name for mismatch in mismatches if mismatch.overridden
+        )
         # Cleared with the rest: the rescue notice belongs to the reload that prompted it.
         # `_restore_transaction` re-raises it *after* observing its own result, which is what
         # lets the notice outlive the restore that earned it without outliving anything else.

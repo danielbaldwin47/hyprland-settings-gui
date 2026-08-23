@@ -135,3 +135,33 @@ def test_importing_the_same_rice_twice_gives_the_same_model(imports, schema) -> 
         second = import_lua(_entry(rice), schema, consent=GRANTED, env=dict(CORPUS_ENV))
         assert first.snapshot() == second.snapshot(), f"{rice} did not import deterministically"
         assert first.legacy == second.legacy, f"{rice}: legacy.lua moved between imports"
+
+
+def test_a_foreign_lua_rice_survives_the_round_trip(imports, schema, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The fixpoint on the Lua path proper: a real hand-written config in, our own Lua
+    out, and the same model when that is read back.
+
+    Distinct from `test_importing_the_same_rice_twice...`, which only proves the importer
+    is deterministic -- a mapper that read every gradient wrong would be perfectly
+    deterministic about it. This one goes through the Writer, so it also catches a value
+    this importer can read but cannot write in a form it can read again.
+
+    Options only, until Entity Modules land (#64).
+    """
+    from hyprtweaker.engine.writer.modules import render_module
+
+    for rice, first in imports.items():
+        sections = [
+            render_module(first.model.section(section), app_version="0.0.0-test")
+            for section in first.model.sections()
+        ]
+        entry = tmp_path / rice / "hyprland.lua"
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_text("\n".join(sections), encoding="utf-8")
+
+        again = import_lua(entry, schema, consent=GRANTED, env=dict(CORPUS_ENV))
+
+        assert again.loss.clean, f"{rice}: re-reading our own output was not clean"
+        assert {o.name: v for o, v in again.model.set_options()} == {
+            o.name: v for o, v in first.model.set_options()
+        }, f"{rice}: the model did not survive Lua -> model -> Lua -> model"

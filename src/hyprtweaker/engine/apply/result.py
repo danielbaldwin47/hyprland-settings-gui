@@ -29,7 +29,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from ..model import UNSET, parse_getoption
+from ..model import UNSET, parse_getoption, values_match
 from ..schema import ResolvedOption
 from ..writer import WriteResult
 
@@ -125,6 +125,24 @@ class Mismatch:
         override order on purpose.
         """
         return not self.live_set and self.expected is not UNSET
+
+    @property
+    def overridden(self) -> bool:
+        """The live config sets this key to something else -- something later won.
+
+        The quiet shape `unapplied` contrasts itself against, and the one ADR-0005 badges:
+        "after each reload the app compares `get_config`/`getoption` against its model and
+        badges diverging options as *overridden in user.lua*". `user.lua` is required last,
+        so a value it sets beats the Module the app wrote.
+
+        Two things deliberately do not count. A live value that *agrees* is not drift --
+        badging a `user.lua` that happens to set what the GUI set would tell the user their
+        edit failed when it landed perfectly. And `UNREADABLE` is not a disagreement but the
+        absence of an answer (ADR-0010's Unconfirmed), which is never evidence of anything.
+        """
+        if not self.live_set or self.actual is UNREADABLE or self.expected is UNSET:
+            return False
+        return not values_match(self.expected, self.actual)
 
 
 @dataclass(frozen=True, slots=True)

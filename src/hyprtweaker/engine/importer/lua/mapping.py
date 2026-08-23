@@ -48,10 +48,10 @@ from ...model.options import ConfigModel
 from ...model.values import parse_lua
 from ...schema.resolve import Schema
 from ...schema.types import ResolvedOption
-from ..loss import LossCode, LossContext, LossReport
+from ..loss import LossClass, LossCode, LossContext, LossReport
 from ..mapping import ImportResult
-from .sandbox import Call, Consent, Policy, Recording, evaluate
-from .scripts import ScriptSource, lua_value, render_legacy
+from .sandbox import DEFAULT_TIMEOUT, Call, Consent, Policy, Recording, evaluate
+from .scripts import ScriptSource, lua_value, luac_binary, render_legacy
 
 #: Calls that are always a script construct, whatever they were handed.
 SCRIPT_CALLS = frozenset({"on", "layout_register", "timer"})
@@ -141,8 +141,8 @@ class _Mapper:
         for call in self.recording.calls:
             self._dispatch(call)
         self._note_script_globals()
-        for note in self.scripts.notes:
-            self.report.add(LossCode.UNEXTRACTABLE_SCRIPT, note, origin=note.split(":")[0])
+        for origin, note in self.scripts.notes:
+            self.report.add(LossCode.UNEXTRACTABLE_SCRIPT, note, origin=origin)
         return ImportResult(
             model=self.model,
             entities=self.entities,
@@ -151,7 +151,6 @@ class _Mapper:
             source=self.source,
             legacy=render_legacy(
                 self.legacy,
-                app_version="",
                 source=str(self.source) if self.source else "a foreign hyprland.lua",
             ),
         )
@@ -200,6 +199,18 @@ class _Mapper:
         for message in recording.errors:
             self.report.add(LossCode.EVAL_ERROR, message)
         for use in recording.shell:
+            if use.kind == "importer.listdir":
+                # The importer's own directory listing, resolving a wildcard `require`.
+                # Recorded because an unrecorded process start would be a hole in the
+                # sandbox's account of itself -- but it is not the config's doing, so it
+                # is not that config's Breakage.
+                self.report.add(
+                    LossCode.EXTERNAL_STATE,
+                    f"Listed {use.cmd}/ to resolve a wildcard require",
+                    origin=use.src,
+                    loss_class=LossClass.INFO,
+                )
+                continue
             self.report.add(
                 LossCode.EXTERNAL_STATE,
                 f"Config ran a command while loading ({use.kind}): {use.cmd}",
@@ -210,6 +221,13 @@ class _Mapper:
                 LossCode.EXTERNAL_STATE,
                 f"Config wrote to {write.path} while loading",
             )
+        for read in self._foreign_reads():
+            self.report.add(
+                LossCode.EXTERNAL_STATE,
+                f"Config read {read.path} while loading; the imported copy holds whatever "
+                "it said at import and will not read it again",
+                origin=read.src,
+            )
         for query in recording.queries:
             self.report.add(
                 LossCode.CONFIG_TIME_QUERY,
@@ -218,8 +236,35 @@ class _Mapper:
                 origin=query.origin,
             )
 
+    def _foreign_reads(self) -> list[Any]:
+        """Files the config read from outside its own tree.
+
+        Reading its own modules is how a config is written; reading a theme cache or a
+        generated colour file is state the import bakes. Only the second is a finding, and
+        the config directory is the line between them.
+        """
+        root = self.recording.basedir.resolve()
+        foreign = []
+        for read in self.recording.reads:
+            try:
+                candidate = Path(read.path)
+                candidate = candidate if candidate.is_absolute() else root / candidate
+                candidate.resolve().relative_to(root)
+            except (ValueError, OSError):
+                foreign.append(read)
+        return foreign
+
     def _note_script_globals(self) -> None:
         """Closures reading names nothing will define for them once lifted."""
+        if self.recording.scripts and luac_binary() is None:
+            # Say so rather than reporting a clean bill: "no findings" and "nobody looked"
+            # must not read the same on a report the user decides from.
+            self.report.add(
+                LossCode.FOREIGN_GLOBAL,
+                f"{len(self.recording.scripts)} preserved script(s) could not be checked "
+                "for globals they read: no luac is installed. Review legacy.lua by hand",
+            )
+            return
         for script in self.recording.scripts:
             for name in self.scripts.foreign_globals(script):
                 self.report.add(
@@ -303,7 +348,12 @@ class _Mapper:
         for key, value in table.items():
             path = (*prefix, str(key))
             option = self._paths.get(path)
-            if option is not None:
+            if isinstance(value, Mapping) and "__fn" in value:
+                # A function inside `hl.config`. The model has nowhere to put one, and
+                # walking into it would report the literal key `__fn` as a misspelled
+                # setting -- a script construct silently dropped and blamed on a typo.
+                self._keep_config_closure(path, value, ctx)
+            elif option is not None:
                 self._set(option, value, ctx)
             elif isinstance(value, Mapping):
                 # Either a real subcategory or a typo; recursing reports the leaves, which
@@ -314,6 +364,26 @@ class _Mapper:
                     LossCode.UNSUPPORTED_KEYWORD,
                     f"{':'.join(path)} is not a setting this Hyprland has",
                 )
+
+    def _keep_config_closure(
+        self, path: tuple[str, ...], value: Mapping[str, Any], ctx: LossContext
+    ) -> None:
+        """A function found inside an `hl.config` table, kept whole rather than dropped."""
+        key = ":".join(path)
+        rendered = lua_value(value, self.scripts)
+        nested: dict[str, Any] = {}
+        cursor = nested
+        for step in path[:-1]:
+            cursor[step] = {}
+            cursor = cursor[step]
+        cursor[path[-1]] = "@@FN@@"
+        body = f"hl.config({lua_value(nested)})".replace('"@@FN@@"', rendered)
+        self.legacy.append(f"-- script from {ctx.origin or 'the imported config'}\n{body}\n")
+        ctx.note(
+            LossCode.SCRIPT_TO_LEGACY,
+            f"{key} is set to a function, which the settings app cannot show; the call was "
+            "kept verbatim in legacy.lua",
+        )
 
     def _set(self, option: ResolvedOption, value: Any, ctx: LossContext) -> None:
         if value is None:
@@ -534,40 +604,15 @@ def import_lua(
     *,
     consent: Consent,
     env: dict[str, str] | None = None,
-    timeout: float | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
 ) -> ImportResult:
     """Evaluate a foreign `hyprland.lua` and map what it declared -- the wizard's entry.
 
     Mirrors `importer.import_config` for the hyprlang path, and reports through the same
     `LossReport`, so the wizard has one flow whichever kind of config it was handed.
     """
-    kwargs: dict[str, Any] = {"consent": consent, "env": env}
-    if timeout is not None:
-        kwargs["timeout"] = timeout
-    recording = evaluate(path, **kwargs)
+    recording = evaluate(path, consent=consent, env=env, timeout=timeout)
     return map_recording(recording, schema, source=path)
 
 
-def overridden_options(
-    path: Path, schema: Schema, *, consent: Consent, env: dict[str, str] | None = None
-) -> frozenset[str]:
-    """Which Options a `user.lua` sets -- the read-back behind the drift badge.
-
-    `user.lua` is required last, so anything it sets wins over the app's own Modules and
-    the Row has to say so (ADR-0005, deferred here from #57). Evaluating it is the only
-    way to know: it is a program, and the app must never rewrite it.
-
-    Returns empty rather than raising when the file is absent or will not evaluate -- a
-    badge that cannot be computed is a missing badge, never a broken window.
-    """
-    if not path.is_file():
-        return frozenset()
-    try:
-        recording = evaluate(path, consent=consent, env=env)
-    except (OSError, RuntimeError):
-        return frozenset()
-    result = map_recording(recording, schema, source=path)
-    return frozenset(option.name for option, _ in result.model.set_options())
-
-
-__all__ = ["import_lua", "map_recording", "overridden_options"]
+__all__ = ["import_lua", "map_recording"]

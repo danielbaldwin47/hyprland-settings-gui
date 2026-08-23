@@ -30,7 +30,7 @@ from hyprtweaker.engine.importer.keywords import (
     SpecialCategory,
     UnparsedLine,
 )
-from hyprtweaker.engine.importer.lua import Consent, import_lua
+from hyprtweaker.engine.importer.lua import Consent, import_lua, lua_binary
 from hyprtweaker.engine.schema import load_schema
 from hyprtweaker.engine.writer.modules import render_module
 
@@ -301,6 +301,7 @@ class TestFixpoint:
                 second = render_module(items, app_version="0.0.0-test")
                 assert first == second, f"{rice}/{section} did not render stably"
 
+    @pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter installed")
     def test_writing_a_model_and_reading_it_back_gives_the_same_model(  # type: ignore[no-untyped-def]
         self, imports, schema, tmp_path
     ) -> None:

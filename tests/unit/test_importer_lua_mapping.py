@@ -324,3 +324,59 @@ def test_a_passthrough_run_says_so_in_the_report(tmp_path, schema) -> None:  # t
     result = import_lua(entry, schema, consent=Consent(evaluate=True, passthrough=True))
 
     assert "L35" in codes(result)
+
+
+def test_a_function_inside_hl_config_is_kept_not_blamed_on_a_typo(imported) -> None:  # type: ignore[no-untyped-def]
+    """`hl.config` is exempt from the hybrid rule because a config table is walked, not
+    mapped whole. Without a case for it the walk descends into the recorded closure and
+    reports the literal key `__fn` as a setting this Hyprland does not have -- a script
+    construct dropped in silence and blamed on the user's spelling.
+    """
+    result = imported("hl.config({ general = { layout = function() return 1 end } })\n")
+
+    assert "L32" in codes(result), "the closure should be kept, not reported as a typo"
+    assert "L30" not in codes(result), "reported as an unknown setting"
+    assert "__fn" not in result.legacy and "__fn" not in str(
+        [item.message for item in result.loss]
+    ), "the recorder's internal marker leaked into user-facing output"
+    assert "hl.config" in result.legacy
+
+
+def test_reading_state_outside_the_config_tree_is_reported(tmp_path, schema) -> None:  # type: ignore[no-untyped-def]
+    """The theme-engine case: a config that discovers its colours from a cache file has
+    baked them, and the imported copy will never read that file again."""
+    outside = tmp_path / "cache"
+    outside.mkdir()
+    (outside / "theme.txt").write_text("7", encoding="utf-8")
+    config = tmp_path / "config"
+    config.mkdir()
+    entry = config / "hyprland.lua"
+    entry.write_text(
+        f'local f = io.open("{outside / "theme.txt"}", "r")\n'
+        "local v = tonumber(f:read('a'))\nf:close()\n"
+        "hl.config({ decoration = { rounding = v } })\n",
+        encoding="utf-8",
+    )
+
+    result = import_lua(entry, schema, consent=GRANTED)
+
+    assert result.model.get("decoration:rounding") == 7, "the value still imports"
+    assert "L34" in codes(result), "but the import does not pretend it will re-read it"
+
+
+def test_reading_its_own_modules_is_not_a_finding(tmp_path, schema) -> None:  # type: ignore[no-untyped-def]
+    """Reading files inside the config tree is how a config is written -- reporting it
+    would bury the real finding under noise."""
+    entry = tmp_path / "hyprland.lua"
+    (tmp_path / "colors.txt").write_text("9", encoding="utf-8")
+    entry.write_text(
+        'local f = io.open("colors.txt", "r")\n'
+        "local v = tonumber(f:read('a'))\nf:close()\n"
+        "hl.config({ decoration = { rounding = v } })\n",
+        encoding="utf-8",
+    )
+
+    result = import_lua(entry, schema, consent=GRANTED)
+
+    assert result.model.get("decoration:rounding") == 9
+    assert "L34" not in codes(result)

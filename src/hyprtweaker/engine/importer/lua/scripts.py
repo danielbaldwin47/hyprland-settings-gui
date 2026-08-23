@@ -20,12 +20,11 @@ naming, because both were found by the prototype rather than reasoned out:
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
-from dataclasses import dataclass
 from typing import Any
 
 from ...model.values import lua_string
+from ...writer.syntax import luac_command
 from .sandbox import Recording, Script
 
 WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -106,11 +105,12 @@ _GETTABUP = re.compile(r"GETTABUP.*_ENV.*\"([A-Za-z_][A-Za-z0-9_]*)\"")
 
 
 def luac_binary() -> str | None:
-    """The bytecode lister used for foreign-global detection, if one is installed."""
-    for name in ("luac5.5", "luac5.4", "luac5.3", "luac"):
-        if (found := shutil.which(name)) is not None:
-            return found
-    return None
+    """The bytecode lister used for foreign-global detection, if one is installed.
+
+    The writer's syntax gate already had to answer "where is luac"; two candidate lists
+    would drift, and this one would be the stale one.
+    """
+    return luac_command()
 
 
 def lua_value(value: Any, scripts: ScriptSource | None = None) -> str:
@@ -212,16 +212,15 @@ def _scrub(text: str) -> str:
     return "".join(out)
 
 
-@dataclass
 class ScriptSource:
     """Reads captured closures back out of the files they came from."""
 
-    recording: Recording
-    notes: list[str]
-
     def __init__(self, recording: Recording) -> None:
         self.recording = recording
-        self.notes = []
+        self.notes: list[tuple[str, str]] = []
+        """`(origin, message)` rather than one string: the caller needs the origin, and
+        recovering it by splitting on the first colon turned `upvalue foo: ...` into an
+        origin of `upvalue foo`."""
         self._files: dict[str, list[str] | None] = {}
         self._expressions: dict[int, str] = {}
         self._globals: dict[int, tuple[str, ...]] = {}
@@ -251,17 +250,19 @@ class ScriptSource:
     def _extract(self, script: Script) -> str:
         lines = self._lines(script.source)
         if lines is None:
-            self.notes.append(f"{script.source}: unreadable")
+            self.notes.append((script.source, "source file could not be read"))
             return UNEXTRACTABLE
         if not (0 < script.start <= script.end <= len(lines)):
-            self.notes.append(f"{script.source}:{script.start}: line range outside the file")
+            self.notes.append(
+                (f"{script.source}:{script.start}", "line range outside the file")
+            )
             return UNEXTRACTABLE
 
         body = lines[script.start - 1 : script.end]
         first = body[0]
         opening = re.search(r"\bfunction\b", first)
         if opening is None:
-            self.notes.append(f"{script.source}:{script.start}: no 'function' to extract")
+            self.notes.append((f"{script.source}:{script.start}", "no 'function' to extract"))
             return UNEXTRACTABLE
         # `function name(a)` and `function M.name(a)` both become an anonymous expression.
         body[0] = re.sub(
@@ -289,7 +290,7 @@ class ScriptSource:
                     cut = token.end()
                     break
         if cut is None:
-            self.notes.append(f"{script.source}:{script.start}: no matching 'end'")
+            self.notes.append((f"{script.source}:{script.start}", "no matching 'end'"))
             return UNEXTRACTABLE
         return text[:cut]
 
@@ -310,7 +311,10 @@ class ScriptSource:
                 definitions.append(f"local {upvalue.name} = {lua_value(upvalue.value, self)}")
             else:
                 self.notes.append(
-                    f"upvalue {upvalue.name}: {upvalue.type} cannot be carried over"
+                    (
+                        "",
+                        f"upvalue {upvalue.name} of type {upvalue.type} cannot be carried over",
+                    )
                 )
                 definitions.append(
                     f"local {upvalue.name} = nil --[[ {upvalue.type} not carried over ]]"
@@ -355,15 +359,14 @@ class ScriptSource:
         return tuple(sorted(found))
 
 
-def render_legacy(entries: list[str], *, app_version: str, source: str) -> str:
+def render_legacy(entries: list[str], *, source: str) -> str:
     """`legacy.lua`: the constructs the GUI cannot represent, kept verbatim.
 
     Written once by the Importer and never rewritten (`ConfigPaths.protected`), so the
     header says so rather than the usual "do not edit" -- this one is the user's now.
     """
-    by = f"hyprtweaker {app_version}" if app_version else "hyprtweaker"
     header = [
-        f"-- Imported by {by} from {source}.",
+        f"-- Imported by hyprtweaker from {source}.",
         "--",
         "-- Constructs the settings app cannot represent, kept exactly as they were. The app",
         "-- lists these read-only and never rewrites this file: it is yours to edit.",
