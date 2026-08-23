@@ -17,7 +17,7 @@ instead -- and the app stops noticing a Bridge tool that reloads while it is ren
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import TracebackType
 
 from ..ipc import CommandClient, EventStream
@@ -28,6 +28,34 @@ from .preview import EvalPreview
 from .queue import DEBOUNCE_SECONDS, ApplyQueue
 from .result import ApplyResult
 from .transaction import RELOAD_TIMEOUT_SECONDS, ApplyTransaction
+
+
+class _Quieted:
+    """The Apply transaction, with the Eval preview tier stilled before it starts.
+
+    ADR-0010's "no eval between the reload and the error read", enforced on the side the
+    blocked-predicate cannot reach. That predicate stops a *new* tick from being sent while
+    a transaction runs, but it is checked before the `await`, and every request opens its
+    own socket -- so a tick dispatched one moment before the release is still in flight when
+    the reload happens, and it clears `configerrors` on its way past. A drag ends in exactly
+    that order every single time: last tick, release, transaction.
+
+    So the queue runs this instead of the transaction itself: drop the tick that has not
+    been sent (the commit carries the same value, durably), then wait out the one that has.
+    By the time this runs the queue is already `busy`, so nothing new can slip in behind it.
+
+    A wrapper rather than a step inside `ApplyTransaction`, because the transaction has no
+    business knowing a preview tier exists -- composing the two is what `Applier` is for.
+    """
+
+    def __init__(self, transaction: ApplyTransaction, preview: EvalPreview) -> None:
+        self._transaction = transaction
+        self._preview = preview
+
+    async def run(self, keys: Sequence[str]) -> ApplyResult:
+        self._preview.forget()
+        await self._preview.flush()
+        return await self._transaction.run(keys)
 
 
 class Applier:
@@ -73,12 +101,6 @@ class Applier:
             events=events,
             reload_timeout=reload_timeout,
         )
-        self._queue = ApplyQueue(self._transaction, debounce=debounce, on_result=on_result)
-        self._watch = ForeignReloadWatch(
-            events,
-            is_ours=lambda: self._transaction.in_flight,
-            on_foreign_reload=on_foreign_reload,
-        )
         self._preview = EvalPreview(
             model=model,
             client=client,
@@ -86,6 +108,14 @@ class Applier:
             # reload, so an eval sent while the transaction is still rendering and writing
             # would clear `configerrors` moments before that same transaction reads it.
             is_blocked=lambda: self._queue.busy or self._transaction.in_flight,
+        )
+        self._queue = ApplyQueue(
+            _Quieted(self._transaction, self._preview), debounce=debounce, on_result=on_result
+        )
+        self._watch = ForeignReloadWatch(
+            events,
+            is_ours=lambda: self._transaction.in_flight,
+            on_foreign_reload=on_foreign_reload,
         )
 
     # --- edits ------------------------------------------------------------------------------
@@ -105,13 +135,8 @@ class Applier:
         self._preview.forget()
 
     async def flush_previews(self) -> None:
-        """Wait until no preview is pending or in flight."""
+        """Wait until no preview is pending or on the socket."""
         await self._preview.flush()
-
-    @property
-    def previews_supported(self) -> bool:
-        """False once this session has refused `eval` -- it runs the hyprlang manager."""
-        return self._preview.supported
 
     def touch(self, *names: str) -> None:
         """The model changed mid-gesture: apply once the changes stop (~150 ms)."""

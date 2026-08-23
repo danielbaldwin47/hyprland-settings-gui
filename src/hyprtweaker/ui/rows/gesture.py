@@ -34,12 +34,12 @@ class Gesture:
 
     def __init__(
         self,
-        name: str,
         *,
-        preview: Callable[[str, Any], None],
-        commit: Callable[[str, Any], None],
+        preview: Callable[[Any], None],
+        commit: Callable[[Any], None],
     ) -> None:
-        self._name = name
+        """Two callbacks over one value. Which Option they write is the caller's business --
+        both come from the Row's own closures, which already know."""
         self._preview = preview
         self._commit = commit
         self._active = False
@@ -54,7 +54,7 @@ class Gesture:
         """The control moved. Preview the new value; do not write it."""
         self._active = True
         self._value = value
-        self._preview(self._name, value)
+        self._preview(value)
 
     def end(self) -> None:
         """The gesture finished: write the value it stopped on, exactly once.
@@ -67,7 +67,7 @@ class Gesture:
         if not self._active:
             return
         self._active = False
-        self._commit(self._name, self._value)
+        self._commit(self._value)
 
     def abandon(self) -> None:
         """Drop the gesture without writing. The model is about to be told the truth.

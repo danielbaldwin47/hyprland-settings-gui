@@ -30,6 +30,7 @@ FLOAT_GAPS = "general:float_gaps"
 SHADOW_OFFSET = "decoration:shadow:offset"
 BACKGROUND = "misc:background_color"
 INACTIVE_TEXT = "group:groupbar:text_color_inactive"
+SHADOW_INACTIVE = "decoration:shadow:color_inactive"
 
 
 class PreviewSession(FakeSession):
@@ -169,6 +170,61 @@ def test_editing_a_stop_writes_a_gradient_of_model_colours() -> None:
     controls(row, Gtk.ColorDialogButton)[0].set_rgba(chosen)
 
     assert session.model.get(ACTIVE_BORDER) == Gradient((Color(0xEE33CCFF),), 0.0)
+
+
+def test_a_nullable_gradient_shows_its_label_rather_than_a_white_stop_at_zero() -> None:
+    """The two `color_inactive` gradients fall back to their related colour when unset.
+
+    An editor opening on one opaque white stop at 0° would state a gradient the config does
+    not contain -- and the collapsed Row would contradict the expanded one, since the
+    summary reads "Same as shadow colour" either way.
+    """
+    from gi.repository import Gtk
+
+    row = build_row(SHADOW_INACTIVE, PreviewSession())
+
+    assert isinstance(row.control, Gtk.Stack)
+    assert row.control.get_visible_child_name() == "none"
+    assert row.control.get_visible_child().get_label() == "Same as shadow colour"
+    assert row.chrome.summary_text == "Same as shadow colour"
+
+
+def test_clicking_a_nullable_gradients_placeholder_gives_it_one_stop() -> None:
+    session = PreviewSession()
+    row = build_row(SHADOW_INACTIVE, session)
+
+    row.control.get_visible_child().emit("clicked")
+    row.refresh()
+    row.chrome.refresh()
+
+    gradient = session.model.get(SHADOW_INACTIVE)
+    assert isinstance(gradient, Gradient)
+    assert len(gradient.colors) == 1
+    assert row.control.get_visible_child_name() == "value"
+    assert row.chrome.summary_text == "0°"
+
+
+def test_resetting_a_nullable_colour_puts_its_button_back_to_the_starting_colour() -> None:
+    """The placeholder writes whatever the button is holding, so a button left on the colour
+    the Row was just reset *from* would make reset-then-set silently reinstate it."""
+    from gi.repository import Gdk
+
+    session = PreviewSession()
+    row = build_row(INACTIVE_TEXT, session)
+
+    session.model.set(INACTIVE_TEXT, Color(0xFF112233))
+    row.refresh()
+    chosen = Gdk.RGBA()
+    assert chosen.parse("#112233ff")
+    assert row.control.get_visible_child().get_rgba().equal(chosen)
+
+    session.model.unset(INACTIVE_TEXT)
+    row.refresh()
+    row.control.get_visible_child().emit("clicked")
+
+    assert session.model.get(INACTIVE_TEXT) == Color(0xFFFFFFFF), (
+        "a fresh start, not the old one"
+    )
 
 
 # --- the one continuous gesture in the app ----------------------------------------------------

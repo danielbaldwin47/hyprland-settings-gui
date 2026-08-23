@@ -37,7 +37,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, TypeVar
 
 import gi
 
@@ -69,6 +69,8 @@ from hyprtweaker.ui.rows.state import (  # noqa: E402
     no_value_label,
     shown_value,
 )
+
+T = TypeVar("T")
 
 _COMBO_WIDGETS = frozenset({Widget.ENUM_MAP, Widget.ENUM_STRING, Widget.SEGMENTED})
 
@@ -117,12 +119,15 @@ hold is `general:float_gaps`'s `-1`, which is its *null* spelling ("same as oute
 is reached by the reset arrow, not by walking a spinner past zero into a marker."""
 
 _DEFAULT_STOP = Color(0xFFFFFFFF)
-"""What a colour control shows when its Option has none yet -- opaque white.
+"""What a colour control shows when its Option has no value yet -- opaque white.
 
-Reached two ways, both of them a user asking for a value where there was none: clicking a
-nullable colour's placeholder, and adding a stop to a gradient. White because it is visible
-against both themes and unmistakably a starting point rather than a considered choice; the
-colour dialog is one click away, and the reset arrow is one click back."""
+The value a nullable colour's placeholder writes when clicked, and the single stop a
+nullable gradient's does. White because it is visible against both themes and unmistakably a
+starting point rather than a considered choice; the colour dialog is one click away, and the
+reset arrow is one click back.
+
+*Not* what "add a colour" puts in a gradient — that duplicates the last stop, so the new
+swatch starts from the colour beside it rather than from an unrelated white."""
 
 _ANGLE_MAX = 360.0
 _ANGLE_PAGE = 15.0
@@ -317,9 +322,8 @@ class RowFactory:
         changes shape (a stop added, a stop removed) and the pointer may well still be down.
         """
         return Gesture(
-            option.name,
-            preview=lambda _name, value: self._preview(option, value),
-            commit=lambda _name, value: self._set(option, value),
+            preview=lambda value: self._preview(option, value),
+            commit=lambda value: self._set(option, value),
         )
 
     def _edited(self, name: str) -> None:
@@ -366,8 +370,7 @@ class RowFactory:
             value = shown_value(option, self._session.value_of(option))
             with self._quiet():
                 spin.set_value(_as_number(value, _parked(low, high)))
-                if isinstance(control, Gtk.Stack):
-                    control.set_visible_child_name("none" if value is NO_VALUE else "value")
+                _show_value(control, value is not NO_VALUE)
 
         def changed(*_: Any) -> None:
             if self._echo_guard:
@@ -431,8 +434,8 @@ class RowFactory:
         placeholder.connect("clicked", lambda _button: on_set())
 
         stack = Gtk.Stack(valign=Gtk.Align.CENTER)
-        stack.add_named(placeholder, "none")
-        stack.add_named(control, "value")
+        stack.add_named(placeholder, _NONE_PAGE)
+        stack.add_named(control, _VALUE_PAGE)
         return stack
 
     def _combo(self, option: ResolvedOption) -> OptionRow:
@@ -538,10 +541,12 @@ class RowFactory:
         def refresh() -> None:
             value = shown_value(option, self._session.value_of(option))
             with self._quiet():
-                if value is not NO_VALUE:
-                    button.set_rgba(_rgba(_as_color(value)))
-                if isinstance(control, Gtk.Stack):
-                    control.set_visible_child_name("none" if value is NO_VALUE else "value")
+                # `_DEFAULT_STOP` when there is no value, not "leave whatever was there":
+                # the placeholder's click writes the button's current colour, and a button
+                # still holding the colour the Row was just reset *from* would make reset
+                # then set silently reinstate it rather than start fresh.
+                button.set_rgba(_rgba(_DEFAULT_STOP if value is NO_VALUE else _as_color(value)))
+                _show_value(control, value is not NO_VALUE)
 
         def changed(*_: Any) -> None:
             if not self._echo_guard:
@@ -575,13 +580,23 @@ class RowFactory:
         editor = _editor_box()
         editor.append(_field("Colours", stops))
         editor.append(_field("Angle (°)", angle, expand=True))
+        # The two `color_inactive` gradients fall back to their related colour when unset,
+        # and an editor opening on one opaque white stop at 0° would be stating a gradient
+        # the config does not contain -- the same falsehood the collapsed summary avoids by
+        # reading "Same as shadow colour". Expanding a Row must not contradict it.
+        control = (
+            self._placeholder_stack(
+                option, editor, on_set=lambda: self._set(option, _DEFAULT_GRADIENT)
+            )
+            if option.nullable
+            else editor
+        )
 
-        row, chrome = self._expander(option, editor)
+        row, chrome = self._expander(option, control)
         gesture = self._gesture(option)
 
         def current() -> Gradient:
-            value = self._typed(option, _DEFAULT_GRADIENT)
-            return value if isinstance(value, Gradient) else _DEFAULT_GRADIENT
+            return self._typed(option, _DEFAULT_GRADIENT)
 
         def write(gradient: Gradient) -> None:
             self._set(option, gradient)
@@ -645,6 +660,9 @@ class RowFactory:
             with self._quiet():
                 angle.set_value(gradient.angle)
                 rebuild(gradient)
+                _show_value(
+                    control, shown_value(option, self._session.value_of(option)) is not NO_VALUE
+                )
 
         def angle_changed(*_: Any) -> None:
             if self._echo_guard:
@@ -653,7 +671,7 @@ class RowFactory:
 
         angle.connect("value-changed", angle_changed)
         _ends_gesture(angle, gesture)
-        return OptionRow(option, row, editor, refresh, chrome, gesture)
+        return OptionRow(option, row, control, refresh, chrome, gesture)
 
     def _css_gaps(self, option: ResolvedOption) -> OptionRow:
         """Four gap sides, entered as one number or as four (ADR-0013's "uniform or per-side").
@@ -698,8 +716,7 @@ class RowFactory:
         row, chrome = self._expander(option, control)
 
         def current() -> CssGaps:
-            value = self._typed(option, _DEFAULT_GAPS)
-            return value if isinstance(value, CssGaps) else _DEFAULT_GAPS
+            return self._typed(option, _DEFAULT_GAPS)
 
         def entered() -> CssGaps:
             """What the visible half of the editor currently says."""
@@ -740,9 +757,9 @@ class RowFactory:
             with self._quiet():
                 uniform.set_active(gaps.top == gaps.right == gaps.bottom == gaps.left)
                 show(gaps)
-                if isinstance(control, Gtk.Stack):
-                    live = shown_value(option, self._session.value_of(option))
-                    control.set_visible_child_name("none" if live is NO_VALUE else "value")
+                _show_value(
+                    control, shown_value(option, self._session.value_of(option)) is not NO_VALUE
+                )
 
         uniform.connect("toggled", shape_toggled)
         all_sides.connect("notify::value", edited)
@@ -766,8 +783,7 @@ class RowFactory:
         row, chrome = self._expander(option, editor)
 
         def refresh() -> None:
-            value = self._typed(option, _DEFAULT_VEC2)
-            vector = value if isinstance(value, Vec2) else _DEFAULT_VEC2
+            vector = self._typed(option, _DEFAULT_VEC2)
             with self._quiet():
                 x_spin.set_value(vector.x)
                 y_spin.set_value(vector.y)
@@ -780,7 +796,7 @@ class RowFactory:
         y_spin.connect("notify::value", edited)
         return OptionRow(option, row, editor, refresh, chrome)
 
-    def _typed(self, option: ResolvedOption, fallback: Any) -> Any:
+    def _typed(self, option: ResolvedOption, fallback: T) -> T:
         """This Option's current value as its own class, or `fallback` when it has none.
 
         Two things stand between the model and a typed value, and neither is an error. An
@@ -789,14 +805,19 @@ class RowFactory:
         schema default arrives as the display text `descriptions` printed (`"ff444444
         0deg"`), never as a `Gradient` -- so every editor parses, and a spelling this
         Hyprland version no longer uses falls back rather than taking the Page down with it.
+
+        The fallback names the type as well as the value: `parse_value` answers by
+        `option.type`, and an Overlay that gave an Option a `widget` its `type` disagrees
+        with would otherwise hand a gradient editor a `CssGaps` to unpack.
         """
         value = shown_value(option, self._session.value_of(option))
         if value is NO_VALUE:
             return fallback
         try:
-            return parse_value(option.type, value)
+            parsed = parse_value(option.type, value)
         except (ValueError, TypeError):
             return fallback
+        return parsed if isinstance(parsed, type(fallback)) else fallback
 
     # --- what has no editor yet ---------------------------------------------------------------
 
@@ -855,6 +876,25 @@ _DEFAULT_VEC2 = Vec2(0.0, 0.0)
 """What a complex editor opens on when its Option has no value to show. Never written by
 being displayed -- an editor showing one of these is a Row whose Option is Unset, and it
 stays Unset until the user moves something."""
+
+
+_NONE_PAGE = "none"
+_VALUE_PAGE = "value"
+"""The two pages of a nullable control's stack, named once.
+
+`_placeholder_stack` builds it and four `refresh` closures swap it, so the two names were
+five bare strings in five places -- and a typo in any of them fails silently, as a control
+that simply never leaves its placeholder."""
+
+
+def _show_value(control: Gtk.Widget, has_value: bool) -> None:
+    """Swap a nullable control to its editor, or back to its "no value" placeholder.
+
+    A no-op on a control that is not nullable, so every `refresh` can call it unconditionally
+    rather than each one re-deciding whether its Option got a stack.
+    """
+    if isinstance(control, Gtk.Stack):
+        control.set_visible_child_name(_VALUE_PAGE if has_value else _NONE_PAGE)
 
 
 def _editor_box() -> Gtk.Box:

@@ -82,6 +82,16 @@ class EvalPreview:
         self._is_blocked = is_blocked
 
         self._pending: str | None = None
+        self._sending = False
+        """Whether a request is on the socket right now.
+
+        Tracked apart from `_pending` because the two settle differently: a pending tick can
+        simply be dropped, but a request already written to the socket will be answered
+        whatever anyone does about it. Folding them together made `forget` report the tier
+        idle with an `eval` still in flight -- and `flush`, whose whole job is to be the
+        moment after which no eval can land, would then return too early.
+        """
+
         self._last_code: str | None = None
         self._supported = True
         self._closed = False
@@ -111,8 +121,9 @@ class EvalPreview:
         """Drop any tick not yet sent -- the compositor reloaded and wiped eval state.
 
         Not a cancellation of anything in flight: a request already on the socket will be
-        answered whatever happens here. It is the un-sent tick that has gone stale, because
-        the model behind it is about to be re-read from the compositor (`Session`).
+        answered whatever happens here, and `flush` is what waits for it. It is the un-sent
+        tick that has gone stale, because the model behind it is about to be re-read from
+        the compositor (`Session`) or written by the transaction that follows it.
         """
         self._pending = None
         self._last_code = None
@@ -142,7 +153,13 @@ class EvalPreview:
             self._worker = asyncio.create_task(self._serve(), name="hyprtweaker-preview")
 
     async def flush(self) -> None:
-        """Wait until nothing is pending and nothing is in flight."""
+        """Wait until nothing is pending and nothing is on the socket.
+
+        The moment after which no `eval` of this tier's can land, which is what makes it
+        safe to start an Apply transaction: `eval` clears `configerrors`, and a request
+        dispatched one tick before the release would otherwise still be in flight when the
+        reload happens (ADR-0010).
+        """
         await self._idle.wait()
 
     async def aclose(self) -> None:
@@ -170,7 +187,11 @@ class EvalPreview:
             name, self._pending = self._pending, None
 
             if name is not None:
-                await self._send(name)
+                self._sending = True
+                try:
+                    await self._send(name)
+                finally:
+                    self._sending = False
             self._settle()
 
     async def _send(self, name: str) -> None:
@@ -222,5 +243,5 @@ class EvalPreview:
         return preview_code(option, value)
 
     def _settle(self) -> None:
-        if self._pending is None:
+        if self._pending is None and not self._sending:
             self._idle.set()

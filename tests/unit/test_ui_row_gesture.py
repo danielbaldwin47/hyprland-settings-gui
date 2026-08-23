@@ -19,16 +19,13 @@ from typing import Any
 
 from hyprtweaker.ui.rows.gesture import Gesture
 
-NAME = "general:col.active_border"
-
 
 def make() -> tuple[Gesture, list[Any], list[Any]]:
     previewed: list[Any] = []
     committed: list[Any] = []
     gesture = Gesture(
-        NAME,
-        preview=lambda name, value: previewed.append((name, value)),
-        commit=lambda name, value: committed.append((name, value)),
+        preview=previewed.append,
+        commit=committed.append,
     )
     return gesture, previewed, committed
 
@@ -39,7 +36,7 @@ def test_every_tick_previews_and_none_of_them_commits() -> None:
     for angle in (10, 20, 30):
         gesture.tick(angle)
 
-    assert previewed == [(NAME, 10), (NAME, 20), (NAME, 30)]
+    assert previewed == [10, 20, 30]
     assert committed == [], "a tick that wrote would be one compositor teardown per tick"
 
 
@@ -50,7 +47,7 @@ def test_the_release_commits_the_value_the_drag_stopped_on_exactly_once() -> Non
     gesture.tick(45)
     gesture.end()
 
-    assert committed == [(NAME, 45)]
+    assert committed == [45]
 
 
 def test_ending_twice_writes_once() -> None:
@@ -62,7 +59,7 @@ def test_ending_twice_writes_once() -> None:
     gesture.end()
     gesture.end()
 
-    assert committed == [(NAME, 45)]
+    assert committed == [45]
 
 
 def test_ending_without_a_tick_writes_nothing() -> None:
@@ -99,4 +96,4 @@ def test_a_gesture_can_start_again_after_being_abandoned() -> None:
     gesture.tick(90)
     gesture.end()
 
-    assert committed == [(NAME, 90)]
+    assert committed == [90]

@@ -37,6 +37,7 @@ from hyprtweaker.engine.schema import (
     Restart,
     Schema,
     Visibility,
+    Widget,
     humanise,
 )
 
@@ -184,8 +185,13 @@ class ValueSummary:
     """
 
 
-_SUMMARISED = frozenset({OptionType.GRADIENT, OptionType.CSS_GAPS, OptionType.VEC2})
-"""The three types whose editor is an expander, and therefore the three that need a summary.
+_SUMMARISED = frozenset({Widget.GRADIENT, Widget.CSS_GAPS, Widget.VEC2})
+"""The three widgets that are expanders, and therefore the three Rows that need a summary.
+
+Keyed on `widget`, not on `type`, because that is what the Row factory dispatches on. The
+two agree throughout the shipped Schema, but the Overlay exists precisely to override
+`widget` -- and keying on `type` would put a collapsed-value preview on a Row that never
+collapses the moment one did.
 
 Colours are not here: a colour button *is* its own preview, and font weights render their
 value in the control. The row catalogue names exactly these three."""
@@ -199,7 +205,7 @@ def value_summary(option: ResolvedOption, value: OptionValue) -> ValueSummary | 
     is the most visible thing on a collapsed Row and the least excusable place to leak a
     sentinel.
     """
-    if option.type not in _SUMMARISED:
+    if option.widget not in _SUMMARISED:
         return None
 
     shown = shown_value(option, value)

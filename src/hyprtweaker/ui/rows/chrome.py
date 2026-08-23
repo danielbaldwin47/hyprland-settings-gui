@@ -145,6 +145,7 @@ class RowChrome:
 
     @property
     def summary_text(self) -> str:
+        """The dim collapsed-value label: an angle, a gap run, or the Option's null label."""
         return self._summary_label.get_text()
 
     @property
@@ -266,12 +267,16 @@ class SwatchStrip:
         return self._colors
 
     def set_colors(self, colors: tuple[str, ...]) -> None:
-        self._colors = colors
+        accepted: list[str] = []
         self._rgba = []
         for css in colors:
             rgba = Gdk.RGBA()
             if rgba.parse(css):
+                accepted.append(css)
                 self._rgba.append(rgba)
+        # Only the ones that will actually be drawn, so `colors` cannot report a swatch the
+        # strip silently dropped -- the property is what the UI tier asserts against.
+        self._colors = tuple(accepted)
         self.widget.set_content_width(int(_SWATCH * len(self._rgba)))
         self.widget.set_visible(bool(self._rgba))
         self.widget.queue_draw()

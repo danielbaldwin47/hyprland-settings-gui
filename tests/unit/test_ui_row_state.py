@@ -18,10 +18,10 @@ from _support import SAMPLE_VERSION, SCHEMA_DIR
 
 from hyprtweaker.engine.model import UNSET, ConfigModel, CssGaps, Gradient, OptionValue, Vec2
 from hyprtweaker.engine.schema import (
-    OptionType,
     ResolvedOption,
     Schema,
     Visibility,
+    Widget,
     load_schema,
 )
 from hyprtweaker.ui.rows.state import (
@@ -397,12 +397,14 @@ class TestValueSummary:
     sentinel could leak.
     """
 
-    def test_only_the_three_expander_types_get_one(self) -> None:
+    def test_only_the_three_expander_widgets_get_one(self) -> None:
+        """Keyed on `widget`, which is what the Row factory dispatches on -- keying on
+        `type` would put a collapsed preview on a Row an Overlay override made not-collapse."""
         summarised = {
-            option.type for option in SCHEMA if value_summary(option, UNSET) is not None
+            option.widget for option in SCHEMA if value_summary(option, UNSET) is not None
         }
 
-        assert summarised == {OptionType.GRADIENT, OptionType.CSS_GAPS, OptionType.VEC2}
+        assert summarised == {Widget.GRADIENT, Widget.CSS_GAPS, Widget.VEC2}
 
     def test_a_gradient_summarises_as_its_stops_and_its_angle(self) -> None:
         option = SCHEMA["general:col.active_border"]
