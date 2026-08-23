@@ -1,6 +1,9 @@
-# Sources are listed explicitly, per subpackage. Meson discourages globbing:
-# an unlisted file is a build error at review time rather than a module that
-# silently fails to install.
+# Sources are listed explicitly, per subpackage, because meson discourages
+# globbing. Meson will NOT complain about a source that is missing from this
+# list -- it just quietly fails to install it, which is invisible from a
+# checkout and shows up as an ImportError from the installed package. So
+# tests/unit/test_meson_sources.py diffs these lists against what is on disk;
+# add a module here and the test stays green, forget to and it goes red.
 package_sources = {
   'hyprtweaker': [
     '__init__.py',

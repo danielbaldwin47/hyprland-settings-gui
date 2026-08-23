@@ -65,11 +65,23 @@ def gi_masked() -> Iterator[None]:
         sys.modules.update(saved)
 
 
+def _discovery_failed(name: str) -> None:
+    # walk_packages defaults to onerror=None, which swallows import errors and
+    # silently drops the subtree -- a broken engine package would then read as a
+    # passing seam. Turn it into a loud failure instead.
+    raise RuntimeError(f"failed to walk {name} while discovering engine modules")
+
+
 def engine_module_names() -> list[str]:
     """Every module and subpackage under `hyprtweaker.engine`, including itself."""
     engine = importlib.import_module(ENGINE)
     names = [ENGINE]
-    names += [info.name for info in pkgutil.walk_packages(engine.__path__, prefix=f"{ENGINE}.")]
+    names += [
+        info.name
+        for info in pkgutil.walk_packages(
+            engine.__path__, prefix=f"{ENGINE}.", onerror=_discovery_failed
+        )
+    ]
     return sorted(names)
 
 

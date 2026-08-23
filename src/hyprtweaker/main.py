@@ -7,13 +7,11 @@ share one entrypoint without the top-level package pulling GTK in.
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Sequence
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str]) -> int:
     """Run the app. Returns the process exit status."""
     from hyprtweaker.application import HyprtweakerApplication
 
-    args = list(sys.argv if argv is None else argv)
-    return HyprtweakerApplication().run(args)
+    return HyprtweakerApplication().run(list(argv))

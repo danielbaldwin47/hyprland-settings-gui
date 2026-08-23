@@ -16,7 +16,6 @@ from gi.repository import Adw, Gio  # noqa: E402
 from hyprtweaker.ui.shell.window import MainWindow  # noqa: E402
 
 APP_ID = "io.github.danielbaldwin47.Hyprtweaker"
-APP_NAME = "Hyprtweaker"
 
 
 class HyprtweakerApplication(Adw.Application):
