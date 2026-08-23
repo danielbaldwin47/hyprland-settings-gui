@@ -15,6 +15,14 @@ package_sources = {
     '__init__.py',
     'paths.py',
   ],
+  'hyprtweaker/engine/apply': [
+    '__init__.py',
+    'applier.py',
+    'foreign.py',
+    'queue.py',
+    'result.py',
+    'transaction.py',
+  ],
   'hyprtweaker/engine/importer': [
     '__init__.py',
     'hyprlang.py',

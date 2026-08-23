@@ -19,13 +19,23 @@ Each reply below is labelled with where it came from, and only two labels exist:
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import tempfile
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, TypeVar
 
-from hyprtweaker.engine.ipc import UNSUPPORTED_EVAL, Instance
+from hyprtweaker.engine.ipc import RELOAD_STARTED, UNSUPPORTED_EVAL, Instance
+from hyprtweaker.engine.model import (
+    Color,
+    ConfigModel,
+    CssGaps,
+    FontWeight,
+    Gradient,
+    Vec2,
+)
+from hyprtweaker.engine.schema import ResolvedOption
 
 T = TypeVar("T")
 
@@ -93,6 +103,70 @@ UNSCRIPTED = "unscripted request"
 silent default: the test that provoked it fails on the reply *and* can name the request."""
 
 
+# --- conversations built from a model -----------------------------------------------------
+#
+# The Apply transaction confirms by reading the keys it wrote back, so its tests need a
+# compositor that answers about *this* model rather than about the four fixed Options above.
+# Built from the schema rather than hand-spelled, so a test asserting "reads back clean"
+# cannot pass by accidentally agreeing with a reply that was typed wrong.
+
+
+def option_reply(option: ResolvedOption, value: Any, *, live_set: bool = True) -> str:
+    """One `getoption` reply reporting `value` for `option`, in that Option's own key.
+
+    `live_set=False` is the shape that matters most: the Option exists, the running config
+    does not set it. That is what a Module which never loaded looks like from outside.
+    """
+    payload: dict[str, Any] = {"option": option.name, "set": live_set}
+    payload[option.getoption_key.value] = _wire(value)
+    return json.dumps(payload)
+
+
+def _wire(value: Any) -> Any:
+    """A model value in the shape `getoption` reports it.
+
+    One spelling per complex type, each the one `from_getoption` documents as the Lua
+    engine's: a colour as its packed ARGB word, a gradient as its display string, css-gaps
+    and vec2 as their side/axis objects.
+    """
+    if isinstance(value, Color):
+        return value.argb
+    if isinstance(value, Gradient):
+        return str(value)
+    if isinstance(value, CssGaps):
+        return {
+            "top": value.top,
+            "right": value.right,
+            "bottom": value.bottom,
+            "left": value.left,
+        }
+    if isinstance(value, Vec2):
+        return {"x": value.x, "y": value.y}
+    if isinstance(value, FontWeight):
+        return value.weight
+    if isinstance(value, bool):
+        return int(value)
+    return value
+
+
+def model_conversation(model: ConfigModel, **overrides: str) -> dict[str, str]:
+    """A session in which every Option the model sets already reads back as the model has it.
+
+    The clean baseline for a transaction test: `reload` answers `ok`, the config parses, and
+    Read-back agrees. A test that wants one of those to go wrong passes `overrides` --
+    keyed by wire request, e.g. `**{"j/configerrors": CONFIG_ERRORS}`.
+    """
+    conversation = {"reload": OK, "j/configerrors": NO_CONFIG_ERRORS}
+    for option, value in model.set_options():
+        # An explicitly-null Option is emitted as its curated null value, and what Hyprland
+        # then reports for that marker is its own business -- so the fake reports the marker
+        # itself and the transaction only checks that the key is set at all.
+        reported = option.null_value if value is None else value
+        conversation[f"j/getoption {option.name}"] = option_reply(option, reported)
+    conversation.update(overrides)
+    return conversation
+
+
 # --- the fake ----------------------------------------------------------------------------
 
 
@@ -100,16 +174,31 @@ class FakeHyprland:
     """Two unix sockets in a temp dir, answering from a script and pushing events on cue."""
 
     def __init__(
-        self, conversation: Mapping[str, str] | None = None, *, never_answer: bool = False
+        self,
+        conversation: Mapping[str, str] | None = None,
+        *,
+        never_answer: bool = False,
+        reload_emits_event: bool = False,
+        reply_delay: float = 0.0,
     ) -> None:
         """`never_answer` accepts commands and sits on them -- a busy, not absent, session.
 
         A mode rather than a second fake class: "silent" is one behaviour of the same
         scripted compositor, and splitting it out duplicated the whole bind-and-clean-up
         lifecycle for the sake of one `await`.
+
+        `reload_emits_event` makes `reload` push `configreloaded` before answering `ok`,
+        which is what a real session does -- the event fires at the end of
+        `postConfigReload` and the reply follows it. Off by default so the IPC tests, which
+        assert on an *unprompted* stream, keep seeing exactly the lines they push.
+
+        `reply_delay` holds every reply for that long. A transaction is several round trips,
+        so a delay is how a test can tell "serialized" from "happened to finish first".
         """
         self.conversation = dict(CONVERSATION if conversation is None else conversation)
         self.never_answer = never_answer
+        self.reload_emits_event = reload_emits_event
+        self.reply_delay = reply_delay
         self.requests: list[str] = []
         """Every request received on the command socket, in order -- the wire-level record a
         test asserts against (that `getoption` really did send the colon form, and so on)."""
@@ -178,6 +267,15 @@ class FakeHyprland:
         # straight after `EventStream.start()` would otherwise push into an empty room and
         # read as "the event never arrived".
         await self.wait_for_listeners(1)
+        await self._push(line)
+
+    async def _push(self, line: str) -> None:
+        """Write to whoever is connected right now, without waiting for anyone to be.
+
+        The waiting version deadlocks inside a command handler: `reload` cannot answer until
+        it has emitted, and a test with no event listener would then hang instead of
+        failing. Callers that need a listener assert on `wait_for_listeners` first.
+        """
         for writer in list(self._listeners):
             writer.write(line.encode("utf-8"))
             await writer.drain()
@@ -211,6 +309,14 @@ class FakeHyprland:
         if self.never_answer:
             self._held.append(writer)
             return
+
+        if self.reply_delay:
+            await asyncio.sleep(self.reply_delay)
+
+        if self.reload_emits_event and request == "reload":
+            # Ordered as the compositor orders it: `configreloaded` fires at the end of
+            # `postConfigReload`, and only then does the socket answer `ok`.
+            await self._push(f"{RELOAD_STARTED}>>\n")
 
         writer.write(self.conversation.get(request, f"{UNSCRIPTED}: {request}").encode("utf-8"))
         await writer.drain()
