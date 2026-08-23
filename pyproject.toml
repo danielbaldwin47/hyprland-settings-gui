@@ -21,10 +21,15 @@ select = [
 ]
 
 [tool.mypy]
-# The Engine only: PyGObject stubs are perpetually partial and the UI is the
-# layer with the least logic, so annotating it costs more than it catches
-# (ADR-0011).
-files = ["src/hyprtweaker/engine"]
+# The Engine, plus the two modules above it that never import `gi`. ADR-0011
+# exempts the UI because PyGObject stubs are perpetually partial and the layer
+# is `gi`-dynamic -- neither is true of toolkit-free code, and `session.py` in
+# particular is where the model, the writer and the socket meet.
+files = [
+    "src/hyprtweaker/engine",
+    "src/hyprtweaker/session.py",
+    "src/hyprtweaker/ui/pages/plan.py",
+]
 mypy_path = "src"
 python_version = "3.11"
 strict = true

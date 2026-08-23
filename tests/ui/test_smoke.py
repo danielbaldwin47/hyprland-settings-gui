@@ -18,11 +18,13 @@ def test_window_constructs() -> None:
     from gi.repository import Adw
 
     from hyprtweaker import APP_ID
+    from hyprtweaker.session import Session
     from hyprtweaker.ui.shell.window import MainWindow
 
     Adw.init()
     app = Adw.Application(application_id=APP_ID)
-    window = MainWindow(application=app)
+    session = Session(spawn=lambda coro: coro.close(), app_version="0.0.0-test")
+    window = MainWindow(session, application=app)
 
     assert isinstance(window, Adw.ApplicationWindow)
     assert window.get_title()

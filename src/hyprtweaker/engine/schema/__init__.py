@@ -31,6 +31,7 @@ from .overlay import Overlay
 from .resolve import (
     Schema,
     available_versions,
+    derive_section_title,
     derive_title,
     load_schema,
     resolve_option,
@@ -73,6 +74,7 @@ __all__ = [
     "Visibility",
     "Widget",
     "available_versions",
+    "derive_section_title",
     "derive_title",
     "load_schema",
     "resolve_option",

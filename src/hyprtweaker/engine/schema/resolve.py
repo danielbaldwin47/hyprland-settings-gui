@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,17 @@ def derive_title(option: GeneratedOption) -> str:
         title = f"{title} color"
 
     return title
+
+
+def derive_section_title(section: str) -> str:
+    """A last-resort human label for a Section the Overlay has no title for.
+
+    Every Section of every shipped schema is curated, so this only fires for a Section a
+    *newer* Hyprland introduced -- the ADR-0012 supplement path, where showing
+    "Input capture" beats showing nothing at all or the raw `input-capture`.
+    """
+    words = section.replace("-", " ").replace("_", " ").strip()
+    return words[:1].upper() + words[1:]
 
 
 def _merge_range(generated: GeneratedOption, entry: OverlayEntry) -> Range | None:
@@ -171,6 +183,14 @@ class Schema:
 
     hyprland_version: str
     options: tuple[ResolvedOption, ...]
+    sections: Mapping[str, SectionOverlay] = field(default_factory=dict)
+    """Per-Section curation, kept rather than folded away.
+
+    `resolve_option` pushes a Section's `visibility` floor and `help_url` down onto each
+    Option, but its **title** has nowhere to land: it names a Page, not a Row. Dropping it
+    here would leave the Config view -- one Page per Section -- with 21 raw config keys for
+    headings and no way to reach the curated names sitting in the Overlay."""
+
     _by_name: dict[str, ResolvedOption] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -188,6 +208,7 @@ class Schema:
                 )
                 for option in schema.options
             ),
+            sections=dict(overlay.sections),
         )
 
     def __getitem__(self, name: str) -> ResolvedOption:
@@ -220,6 +241,18 @@ class Schema:
                 key=lambda option: option.order,
             )
         )
+
+    def section_title(self, name: str) -> str:
+        """The Page heading for a Section: curated when the Overlay names it."""
+        overlay = self.sections.get(name)
+        if overlay is not None and overlay.title:
+            return overlay.title
+        return derive_section_title(name)
+
+    def section_help_url(self, name: str) -> str | None:
+        """The Section's wiki anchor, for the Page's "Learn more"."""
+        overlay = self.sections.get(name)
+        return overlay.help_url if overlay is not None else None
 
 
 def schema_dir() -> Path:

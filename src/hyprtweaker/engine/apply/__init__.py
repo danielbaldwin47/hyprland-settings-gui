@@ -13,6 +13,8 @@ Four modules, in dependency order:
 - `transaction.py` -- `ApplyTransaction`, the five steps and the in-flight flag;
 - `queue.py` -- `ApplyQueue`, debounce and serialization, with no idea sockets exist;
 - `foreign.py` -- `ForeignReloadWatch`, the "somebody else reloaded" signal;
+- `reread.py` -- `read_state`, the full state re-read that answers a foreign reload and
+  recovers the model at startup;
 - `applier.py` -- `Applier`, the three wired together, which is what the app holds.
 
 Typical use::
@@ -35,6 +37,7 @@ from __future__ import annotations
 from .applier import Applier
 from .foreign import ForeignReloadWatch
 from .queue import DEBOUNCE_SECONDS, ApplyQueue, Transaction
+from .reread import ReRead, app_owned_options, read_state
 from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch
 from .transaction import (
     RELOAD_TIMEOUT_SECONDS,
@@ -54,5 +57,8 @@ __all__ = [
     "ApplyTransaction",
     "ForeignReloadWatch",
     "Mismatch",
+    "ReRead",
     "Transaction",
+    "app_owned_options",
+    "read_state",
 ]
