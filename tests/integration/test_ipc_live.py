@@ -31,7 +31,7 @@ from hyprtweaker.engine.ipc import (  # noqa: E402
     EventStream,
     Instance,
     NoInstance,
-    UnknownOption,
+    NoSuchOption,
 )
 
 pytestmark = pytest.mark.hyprland
@@ -75,7 +75,7 @@ def test_getoption_answers_from_the_real_socket() -> None:
 def test_an_option_this_hyprland_does_not_have_raises() -> None:
     async def main() -> None:
         assert INSTANCE is not None
-        with pytest.raises(UnknownOption):
+        with pytest.raises(NoSuchOption):
             await CommandClient(INSTANCE).getoption("general:definitely_not_an_option")
 
     asyncio.run(main())

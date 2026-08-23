@@ -41,5 +41,12 @@ class MalformedReply(IpcError):
     """
 
 
-class UnknownOption(IpcError):
-    """`getoption` for a name this Hyprland does not have."""
+class NoSuchOption(IpcError):
+    """`getoption` for a name the *running* Hyprland does not have.
+
+    Named for the compositor's own reply rather than mirroring the model's `UnknownOption`
+    (a name no shipped Schema knows), because the two are different facts with different
+    answers: one means the app is out of date or the user is on another release, the other
+    means the app asked for something that never existed. Sharing a name would make
+    `except UnknownOption` mean whichever one the import line happened to pick.
+    """

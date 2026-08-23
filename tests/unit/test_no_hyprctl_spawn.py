@@ -31,21 +31,22 @@ Adding to this is a real decision, not a formality: whatever goes here must be a
 is not Hyprland. Talking to the compositor has exactly one route, and it is the socket.
 """
 
-SPAWN_NAMES = frozenset(
-    {
-        "system",
-        "popen",
-        "execv",
-        "execve",
-        "execvp",
-        "execvpe",
-        "spawnv",
-        "spawnvp",
-        "posix_spawn",
-        "create_subprocess_exec",
-        "create_subprocess_shell",
-    }
-)
+SPAWN_PREFIXES = ("exec", "spawn", "posix_spawn", "popen", "fork", "create_subprocess")
+"""Matched by prefix rather than by an explicit list of names.
+
+`os` alone offers `execl/execle/execlp/execv/execve/execvp/execvpe`, seven `spawn*`, two
+`posix_spawn*`, `fork`, `forkpty`, `popen` and `system` -- an enumeration is a list of the
+holes someone will find. Prefixes are checked only against attributes of `os`, `asyncio`
+and `subprocess`, so an unrelated method called `execute` is not swept up."""
+
+SPAWN_NAMES = frozenset({"system", "startfile"})
+"""The spawners whose names carry no family prefix."""
+
+SPAWN_MODULES = frozenset({"os", "asyncio", "subprocess", "pty", "multiprocessing"})
+
+
+def is_spawn(name: str) -> bool:
+    return name in SPAWN_NAMES or name.startswith(SPAWN_PREFIXES)
 
 
 def engine_modules() -> list[Path]:
@@ -93,24 +94,60 @@ def test_no_engine_module_names_hyprctl_in_code(module: Path) -> None:
     )
 
 
+def spawners_in(source: str) -> list[str]:
+    """Every way `source` could start a process, by name."""
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            found += [alias.name for alias in node.names if alias.name == "subprocess"]
+        elif isinstance(node, ast.ImportFrom):
+            # `from subprocess import run` -- and `from os import execvp`, which the
+            # attribute branch below would never see.
+            if node.module == "subprocess":
+                found.append("subprocess")
+            elif node.module in SPAWN_MODULES:
+                found += [alias.name for alias in node.names if is_spawn(alias.name)]
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in SPAWN_MODULES
+            and is_spawn(node.attr)
+        ):
+            found.append(f"{node.value.id}.{node.attr}")
+    return sorted(set(found))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import subprocess",
+        "from subprocess import run",
+        "import os\nos.system('hyprctl reload')",
+        "import os\nos.execlp('hyprctl', 'hyprctl', 'reload')",
+        "import os\nos.posix_spawnp('hyprctl', [], {})",
+        "import os\nos.forkpty()",
+        "from os import execvp",
+        "import asyncio\nasyncio.create_subprocess_exec('hyprctl')",
+    ],
+)
+def test_the_scan_catches_every_spelling_it_claims_to(source: str) -> None:
+    """Guards the guard: a detector with a hole reads exactly like a clean engine."""
+    assert spawners_in(source), f"the spawn scan missed {source!r}"
+
+
+def test_the_scan_leaves_innocent_names_alone() -> None:
+    """A method called `execute` is not a process spawn, and a false positive here would
+    push a future author to work around the test rather than trust it."""
+    assert not spawners_in("class Query:\n    def execute(self): ...\nQuery().execute()")
+
+
 @pytest.mark.parametrize("module", engine_modules(), ids=relative)
 def test_only_listed_engine_modules_start_a_process(module: Path) -> None:
     if relative(module) in MAY_SPAWN:
         return
 
-    tree = ast.parse(module.read_text(encoding="utf-8"))
-    found: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            found += [alias.name for alias in node.names if alias.name == "subprocess"]
-        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
-            found.append("subprocess")
-        elif isinstance(node, ast.Attribute) and node.attr in SPAWN_NAMES:
-            found.append(node.attr)
-        elif isinstance(node, ast.Name) and node.id in SPAWN_NAMES:
-            found.append(node.id)
-
+    found = spawners_in(module.read_text(encoding="utf-8"))
     assert not found, (
-        f"{relative(module)} spawns processes ({sorted(set(found))}) but is not in "
-        f"MAY_SPAWN. If it is not Hyprland it is talking to, list it there with a reason."
+        f"{relative(module)} spawns processes ({found}) but is not in MAY_SPAWN. "
+        f"If it is not Hyprland it is talking to, list it there with a reason."
     )

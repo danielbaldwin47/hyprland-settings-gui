@@ -54,10 +54,6 @@ class Instance:
         return instance
 
     @property
-    def signature(self) -> str:
-        return self.directory.name
-
-    @property
     def command_socket(self) -> Path:
         """The request/reply socket: one connection per command, closed by Hyprland."""
         return self.directory / COMMAND_SOCKET_NAME

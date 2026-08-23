@@ -5,12 +5,15 @@ so the fake is the real thing minus the compositor: real `AF_UNIX` sockets, real
 real EOF-terminated replies. Nothing is monkeypatched, which means these tests exercise the
 same code path a live session does, down to the connection handling.
 
-The conversations below are **captures from a live Hyprland 0.56.2**, byte for byte,
-including the two shapes that would be easy to get wrong from prose: `configerrors` answers
-`[""]` rather than `[]` when the config is clean, and an unknown option answers with the
-bare text `no such option` rather than JSON. Replies marked *from source* were not captured
-live: exercising them means mutating the developer's own session, so they come from
-research #5's reading of `HyprCtl.cpp` instead.
+Each reply below is labelled with where it came from, and only two labels exist:
+
+* **Captured** -- taken byte for byte off a live Hyprland 0.56.2 socket, including the two
+  shapes that are easy to get wrong from prose: `configerrors` answers `[""]` rather than
+  `[]` when the config is clean, and an unknown option answers with the bare text `no such
+  option` rather than JSON.
+* **From source** -- not captured, because provoking it means mutating the developer's own
+  session or running an engine this box does not run. These follow research #5's reading of
+  `HyprCtl.cpp`, and each says so, so nobody mistakes a reconstruction for evidence.
 """
 
 from __future__ import annotations
@@ -18,11 +21,13 @@ from __future__ import annotations
 import asyncio
 import shutil
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-from hyprtweaker.engine.ipc import Instance
+from hyprtweaker.engine.ipc import UNSUPPORTED_EVAL, Instance
+
+T = TypeVar("T")
 
 # --- golden conversations ----------------------------------------------------------------
 
@@ -54,14 +59,20 @@ CONFIG_ERRORS = (
     '\t"require(\\"hyprtweaker/options/decoration\\"): bad argument"\n'
     "]\n"
 )
-"""Same array shape as the captured clean reply, carrying the two error spellings research
- #5 §6 documents: a `file:line`-prefixed `hl.config` complaint and a failed `require`."""
+"""**From source**, not captured -- this box's config is clean and the live tier is
+read-only. The array shape is the captured one (one element per error line); the two
+messages are the spellings research #5 §6 documents: a `file:line`-prefixed `hl.config`
+complaint and a failed `require`."""
 
 OK = "ok"
 """From source: `reload` answers this unconditionally, and `eval` answers it on success."""
 
 EVAL_ERROR = "error setting 'general.gaps_in': invalid value"
 """From source: a failed `eval` answers with the parser's own message, not with `ok`."""
+
+EVAL_UNSUPPORTED = UNSUPPORTED_EVAL
+"""Captured -- from a hyprlang session, which refuses `eval` outright. Safe to provoke
+live precisely because the refusal happens before anything is evaluated."""
 
 CONVERSATION: Mapping[str, str] = {
     "j/getoption general:gaps_in": GAPS_IN,
@@ -72,9 +83,9 @@ CONVERSATION: Mapping[str, str] = {
     "j/getoption general.gaps_in": NO_SUCH_OPTION,
     "j/configerrors": NO_CONFIG_ERRORS,
     "reload": OK,
-    "reload full-reset": OK,
     "eval hl.config{general={gaps_in=6}}": OK,
     "eval hl.config{general={gaps_in='x'}}": EVAL_ERROR,
+    "eval hl.config{general={gaps_in=8}}": EVAL_UNSUPPORTED,
 }
 
 UNSCRIPTED = "unscripted request"
@@ -88,8 +99,17 @@ silent default: the test that provoked it fails on the reply *and* can name the 
 class FakeHyprland:
     """Two unix sockets in a temp dir, answering from a script and pushing events on cue."""
 
-    def __init__(self, conversation: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self, conversation: Mapping[str, str] | None = None, *, never_answer: bool = False
+    ) -> None:
+        """`never_answer` accepts commands and sits on them -- a busy, not absent, session.
+
+        A mode rather than a second fake class: "silent" is one behaviour of the same
+        scripted compositor, and splitting it out duplicated the whole bind-and-clean-up
+        lifecycle for the sake of one `await`.
+        """
         self.conversation = dict(CONVERSATION if conversation is None else conversation)
+        self.never_answer = never_answer
         self.requests: list[str] = []
         """Every request received on the command socket, in order -- the wire-level record a
         test asserts against (that `getoption` really did send the colon form, and so on)."""
@@ -97,6 +117,7 @@ class FakeHyprland:
         self._directory: Path | None = None
         self._servers: list[asyncio.Server] = []
         self._listeners: list[asyncio.StreamWriter] = []
+        self._held: list[asyncio.StreamWriter] = []
 
     @property
     def instance(self) -> Instance:
@@ -126,9 +147,10 @@ class FakeHyprland:
         return instance
 
     async def stop(self) -> None:
-        for writer in self._listeners:
+        for writer in (*self._listeners, *self._held):
             writer.close()
         self._listeners.clear()
+        self._held.clear()
 
         for server in self._servers:
             server.close()
@@ -178,10 +200,6 @@ class FakeHyprland:
         # Let the client's reader see the EOF before the test asserts on it.
         await asyncio.sleep(0)
 
-    @property
-    def listener_count(self) -> int:
-        return len(self._listeners)
-
     # --- handlers -------------------------------------------------------------------------
 
     async def _serve_command(
@@ -189,6 +207,11 @@ class FakeHyprland:
     ) -> None:
         request = (await reader.read(4096)).decode("utf-8")
         self.requests.append(request)
+
+        if self.never_answer:
+            self._held.append(writer)
+            return
+
         writer.write(self.conversation.get(request, f"{UNSCRIPTED}: {request}").encode("utf-8"))
         await writer.drain()
         # Closing is the message boundary: Hyprland answers and hangs up.
@@ -210,32 +233,17 @@ class FakeHyprland:
             writer.close()
 
 
-class HangingHyprland:
-    """A command socket that accepts connections and never answers -- the timeout case."""
+def run_with_fake(
+    scenario: Callable[[FakeHyprland], Awaitable[T]], fake: FakeHyprland | None = None
+) -> T:
+    """Run one async `scenario` against a started fake, and clean up after it.
 
-    def __init__(self) -> None:
-        self._directory: Path | None = None
-        self._server: asyncio.Server | None = None
-        self._held: list[asyncio.StreamWriter] = []
+    `asyncio.run` per test rather than pytest-asyncio: the engine's IPC is async (ADR-0010)
+    but the plugin would be a new dependency for something one stdlib call already does.
+    """
 
-    async def start(self) -> Instance:
-        self._directory = Path(tempfile.mkdtemp(prefix="hyprhang-"))
-        instance = Instance(self._directory)
-        self._server = await asyncio.start_unix_server(self._hold, instance.command_socket)
-        return instance
+    async def main() -> T:
+        async with fake or FakeHyprland() as started:
+            return await scenario(started)
 
-    async def stop(self) -> None:
-        for writer in self._held:
-            writer.close()
-        self._held.clear()
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
-        if self._directory is not None:
-            shutil.rmtree(self._directory, ignore_errors=True)
-            self._directory = None
-
-    async def _hold(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        self._held.append(writer)
-        await reader.read()
+    return asyncio.run(main())

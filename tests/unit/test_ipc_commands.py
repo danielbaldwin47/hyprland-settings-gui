@@ -4,8 +4,8 @@ Every test here is a round-trip: what the client puts on the wire, and what it m
 what comes back. The replies are real captures (`_fake_hyprland`), so a reply shape that
 changes in a future Hyprland breaks these tests instead of the app.
 
-`asyncio.run` per test rather than a plugin: the engine's IPC is async (ADR-0010) but
-pytest-asyncio would be a new dependency for something one line of stdlib already does.
+Async scenarios go through `_fake_hyprland.run_with_fake`, which owns the event loop and
+the socket lifecycle.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TypeVar
 
 import pytest
-from _fake_hyprland import CONFIG_ERRORS, FakeHyprland, HangingHyprland
+from _fake_hyprland import CONFIG_ERRORS, FakeHyprland, run_with_fake
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
 from hyprtweaker.engine.ipc import (
@@ -24,8 +24,8 @@ from hyprtweaker.engine.ipc import (
     Instance,
     IpcTimeout,
     MalformedReply,
+    NoSuchOption,
     SocketUnavailable,
-    UnknownOption,
 )
 from hyprtweaker.engine.model.values import CssGaps, parse_getoption
 from hyprtweaker.engine.schema import load_schema
@@ -34,13 +34,8 @@ T = TypeVar("T")
 
 
 def run(scenario: Callable[[CommandClient, FakeHyprland], Awaitable[T]]) -> T:
-    """Run `scenario` against a freshly bound fake pair of sockets."""
-
-    async def main() -> T:
-        async with FakeHyprland() as fake:
-            return await scenario(CommandClient(fake.instance), fake)
-
-    return asyncio.run(main())
+    """Run `scenario` with a client already pointed at a freshly bound fake."""
+    return run_with_fake(lambda fake: scenario(CommandClient(fake.instance), fake))
 
 
 # --- getoption ----------------------------------------------------------------------------
@@ -98,7 +93,7 @@ def test_getoption_keeps_dots_inside_a_leaf_name() -> None:
 
 def test_unknown_option_raises_rather_than_answering_with_a_value() -> None:
     async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
-        with pytest.raises(UnknownOption, match="general:nope"):
+        with pytest.raises(NoSuchOption, match="general:nope"):
             await client.getoption("general:nope")
 
     run(scenario)
@@ -108,7 +103,7 @@ def test_the_dot_form_is_an_unknown_option_too() -> None:
     """Why the client documents colon form: the legacy engine rejects the dot form."""
 
     async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
-        with pytest.raises(UnknownOption):
+        with pytest.raises(NoSuchOption):
             await client.getoption("general.gaps_in")
 
     run(scenario)
@@ -175,7 +170,20 @@ def test_a_rejected_eval_carries_the_parser_message() -> None:
     async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
         reply = await client.eval("hl.config{general={gaps_in='x'}}")
         assert not reply.ok
+        assert not reply.unsupported
         assert "invalid value" in reply.text
+
+    run(scenario)
+
+
+def test_a_hyprlang_session_refusing_eval_is_not_a_rejected_value() -> None:
+    """Nothing about the code would fix this one -- the session is not running Lua, and the
+    answer is the Migration wizard rather than an error about a bad value."""
+
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        reply = await client.eval("hl.config{general={gaps_in=8}}")
+        assert not reply.ok
+        assert reply.unsupported
 
     run(scenario)
 
@@ -190,14 +198,6 @@ def test_reload_asks_for_a_reload_and_promises_nothing() -> None:
     async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
         assert await client.reload() is None
         assert fake.requests == ["reload"]
-
-    run(scenario)
-
-
-def test_full_reset_is_a_separate_deliberate_request() -> None:
-    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
-        await client.reload(full_reset=True)
-        assert fake.requests == ["reload full-reset"]
 
     run(scenario)
 
@@ -228,14 +228,9 @@ def test_a_compositor_that_never_answers_times_out() -> None:
     """Separate from unavailable on purpose: the session may be alive and merely busy, and
     ADR-0010 keeps "unknown outcome" apart from "failed"."""
 
-    async def main() -> None:
-        hanging = HangingHyprland()
-        instance = await hanging.start()
-        try:
-            client = CommandClient(instance, timeout=0.05)
-            with pytest.raises(IpcTimeout):
-                await client.configerrors()
-        finally:
-            await hanging.stop()
+    async def scenario(fake: FakeHyprland) -> None:
+        with pytest.raises(IpcTimeout):
+            await CommandClient(fake.instance, timeout=0.05).configerrors()
+        assert fake.requests == ["j/configerrors"], "the request did reach the compositor"
 
-    asyncio.run(main())
+    run_with_fake(scenario, FakeHyprland(never_answer=True))

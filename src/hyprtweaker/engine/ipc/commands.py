@@ -35,7 +35,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
-from .errors import IpcTimeout, MalformedReply, SocketUnavailable, UnknownOption
+from .errors import IpcTimeout, MalformedReply, NoSuchOption, SocketUnavailable
 from .instance import Instance
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
@@ -43,6 +43,10 @@ DEFAULT_TIMEOUT_SECONDS = 5.0
 and Hyprland's own config watchdog runs to 1.5 s before it gives up (research #5 §1)."""
 
 _NO_SUCH_OPTION = "no such option"
+
+UNSUPPORTED_EVAL = "eval is only supported with the lua config manager"
+"""What a hyprlang session answers to `eval` -- captured off one. Not an error the app can
+fix by sending different code: that session is not running a Lua config at all."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +81,24 @@ class EvalReply:
 
     @property
     def ok(self) -> bool:
+        """Exactly `ok` came back: no error, and the evaluated Lua printed nothing.
+
+        Not quite "it worked". Hyprland answers with the error text *or* with whatever the
+        code printed, so a preview whose Lua prints reads as not-ok here. The Eval preview
+        tier only ever sends `hl.config{...}`, which prints nothing -- anything richer
+        needs to read `text` rather than trust this.
+        """
         return self.text.strip() == "ok"
+
+    @property
+    def unsupported(self) -> bool:
+        """This session refuses `eval` at all: it is running the hyprlang manager.
+
+        Worth telling apart from a rejected value, because nothing the app can do to the
+        code will help -- the config is not Lua, and the answer is the Migration wizard
+        (ADR-0009), not an error toast about a bad value.
+        """
+        return self.text.strip() == UNSUPPORTED_EVAL
 
 
 class CommandClient:
@@ -92,10 +113,6 @@ class CommandClient:
         self._instance = instance
         self._timeout = timeout
 
-    @property
-    def instance(self) -> Instance:
-        return self._instance
-
     # --- the four commands ----------------------------------------------------------------
 
     async def getoption(self, name: str) -> OptionReply:
@@ -108,12 +125,12 @@ class CommandClient:
         """
         reply = await self._request(f"getoption {name}", json_output=True)
         if reply.strip() == _NO_SUCH_OPTION:
-            raise UnknownOption(
+            raise NoSuchOption(
                 f"Hyprland has no option {name!r} "
                 f"(names are colon-separated, e.g. general:gaps_in)"
             )
 
-        payload = self._json(reply, f"getoption {name}")
+        payload = _parse_json(reply, f"getoption {name}")
         if not isinstance(payload, dict) or "option" not in payload:
             raise MalformedReply(f"getoption {name} answered {reply!r}")
         return OptionReply(name=str(payload["option"]), payload=payload)
@@ -129,7 +146,7 @@ class CommandClient:
         that prefix is what ADR-0016 attributes ownership by.
         """
         reply = await self._request("configerrors", json_output=True)
-        payload = self._json(reply, "configerrors")
+        payload = _parse_json(reply, "configerrors")
         if not isinstance(payload, list):
             raise MalformedReply(f"configerrors answered {payload!r}")
         # Clean answers as `[""]`, not `[]` -- the joined-errors string is what gets
@@ -147,19 +164,20 @@ class CommandClient:
         """
         return EvalReply(await self._request(f"eval {code}", json_output=False))
 
-    async def reload(self, *, full_reset: bool = False) -> None:
+    async def reload(self) -> None:
         """Re-read the config now. Returns when Hyprland has finished reloading.
 
         Deliberately returns nothing. The reply is `"ok"` even when the config failed to
         parse, so the only honest confirmation is the `configreloaded` event plus a
         `configerrors` read (ADR-0010 step 5).
 
-        `full_reset` rebuilds the config manager and re-resolves the config path -- the one
-        way to switch a live session from hyprlang to Lua, which the Migration wizard needs
-        after it writes the first `hyprland.lua` (ADR-0009). It is heavier and has side
-        effects (`hyprland.start` never re-fires), so it is never the apply path.
+        The `reload full-reset` variant -- which rebuilds the config manager and re-resolves
+        the config path, the one way to switch a live session from hyprlang to Lua -- is not
+        here. It is migration mechanics with session-wide side effects (`hyprland.start`
+        never re-fires), so it belongs with the wizard that needs it (ADR-0009) rather than
+        sitting next to the apply path as a flag.
         """
-        await self._request("reload full-reset" if full_reset else "reload", json_output=False)
+        await self._request("reload", json_output=False)
 
     # --- wire -----------------------------------------------------------------------------
 
@@ -190,8 +208,9 @@ class CommandClient:
             with suppress(OSError):
                 await writer.wait_closed()
 
-    def _json(self, reply: str, command: str) -> Any:
-        try:
-            return json.loads(reply)
-        except ValueError as error:
-            raise MalformedReply(f"{command} answered non-JSON {reply!r}") from error
+
+def _parse_json(reply: str, command: str) -> Any:
+    try:
+        return json.loads(reply)
+    except ValueError as error:
+        raise MalformedReply(f"{command} answered non-JSON {reply!r}") from error

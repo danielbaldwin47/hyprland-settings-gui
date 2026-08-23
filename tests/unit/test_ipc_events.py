@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 import pytest
-from _fake_hyprland import CONFIG_ERRORS, FakeHyprland
+from _fake_hyprland import CONFIG_ERRORS, FakeHyprland, run_with_fake
 
 from hyprtweaker.engine.ipc import (
     MONITOR_ADDED,
@@ -32,11 +32,13 @@ only paces the ones asserting an event was correctly filtered out."""
 
 
 def run(scenario: Callable[[EventStream, FakeHyprland], Awaitable[T]]) -> T:
-    async def main() -> T:
-        async with FakeHyprland() as fake, EventStream(fake.instance) as stream:
+    """Run `scenario` with a started stream attached to a freshly bound fake."""
+
+    async def with_stream(fake: FakeHyprland) -> T:
+        async with EventStream(fake.instance) as stream:
             return await scenario(stream, fake)
 
-    return asyncio.run(main())
+    return run_with_fake(with_stream)
 
 
 # --- delivery -----------------------------------------------------------------------------
@@ -203,34 +205,32 @@ def test_reload_started_is_not_apply_done() -> None:
 
 
 def test_losing_the_compositor_is_reported_once() -> None:
-    async def main() -> None:
+    async def scenario(fake: FakeHyprland) -> None:
         lost: list[bool] = []
-        async with FakeHyprland() as fake:
-            stream = EventStream(fake.instance, on_lost=lambda: lost.append(True))
-            await stream.start()
-            await fake.wait_for_listeners(1)
-            await fake.drop_listeners()
-            await asyncio.sleep(SETTLE)
+        stream = EventStream(fake.instance, on_lost=lambda: lost.append(True))
+        await stream.start()
+        await fake.wait_for_listeners(1)
+        await fake.drop_listeners()
+        await asyncio.sleep(SETTLE)
 
-            assert lost == [True]
-            assert not stream.running
-            await stream.aclose()
+        assert lost == [True]
+        assert not stream.running
+        await stream.aclose()
 
-    asyncio.run(main())
+    run_with_fake(scenario)
 
 
 def test_closing_is_safe_twice_and_disconnects() -> None:
-    async def main() -> None:
-        async with FakeHyprland() as fake:
-            stream = EventStream(fake.instance)
-            await stream.start()
-            await fake.wait_for_listeners(1)
+    async def scenario(fake: FakeHyprland) -> None:
+        stream = EventStream(fake.instance)
+        await stream.start()
+        await fake.wait_for_listeners(1)
 
-            await stream.aclose()
-            await stream.aclose()
-            await fake.wait_for_listeners(0)
+        await stream.aclose()
+        await stream.aclose()
+        await fake.wait_for_listeners(0)
 
-    asyncio.run(main())
+    run_with_fake(scenario)
 
 
 def test_starting_twice_is_a_programming_error() -> None:
@@ -251,4 +251,6 @@ def test_no_event_socket_is_unavailable() -> None:
         finally:
             await fake.stop()
 
+    # Not `run_with_fake`: this one has to bind half a compositor, which is exactly the
+    # argument that helper's `start()` does not take.
     asyncio.run(main())

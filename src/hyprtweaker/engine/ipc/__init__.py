@@ -23,14 +23,20 @@ plain Python callables, and the UI adapts them to its own main loop (ADR-0011).
 
 from __future__ import annotations
 
-from .commands import DEFAULT_TIMEOUT_SECONDS, CommandClient, EvalReply, OptionReply
+from .commands import (
+    DEFAULT_TIMEOUT_SECONDS,
+    UNSUPPORTED_EVAL,
+    CommandClient,
+    EvalReply,
+    OptionReply,
+)
 from .errors import (
     IpcError,
     IpcTimeout,
     MalformedReply,
     NoInstance,
+    NoSuchOption,
     SocketUnavailable,
-    UnknownOption,
 )
 from .events import (
     MONITOR_ADDED,
@@ -49,6 +55,7 @@ __all__ = [
     "MONITOR_ADDED",
     "MONITOR_REMOVED",
     "RELOAD_STARTED",
+    "UNSUPPORTED_EVAL",
     "CommandClient",
     "EvalReply",
     "Event",
@@ -59,9 +66,9 @@ __all__ = [
     "IpcTimeout",
     "MalformedReply",
     "NoInstance",
+    "NoSuchOption",
     "OptionReply",
     "SocketUnavailable",
     "Subscriber",
-    "UnknownOption",
     "Unsubscribe",
 ]

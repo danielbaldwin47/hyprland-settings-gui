@@ -278,9 +278,10 @@ Channels, in order of usefulness to the app:
 
 1. **`hyprctl -j configerrors`** — the joined `m_errors` of the last parse (Lua:
    `getErrors()` `lua/ConfigManager.cpp:1057-1066`; formatted `HyprCtl.cpp:725-745`).
-   Clean reads as `[""]`, **not** `[]` — the joined-errors string is what gets serialised,
-   and an empty one still occupies an element (captured off the socket while implementing
-   #52; the IPC client filters blank lines, so "no errors" is an empty tuple there).
+   One array element per line of the joined error string — so a *clean* config reads as
+   `[""]`, **not** `[]`: the joined string is empty and splitting it still yields one
+   (empty) line (captured off the socket while implementing #52; the IPC client filters
+   blank lines, so "no errors" is an empty tuple there).
    Contains syntax errors (phase 1), `require("x"): <err>` per broken
    module, `hl.config`-level messages like `"<file>:<line>: unknown config key 'x'"` /
    `"error setting 'general.gaps_in': ..."` (`LuaBindingsConfigRules.cpp:1000-1003`), and
