@@ -24,7 +24,8 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -45,6 +46,7 @@ from ..writer.lua import table_key
 from . import backup as backups
 from . import sentinel as sentinels
 from .detect import ConfigKind, Detection, detect
+from .export import render as export_render
 
 ROLLBACK_SECONDS = 60.0
 """How long Keep-or-roll-back waits before rolling back on its own (ADR-0009).
@@ -55,6 +57,20 @@ working, and five minutes of that is a user reaching for the power button.
 
 VERIFY_TIMEOUT_SECONDS = 180.0
 BACKUP_SUFFIX = ".bak"
+
+RELOAD_SETTLE_SECONDS = 0.25
+"""How long to let a `reload full-reset` land before believing what the compositor says.
+
+ADR-0010's settle window, for the same reason: the reply and the event both arrive before
+the new config is readable, so an immediate read answers about the config being replaced.
+"""
+
+_SWITCH_NOTES = (
+    "Environment variables and permissions apply at your next login, not now -- Hyprland "
+    "does not re-read them on a reload.",
+    "Anything set to run at startup may have been started again by the switch.",
+)
+"""ADR-0009's two "we cannot verify this here" caveats, said rather than assumed."""
 
 
 class Step(StrEnum):
@@ -109,19 +125,9 @@ class Preview:
     def model(self) -> ConfigModel:
         return self.result.model
 
-    @property
-    def blocking(self) -> tuple[str, ...]:
-        """Breakage the wizard cannot fix. Shown, never blocking -- hence the name's limit.
-
-        ADR-0009 is explicit that Breakage is reported rather than refused: a config with a
-        `hyprctl dispatch` in an `exec` string is still worth converting, and the user is
-        the one who decides whether to fix the script or stay put.
-        """
-        return tuple(item.message for item in self.loss.breakage)
-
 
 @dataclass(frozen=True, slots=True)
-class GateResult:
+class VerifyGate:
     """The static `Hyprland --verify-config` gate over the staged tree."""
 
     ran: bool
@@ -164,9 +170,34 @@ class SwitchResult:
     errors: tuple[str, ...] = ()
     detail: str = ""
 
+    live: bool = True
+    """Whether a running compositor was actually switched.
+
+    False means the config was written but nothing changed yet, which is a different ending
+    from a successful switch: there is nothing to keep or roll back, so no countdown runs.
+    """
+
+    notes: tuple[str, ...] = ()
+    """What the switch could not verify, in the user's terms (ADR-0009).
+
+    Not failures. `hl.env` and `hl.permission` do not take effect on a reload at all, and
+    autostart entries may have been re-run by the switch -- a user judging "is everything
+    still working?" needs both said out loud, because neither is visible in the session
+    they are looking at.
+    """
+
     @property
     def failures(self) -> tuple[Check, ...]:
         return tuple(check for check in self.checks if not check.ok and check.hard)
+
+    @property
+    def warnings(self) -> tuple[Check, ...]:
+        """Checks that did not pass but do not roll the migration back.
+
+        Surfaced rather than swallowed: a soft check that fails silently is a comment in the
+        source rather than a fact the user is told.
+        """
+        return tuple(check for check in self.checks if not check.ok and not check.hard)
 
 
 @dataclass
@@ -254,28 +285,49 @@ class MigrationFlow:
         self.backup = backups.create(self.paths, now=self.now())
         return self.backup
 
-    def stage_and_gate(self) -> GateResult:
-        """Render the new tree somewhere harmless and let Hyprland judge it.
+    @contextmanager
+    def _staged(self, preview: Preview) -> Iterator[ConfigPaths]:
+        """The converted tree, rendered somewhere harmless.
 
         Staged rather than written in place, because the real Entrypoint *is* the switch:
         writing it to run the gate would leave a live session one manual reload away from a
         config nobody has approved yet. The staged tree is byte-identical to what Switch
-        will write, so the verdict transfers.
+        will write, so a verdict on it transfers -- and so does an export of it.
         """
-        preview = self._require_preview()
-        if shutil.which("Hyprland") is None:
-            return GateResult(ran=False, ok=True, output="no Hyprland binary on this machine")
-
-        with tempfile.TemporaryDirectory(prefix="hyprtweaker-gate-") as raw:
+        with tempfile.TemporaryDirectory(prefix="hyprtweaker-staged-") as raw:
             staging = ConfigPaths.rooted_at(Path(raw))
             staging.hypr_dir.mkdir(parents=True, exist_ok=True)
             self._write_tree(preview, staging)
-            runtime = Path(raw) / "run"
+            yield staging
+
+    def stage_and_gate(self) -> VerifyGate:
+        """Let Hyprland judge the converted tree before the live engine is touched."""
+        preview = self._require_preview()
+        if shutil.which("Hyprland") is None:
+            return VerifyGate(ran=False, ok=True, output="no Hyprland binary on this machine")
+
+        with self._staged(preview) as staging:
+            runtime = staging.hypr_dir.parent / "run"
             runtime.mkdir(exist_ok=True)
             completed = _verify_config(staging.entrypoint, runtime)
 
         output = f"{completed.stdout}\n{completed.stderr}".strip()
-        return GateResult(ran=True, ok=completed.returncode == 0, output=output)
+        return VerifyGate(ran=True, ok=completed.returncode == 0, output=output)
+
+    def export_text(self) -> str:
+        """The converted config as one flattened file -- the "Copy the Lua instead" exit.
+
+        Rendered from the *staged* tree, not from the model plus the live config dir. The
+        difference is the whole correctness of this exit: `vars.lua` and `legacy.lua` exist
+        only once the tree is written, so exporting from the model alone would silently drop
+        the user's `$variables` and every construct the GUI cannot represent -- while
+        inlining a `user.lua` and Bridge modules belonging to the config being replaced.
+        """
+        preview = self._require_preview()
+        with self._staged(preview) as staging:
+            return export_render(
+                preview.model, staging, app_version=self.app_version, now=self.now()
+            ).text
 
     # --- 4. switch & verify -------------------------------------------------------------
 
@@ -288,6 +340,24 @@ class MigrationFlow:
         """
         preview = self._require_preview()
         self.step = Step.SWITCH
+
+        if self.client is None:
+            # ADR-0009: "Requires a live session; without an IPC socket the wizard runs
+            # Detect/Preview only." The tree is still written -- it is what the user asked
+            # for and it loads at next login -- but nothing switched, so there is nothing to
+            # confirm: no sentinel, and no countdown to roll back a change that never
+            # happened. Writing one anyway would offer to undo a migration on the next start.
+            self._write_tree(preview, self.paths)
+            self._record_provenance(preview)
+            self.step = Step.DONE
+            return SwitchResult(
+                ok=True,
+                live=False,
+                detail=(
+                    "There is no running Hyprland to switch, so nothing changed yet. Your "
+                    "new configuration is written and loads the next time you log in."
+                ),
+            )
 
         restore = self._preserve_foreign_entrypoint(preview)
         sentinels.write(
@@ -302,13 +372,6 @@ class MigrationFlow:
         self._write_tree(preview, self.paths)
         self._record_provenance(preview)
 
-        if self.client is None:
-            self.step = Step.DECIDE
-            return SwitchResult(
-                ok=True,
-                detail="Nothing to switch: the config is on disk and loads at next login.",
-            )
-
         await self.client.reload_full_reset()
         checks = await self._verify_live(preview)
         ok = all(check.ok for check in checks if check.hard)
@@ -317,14 +380,34 @@ class MigrationFlow:
         )
 
         self.step = Step.DECIDE
-        return SwitchResult(ok=ok, checks=tuple(checks), errors=errors)
+        return SwitchResult(ok=ok, checks=tuple(checks), errors=errors, notes=_SWITCH_NOTES)
+
+    async def _settled_errors(self) -> tuple[str, ...]:
+        """`configerrors`, read only once the reload has actually finished.
+
+        `reload full-reset` answers `"ok"` as soon as it has been *asked*, not once the new
+        config is parsed -- the same gap ADR-0010 documents for `configreloaded`, which
+        fires ~11 ms before the new values are readable. Reading straight after the reply
+        can therefore report the state of the config being replaced, which on this path
+        would mean verifying the old config and keeping the new one.
+
+        So: settle, read, and if that read is dirty, settle and read again. Errors that
+        survive the second read are real; ones that do not were the reload still in flight.
+        """
+        assert self.client is not None
+        await asyncio.sleep(RELOAD_SETTLE_SECONDS)
+        errors = await self.client.configerrors()
+        if errors:
+            await asyncio.sleep(RELOAD_SETTLE_SECONDS)
+            errors = await self.client.configerrors()
+        return errors
 
     async def _verify_live(self, preview: Preview) -> list[Check]:
         """ADR-0009's live checks, spoken over the IPC socket rather than by spawning."""
         assert self.client is not None
         checks: list[Check] = []
 
-        errors = await self.client.configerrors()
+        errors = await self._settled_errors()
         checks.append(
             Check(
                 name="configerrors",
@@ -549,10 +632,10 @@ __all__ = [
     "Check",
     "Client",
     "Decision",
-    "GateResult",
     "MigrationFlow",
     "Preview",
     "Step",
     "SwitchResult",
+    "VerifyGate",
     "fresh_start",
 ]

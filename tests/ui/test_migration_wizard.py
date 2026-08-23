@@ -14,8 +14,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -135,7 +133,7 @@ class TestExport:
         assert window.lookup_action(EXPORT_ACTION) is not None
 
     def test_exporting_writes_a_standalone_file(self, tmp_path: Path) -> None:
-        window, session = build_window(tmp_path)
+        window, _ = build_window(tmp_path)
         window.route_first_run()
         target = tmp_path / "exported.lua"
 

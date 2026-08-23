@@ -45,10 +45,15 @@ from hyprtweaker.engine.apply import (  # noqa: E402
     UndoStep,
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
+from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
 from hyprtweaker.engine.ipc import CommandClient, Instance, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
 from hyprtweaker.engine.migration.export import render as export_render  # noqa: E402
-from hyprtweaker.engine.migration.flow import MigrationFlow, fresh_start  # noqa: E402
+from hyprtweaker.engine.migration.flow import (  # noqa: E402
+    Decision,
+    MigrationFlow,
+    fresh_start,
+)
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
 from hyprtweaker.engine.schema import Schema  # noqa: E402
@@ -66,6 +71,7 @@ from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
 
 IMPORT_ACTION = "import-config"
 EXPORT_ACTION = "export-config"
+REPORT_ACTION = "import-report"
 
 READ_ONLY_REASON = {
     ConfigKind.LEGACY_CONF: "You are still on hyprland.conf -- settings can't be saved yet.",
@@ -152,6 +158,12 @@ class MainWindow(Adw.ApplicationWindow):
             navigate=self.reveal_option,
         )
         self._pages: list[ConfigPage] = []
+        self._offered: Detection | None = None
+        """The import on offer, while one is (ADR-0009).
+
+        Held because it outranks the health Banner: "settings can't be saved yet, Convert..."
+        is more use to someone on an unmigrated box than "no compositor", and it is the only
+        Banner state with a way out on its own button."""
         self._dependents = _dependents(session.schema)
         self._last_failure: str | None = None
         self._closing = False
@@ -222,6 +234,7 @@ class MainWindow(Adw.ApplicationWindow):
         interop = Gio.Menu()
         interop.append("Import...", f"win.{IMPORT_ACTION}")
         interop.append("Export...", f"win.{EXPORT_ACTION}")
+        interop.append("Last import report", f"win.{REPORT_ACTION}")
         # A section of its own: Import and Export are about somebody else's config coming in
         # or this one going out, which is a different kind of act from changing a setting.
         menu.append_section(None, interop)
@@ -247,6 +260,7 @@ class MainWindow(Adw.ApplicationWindow):
         for name, handler in (
             (IMPORT_ACTION, self._on_import),
             (EXPORT_ACTION, self._on_export),
+            (REPORT_ACTION, self._on_report),
         ):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", handler)
@@ -300,8 +314,18 @@ class MainWindow(Adw.ApplicationWindow):
             self,
             self.migration_flow(source),
             spawn=self._spawn,
-            on_finished=lambda _decision: self.sync(),
+            on_finished=self._on_migration_finished,
         )
+
+    def _on_migration_finished(self, decision: Decision | None) -> None:
+        """A kept migration is the one thing that retires the "convert me" Banner.
+
+        A rollback -- or a wizard closed part-way -- leaves the offer standing, because the
+        config the app cannot write to is still the one in place.
+        """
+        if decision is Decision.KEPT:
+            self._offered = None
+        self.sync()
 
     def route_first_run(self) -> Detection:
         """ADR-0009's four cases, decided once at startup and acted on.
@@ -310,28 +334,31 @@ class MainWindow(Adw.ApplicationWindow):
         went without inspecting dialogs.
         """
         session = self._session
+        detection = self._detect()
+        self._offered = detection if detection.offers_import else None
+
         pending = sentinel_read(session.paths)
         if pending is not None:
             self._offer_rollback(pending)
-            return detect(
-                session.paths,
-                app_version=session.app_version,
-                schema_version=session.schema.hyprland_version,
-            )
+            return detection
 
-        detection = detect(
-            session.paths,
-            app_version=session.app_version,
-            schema_version=session.schema.hyprland_version,
-        )
         if detection.kind is ConfigKind.FRESH:
             fresh_start(session.paths, session.schema, app_version=session.app_version)
         elif detection.offers_import:
             # Read-only until the offered import is accepted: there is nowhere honest to
             # write while the live session is reading a file this app does not own.
             session.set_read_only(READ_ONLY_REASON[detection.kind])
+            self.sync_banner()
             GLib.idle_add(self._present_offer, detection)
         return detection
+
+    def _detect(self) -> Detection:
+        """Which of ADR-0009's four cases this machine is in, asked once per caller."""
+        return detect(
+            self._session.paths,
+            app_version=self._session.app_version,
+            schema_version=self._session.schema.hyprland_version,
+        )
 
     def _present_offer(self, detection: Detection) -> bool:
         self.show_migration()
@@ -369,6 +396,20 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_export(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         export_dialog(self, self._write_export)
+
+    def _on_report(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        """The last import's Loss report, reachable long after the wizard closed (ADR-0009).
+
+        Persisted at Preview time precisely so this entry can exist: a user who wants to
+        know what conversion cost them usually wants it days later, not while deciding.
+        """
+        report = LossReport.latest(self._session.paths)
+        if report is None:
+            self._toasts.add_toast(Adw.Toast(title="No configuration has been imported yet"))
+            return
+        dialog = Adw.AlertDialog(heading="Last import", body=report.render())
+        dialog.add_response("close", "Close")
+        dialog.present(self)
 
     def _write_export(self, target: Path) -> None:
         result = export_render(
@@ -446,6 +487,16 @@ class MainWindow(Adw.ApplicationWindow):
         but a full `sync` refreshes all 353 Rows, which is far too much to spend per apply on
         a config that is usually fine.
         """
+        if self._offered is not None:
+            # ADR-0009's own banner, which outranks ADR-0016's health states while it
+            # applies: the app is read-only for a reason the user can act on right here.
+            self._banner.set_title(READ_ONLY_REASON[self._offered.kind])
+            self._banner.set_revealed(True)
+            self._banner.set_button_label("Convert...")
+            self._banner.set_use_markup(False)
+            self._banner.remove_css_class(SEVERE_BANNER_CLASS)
+            return
+
         health = self._session.health
         self._banner.set_title(health.title)
         self._banner.set_revealed(health.unhealthy)
@@ -525,13 +576,17 @@ class MainWindow(Adw.ApplicationWindow):
     # --- recovery (ADR-0016) ------------------------------------------------------------------
 
     def _on_banner_clicked(self, _banner: Adw.Banner) -> None:
-        """The Banner's one button: open the errors, or lift a Quarantine.
+        """The Banner's one button: convert, open the errors, or lift a Quarantine.
 
-        Two jobs on one button because there is only one Banner and the states are mutually
+        Three jobs on one button because there is only one Banner and the states are mutually
         exclusive in practice -- a Quarantine the user has already fixed has no errors left to
         show, and a config that is erroring has something more urgent to offer than a toggle.
         `Health.button` is what decides which, and it is the same object that wrote the label.
         """
+        if self._offered is not None:
+            self.show_migration()
+            return
+
         health = self._session.health
         if health.recovery.unhealthy:
             self.show_errors()

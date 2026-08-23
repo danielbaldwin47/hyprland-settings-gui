@@ -21,7 +21,7 @@ import gi
 gi.require_version("Adw", "1")
 gi.require_version("Gtk", "4.0")
 
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from ...engine.importer.loss import CLASS_ORDER, CLASS_TITLES, LossReport  # noqa: E402
 from ...engine.migration.detect import ConfigKind  # noqa: E402
@@ -29,6 +29,7 @@ from ...engine.migration.flow import (  # noqa: E402
     ROLLBACK_SECONDS,
     Decision,
     MigrationFlow,
+    SwitchResult,
 )
 
 Spawn = Callable[[Any], None]
@@ -109,6 +110,12 @@ class MigrationDialog(Adw.Dialog):
             self._view.push(self._failed_page("Could not read the configuration", str(error)))
             return
         self._flow.save_report()
+        if self._flow.preview is not None and self._flow.preview.detection.streamlined:
+            # Hyprland's own example config: "no loss report, straight to convert"
+            # (ADR-0009). There is nothing of the user's to lose, so a report of what
+            # converting it costs them is a page about somebody else's boilerplate.
+            self._go_backup()
+            return
         self._view.push(self._preview_page())
 
     # --- step 2: preview ------------------------------------------------------------------
@@ -149,13 +156,9 @@ class MigrationDialog(Adw.Dialog):
 
         Interop, not lock-in.
         """
-        preview = self._flow.preview
-        if preview is None:
+        if self._flow.preview is None:
             return
-        from ...engine.migration.export import render
-
-        text = render(preview.model, self._flow.paths, app_version=self._flow.app_version).text
-        self.get_clipboard().set(text)
+        self.get_clipboard().set(self._flow.export_text())
         self._view.push(
             self._done_page(
                 "Copied",
@@ -221,19 +224,24 @@ class MigrationDialog(Adw.Dialog):
                 )
             )
             return
-        self._view.push(self._decide_page(result.detail))
+        if not result.live:
+            # Nothing was switched, so there is nothing to keep or roll back. Starting a
+            # countdown here would offer to undo a change that never happened.
+            self._view.push(self._done_page("Written", result.detail))
+            return
+        self._view.push(self._decide_page(result))
         self._spawn(self._countdown())
 
     # --- step 5: keep or roll back --------------------------------------------------------
 
-    def _decide_page(self, detail: str) -> Adw.NavigationPage:
+    def _decide_page(self, result: SwitchResult) -> Adw.NavigationPage:
         page = _page("Keep or roll back")
         page.set_can_pop(False)
 
         group = Adw.PreferencesGroup(
             title="Is everything still working?",
             description=(
-                detail
+                result.detail
                 or "Your new configuration is live. Try your keybinds. If you do nothing, "
                 "it rolls back on its own."
             ),
@@ -243,7 +251,24 @@ class MigrationDialog(Adw.Dialog):
         )
         group.add(_row("Rolling back in", "", suffix=self._countdown_label))
         group.add(_row("If you are locked out", self._flow.rescue_line))
-        page.get_child().set_content(_column(group))
+
+        column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        column.append(group)
+
+        # What the switch could not check, and what it could check but did not like. Both
+        # belong in front of the person deciding whether to keep it -- a soft check that
+        # only ever reached a comment in the source is not a check the user got.
+        caveats = [*result.notes, *(check.detail for check in result.warnings)]
+        if caveats:
+            unverified = Adw.PreferencesGroup(
+                title="What this could not confirm",
+                description="Not failures -- things the switch cannot see from here.",
+            )
+            for note in caveats:
+                unverified.add(_row(note, ""))
+            column.append(unverified)
+
+        page.get_child().set_content(_scrolled(column))
 
         keep = _suggested("Keep")
         keep.connect("clicked", lambda _button: self._answer(Decision.KEPT))
@@ -285,7 +310,8 @@ class MigrationDialog(Adw.Dialog):
     def _done_page(self, title: str, body: str) -> Adw.NavigationPage:
         page = _page(title)
         page.set_can_pop(False)
-        page.get_child().set_content(_column(Adw.PreferencesGroup(title=title, description=body)))
+        group = Adw.PreferencesGroup(title=title, description=body)
+        page.get_child().set_content(_column(group))
         page.get_child().add_bottom_bar(_actions(self._close_button("Close", suggested=True)))
         return page
 
@@ -426,43 +452,57 @@ def migration_dialog(
     return dialog
 
 
-def export_dialog(parent: Gtk.Widget, on_chosen: Callable[[Path], None]) -> Gtk.FileDialog:
-    """Ask where to write a flattened export, then hand the path back."""
-    dialog = Gtk.FileDialog(title="Export configuration", initial_name="hyprland.lua")
+def _pick_file(
+    parent: Gtk.Widget,
+    dialog: Gtk.FileDialog,
+    *,
+    saving: bool,
+    on_chosen: Callable[[Path], None],
+) -> Gtk.FileDialog:
+    """Run a `Gtk.FileDialog` and hand back the chosen path, or nothing if cancelled.
+
+    One helper for both directions: save and open differ only in which pair of methods
+    they call, and a cancelled dialog is not a failure in either.
+    """
 
     def finished(source: Gtk.FileDialog, result: Any) -> None:
         try:
-            chosen = source.save_finish(result)
+            chosen = source.save_finish(result) if saving else source.open_finish(result)
         except GLib.Error:
-            return  # Cancelled. Not a failure, and not something to report.
+            return  # Cancelled, or the portal declined. Neither is worth reporting.
         if chosen is not None and chosen.get_path():
             on_chosen(Path(chosen.get_path()))
 
-    dialog.save(parent.get_root(), None, finished)
+    root = parent.get_root()
+    if saving:
+        dialog.save(root, None, finished)
+    else:
+        dialog.open(root, None, finished)
     return dialog
+
+
+def export_dialog(parent: Gtk.Widget, on_chosen: Callable[[Path], None]) -> Gtk.FileDialog:
+    """Ask where to write a flattened export, then hand the path back."""
+    return _pick_file(
+        parent,
+        Gtk.FileDialog(title="Export configuration", initial_name="hyprland.lua"),
+        saving=True,
+        on_chosen=on_chosen,
+    )
 
 
 def import_dialog(parent: Gtk.Widget, on_chosen: Callable[[Path], None]) -> Gtk.FileDialog:
     """Ask which `hyprland.lua` or `hyprland.conf` to import, then hand the path back."""
-    filters = _config_filters()
-    dialog = Gtk.FileDialog(title="Import configuration", filters=filters)
-
-    def finished(source: Gtk.FileDialog, result: Any) -> None:
-        try:
-            chosen = source.open_finish(result)
-        except GLib.Error:
-            return
-        if chosen is not None and chosen.get_path():
-            on_chosen(Path(chosen.get_path()))
-
-    dialog.open(parent.get_root(), None, finished)
-    return dialog
+    return _pick_file(
+        parent,
+        Gtk.FileDialog(title="Import configuration", filters=_config_filters()),
+        saving=False,
+        on_chosen=on_chosen,
+    )
 
 
-def _config_filters() -> Any:
+def _config_filters() -> Gio.ListStore:
     """The one file type Import accepts: a Lua or hyprlang Hyprland config."""
-    from gi.repository import Gio
-
     filters = Gio.ListStore.new(Gtk.FileFilter)
     config = Gtk.FileFilter(name="Hyprland configuration")
     config.add_pattern("*.lua")

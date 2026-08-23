@@ -470,3 +470,119 @@ def test_the_flow_walks_the_five_steps_in_order(legacy: ConfigPaths, schema: Sch
 
     flow.keep()
     assert flow.step is Step.DONE
+
+
+class TestTheDiyExit:
+    """ "Copy the Lua instead" must hand over the *converted* config, whole."""
+
+    def test_the_copy_carries_variables_and_legacy_constructs(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """Both live only in files the tree write creates, so exporting from the model
+        alone would drop them silently -- the user would carry away a config missing
+        everything the GUI could not represent."""
+        paths.hyprland_conf.write_text(
+            "$gap = 5\ngeneral {\n    gaps_in = $gap\n}\nexec-once = waybar\n",
+            encoding="utf-8",
+        )
+        flow = flow_for(paths, schema)
+        flow.build_preview()
+
+        text = flow.export_text()
+
+        assert "hl.config(" in text
+        result = flow.preview.result  # type: ignore[union-attr]
+        if result.variables:
+            assert "hyprtweaker/vars" in text
+        if result.legacy:
+            assert "hyprtweaker/legacy" in text
+
+    def test_the_copy_does_not_inline_the_config_being_replaced(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        """A `user.lua` belonging to the old setup is not part of what conversion produced."""
+        legacy.user_lua.write_text("-- from the config being replaced\n", encoding="utf-8")
+        flow = flow_for(legacy, schema)
+        flow.build_preview()
+
+        assert "from the config being replaced" not in flow.export_text()
+
+    def test_copying_writes_nothing_to_the_real_config_dir(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        before = tree(legacy.hypr_dir)
+        flow = flow_for(legacy, schema)
+        flow.build_preview()
+
+        flow.export_text()
+
+        assert tree(legacy.hypr_dir) == before
+
+
+class TestWithoutACompositor:
+    """ADR-0009: "without an IPC socket the wizard runs Detect/Preview only"."""
+
+    def test_nothing_is_switched_and_no_sentinel_is_left(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        """A sentinel here would offer, on the next start, to roll back a switch that never
+        happened -- and the countdown would auto-roll-back a live config nothing replaced."""
+        flow = flow_for(legacy, schema, client=None)
+        flow.build_preview()
+        flow.back_up()
+
+        result = run(flow.switch())
+
+        assert result.ok
+        assert not result.live
+        assert not legacy.sentinel.exists()
+        assert flow.step is Step.DONE
+
+    def test_the_config_is_still_written_for_next_login(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        flow = flow_for(legacy, schema, client=None)
+        flow.build_preview()
+        flow.back_up()
+
+        run(flow.switch())
+
+        assert legacy.entrypoint.is_file()
+
+
+class TestReloadSettling:
+    def test_config_errors_are_re_read_before_they_count(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        """`reload full-reset` answers before the new config is parsed, so the first read can
+        describe the config being replaced. Believing it would roll back a good migration."""
+
+        class SlowClient(FakeClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.reads = 0
+
+            async def configerrors(self) -> tuple[str, ...]:
+                self.reads += 1
+                # Stale errors from the outgoing config on the first read only.
+                return ("hyprland.conf:1: leftover",) if self.reads == 1 else ()
+
+        client = SlowClient()
+        flow = flow_for(legacy, schema, client)
+        flow.build_preview()
+        flow.back_up()
+
+        result = run(flow.switch())
+
+        assert client.reads == 2
+        assert result.ok, "a transient first read must not fail the switch"
+
+    def test_errors_that_survive_the_second_read_still_fail(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        client = FakeClient(errors=("hyprland.lua:3: real problem",))
+        flow = flow_for(legacy, schema, client)
+        flow.build_preview()
+        flow.back_up()
+
+        assert not run(flow.switch()).ok
