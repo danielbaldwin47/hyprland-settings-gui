@@ -195,11 +195,12 @@ def test_the_error_dialog_shows_the_lines_verbatim(tmp_path: Path) -> None:
     user can paste into an editor's go-to-line box (ADR-0016)."""
     from gi.repository import Gtk
 
+    from hyprtweaker.engine.apply import plan
     from hyprtweaker.ui.dialogs.errors import error_dialog
 
     _session, window = build_window(tmp_path)
 
-    dialog = error_dialog(window, [ERROR_LINE])
+    dialog = error_dialog(window, plan([ERROR_LINE]))
 
     child = dialog.get_extra_child()
     assert isinstance(child, Gtk.ScrolledWindow)

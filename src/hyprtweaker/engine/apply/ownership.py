@@ -50,14 +50,14 @@ class Ownership(enum.StrEnum):
 
     APP_MODULE = "app-module"
     """An App-dir Module this transaction did not write -- a hand edit, or an older write.
-    Banner with Restore-last-good / Open file; never an automatic write (#60)."""
+    Banner with Restore last good / Open file; never an automatic write (`recovery.py`)."""
 
     ENTRYPOINT = "entrypoint"
     """`hyprland.lua`. App-owned and always regenerable, so the recovery is "regenerate"."""
 
     FOREIGN = "foreign"
     """`user.lua`, `legacy.lua`, or a Bridge module: files the app must never write. The only
-    recovery it can offer is Quarantine (#60)."""
+    recovery it can offer is Quarantine (`recovery.py`)."""
 
     UNKNOWN = "unknown"
     """A line with no file in it, or a file in nobody's territory. Surfaced verbatim rather

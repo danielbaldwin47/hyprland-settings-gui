@@ -88,7 +88,7 @@ class ApplyQueue:
         """`on_result` sees every transaction, including ones nobody is awaiting.
 
         A debounced `touch` has no caller left to hand a result to by the time it applies,
-        so the callback is the only way error surfacing (#60) hears about the apply that a
+        so the callback is the only way error surfacing hears about the apply that a
         slider drag ended in.
         """
         self._transaction = transaction

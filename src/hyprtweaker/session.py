@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from hyprtweaker.engine.apply import (
@@ -57,7 +58,7 @@ from hyprtweaker.engine.ipc import (
     NoInstance,
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
-from hyprtweaker.engine.paths import ConfigPaths
+from hyprtweaker.engine.paths import ENTRYPOINT_NAME, ConfigPaths
 from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
@@ -299,7 +300,7 @@ class Session:
 
         Held by the session rather than built per transaction, so "what is this Module's Last
         known good?" has one answer whoever asks -- auto-revert now, the Banner's
-        Restore-last-good in #60.
+        Restore last good now.
         """
         return self._journal
 
@@ -939,6 +940,26 @@ class Session:
         """Put `require` back in the Entrypoint and reload. The one-click reversal."""
         return self._set_quarantine(set(self.quarantined) - {require})
 
+    def file_for(self, problem: Problem) -> Path | None:
+        """Which file on this machine a Problem names, for Open file. `None` if none does.
+
+        An app-owned Module is resolved through `ConfigPaths`, never through the path
+        Hyprland printed: the app knows exactly where its own files are, and the printed one
+        may have travelled through a symlinked dotfile directory (`ownership.py`). For a
+        foreign file the printed path is the only thing there is -- and it is trusted only
+        when it is absolute, because a relative fragment is not something to go guessing a
+        root for.
+        """
+        if problem.module is not None:
+            return (
+                self._paths.entrypoint
+                if problem.module == ENTRYPOINT_NAME
+                else self._paths.app_dir / problem.module
+            )
+        if problem.path.startswith("/"):
+            return Path(problem.path)
+        return None
+
     def quarantine_target(self, problem: Problem) -> str | None:
         """The `require` path a foreign Problem names, or `None` when it names none.
 
@@ -1110,8 +1131,8 @@ class Session:
         """Whether the app has stopped recovering automatically and needs the user.
 
         Set when a restore fails to land the Snapshot it promised. ADR-0016 puts a Banner
-        behind this; the Banner and its error dialog are #60, so for now it is a fact the
-        session states and the log records rather than one the window draws.
+        behind this, and `Health` is what puts it there: a halted recovery is one of the four
+        states the one Banner ranks.
         """
         return self._recovery_halted
 

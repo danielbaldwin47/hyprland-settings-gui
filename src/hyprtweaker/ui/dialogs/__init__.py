@@ -1,7 +1,7 @@
 """Dialogs: the config-error list now; Capture, the Migration wizard and confirm-or-revert
 later.
 
-`errors.py` is what an auto-revert toast's **Details** action opens (ADR-0016). The rest are
-filled in by #63 and #65, and #60 grows `errors.py` into the one error dialog the Banner
-raises, with its per-Ownership-class actions.
+`errors.py` is the one error dialog ADR-0016 allows: the `file:line` list the Banner raises,
+with a per-Ownership-class action beside each broken file. The auto-revert toast's **Details**
+opens the same dialog with no actions on it. Capture and the Migration wizard are #63 and #65.
 """

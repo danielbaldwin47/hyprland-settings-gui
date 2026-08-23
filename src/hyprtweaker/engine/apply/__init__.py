@@ -9,7 +9,7 @@ not attribute.
 
 Four modules, in dependency order:
 
-- `result.py` -- `ApplyOutcome`, `ApplyResult`, `Mismatch`: the answer #60 branches on;
+- `result.py` -- `ApplyOutcome`, `ApplyResult`, `Mismatch`: the answer recovery branches on;
 - `transaction.py` -- `ApplyTransaction`, the five steps and the in-flight flag;
 - `queue.py` -- `ApplyQueue`, debounce and serialization, with no idea sockets exist;
 - `foreign.py` -- `ForeignReloadWatch`, the "somebody else reloaded" signal;

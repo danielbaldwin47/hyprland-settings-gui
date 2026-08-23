@@ -267,8 +267,8 @@ class ApplyTransaction:
         transaction would spend 140 ms confirming values nobody changed.
 
         Hand-edited Modules are left alone and reported on `result.skipped`, never
-        overwritten. Carrying the user's answer to the ADR-0016 Banner back in is #60's,
-        along with the Banner that asks the question.
+        overwritten. What the user may then do about it is the recovery matrix's
+        (`recovery.py`), raised on the Banner.
         """
         names = tuple(keys)
         try:

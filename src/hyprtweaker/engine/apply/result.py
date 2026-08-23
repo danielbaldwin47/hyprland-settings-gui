@@ -129,7 +129,7 @@ class Mismatch:
 
 @dataclass(frozen=True, slots=True)
 class ApplyResult:
-    """The structured outcome ADR-0010 promises and error surfacing (#60) consumes."""
+    """The structured outcome ADR-0010 promises and `recovery.py` branches on."""
 
     outcome: ApplyOutcome
     keys: tuple[str, ...] = ()
