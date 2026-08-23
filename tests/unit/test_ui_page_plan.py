@@ -70,7 +70,7 @@ def test_with_advanced_off_exactly_the_non_default_tiers_are_withheld() -> None:
 
 def test_a_page_is_titled_from_the_overlay_not_from_the_config_key() -> None:
     assert plan_section(SCHEMA, "misc").title == "Miscellaneous"
-    assert plan_section(SCHEMA, "misc").help_url is not None
+    assert plan_section(SCHEMA, "input-capture").title == "Input capture"
 
 
 def test_sub_prefixed_options_group_under_their_own_heading() -> None:

@@ -175,18 +175,40 @@ def test_a_fresh_install_owns_nothing_so_it_adopts_nothing() -> None:
     assert app_owned_options(SCHEMA, manifest) == ()
 
 
-def test_ownership_covers_exactly_the_sections_with_a_written_module() -> None:
+def test_ownership_is_per_option_not_per_section() -> None:
+    """The over-claim this record exists to end.
+
+    `general:gaps_in` is the app's. `general:border_size` sits in the same Section and the
+    same file's Section, but the app never wrote it -- so a re-read must not adopt it,
+    render it as the app's own, and emit it into the app's Module on the next write. That
+    would let the app's copy outlive the `user.lua` line the user later deletes.
+    """
     manifest = Manifest(
         app_version="0.0.0",
         schema_version=SAMPLE_VERSION,
         modules={
-            "options/general.lua": ModuleRecord.of("-- general"),
+            "options/general.lua": ModuleRecord.of("-- general", [GAPS_IN]),
             # Not an options Module, and not this writer's to claim.
-            "binds.lua": ModuleRecord.of("-- binds"),
+            "binds.lua": ModuleRecord.of("-- binds", ["binds:workspace_back_and_forth"]),
         },
     )
 
     owned = app_owned_options(SCHEMA, manifest)
 
-    assert {option.section for option in owned} == {"general"}
-    assert len(owned) == len(SCHEMA.section("general"))
+    assert [option.name for option in owned] == [GAPS_IN]
+
+
+def test_ownership_is_ordered_by_hyprlands_own_declaration_order() -> None:
+    manifest = Manifest(
+        app_version="0.0.0",
+        schema_version=SAMPLE_VERSION,
+        modules={
+            "options/decoration.lua": ModuleRecord.of("-- d", [ROUNDING]),
+            "options/general.lua": ModuleRecord.of("-- g", [GAPS_IN]),
+        },
+    )
+
+    owned = app_owned_options(SCHEMA, manifest)
+
+    assert [option.order for option in owned] == sorted(option.order for option in owned)
+    assert {option.name for option in owned} == {ROUNDING, GAPS_IN}

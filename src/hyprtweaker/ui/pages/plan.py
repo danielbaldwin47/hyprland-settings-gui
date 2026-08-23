@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility
+from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, humanise
 
 _SEGMENT_TITLES = {
     "col": "Colors",
@@ -47,10 +47,7 @@ def group_title(option: ResolvedOption) -> str:
 
 
 def _segment_title(segment: str) -> str:
-    if segment in _SEGMENT_TITLES:
-        return _SEGMENT_TITLES[segment]
-    words = segment.replace("_", " ").replace("-", " ")
-    return words[:1].upper() + words[1:]
+    return _SEGMENT_TITLES.get(segment) or humanise(segment)
 
 
 def is_visible(option: ResolvedOption, *, show_advanced: bool) -> bool:
@@ -77,7 +74,6 @@ class PagePlan:
 
     section: str
     title: str
-    help_url: str | None
     groups: tuple[GroupPlan, ...]
     withheld: int
     """Options this Section has that the Advanced switch is currently hiding.
@@ -114,7 +110,6 @@ def plan_section(schema: Schema, section: str, *, show_advanced: bool = False) -
     return PagePlan(
         section=section,
         title=schema.section_title(section),
-        help_url=schema.section_help_url(section),
         groups=groups,
         withheld=len(options) - len(visible),
     )

@@ -6,11 +6,14 @@ say, and what should the model therefore hold?" -- and writes the answer in. ADR
 for it in two places, and they differ only in which Options are read:
 
 * **Startup.** The app has to recover the values it wrote in an earlier session. It reads
-  the Options belonging to Modules the Manifest says it owns (`app_owned_options`), so a
+  exactly the Options the Manifest records it having written (`app_owned_options`), so a
   fresh install adopts nothing and starts Unset, as the spec's from-scratch user expects.
 * **Foreign reload.** "Any `configreloaded` not correlated with an in-flight transaction
-  triggers a full state re-read + drift scan" -- somebody else rewrote the config, so every
-  Option the model holds is re-read and the stale ones are dropped.
+  triggers a full state re-read + drift scan" -- somebody else rewrote the config, so the
+  re-read has to cover both what the model currently holds *and* everything the app owns.
+  Narrowing it to the former would miss a key a foreign edit added inside an app-owned
+  Module: the Row would keep showing the default, and the next Apply would re-render that
+  Module without the key, silently overwriting the hand edit ADR-0016 exists to protect.
 
 Three rules, each learned from a defect the schema layer already names:
 
@@ -18,12 +21,20 @@ Three rules, each learned from a defect the schema layer already names:
    (verified live), and adopting that verbatim would put the marker in the model, in the
    Row, and eventually in the user's Lua. A reply that spells the Option's "no value" lands
    as explicit null.
-2. **An explicit null is never re-read over.** The model already knows the key means "no
-   value"; what the compositor reports for that marker is its own interpretation, and
-   parsing it back would turn "same as the outer gaps" into four gaps of -1.
+2. **An explicit null is never re-read over.** A re-read exists to replace a claim with
+   better information, and here there is none to be had: `getoption` has no spelling for
+   "this key has no value", so a compositor asked about one answers with whatever the
+   marker resolved to. Parsing that back would turn "same as the outer gaps" into four gaps
+   of -1. `ApplyTransaction._compare` already stops at "the live config sets this key" for
+   exactly this reason, and the two must not disagree.
+
+   That holds even when something else has since overridden the key: the model records what
+   *this app* sets, and an override is surfaced by the ADR-0005 drift badge (#57), never by
+   rewriting the model out from under the user's own choice.
 3. **Unreadable is not empty.** A reply this Option's parser refuses leaves the model
-   alone. It is a Hyprland-version surprise, not evidence that the value is gone -- the
-   same distinction `Unconfirmed` draws for Read-back.
+   alone. It is a Hyprland-version surprise, not evidence that the value is gone -- and it
+   is judged by the same `live_value` Read-back uses, so the two cannot drift into
+   disagreeing about what "unreadable" means.
 """
 
 from __future__ import annotations
@@ -33,11 +44,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..ipc import CommandClient, NoSuchOption
-from ..model import ConfigModel, getoption_raw, parse_getoption
+from ..model import ConfigModel, getoption_raw
 from ..schema import ResolvedOption, Schema
 from ..schema.infer import STRING_SENTINELS
 from ..state import Manifest
-from ..writer import is_option_module, module_stem
+from ..writer import is_option_module
+from .result import UNREADABLE, live_value
 
 _log = logging.getLogger(__name__)
 
@@ -70,20 +82,26 @@ class ReRead:
 
 
 def app_owned_options(schema: Schema, manifest: Manifest) -> tuple[ResolvedOption, ...]:
-    """Every Option of every Section the app has a Module for.
+    """Exactly the Options the app's own Modules set, as the Manifest last recorded them.
 
-    Ownership is per **Module**, not per Option, because a Module is the finest grain the
-    Manifest records -- and the app cannot yet read its own Lua back to learn which keys are
-    inside one. Per-Option ownership arrives with the Lua reader (#62); until then this is
-    deliberately the conservative half of the trade: a Section the app never wrote is never
-    adopted, so nothing that lives only in `user.lua` is quietly taken over on first run.
+    Per Option, not per Section. The app cannot read its own Lua back (#62), so the
+    Manifest is the only record of what it wrote -- and "every Option in a Section the app
+    has a Module for" would be an over-claim: an Option `user.lua`, `legacy.lua` or a Bridge
+    sets in that same Section would be adopted, shown as the app's own, and emitted into the
+    app's Module on the next write. That value would then survive the user deleting their
+    own line, which is the app quietly taking over a file it promised never to touch
+    (ADR-0005).
+
+    Ordered by Hyprland's declaration order rather than by the Manifest, so a re-read walks
+    the sockets in the same order every time.
     """
     owned = {
-        relpath.rsplit("/", 1)[-1].removesuffix(".lua")
-        for relpath in manifest.modules
+        name
+        for relpath, record in manifest.modules.items()
         if is_option_module(relpath)
+        for name in record.options
     }
-    return tuple(option for option in schema.options if module_stem(option) in owned)
+    return tuple(option for option in schema.options if option.name in owned)
 
 
 async def read_state(
@@ -115,18 +133,36 @@ async def read_state(
                 cleared.append(option.name)
             continue
 
-        if model.is_set(option.name) and model.get(option.name) is None:
-            # Rule 2: the model's explicit null already says what this key means.
-            continue
-
         payload = dict(reply.payload)
         try:
-            if _is_no_value(option, payload):
-                model.set_null(option.name)
-            else:
-                model.set(option.name, parse_getoption(option, payload))
-        except (KeyError, ValueError, TypeError) as error:
+            no_value = _is_no_value(option, payload)
+        except KeyError as error:
             _log.warning("unreadable getoption reply for %s: %s", option.name, error)
+            unreadable.append(option.name)
+            continue
+
+        if model.is_set(option.name) and model.get(option.name) is None:
+            # Rule 2: the model's explicit null already says what this key means, and no
+            # reply can say it better.
+            continue
+
+        if no_value:
+            model.set_null(option.name)
+            adopted.append(option.name)
+            continue
+
+        value = live_value(option, payload)
+        if value is UNREADABLE:
+            unreadable.append(option.name)
+            continue
+
+        try:
+            model.set(option.name, value)
+        except (ValueError, TypeError) as error:
+            # `live_value` produced something of the Option's own type; the model refusing
+            # it means a bound or an enum the compositor does not share. Same answer as an
+            # unreadable reply -- no evidence the model's value is wrong.
+            _log.warning("live value rejected by the model for %s: %s", option.name, error)
             unreadable.append(option.name)
             continue
 

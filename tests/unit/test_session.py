@@ -24,6 +24,7 @@ from hyprtweaker.engine.ipc import Instance, NoInstance
 from hyprtweaker.engine.model import UNSET, CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import load_schema
+from hyprtweaker.engine.state import Manifest, ModuleRecord
 from hyprtweaker.session import Session
 
 SCHEMA = load_schema(SAMPLE_VERSION, SCHEMA_DIR)
@@ -101,10 +102,15 @@ def test_without_a_compositor_the_session_is_read_only_and_says_why(tmp_path: Pa
     run_with_fake(scenario)
 
 
-def test_a_read_only_session_writes_nothing_to_disk(tmp_path: Path) -> None:
+def test_a_read_only_session_writes_nothing_and_changes_nothing(tmp_path: Path) -> None:
     """Instant apply means a change *is* a write plus a reload (ADR-0003). With no reload
     to be had, a write would leave values on disk that the next launch cannot read back --
-    the app would open showing defaults over a config that says otherwise."""
+    the app would open showing defaults over a config that says otherwise.
+
+    The model is left alone too. Accepting the edit in memory would leave it holding a
+    value that exists nowhere else -- no file, no compositor -- which a later re-read could
+    not clear and a reconnecting session would write without being asked again.
+    """
 
     async def scenario(fake: FakeHyprland) -> None:
         runner = Runner()
@@ -121,8 +127,8 @@ def test_a_read_only_session_writes_nothing_to_disk(tmp_path: Path) -> None:
         session.set_option(ROUNDING, 12)
         await session.aclose()
 
-        assert session.model.get(ROUNDING) == 12, "the Row still shows what the user did"
-        assert not (tmp_path / "hypr").exists(), "but nothing was written"
+        assert session.model.get(ROUNDING) is UNSET
+        assert not (tmp_path / "hypr").exists()
 
     run_with_fake(scenario)
 
@@ -270,6 +276,39 @@ def test_a_foreign_reload_re_reads_the_model_and_tells_the_ui(tmp_path: Path) ->
     run_with_fake(scenario, FakeHyprland(section_conversation("general")))
 
 
+def test_a_foreign_reload_also_re_reads_owned_keys_the_model_does_not_hold(
+    tmp_path: Path,
+) -> None:
+    """The half a "re-read what the model holds" would miss.
+
+    The app owns `general:gaps_in` -- the Manifest records it having written the Module that
+    sets it -- but this session recovered nothing, because at startup the compositor was
+    running a config that never loaded that Module. When the config is fixed and reloaded,
+    a re-read scoped to `model.set_options()` asks about nothing at all and the app stays
+    blind to its own value. ADR-0010 asks for a *full* re-read for this reason.
+    """
+    _write_manifest(tmp_path, {"options/general.lua": (GAPS_IN,)})
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = session_for(fake, tmp_path, runner)
+        session.start()
+        await runner.settle()
+
+        assert len(session.model) == 0, "the Module was owned but not loaded"
+
+        fake.conversation[f"j/getoption {GAPS_IN}"] = option_reply(
+            SCHEMA[GAPS_IN], CssGaps(9, 9, 9, 9)
+        )
+        await fake.emit("configreloaded")
+        await _drain_events(runner)
+
+        assert session.model.get(GAPS_IN) == CssGaps(9, 9, 9, 9)
+        await session.aclose()
+
+    run_with_fake(scenario, FakeHyprland(section_conversation("general")))
+
+
 def test_a_compositor_that_exits_makes_the_session_read_only(tmp_path: Path) -> None:
     async def scenario(fake: FakeHyprland) -> None:
         runner = Runner()
@@ -293,6 +332,20 @@ def test_a_compositor_that_exits_makes_the_session_read_only(tmp_path: Path) -> 
 
 def _no_instance() -> Instance:
     raise NoInstance("HYPRLAND_INSTANCE_SIGNATURE is unset -- not running under Hyprland")
+
+
+def _write_manifest(root: Path, modules: dict[str, tuple[str, ...]]) -> None:
+    """An App dir that records what an earlier session wrote, with no Modules on disk."""
+    paths = ConfigPaths.rooted_at(root)
+    paths.app_dir.mkdir(parents=True, exist_ok=True)
+    manifest = Manifest(
+        app_version=APP_VERSION,
+        schema_version=SCHEMA.hyprland_version,
+        modules={
+            name: ModuleRecord.of("-- unread", options) for name, options in modules.items()
+        },
+    )
+    paths.manifest.write_text(manifest.render(), encoding="utf-8")
 
 
 async def _drain_events(runner: Runner) -> None:

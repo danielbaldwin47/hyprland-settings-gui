@@ -84,6 +84,18 @@ def derive_title(option: GeneratedOption) -> str:
     return title
 
 
+def humanise(token: str) -> str:
+    """A raw config token as a human label: separators to spaces, first letter capitalised.
+
+    The one place that rule lives. Section names, Group headings and uncurated enum values
+    are three different things the app has to label, and three copies of this drifted apart
+    within a single ticket. Curated text always wins over it -- this is the fallback for
+    what the Overlay has not named yet.
+    """
+    words = token.replace("-", " ").replace("_", " ").strip()
+    return words[:1].upper() + words[1:]
+
+
 def derive_section_title(section: str) -> str:
     """A last-resort human label for a Section the Overlay has no title for.
 
@@ -91,8 +103,7 @@ def derive_section_title(section: str) -> str:
     *newer* Hyprland introduced -- the ADR-0012 supplement path, where showing
     "Input capture" beats showing nothing at all or the raw `input-capture`.
     """
-    words = section.replace("-", " ").replace("_", " ").strip()
-    return words[:1].upper() + words[1:]
+    return humanise(section)
 
 
 def _merge_range(generated: GeneratedOption, entry: OverlayEntry) -> Range | None:
@@ -248,11 +259,6 @@ class Schema:
         if overlay is not None and overlay.title:
             return overlay.title
         return derive_section_title(name)
-
-    def section_help_url(self, name: str) -> str | None:
-        """The Section's wiki anchor, for the Page's "Learn more"."""
-        overlay = self.sections.get(name)
-        return overlay.help_url if overlay is not None else None
 
 
 def schema_dir() -> Path:

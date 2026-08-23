@@ -23,7 +23,8 @@ Two conventions worth stating, both from ADR-0013:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,7 +36,12 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model import UNSET, display_text  # noqa: E402
-from hyprtweaker.engine.schema import OptionType, ResolvedOption, Widget  # noqa: E402
+from hyprtweaker.engine.schema import (  # noqa: E402
+    OptionType,
+    ResolvedOption,
+    Widget,
+    humanise,
+)
 from hyprtweaker.session import Session  # noqa: E402
 
 _COMBO_WIDGETS = frozenset({Widget.ENUM_MAP, Widget.ENUM_STRING, Widget.SEGMENTED})
@@ -134,6 +140,8 @@ class RowFactory:
         """
         row = Adw.ActionRow()
         row.set_use_markup(False)
+        # The unit belongs in the title: "`px` / `ms` / `deg` / `/s` in the title, so the
+        # number means something" (prototype #8 FINDINGS, curation policy, 22 Options).
         row.set_title(f"{option.title} ({option.unit})" if option.unit else option.title)
         row.set_subtitle(option.description)
         row.add_suffix(control)
@@ -221,7 +229,10 @@ class RowFactory:
             width_chars=18,
             # A nullable string is never blank: the placeholder is the curated `null_label`
             # ("Device default", "None"), so an unset Option says what it falls back to
-            # instead of showing an empty field (ADR-0013 §2).
+            # instead of showing an empty field (ADR-0013 §2). This is the basic entry Row's
+            # own convention, not #57's honest-sentinel work -- the alternative is not "no
+            # placeholder" but a field showing `[[EMPTY]]`, which is the falsehood prototype
+            # #8 measured as its most damaging defect class.
             placeholder_text=option.null_label or "",
         )
         row = self._row(option, entry)
@@ -281,29 +292,23 @@ class RowFactory:
 
     # --- echo suppression -------------------------------------------------------------------
 
-    def _quiet(self) -> _Quiet:
+    @contextmanager
+    def _quiet(self) -> Iterator[None]:
         """Suppress the change signals a programmatic write to a control emits.
 
         Without it every refresh looks exactly like a user edit: `set_active` fires
         `notify::active`, which would write the value straight back into the model and, on
         the re-read that follows a foreign reload, apply a config the user never touched.
+
+        One flag for the whole factory, not one per Row: GTK is single-threaded and a
+        refresh runs to completion before any other signal is dispatched, so there is never
+        a second Row mid-refresh to confuse it with.
         """
-        return _Quiet(self)
-
-
-class _Quiet:
-    """The guard `RowFactory._quiet` hands out. One flag, shared by every Row it built."""
-
-    __slots__ = ("_factory",)
-
-    def __init__(self, factory: RowFactory) -> None:
-        self._factory = factory
-
-    def __enter__(self) -> None:
-        self._factory._echo_guard = True
-
-    def __exit__(self, *_: object) -> None:
-        self._factory._echo_guard = False
+        self._echo_guard = True
+        try:
+            yield
+        finally:
+            self._echo_guard = False
 
 
 # --- Schema -> control parameters -----------------------------------------------------------
@@ -355,9 +360,9 @@ def _choices(option: ResolvedOption) -> tuple[tuple[Any, str], ...]:
     if option.labels:
         entries.extend((_typed(option, key), label) for key, label in option.labels.items())
     elif option.map:
-        entries.extend((value, _humanise(name)) for name, value in option.map.items())
+        entries.extend((value, humanise(name)) for name, value in option.map.items())
     elif option.known_values:
-        entries.extend((value, _humanise(value)) for value in option.known_values.values)
+        entries.extend((value, humanise(value)) for value in option.known_values.values)
 
     return tuple(entries)
 
@@ -375,12 +380,6 @@ def _typed(option: ResolvedOption, key: str) -> Any:
         return int(key)
     except ValueError:
         return key
-
-
-def _humanise(value: str) -> str:
-    """A raw enum spelling as a label, for the values the Overlay has not curated yet."""
-    words = value.replace("_", " ").replace("-", " ")
-    return words[:1].upper() + words[1:]
 
 
 def _index_of(choices: tuple[tuple[Any, str], ...], value: Any) -> int:

@@ -44,10 +44,10 @@ from ..ipc import (
     NoSuchOption,
     OptionReply,
 )
-from ..model import UNSET, ConfigModel, UnknownOption, parse_getoption, values_match
+from ..model import UNSET, ConfigModel, UnknownOption, values_match
 from ..schema import ResolvedOption
 from ..writer import LuaSyntaxError, ProtectedFile, Writer, WriteResult, module_relpath
-from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch
+from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch, live_value
 
 _log = logging.getLogger(__name__)
 
@@ -329,14 +329,9 @@ class ApplyTransaction:
     def _live_value(option: ResolvedOption, reply: OptionReply) -> Any:
         """The reply as a model value, or `UNREADABLE` if this Option's parser refused it.
 
-        Refusing is a Hyprland-version surprise. What the caller does with `UNREADABLE`
-        depends on what was being asked: for a key the model no longer sets, "the live
-        config sets *something* here" is the whole finding and the unreadable value only
-        costs the badge its detail; for a key the model does set, there is nothing left to
-        compare and the key is unconfirmed.
+        What a caller does with `UNREADABLE` depends on what was being asked: for a key the
+        model no longer sets, "the live config sets *something* here" is the whole finding
+        and the unreadable value only costs the badge its detail; for a key the model does
+        set, there is nothing left to compare and the key is unconfirmed.
         """
-        try:
-            return parse_getoption(option, dict(reply.payload))
-        except (KeyError, ValueError, TypeError) as error:
-            _log.warning("unreadable getoption reply for %s: %s", option.name, error)
-            return UNREADABLE
+        return live_value(option, dict(reply.payload))

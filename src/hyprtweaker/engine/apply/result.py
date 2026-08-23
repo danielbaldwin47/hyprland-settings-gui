@@ -25,11 +25,15 @@ would take the queue -- and therefore every later apply -- down with it.
 from __future__ import annotations
 
 import enum
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from ..model import UNSET
+from ..model import UNSET, parse_getoption
+from ..schema import ResolvedOption
 from ..writer import WriteResult
+
+_log = logging.getLogger(__name__)
 
 
 class ApplyOutcome(enum.StrEnum):
@@ -75,6 +79,22 @@ class _Unreadable(enum.Enum):
 
 UNREADABLE: Final = _Unreadable.TOKEN
 """`getoption` answered, but not with anything this Option's parser could read."""
+
+
+def live_value(option: ResolvedOption, payload: dict[str, Any]) -> Any:
+    """One `getoption` reply as a model value, or `UNREADABLE` if the parser refused it.
+
+    Lives beside the sentinel because it is the only thing that produces one, and it is one
+    function rather than two so that Read-back and the full state re-read cannot drift into
+    disagreeing about what "unreadable" means. Refusing is a Hyprland-version surprise, not
+    evidence about the value: what each caller does with that is its own business, but the
+    judgement is made once.
+    """
+    try:
+        return parse_getoption(option, payload)
+    except (KeyError, ValueError, TypeError) as error:
+        _log.warning("unreadable getoption reply for %s: %s", option.name, error)
+        return UNREADABLE
 
 
 @dataclass(frozen=True, slots=True)

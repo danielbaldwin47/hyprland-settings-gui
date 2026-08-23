@@ -142,27 +142,42 @@ class Session:
 
     def set_option(self, name: str, value: Any) -> None:
         """A decided edit: into the model, then applied as soon as the queue is free."""
+        if self._refuse(name):
+            return
         self._model.set(name, value)
-        self._commit(name)
+        self._applier.commit(name)  # type: ignore[union-attr]  # _refuse proved it is here
 
     def unset_option(self, name: str) -> None:
         """Reset to Hyprland's default: stop emitting the Option (ADR-0013 §6)."""
+        if self._refuse(name):
+            return
         self._model.unset(name)
-        self._commit(name)
+        self._applier.commit(name)  # type: ignore[union-attr]  # _refuse proved it is here
 
     def touch_option(self, name: str, value: Any) -> None:
         """A mid-gesture edit -- a slider being dragged. Applied once the changes stop."""
-        self._model.set(name, value)
-        if self.live and self._applier is not None:
-            self._applier.touch(name)
-
-    def _commit(self, name: str) -> None:
-        if not self.live or self._applier is None:
-            # Read-only session. The model still moved, so the Row stays consistent with
-            # what the user did; nothing is written, because nothing could be reloaded.
-            _log.debug("no compositor: %s changed in the model only", name)
+        if self._refuse(name):
             return
-        self._applier.commit(name)
+        self._model.set(name, value)
+        self._applier.touch(name)  # type: ignore[union-attr]  # _refuse proved it is here
+
+    def _refuse(self, name: str) -> bool:
+        """Whether this session must decline an edit -- and leave the model alone doing it.
+
+        The model is the app's claim about what the config says. On a read-only session
+        nothing is written, so accepting the edit would leave the model holding a value that
+        exists nowhere else: the Row would show it, a later re-read would not clear it (the
+        compositor never had it), and a session that regained a compositor would write it
+        without the user asking again. Declining keeps the model and the config in step.
+
+        Unreachable from the UI, which makes every control insensitive while read-only. It
+        is an invariant rather than a guard for that reason -- worth stating so no later
+        caller has to rediscover it.
+        """
+        if self.live and self._applier is not None:
+            return False
+        _log.debug("read-only session: refusing the edit to %s", name)
+        return True
 
     # --- lifecycle --------------------------------------------------------------------------
 
@@ -211,19 +226,23 @@ class Session:
         self._offline_reason = None
         self._changed()
 
-    async def _recover(self, client: CommandClient) -> ReRead:
-        """Re-read the Options this app already owns Modules for (ADR-0010, `reread.py`).
-
-        The app cannot yet parse its own Lua back (that reader is #62), so what it wrote
-        last session is recovered from the compositor that loaded it. Ownership is per
-        Module, so an install that has written nothing adopts nothing and opens Unset.
-        """
+    def _owned(self) -> tuple[ResolvedOption, ...]:
+        """Exactly the Options the Manifest records this app as having written."""
         manifest = Manifest.load(
             self._paths.manifest,
             app_version=self._app_version,
             schema_version=self._schema.hyprland_version,
         )
-        owned = app_owned_options(self._schema, manifest)
+        return app_owned_options(self._schema, manifest)
+
+    async def _recover(self, client: CommandClient) -> ReRead:
+        """Re-read the Options this app already wrote (ADR-0010, `reread.py`).
+
+        The app cannot yet parse its own Lua back (that reader is #62), so what it wrote
+        last session is recovered from the compositor that loaded it. An install that has
+        written nothing owns nothing, adopts nothing, and opens Unset.
+        """
+        owned = self._owned()
         result = await read_state(self._model, client, owned)
         _log.info(
             "recovered %d option(s) from %d owned; %d unreadable, %d unknown",
@@ -282,9 +301,14 @@ class Session:
     def _on_foreign_reload(self) -> None:
         """Somebody else reloaded the config: everything the model holds may be stale.
 
-        ADR-0010 requires a full re-read here rather than a merge. The model's values are a
-        claim about a config that has just been replaced, so re-reading only the keys that
-        *look* wrong would keep whichever of them the new config silently dropped.
+        ADR-0010 requires a *full* re-read here rather than a merge: the model's values
+        describe a config that has just been replaced, so re-reading only the keys that look
+        wrong would keep whichever of them the new config silently dropped. What a re-read
+        cannot revise is an Option the app deliberately set to null -- no reply spells "no
+        value" -- so those keep their state and surface an override as a drift badge (#57).
+
+        Attributing any `configerrors` the foreign reload produced, and raising the Banner
+        for them (ADR-0016 §Surfacing), is #60's -- this re-read is the state half only.
         """
         if self._closing:
             return
@@ -294,9 +318,15 @@ class Session:
         client = self._client
         if client is None:
             return
-        held = tuple(option for option, _ in self._model.set_options())
+        # Both halves, because they answer different failures: the model's own keys catch a
+        # value the new config changed or dropped, and the owned set catches a key a hand
+        # edit *added* to one of the app's Modules -- which the next Apply would otherwise
+        # re-render without, silently undoing it (ADR-0016 ownership class 2).
+        wanted = {option.name for option, _ in self._model.set_options()}
+        wanted.update(option.name for option in self._owned())
+        stale = tuple(option for option in self._schema.options if option.name in wanted)
         try:
-            result = await read_state(self._model, client, held)
+            result = await read_state(self._model, client, stale)
         except IpcError as error:
             self.set_read_only(f"lost contact with Hyprland: {error}")
             return

@@ -26,7 +26,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
-from hyprtweaker.engine.apply import ApplyResult  # noqa: E402
+from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult  # noqa: E402
 from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
@@ -35,7 +35,13 @@ from hyprtweaker.ui.rows.factory import RowFactory  # noqa: E402
 SHOW_ADVANCED_ACTION = "show-advanced"
 """One global switch, in the primary menu -- never per-Page (ADR-0013 §5).
 
-Session-scoped for now: it belongs in the Prefs file with the View choice and the remembered
+**Shell chrome here, Row chrome in #57.** #57 owns "the global Advanced switch with the
+hidden tier Config-view-only", and what it adds is the *Row* half: the "Advanced" pill, the
+Tasks-view exclusion, and Search's one-off reveal. The filter itself lives in `plan.py` and
+is here now because without it the Config view puts `debug:manual_crash` ("Crash Hyprland")
+at full weight beside `general:gaps_in` -- a tracer nobody should be asked to demo.
+
+Session-scoped: the remembered choice belongs in the Prefs file with the View choice and the
 dialog answers, and that file is #71."""
 
 
@@ -48,6 +54,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._session = session
         self._factory = RowFactory(session)
         self._pages: list[ConfigPage] = []
+        self._last_failure: str | None = None
         self._closing = False
 
         self.set_title("Hyprtweaker")
@@ -58,7 +65,6 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._stack = Gtk.Stack(vexpand=True)
         self._banner = Adw.Banner(revealed=False)
-        self._toasts = Adw.ToastOverlay()
         self._content_page = Adw.NavigationPage(title="Hyprtweaker")
 
         self._split = Adw.NavigationSplitView(
@@ -66,8 +72,7 @@ class MainWindow(Adw.ApplicationWindow):
             content=self._build_content(),
             min_sidebar_width=220,
         )
-        self._toasts.set_child(self._split)
-        self.set_content(self._toasts)
+        self.set_content(self._split)
 
         self._install_actions()
         self.rebuild()
@@ -234,7 +239,20 @@ def _sidebar_row(section: str, title: str, count: int) -> Gtk.ListBoxRow:
     return row
 
 
+#: What each unhappy `ApplyOutcome` means to a person. The enum's own spelling is a wire
+#: value -- "read-back-mismatch" is not a sentence to show a user -- and #60 replaces this
+#: with the full error dialog and its per-Ownership-class actions.
+_FAILURE_TEXT = {
+    ApplyOutcome.CONFIG_ERRORS: "Hyprland rejected the change.",
+    ApplyOutcome.READ_BACK_MISMATCH: "The change was written but did not take effect.",
+    ApplyOutcome.TIMEOUT: "Hyprland did not confirm the change.",
+    ApplyOutcome.COMPOSITOR_GONE: "Hyprland stopped responding; the change is saved but "
+    "not applied.",
+    ApplyOutcome.WRITE_FAILED: "The settings file could not be written.",
+    ApplyOutcome.ABORTED: "The change was refused before anything was written.",
+}
+
+
 def _result_summary(result: ApplyResult) -> str:
-    """One line naming what went wrong, in the vocabulary `ApplyOutcome` already uses."""
-    detail = f": {result.detail}" if result.detail else ""
-    return f"Could not apply ({result.outcome.value}){detail}"
+    """One line naming what went wrong, in words rather than in the enum's wire spelling."""
+    return _FAILURE_TEXT.get(result.outcome, "The change could not be applied.")

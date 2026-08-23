@@ -31,6 +31,8 @@ ADR-0001 fixed the stack (Python + GTK4 + libadwaita) and demanded a clean engin
   - `pages/` — generated page factory + curated Tasks mapping
   - `dialogs/` — Capture, Migration wizard, confirm-or-revert
 
+**One module sits between them, amended during #56:** `src/hyprtweaker/session.py` — the Schema, model, Writer and live connection wired together for one run of the app. It is imported by `ui/` but imports no `gi`, so it belongs to neither subpackage: putting it under `ui/` would make the whole edit-to-compositor path reachable only from a machine with a display, and putting it under `engine/` would give the engine an opinion about application lifetime. It is the seam that lets `tests/unit` drive a real edit against a scripted socket and `tests/integration` drive the same object against a nested Hyprland.
+
 ### Seam enforcement
 
 **`engine` never imports `gi`.** Enforced by a unit test that imports every `hyprtweaker.engine` module with `gi` masked out of `sys.modules` — the build fails the moment the seam leaks. The engine is the part that runs in tests, in the schema generator, and in any future CLI.
@@ -63,7 +65,7 @@ pytest, three tiers; the engine carries the coverage, the UI stays thin:
 ### Build & conventions
 
 - **meson** is the canonical build now (GNOME convention; grows into desktop file/icons/gresource install later — distribution packaging itself remains an open map item). Dev loop: `meson devenv`.
-- `pyproject.toml` carries Python tooling: **ruff** (lint + format), **mypy** on `engine/` only (the UI is too `gi`-dynamic to be worth annotating), pytest config.
+- `pyproject.toml` carries Python tooling: **ruff** (lint + format), **mypy** on `engine/` plus the toolkit-free modules above it (`session.py`, `ui/pages/plan.py`; amended during #56 — the exemption was earned by PyGObject's partial stubs and `gi`-dynamic code, neither of which applies to a module that never imports `gi`), pytest config.
 - GitHub Actions CI: ruff + mypy + unit tests + overlay completeness test.
 - Commit style unchanged.
 

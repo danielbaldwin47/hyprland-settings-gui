@@ -148,6 +148,20 @@ class Writer:
             rendered[relpath] = render_module(items, app_version=self._app_version)
         return rendered
 
+    def module_options(self, model: ConfigModel) -> dict[str, tuple[str, ...]]:
+        """Which Options each rendered Module carries, keyed as `render_modules` keys it.
+
+        The Manifest records this so a later session can tell what the app wrote from what
+        merely happens to live in the same Section (`apply/reread.py`). Derived from the
+        same model walk as the rendering, so the two can never disagree about a Module's
+        contents.
+        """
+        return {
+            module_relpath(items[0][0]): tuple(option.name for option, _ in items)
+            for section in model.sections()
+            for items in (model.section(section),)
+        }
+
     def render_entrypoint(self, module_set: ModuleSet) -> str:
         return render_entrypoint(
             modules=module_set.modules,
@@ -223,8 +237,9 @@ class Writer:
         # or -- when there is none, because the Manifest was lost -- keeps its place on
         # `unverified` instead. Recording bytes nobody wrote would erase the very edit that
         # was just detected.
+        carried = self.module_options(model)
         records = {
-            name: ModuleRecord.of(text)
+            name: ModuleRecord.of(text, carried.get(name, ()))
             for name, text in rendered.items()
             if name not in off_limits
         }
