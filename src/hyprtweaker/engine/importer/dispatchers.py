@@ -24,43 +24,34 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from ..model.entities import DispatcherCall
-from .loss import LossClass, LossCode, LossReport
+from .loss import LossClass, LossCode, LossContext, LossReport
+from .scalars import direction as _direction
+from .scalars import number as _number
 
 __all__ = [
     "DEAD_DISPATCHERS",
     "LEGACY_DISPATCHERS",
     "LEGACY_ENGINE_CALLS",
+    "MAX_SCRIPT_BYTES",
+    "ScriptLookup",
+    "referenced_scripts",
     "scan_legacy_dispatch",
     "translate_dispatcher",
 ]
 
 
 @dataclass(slots=True)
-class _Ctx:
-    """What a grammar needs besides its argument string: where to file findings."""
+class _Ctx(LossContext):
+    """A `LossContext` plus the one thing only dispatchers need: where scripts live.
 
-    origin: str
-    report: LossReport
-    source: str
+    `exec` is the only grammar that reaches outside the config at all, and it needs the
+    roots to resolve a script path against (ADR-0009's "referenced local scripts").
+    """
 
-    def note(
-        self,
-        code: LossCode,
-        message: str,
-        *,
-        replacement: str = "",
-        loss_class: LossClass | None = None,
-    ) -> None:
-        self.report.add(
-            code,
-            message,
-            origin=self.origin,
-            source=self.source,
-            replacement=replacement,
-            loss_class=loss_class,
-        )
+    lookup: ScriptLookup | None = None
 
 
 Grammar = Callable[[str, _Ctx], DispatcherCall | None]
@@ -77,18 +68,6 @@ DEAD_DISPATCHERS: dict[str, str] = {
 # --- small shared parsers ---------------------------------------------------------------
 
 
-def _truthy(text: str) -> bool:
-    """hyprlang's `truthy()`: `1`, or a `true`/`yes`/`on` prefix, case-insensitively."""
-    lowered = text.strip().lower()
-    return lowered == "1" or lowered.startswith(("true", "yes", "on"))
-
-
-def _direction(text: str) -> str:
-    """Legacy kept only the first character; Lua accepts that same letter."""
-    stripped = text.strip().lower()
-    return stripped[0] if stripped else ""
-
-
 def _window(text: str) -> dict[str, str]:
     """A window selector field, omitted when it means "the focused window".
 
@@ -102,25 +81,23 @@ def _window(text: str) -> dict[str, str]:
     return {"window": selector}
 
 
-def _number(text: str) -> float | int | None:
-    stripped = text.strip()
-    if not stripped:
-        return None
-    try:
-        return int(stripped, 10)
-    except ValueError:
-        pass
-    try:
-        return float(stripped)
-    except ValueError:
-        return None
+def _action(
+    text: str,
+    ctx: _Ctx,
+    *,
+    empty: str,
+    enable_words: tuple[str, ...] = ("lock", "on", "enable"),
+) -> str:
+    """A toggle-style action word, resolved the way hyprlang resolved it.
 
+    The trap this closes is that the two engines disagree about *unrecognised* words, not
+    just missing ones. hyprlang's group dispatchers tested for their enable word and their
+    toggle word and let everything else mean **disable**; Lua's parser maps everything it
+    does not recognise to **toggle** (`LuaBindingsInternal.cpp:306-314`). So a passed-through
+    `unlock` -- or `yes`, or the dispatcher's own name -- silently inverts.
 
-def _action(text: str, ctx: _Ctx, *, empty: str) -> str:
-    """A toggle-style action word, with hyprlang's empty-means-`off` made explicit.
-
-    `unlock` gets the same treatment: Lua maps any unrecognised action word to *toggle*, so
-    passing `unlock` through would silently invert what the user asked for (L10).
+    Every word is therefore resolved here to one of Lua's three, and anything unrecognised
+    takes hyprlang's else-branch rather than travelling onward (L10).
     """
     word = text.strip().lower()
     if not word:
@@ -130,7 +107,7 @@ def _action(text: str, ctx: _Ctx, *, empty: str) -> str:
             replacement=f'action = "{empty}"',
         )
         return empty
-    if word in ("lock", "on", "enable"):
+    if word in enable_words:
         return "on"
     if word == "toggle":
         return "toggle"
@@ -142,16 +119,25 @@ def _action(text: str, ctx: _Ctx, *, empty: str) -> str:
                 replacement='action = "off"',
             )
         return "off"
-    return word
+    ctx.note(
+        LossCode.TOGGLE_DEFAULT,
+        f"{word!r} is not an action word; hyprlang read anything unrecognised as "
+        "disable, while Lua would read it as toggle",
+        replacement='action = "off"',
+    )
+    return "off"
 
 
 def _resize_params(text: str, ctx: _Ctx) -> dict[str, object]:
     """`[exact] X Y` -- the shared grammar of `resizeactive`/`moveactive`/`*pixel`.
 
-    `exact` is Lua's `relative = false`; a bare pair is a delta. Percentages have no Lua
-    field at all: the numbers are kept as pixels and the finding is Breakage, because a
-    window that moves by 20 pixels where the user asked for 20% is wrong in a way no
-    warning-level message covers (L8).
+    `exact` is Lua's `relative = false`; a bare pair is a delta.
+
+    Percentages have no Lua field at all, and the bind is **dropped** rather than emitted
+    with the bare number (L8). Emitting `20` for `20%` would produce a bind that silently
+    does the wrong thing on every monitor -- which is worse than one that does nothing and
+    says so in the report, and is the same call `fullscreenstate -1` gets a few functions
+    below. Two equally unrepresentable arguments should not get two different fates.
     """
     tokens = text.split()
     relative = True
@@ -163,11 +149,12 @@ def _resize_params(text: str, ctx: _Ctx) -> dict[str, object]:
     if any("%" in token for token in tokens):
         ctx.note(
             LossCode.RESIZE_PERCENT,
-            "percentage arguments have no Lua equivalent; kept as plain pixel numbers",
-            replacement=" ".join(token.replace("%", "") for token in tokens[:2]),
+            "percentage arguments have no Lua equivalent, and a plain number would mean "
+            "pixels; the bind is dropped rather than silently resized",
         )
-    x = _number(tokens[0].replace("%", ""))
-    y = _number(tokens[1].replace("%", ""))
+        return {}
+    x = _number(tokens[0])
+    y = _number(tokens[1])
     if x is None or y is None:
         return {}
     return {"x": x, "y": y, "relative": relative}
@@ -219,7 +206,7 @@ def _string_arg(path: str) -> Grammar:
 def _exec(args: str, ctx: _Ctx) -> DispatcherCall | None:
     command = args.strip()
     if not command:
-        ctx.note(LossCode.DEAD_DISPATCHER, "exec with an empty command is an error in Lua")
+        ctx.note(LossCode.UNSUPPORTED_KEYWORD, "exec with an empty command is an error in Lua")
         return None
     _check_legacy_dispatch(command, ctx)
     return DispatcherCall("exec_cmd", positional=(command,))
@@ -246,12 +233,82 @@ the socket (ADR-0010), and nothing here is ever run.
 """
 
 
+_SCRIPT_SUFFIXES: frozenset[str] = frozenset({".sh", ".bash", ".zsh", ".fish", ".py", ""})
+
+MAX_SCRIPT_BYTES = 256 * 1024
+"""Cap on a scanned script. A shell script this big is not what the grep is for, and an
+importer that reads an arbitrarily large file a config happens to name is a denial of
+service with extra steps."""
+
+
+@dataclass(frozen=True, slots=True)
+class ScriptLookup:
+    """Where to resolve a script path a command mentions.
+
+    Both roots matter and neither is guessable from the command text: `~/bin/x.sh` needs
+    the home the config was written for (the staged one under test, not the running
+    user's), and `scripts/x.sh` is relative to the config directory.
+    """
+
+    home: Path | None = None
+    config_dir: Path | None = None
+
+    def resolve(self, token: str) -> Path | None:
+        """A command token as a readable local file, or None if it is not one."""
+        text = token.strip().strip("\"'`();&|")
+        if not text or text.startswith("-"):
+            return None
+        if self.home is not None:
+            if text.startswith("~/"):
+                text = str(self.home / text[2:])
+            elif text.startswith("$HOME/"):
+                text = str(self.home / text[len("$HOME/") :])
+            elif text.startswith("${HOME}/"):
+                text = str(self.home / text[len("${HOME}/") :])
+        if "$" in text:
+            return None
+        candidate = Path(text)
+        if candidate.suffix.lower() not in _SCRIPT_SUFFIXES:
+            return None
+        options = [candidate] if candidate.is_absolute() else []
+        if not candidate.is_absolute():
+            for root in (self.config_dir, self.home):
+                if root is not None:
+                    options.append(root / candidate)
+        for option in options:
+            try:
+                if option.is_file():
+                    return option
+            except OSError:  # pragma: no cover -- an unreadable path component
+                continue
+        return None
+
+
+def _needle_in(text: str) -> str | None:
+    lowered = text.lower()
+    for needle in LEGACY_ENGINE_CALLS:
+        if needle in lowered:
+            return needle
+    return None
+
+
+def referenced_scripts(command: str, lookup: ScriptLookup) -> list[Path]:
+    """Every local script file a command names, in the order it names them."""
+    found: list[Path] = []
+    for token in command.replace(";", " ").replace("&", " ").replace("|", " ").split():
+        resolved = lookup.resolve(token)
+        if resolved is not None and resolved not in found:
+            found.append(resolved)
+    return found
+
+
 def scan_legacy_dispatch(
     command: str,
     *,
     origin: str,
     source: str,
     report: LossReport,
+    lookup: ScriptLookup | None = None,
 ) -> bool:
     """Flag a command that drives the old config engine. True when one was found.
 
@@ -260,23 +317,66 @@ def scan_legacy_dispatch(
     a shell script to fix them -- which is exactly what the Breakage class is for
     (ADR-0009). It is also the one breakage class a syntax check can never find, because
     the resulting config is perfectly valid.
+
+    The scan follows the command into any local script it names, because ADR-0009 scopes it
+    to "all exec strings *and referenced local scripts*" -- and a rice that keeps its
+    dispatches in `~/.config/hypr/scripts/` is the common case, not the exotic one. Scripts
+    are read, never run.
     """
-    lowered = command.lower()
-    for needle in LEGACY_ENGINE_CALLS:
-        if needle in lowered:
-            report.add(
-                LossCode.LEGACY_DISPATCH_CALL,
-                f"command runs `{needle}`, which drives the legacy config engine and "
-                "stops working once the config is Lua",
-                origin=origin,
-                source=source,
-            )
-            return True
+    needle = _needle_in(command)
+    if needle is not None:
+        report.add(
+            LossCode.LEGACY_DISPATCH_CALL,
+            f"command runs `{needle}`, which drives the legacy config engine and "
+            "stops working once the config is Lua",
+            origin=origin,
+            source=source,
+        )
+        return True
+    if lookup is None:
+        return False
+    for script in referenced_scripts(command, lookup):
+        found = _scan_script(script)
+        if found is None:
+            continue
+        line, script_needle = found
+        report.add(
+            LossCode.LEGACY_DISPATCH_CALL,
+            f"the script this command runs calls `{script_needle}` at {script.name}:{line}, "
+            "which drives the legacy config engine and stops working once the config is Lua",
+            origin=origin,
+            source=source,
+            replacement=str(script),
+        )
+        return True
     return False
 
 
+def _scan_script(script: Path) -> tuple[int, str] | None:
+    """The first line of a script that drives the legacy engine, if any."""
+    try:
+        if script.stat().st_size > MAX_SCRIPT_BYTES:
+            return None
+        text = script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for number, line in enumerate(text.splitlines(), start=1):
+        if line.lstrip().startswith("#"):
+            continue
+        needle = _needle_in(line)
+        if needle is not None:
+            return number, needle
+    return None
+
+
 def _check_legacy_dispatch(command: str, ctx: _Ctx) -> None:
-    scan_legacy_dispatch(command, origin=ctx.origin, source=ctx.source, report=ctx.report)
+    scan_legacy_dispatch(
+        command,
+        origin=ctx.origin,
+        source=ctx.source,
+        report=ctx.report,
+        lookup=ctx.lookup,
+    )
 
 
 def _signal_window(args: str, __: _Ctx) -> DispatcherCall | None:
@@ -400,7 +500,7 @@ def _center_window(args: str, ctx: _Ctx) -> DispatcherCall:
     return DispatcherCall("window.center")
 
 
-def _change_group_active(args: str, __: _Ctx) -> DispatcherCall:
+def _change_group_active(args: str, ctx: _Ctx) -> DispatcherCall:
     word = args.strip().lower()
     if word in ("b", "prev"):
         return DispatcherCall("group.prev")
@@ -409,6 +509,14 @@ def _change_group_active(args: str, __: _Ctx) -> DispatcherCall:
     index = _number(word)
     if index is None:
         return DispatcherCall("group.next")
+    if index <= 0:
+        # hyprlang read an index of 0 or below as "the last window in the group"; Lua's
+        # `group.active` takes the index straight through and has no spelling for that.
+        ctx.note(
+            LossCode.UNSUPPORTED_KEYWORD,
+            f"changegroupactive {word} meant 'the last window' in hyprlang, which "
+            "hl.dsp.group.active has no index for; passed through unchanged",
+        )
     return DispatcherCall("group.active", {"index": index})
 
 
@@ -602,16 +710,16 @@ def _move_window_or_group(args: str, __: _Ctx) -> DispatcherCall:
 
 
 def _deny_from_group(args: str, ctx: _Ctx) -> DispatcherCall:
-    word = args.strip().lower()
-    if not word:
-        action = "off"
-    elif _truthy(word):
-        action = "on"
-    elif word == "toggle":
-        action = "toggle"
-    else:
-        action = "off"
-    return DispatcherCall("window.deny_from_group", {"action": action})
+    """`on` / `toggle` / else off -- note this one tests the literal word, not truthiness.
+
+    `denywindowfromgroup 1` is *off* to hyprlang, because the translator compares against
+    the string `on` rather than calling `truthy()` (`DispatcherTranslator.cpp:753-762`).
+    Reading it as a boolean here would invert the rule for anyone who wrote `1`.
+    """
+    return DispatcherCall(
+        "window.deny_from_group",
+        {"action": _action(args, ctx, empty="off", enable_words=("on",))},
+    )
 
 
 def _set_prop(args: str, __: _Ctx) -> DispatcherCall | None:
@@ -633,7 +741,7 @@ def _pass(args: str, ctx: _Ctx) -> DispatcherCall | None:
     fields = _window(args)
     if not fields:
         ctx.note(
-            LossCode.DEAD_DISPATCHER,
+            LossCode.UNSUPPORTED_KEYWORD,
             "pass requires a window selector in Lua; hyprlang allowed none",
         )
         return None
@@ -737,6 +845,7 @@ def translate_dispatcher(
     origin: str,
     report: LossReport,
     source: str = "",
+    lookup: ScriptLookup | None = None,
 ) -> DispatcherCall | None:
     """Translate one legacy dispatcher call, filing any loss against `report`.
 
@@ -745,7 +854,12 @@ def translate_dispatcher(
     it means the bind is dropped, and the Loss report already says why.
     """
     lowered = name.strip().lower()
-    ctx = _Ctx(origin=origin, report=report, source=source or f"{name} {args}".strip())
+    ctx = _Ctx(
+        report=report,
+        origin=origin,
+        source=source or f"{name} {args}".strip(),
+        lookup=lookup,
+    )
     if lowered in DEAD_DISPATCHERS:
         ctx.note(
             LossCode.DEAD_DISPATCHER,

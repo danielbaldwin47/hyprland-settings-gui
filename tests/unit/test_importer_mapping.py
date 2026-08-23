@@ -8,12 +8,15 @@ config which loads cleanly and behaves wrongly, which no amount of syntax checki
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hyprtweaker.engine.importer import (
     LossClass,
     LossCode,
     LossReport,
+    import_config,
     map_bind,
     map_keywords,
     map_layer_rule,
@@ -24,6 +27,9 @@ from hyprtweaker.engine.importer import (
     parse,
     translate_dispatcher,
 )
+from hyprtweaker.engine.importer.binds import _KEY_RENAMES
+from hyprtweaker.engine.importer.dispatchers import MAX_SCRIPT_BYTES
+from hyprtweaker.engine.importer.keysyms import known_keysym, validator_available
 from hyprtweaker.engine.schema import load_schema
 
 SCHEMA_VERSION = "0.56.2"
@@ -114,12 +120,49 @@ class TestDispatcherGrammars:
         assert absolute is not None and absolute.args["relative"] is False
         assert relative is not None and relative.args["relative"] is True
 
-    def test_percentage_resize_is_breakage_not_a_silent_pixel_value(
+    def test_percentage_resize_is_dropped_rather_than_read_as_pixels(
         self, report: LossReport
     ) -> None:
-        translate_dispatcher("resizeactive", "20% 0", origin="x:1", report=report)
+        """`20%` emitted as `20` would resize by 20 pixels on every monitor -- a bind that
+        silently does the wrong thing, which is worse than one that does nothing and says
+        so. Same call `fullscreenstate -1` gets."""
+        call = translate_dispatcher("resizeactive", "20% 0", origin="x:1", report=report)
+        assert call is None
         assert LossCode.RESIZE_PERCENT in {item.code for item in report}
         assert report.of_class(LossClass.BREAKAGE)
+
+    def test_an_unrecognised_action_word_takes_hyprlangs_else_branch(
+        self, report: LossReport
+    ) -> None:
+        """hyprlang's group dispatchers read anything they did not recognise as *disable*;
+        Lua reads anything it does not recognise as *toggle*. Passing the word through
+        would silently invert it."""
+        call = translate_dispatcher("lockgroups", "yes", origin="x:1", report=report)
+        assert call is not None
+        assert call.args == {"action": "off"}
+        assert LossCode.TOGGLE_DEFAULT in {item.code for item in report}
+
+    def test_lockgroups_repeated_as_its_own_argument_still_enables(
+        self, report: LossReport
+    ) -> None:
+        call = translate_dispatcher("lockgroups", "lock", origin="x:1", report=report)
+        assert call is not None and call.args == {"action": "on"}
+
+    def test_denywindowfromgroup_tests_the_word_on_not_truthiness(
+        self, report: LossReport
+    ) -> None:
+        """The translator compares against the literal string `on`, so `1` is *off*.
+        Reading it as a boolean inverts the rule for anyone who wrote `1`."""
+        on = translate_dispatcher("denywindowfromgroup", "on", origin="x", report=report)
+        one = translate_dispatcher("denywindowfromgroup", "1", origin="x", report=report)
+        assert on is not None and on.args == {"action": "on"}
+        assert one is not None and one.args == {"action": "off"}
+
+    def test_changegroupactive_index_zero_is_reported(self, report: LossReport) -> None:
+        """0 and below meant "the last window" to hyprlang; Lua's index has no such form."""
+        call = translate_dispatcher("changegroupactive", "0", origin="x:1", report=report)
+        assert call is not None
+        assert LossCode.UNSUPPORTED_KEYWORD in {item.code for item in report}
 
     def test_movewindow_distinguishes_a_direction_from_a_monitor(
         self, report: LossReport
@@ -276,6 +319,39 @@ class TestBinds:
         self, report: LossReport
     ) -> None:
         assert map_bind("", "SUPER, S, splitratio, +0.1", origin="x:1", report=report) is None
+
+    def test_an_unknown_key_name_is_reported_because_lua_refuses_it(
+        self, report: LossReport
+    ) -> None:
+        """hyprlang resolved key names at press time and silently never matched a bad one;
+        Lua resolves at bind time and refuses the whole config (ADR-0009, Needs review)."""
+        bind = map_bind("", "SUPER, notakey, killactive", origin="x:1", report=report)
+        assert bind is not None
+        assert LossCode.UNKNOWN_KEYSYM in {item.code for item in report}
+
+    def test_a_real_keysym_raises_nothing(self, report: LossReport) -> None:
+        map_bind("", "SUPER, XF86AudioPlay, killactive", origin="x:1", report=report)
+        assert LossCode.UNKNOWN_KEYSYM not in {item.code for item in report}
+
+    @pytest.mark.parametrize(("wrong", "right"), sorted(_KEY_RENAMES.items()))
+    def test_every_rename_goes_from_a_dead_name_to_a_live_one(
+        self, wrong: str, right: str
+    ) -> None:
+        """Checks the rename table against xkb in both directions, so it cannot drift into
+        a table of guesses: the key must be a name xkb rejects, the value one it accepts."""
+        if not validator_available():
+            pytest.skip("libxkbcommon is not loadable here")
+        assert known_keysym(wrong) is False, f"{wrong!r} is a real keysym; do not rename it"
+        assert known_keysym(right) is True, f"{right!r} is not a real keysym"
+
+    def test_catchall_drops_its_modifiers(self, report: LossReport) -> None:
+        """`catchall` swallows every key in its submap, so modifiers were already
+        meaningless -- and carrying them into the key string would make Lua *require* them
+        (ADR-0009 lists this under Needs review)."""
+        bind = map_bind("", "SUPER, catchall, killactive", origin="x:1", report=report)
+        assert bind is not None
+        assert bind.keys == "catchall"
+        assert LossCode.UNKNOWN_KEYSYM in {item.code for item in report}
 
     def test_unbind_canonicalises_the_key_string(self, report: LossReport) -> None:
         unbind = map_unbind("SUPER_SHIFT, Q", origin="x:1", report=report)
@@ -685,6 +761,81 @@ class TestStartupCommands:
     def test_an_ordinary_command_is_not_flagged(self, schema, tmp_path) -> None:
         result = _map("exec-once = waybar --config ~/.config/waybar\n", schema, tmp_path)
         assert not result.loss.of_class(LossClass.BREAKAGE)
+
+
+class TestReferencedScripts:
+    """ADR-0009 scopes the breakage grep to "all exec strings *and referenced local
+    scripts*" -- and a rice that keeps its dispatches in `scripts/` is the common case."""
+
+    def _rice(self, tmp_path: Path, command: str, script_body: str) -> Path:
+        scripts = tmp_path / "scripts"
+        scripts.mkdir(exist_ok=True)
+        (scripts / "toggle.sh").write_text(script_body, encoding="utf-8")
+        entry = tmp_path / "hyprland.conf"
+        entry.write_text(f"exec-once = {command}\n", encoding="utf-8")
+        return entry
+
+    def _import(self, entry: Path, schema):  # type: ignore[no-untyped-def]
+        return import_config(entry, schema, env={"HOME": str(entry.parent)})
+
+    def test_a_script_that_dispatches_is_found(self, schema, tmp_path: Path) -> None:
+        entry = self._rice(
+            tmp_path,
+            "~/scripts/toggle.sh",
+            "#!/bin/sh\nhyprctl dispatch togglefloating\n",
+        )
+        result = self._import(entry, schema)
+        breakage = result.loss.of_class(LossClass.BREAKAGE)
+        assert [str(item.code) for item in breakage] == ["L29"]
+        assert "toggle.sh:2" in breakage[0].message
+
+    def test_a_relative_script_path_resolves_against_the_config_dir(
+        self, schema, tmp_path: Path
+    ) -> None:
+        entry = self._rice(
+            tmp_path, "scripts/toggle.sh", "#!/bin/sh\nhyprctl keyword general:border_size 3\n"
+        )
+        assert self._import(entry, schema).loss.of_class(LossClass.BREAKAGE)
+
+    def test_an_innocent_script_is_not_flagged(self, schema, tmp_path: Path) -> None:
+        entry = self._rice(tmp_path, "~/scripts/toggle.sh", "#!/bin/sh\nnotify-send hi\n")
+        assert not self._import(entry, schema).loss.of_class(LossClass.BREAKAGE)
+
+    def test_a_commented_out_dispatch_is_not_flagged(self, schema, tmp_path: Path) -> None:
+        """A line the shell never runs is not breakage, and flagging it would train users
+        to ignore the class."""
+        entry = self._rice(
+            tmp_path, "~/scripts/toggle.sh", "#!/bin/sh\n# hyprctl dispatch exit\necho hi\n"
+        )
+        assert not self._import(entry, schema).loss.of_class(LossClass.BREAKAGE)
+
+    def test_a_missing_script_is_not_an_error(self, schema, tmp_path: Path) -> None:
+        entry = tmp_path / "hyprland.conf"
+        entry.write_text("exec-once = ~/scripts/gone.sh\n", encoding="utf-8")
+        assert not self._import(entry, schema).loss.of_class(LossClass.BREAKAGE)
+
+    def test_the_scan_stays_inside_the_home_it_was_given(self, schema, tmp_path: Path) -> None:
+        """`~` resolves to the home the config was written for, not the one running the
+        import -- the Harness stages a rice under a throwaway home, and previewing someone
+        else's dotfiles must not go reading the current user's scripts."""
+        other = tmp_path / "elsewhere"
+        (other / "scripts").mkdir(parents=True)
+        (other / "scripts" / "toggle.sh").write_text(
+            "hyprctl dispatch exit\n", encoding="utf-8"
+        )
+        entry = tmp_path / "hyprland.conf"
+        entry.write_text("exec-once = ~/scripts/toggle.sh\n", encoding="utf-8")
+        result = import_config(entry, schema, env={"HOME": str(other)})
+        assert result.loss.of_class(LossClass.BREAKAGE)
+        without_home = import_config(entry, schema, env={})
+        assert not without_home.loss.of_class(LossClass.BREAKAGE)
+
+    def test_an_oversized_script_is_skipped_rather_than_read(
+        self, schema, tmp_path: Path
+    ) -> None:
+        body = "# padding\n" * (MAX_SCRIPT_BYTES // 10 + 10) + "hyprctl dispatch exit\n"
+        entry = self._rice(tmp_path, "~/scripts/toggle.sh", body)
+        assert not self._import(entry, schema).loss.of_class(LossClass.BREAKAGE)
 
 
 class TestOptions:

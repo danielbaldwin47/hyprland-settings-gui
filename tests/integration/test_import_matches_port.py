@@ -40,6 +40,25 @@ from hyprtweaker.engine.writer import Writer
 RICE = "end-4"
 APP_VERSION = "0.0.0-test"
 
+KNOWN_PORT_DIVERGENCES: dict[str, str] = {
+    "general:col.active_border": "port takes its colours from a theme module, not the .conf",
+    "general:col.inactive_border": "port takes its colours from a theme module, not the .conf",
+    "misc:background_color": "port takes its colours from a theme module, not the .conf",
+    "gestures:workspace_swipe_cancel_ratio": "commented out in the port; falls back to default",
+    "gestures:workspace_swipe_distance": "commented out in the port; falls back to default",
+    "gestures:workspace_swipe_min_speed_to_force": (
+        "commented out in the port; falls back to default"
+    ),
+}
+"""Options where upstream's hand port deliberately differs from upstream's own `.conf`.
+
+Each was checked against both trees: `hyprland/general.conf:10` sets
+`workspace_swipe_distance = 700` while `hyprland/general.lua:16` has the same line
+**commented out**, so the compositor falls back to 300. The importer is right and the port
+is the one that diverges -- which is exactly why this is an allowlist of named, explained
+options rather than a tolerance: a *new* disagreement is a mapping bug and must fail.
+"""
+
 pytestmark = pytest.mark.hyprland
 
 
@@ -127,13 +146,15 @@ def test_imported_options_agree_with_the_upstream_port(
         for name in names
         if imported.option(name) != upstream.option(name)
     }
-    # Where upstream's hand port deliberately differs from their own .conf there is nothing
-    # to agree about, so the assertion is on the *share* that agrees, reported in full.
-    agreed = len(names) - len(disagreements)
-    assert agreed / len(names) >= 0.9, (
-        f"only {agreed}/{len(names)} options matched the upstream port; "
-        f"disagreements: {sorted(disagreements.items())[:10]}"
+    unexpected = set(disagreements) - set(KNOWN_PORT_DIVERGENCES)
+    assert not unexpected, (
+        "options disagreed with the upstream port that are not known divergences: "
+        + ", ".join(f"{name}={disagreements[name]}" for name in sorted(unexpected))
     )
+    # The allowlist must not rot into a blanket excuse: every entry has to still be an
+    # option this import actually sets, or it is hiding nothing and should be deleted.
+    stale = set(KNOWN_PORT_DIVERGENCES) - set(names)
+    assert not stale, f"KNOWN_PORT_DIVERGENCES lists options the import no longer sets: {stale}"
 
 
 def _render(entrypoint: Path, home: Path, png: Path, log: Path) -> Path:

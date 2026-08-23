@@ -88,7 +88,7 @@ binds | keys=SUPER + Super_L dispatcher=hl.dsp.global('quickshell:searchToggleRe
 binds | keys=SUPER + Super_R dispatcher=hl.dsp.global('quickshell:searchToggleRelease') options={description=Toggle search, ignore_mods=True} submap=global
 binds | keys=SUPER + Super_L dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pkill fuzzel || fuzzel') submap=global
 binds | keys=SUPER + Super_R dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pkill fuzzel || fuzzel') submap=global
-binds | keys=SUPER + catchall dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') options={ignore_mods=True, non_consuming=True, transparent=True} submap=global
+binds | keys=catchall dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') options={ignore_mods=True, non_consuming=True, transparent=True} submap=global
 binds | keys=CTRL + Super_L dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
 binds | keys=CTRL + Super_R dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
 binds | keys=SUPER + mouse:272 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
@@ -536,6 +536,7 @@ L21 needs-review | plugin options need a guard in Lua: unknown keys of a plugin 
 L23 info | hyprland/keybinds.conf was inlined; the Lua config requires a converted module instead
 L29 breakage | command runs `hyprctl dispatch`, which drives the legacy config engine and stops working once the config is Lua
 L22 info | exec ran on every reload and, on the first launch, only once Hyprland had started; the Lua form spawns while the config is parsed
+L3 needs-review | catchall ignores modifiers, so SUPER is dropped; the bind still catches every key in its submap
 L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
 L1 info | modifiers 'Shift+Super+Alt' respelled for Lua's strict '+' tokens
 L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens

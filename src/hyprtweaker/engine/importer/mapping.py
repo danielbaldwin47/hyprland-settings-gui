@@ -29,19 +29,20 @@ from ..model.entities import (
     Animation,
     Curve,
     Device,
-    DispatcherCall,
     EntitySet,
     EnvVar,
     Gesture,
     Permission,
     PluginLoad,
     StartupCommand,
+    entity_summary,
 )
 from ..model.options import ConfigModel, UnknownOption
+from ..model.values import display_text
 from ..schema.resolve import Schema
 from ..schema.types import OptionType
 from .binds import map_bind, map_submap, map_unbind
-from .dispatchers import scan_legacy_dispatch, translate_dispatcher
+from .dispatchers import ScriptLookup, scan_legacy_dispatch, translate_dispatcher
 from .hyprlang import ParseResult, parse
 from .keywords import (
     Assignment,
@@ -56,6 +57,21 @@ from .keywords import (
 from .loss import LossClass, LossCode, LossReport
 from .monitors import map_monitor, map_monitor_block
 from .rules import map_layer_rule, map_rule_block, map_window_rule, map_workspace_rule
+from .scalars import bool_prefix as _bool_prefix
+from .scalars import number as _number
+from .scalars import truthy as _truthy
+
+
+def _as_float(text: str) -> float | None:
+    """A continuous quantity: always a float, never an int that happens to parse.
+
+    Bezier coordinates and animation speeds are continuous, so `0` reading back as an int
+    while `0.5` reads as a float would make two spellings of one value -- the kind of
+    difference that surfaces as snapshot churn rather than as a bug, and so goes unnoticed.
+    """
+    value = _number(text)
+    return None if value is None else float(value)
+
 
 __all__ = ["OPTION_RENAMES", "REMOVED_OPTIONS", "ImportResult", "import_config", "map_keywords"]
 
@@ -163,12 +179,12 @@ class ImportResult:
         """
         lines = ["# options"]
         for option, value in self.model.set_options():
-            lines.append(f"{option.name} = {_render(value)}")
+            lines.append(f"{option.name} = {display_text(value)}")
         lines.append("")
         lines.append("# entities")
         for kind, items in self.entities.kinds():
             for item in items:
-                lines.append(f"{kind} | {_entity_line(item)}")
+                lines.append(f"{kind} | {entity_summary(item)}")
         lines.append("")
         lines.append("# loss")
         for item in self.loss:
@@ -176,51 +192,21 @@ class ImportResult:
         return "\n".join(lines) + "\n"
 
 
-def _render(value: Any) -> str:
-    from ..model.values import display_text
-
-    return display_text(value)
-
-
-def _entity_line(item: Any) -> str:
-    """One entity as a single stable line, origin last so paths never shift columns."""
-    parts: list[str] = []
-    for name in ("keys", "name", "output", "workspace", "leaf", "command", "path", "binary"):
-        value = getattr(item, name, None)
-        if value:
-            parts.append(f"{name}={value}")
-    for name in ("dispatcher", "match", "effects", "fields", "spec", "value"):
-        value = getattr(item, name, None)
-        if value:
-            parts.append(f"{name}={_stable(value)}")
-    options = getattr(item, "options", None)
-    if options is not None and options.as_table():
-        parts.append(f"options={_stable(options.as_table())}")
-    submap = getattr(item, "submap", None)
-    if submap:
-        parts.append(f"submap={submap}")
-    return " ".join(parts) if parts else repr(item)
-
-
-def _stable(value: Any) -> str:
-    if isinstance(value, DispatcherCall):
-        return str(value)
-    if isinstance(value, Mapping):
-        inner = ", ".join(f"{k}={_stable(v)}" for k, v in sorted(value.items()))
-        return "{" + inner + "}"
-    if isinstance(value, list | tuple):
-        return "[" + ", ".join(_stable(v) for v in value) + "]"
-    return str(value)
-
-
 class _Mapper:
     """One pass over one Keyword stream. Holds only the walk's own state."""
 
-    def __init__(self, model: ConfigModel, report: LossReport, root: Path) -> None:
+    def __init__(
+        self,
+        model: ConfigModel,
+        report: LossReport,
+        root: Path,
+        lookup: ScriptLookup | None = None,
+    ) -> None:
         self.model = model
         self.report = report
         self.entities = EntitySet()
         self._root = root
+        self._lookup = lookup
         self._submap: str | None = None
         self._seen_sources: set[Path] = set()
 
@@ -236,25 +222,6 @@ class _Mapper:
             relative = origin.file
         return f"{relative}:{origin.line}"
 
-    def _note(
-        self,
-        code: LossCode,
-        message: str,
-        *,
-        origin: str,
-        source: str = "",
-        replacement: str = "",
-        loss_class: LossClass | None = None,
-    ) -> None:
-        self.report.add(
-            code,
-            message,
-            origin=origin,
-            source=source,
-            replacement=replacement,
-            loss_class=loss_class,
-        )
-
     # -- the walk --
 
     def run(self, keywords: Sequence[Keyword]) -> None:
@@ -267,7 +234,7 @@ class _Mapper:
                 case SpecialCategory():
                     self._special(keyword)
                 case UnparsedLine():
-                    self._note(
+                    self.report.add(
                         LossCode.UNPARSED_LINE,
                         "line could not be parsed and has no model representation",
                         origin=self._where(keyword),
@@ -282,7 +249,7 @@ class _Mapper:
 
     def _variable(self, keyword: VariableDefinition) -> None:
         if "$" in keyword.value:
-            self._note(
+            self.report.add(
                 LossCode.VARIABLE_UNRESOLVED,
                 f"variable ${keyword.name} still contains an unresolved reference",
                 origin=self._where(keyword),
@@ -299,7 +266,7 @@ class _Mapper:
             relative = keyword.file.relative_to(self._root)
         except ValueError:
             relative = keyword.file
-        self._note(
+        self.report.add(
             LossCode.SOURCE_REQUIRE,
             f"{relative} was inlined; the Lua config requires a converted module instead",
             origin=self._where(keyword),
@@ -313,7 +280,7 @@ class _Mapper:
         key = keyword.key
         source = f"{key} = {keyword.value}"
         if key.startswith("plugin:"):
-            self._note(
+            self.report.add(
                 LossCode.PLUGIN_GUARD,
                 f"{key} belongs to a plugin; Lua errors on the keys of a plugin that is "
                 "not loaded, so it needs a guard",
@@ -323,7 +290,7 @@ class _Mapper:
             return
         renamed = OPTION_RENAMES.get(key)
         if renamed is not None:
-            self._note(
+            self.report.add(
                 LossCode.REMOVED_OPTION,
                 f"{key} is now {renamed} in this Hyprland",
                 origin=origin,
@@ -333,7 +300,7 @@ class _Mapper:
             )
             key = renamed
         if key in REMOVED_OPTIONS:
-            self._note(
+            self.report.add(
                 LossCode.REMOVED_OPTION,
                 f"{key} was {REMOVED_OPTIONS[key]} and is dropped",
                 origin=origin,
@@ -343,7 +310,7 @@ class _Mapper:
         try:
             self.model.set(key, keyword.value)
         except UnknownOption:
-            self._note(
+            self.report.add(
                 LossCode.REMOVED_OPTION,
                 f"{key} is not an option in this Hyprland and was dropped",
                 origin=origin,
@@ -370,7 +337,7 @@ class _Mapper:
         variable that never got defined.
         """
         if "$" in raw:
-            self._note(
+            self.report.add(
                 LossCode.VARIABLE_UNRESOLVED,
                 f"{key} was left with an unresolved variable, so the value could not be "
                 "read; the file defining it was probably not found",
@@ -391,7 +358,7 @@ class _Mapper:
             except (ValueError, TypeError):  # pragma: no cover -- the type just matched
                 pass
             else:
-                self._note(
+                self.report.add(
                     LossCode.VALUE_NORMALISED,
                     f"{key} = {raw.strip()!r} was read by hyprlang's prefix rule as "
                     f"{str(value).lower()}",
@@ -400,7 +367,7 @@ class _Mapper:
                     replacement=str(value).lower(),
                 )
                 return
-        self._note(
+        self.report.add(
             LossCode.RULE_VALUE_TYPE,
             f"{key} could not take the value {raw.strip()!r}: {error}",
             origin=origin,
@@ -418,7 +385,7 @@ class _Mapper:
         option = self.model.option(key)
         stripped = raw.strip().lower()
         if option.type is OptionType.BOOL and stripped in _BOOL_WORDS:
-            self._note(
+            self.report.add(
                 LossCode.VALUE_NORMALISED,
                 f"{key} = {raw.strip()} normalised to a Lua boolean",
                 origin=origin,
@@ -426,7 +393,7 @@ class _Mapper:
                 replacement=str(self.model.get(key)).lower(),
             )
         elif option.type is OptionType.CSS_GAPS and 1 < len(raw.split(",")) < 4:
-            self._note(
+            self.report.add(
                 LossCode.VALUE_NORMALISED,
                 f"{key} CSS shorthand expanded to all four sides",
                 origin=origin,
@@ -448,6 +415,7 @@ class _Mapper:
                     origin=origin,
                     report=self.report,
                     submap=self._submap,
+                    lookup=self._lookup,
                 )
                 if bind is not None:
                     self.entities.binds.append(bind)
@@ -475,7 +443,7 @@ class _Mapper:
                 if layer_rule is not None:
                     self.entities.add_layer_rule(layer_rule)
             case "windowrulev2" | "layerrulev2":
-                self._note(
+                self.report.add(
                     LossCode.OLD_WINDOWRULE_SYNTAX,
                     f"{name} is refused outright by this Hyprland; rewrite it as a "
                     f"{name[:-2]} with match: props",
@@ -499,7 +467,7 @@ class _Mapper:
             case "source":
                 pass  # already inlined by the Grammar core; reported at SourceEnter
             case _:
-                self._note(
+                self.report.add(
                     LossCode.UNSUPPORTED_KEYWORD,
                     f"keyword {name!r} has no model representation",
                     origin=origin,
@@ -518,7 +486,7 @@ class _Mapper:
     def _bezier(self, value: str, origin: str) -> None:
         parts = [part.strip() for part in value.split(",")]
         if len(parts) < 5:
-            self._note(
+            self.report.add(
                 LossCode.UNSUPPORTED_KEYWORD,
                 "bezier needs a name and four coordinates",
                 origin=origin,
@@ -528,9 +496,9 @@ class _Mapper:
         name = parts[0]
         coords: list[float] = []
         for token in parts[1:5]:
-            number = _float(token)
+            number = _as_float(token)
             if number is None:
-                self._note(
+                self.report.add(
                     LossCode.ANIMATION_RANGE,
                     f"bezier {name!r} has a non-numeric coordinate {token!r}",
                     origin=origin,
@@ -540,7 +508,7 @@ class _Mapper:
             coords.append(number)
         outside = [c for c in coords if not -1.0 <= c <= 2.0]
         if outside:
-            self._note(
+            self.report.add(
                 LossCode.ANIMATION_RANGE,
                 f"bezier {name!r} has coordinates outside the -1..2 range Lua accepts "
                 f"({', '.join(str(c) for c in outside)}); Hyprland will reject the curve",
@@ -557,7 +525,7 @@ class _Mapper:
         parts = [part.strip() for part in value.split(",")]
         leaf = parts[0] if parts else ""
         if not leaf:
-            self._note(
+            self.report.add(
                 LossCode.UNSUPPORTED_KEYWORD,
                 "animation has no leaf name",
                 origin=origin,
@@ -573,9 +541,9 @@ class _Mapper:
             return
         fields: dict[str, Any] = {"enabled": True}
         if len(parts) > 2 and parts[2]:
-            speed = _float(parts[2])
+            speed = _as_float(parts[2])
             if speed is None:
-                self._note(
+                self.report.add(
                     LossCode.ANIMATION_RANGE,
                     f"animation {leaf!r} has a non-numeric speed {parts[2]!r}",
                     origin=origin,
@@ -583,7 +551,7 @@ class _Mapper:
                 )
             else:
                 if not 0 < speed <= 100:
-                    self._note(
+                    self.report.add(
                         LossCode.ANIMATION_RANGE,
                         f"animation {leaf!r} speed {speed} is outside the 0..100 range Lua "
                         "accepts; Hyprland will reject it",
@@ -601,7 +569,7 @@ class _Mapper:
         source = f"gesture{flags} = {value}"
         parts = [part.strip() for part in value.split(",")]
         if len(parts) < 3:
-            self._note(
+            self.report.add(
                 LossCode.UNSUPPORTED_KEYWORD,
                 "gesture needs fingers, a direction and an action",
                 origin=origin,
@@ -609,7 +577,7 @@ class _Mapper:
             )
             return
         fields: dict[str, Any] = {}
-        fingers = _float(parts[0])
+        fingers = _number(parts[0])
         fields["fingers"] = int(fingers) if fingers is not None else parts[0]
         fields["direction"] = parts[1]
         if "p" in flags.lower():
@@ -622,11 +590,11 @@ class _Mapper:
             if key.lower() == "mod":
                 fields["mods"] = raw.strip()
             else:
-                scale = _float(raw)
+                scale = _as_float(raw)
                 if scale is not None:
                     fields["scale"] = scale
         if not rest:
-            self._note(
+            self.report.add(
                 LossCode.UNSUPPORTED_KEYWORD,
                 "gesture has no action",
                 origin=origin,
@@ -641,9 +609,14 @@ class _Mapper:
             name = rest[1] if len(rest) > 1 else ""
             args = ",".join(rest[2:])
             call = translate_dispatcher(
-                name, args, origin=origin, report=self.report, source=source
+                name,
+                args,
+                origin=origin,
+                report=self.report,
+                source=source,
+                lookup=self._lookup,
             )
-            self._note(
+            self.report.add(
                 LossCode.GESTURE_DISPATCHER,
                 "gesture dispatcher actions have no string form in Lua and become a "
                 "callback that runs the dispatcher",
@@ -661,12 +634,12 @@ class _Mapper:
             elif lowered in ("float", "fullscreen") and extra:
                 fields["mode"] = extra
             elif lowered == "cursorzoom" and extra:
-                zoom = _float(extra)
+                zoom = _as_float(extra)
                 fields["zoom_level"] = zoom if zoom is not None else extra
                 if len(rest) > 2 and rest[2].strip():
                     fields["mode"] = rest[2].strip()
         else:
-            self._note(
+            self.report.add(
                 LossCode.UNSUPPORTED_KEYWORD,
                 f"gesture action {action!r} is not one this Hyprland knows",
                 origin=origin,
@@ -678,7 +651,7 @@ class _Mapper:
     def _env(self, flags: str, value: str, origin: str) -> None:
         name, sep, raw = value.partition(",")
         if not sep or not name.strip():
-            self._note(
+            self.report.add(
                 LossCode.UNSUPPORTED_KEYWORD,
                 "env needs a name and a value",
                 origin=origin,
@@ -697,7 +670,7 @@ class _Mapper:
     def _permission(self, value: str, origin: str) -> None:
         parts = [part.strip() for part in value.split(",")]
         if len(parts) < 3:
-            self._note(
+            self.report.add(
                 LossCode.UNSUPPORTED_KEYWORD,
                 "permission needs a binary, a type and a mode",
                 origin=origin,
@@ -714,9 +687,15 @@ class _Mapper:
             return
         event, raw, every_reload = _EXEC_EVENTS[name]
         source = f"{name} = {command}"
-        scan_legacy_dispatch(command, origin=origin, source=source, report=self.report)
+        scan_legacy_dispatch(
+            command,
+            origin=origin,
+            source=source,
+            report=self.report,
+            lookup=self._lookup,
+        )
         if every_reload:
-            self._note(
+            self.report.add(
                 LossCode.EXEC_TIMING,
                 f"{name} ran on every reload and, on the first launch, only once "
                 "Hyprland had started; the Lua form spawns while the config is parsed",
@@ -748,7 +727,7 @@ class _Mapper:
                     map_rule_block(fields, origin=origin, report=self.report, layer=True)  # type: ignore[arg-type]
                 )
             case "plugin":
-                self._note(
+                self.report.add(
                     LossCode.PLUGIN_GUARD,
                     "plugin options need a guard in Lua: unknown keys of a plugin that is "
                     "not loaded are an error, where hyprlang ignored them",
@@ -756,7 +735,7 @@ class _Mapper:
                     source=f"plugin {{ {', '.join(fields)} }}",
                 )
             case _:
-                self._note(
+                self.report.add(
                     LossCode.UNSUPPORTED_KEYWORD,
                     f"category {keyword.category!r} has no model representation",
                     origin=origin,
@@ -764,14 +743,16 @@ class _Mapper:
 
     def _device(self, name: str, fields: Mapping[str, str], origin: str) -> None:
         if not name:
-            self._note(LossCode.UNSUPPORTED_KEYWORD, "device block has no name", origin=origin)
+            self.report.add(
+                LossCode.UNSUPPORTED_KEYWORD, "device block has no name", origin=origin
+            )
             return
         mapped: dict[str, Any] = {}
         for key, raw in fields.items():
             if key == "name":
                 continue
             if key in _DEVICE_DROPPED:
-                self._note(
+                self.report.add(
                     LossCode.DEVICE_FIELD,
                     f"per-device {key!r} has no field in this Hyprland's Lua API and was "
                     "dropped",
@@ -782,7 +763,7 @@ class _Mapper:
                 continue
             renamed = _DEVICE_RENAMES.get(key)
             if renamed is not None:
-                self._note(
+                self.report.add(
                     LossCode.DEVICE_FIELD,
                     f"per-device {key!r} is spelled {renamed!r} in Lua",
                     origin=origin,
@@ -803,39 +784,25 @@ _GESTURE_ACTION_NAMES: dict[str, str] = {
 }
 
 
-def _truthy(text: str) -> bool:
-    lowered = text.strip().lower()
-    return lowered == "1" or lowered.startswith(("true", "yes", "on"))
-
-
-def _bool_prefix(text: str) -> bool | None:
-    """hyprlang's `parseInt` truth rule: match a *prefix*, ignore whatever follows."""
-    lowered = text.strip().lower()
-    if lowered.startswith(("true", "yes", "on")) or lowered == "1":
-        return True
-    if lowered.startswith(("false", "no", "off")) or lowered == "0":
-        return False
-    return None
-
-
-def _float(text: str) -> float | None:
-    try:
-        return float(text.strip())
-    except (TypeError, ValueError):
-        return None
-
-
 def map_keywords(
     result: ParseResult,
     schema: Schema,
     *,
     source: Path | None = None,
+    home: Path | None = None,
 ) -> ImportResult:
-    """Map one parsed tree into a fresh model, Entity set and Loss report."""
+    """Map one parsed tree into a fresh model, Entity set and Loss report.
+
+    `home` is where `~/...` in an exec command resolves to. It is a parameter rather than
+    `Path.home()` because the home the config was written for is not always the one running
+    the import -- the Harness stages a rice under a throwaway home, and a wizard previewing
+    someone else's dotfiles should not go reading the current user's scripts.
+    """
     root = source.parent if source is not None else Path()
     model = ConfigModel(schema)
     report = LossReport(source=str(source) if source else "")
-    mapper = _Mapper(model, report, root)
+    lookup = ScriptLookup(home=home, config_dir=root)
+    mapper = _Mapper(model, report, root, lookup)
     mapper.run(result.keywords)
     if any(rule.named for rule in mapper.entities.window_rules) and any(
         not rule.named for rule in mapper.entities.window_rules
@@ -865,4 +832,5 @@ def import_config(
 ) -> ImportResult:
     """Parse and map a `hyprland.conf` tree in one call -- the wizard's entry point."""
     parsed = parse(path, env=env, follow_source=follow_source)
-    return map_keywords(parsed, schema, source=path)
+    home = Path(env["HOME"]) if env and env.get("HOME") else None
+    return map_keywords(parsed, schema, source=path, home=home)

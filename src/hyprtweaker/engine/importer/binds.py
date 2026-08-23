@@ -22,10 +22,12 @@ makes the common case work, and the case it cannot cover is reported (L6).
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Any
 
-from ..model.entities import Bind, BindDevice, BindOptions, DispatcherCall, Submap, Unbind
-from .dispatchers import translate_dispatcher
-from .loss import LossClass, LossCode, LossReport
+from ..model.entities import Bind, BindDevice, BindOptions, Submap, Unbind
+from .dispatchers import ScriptLookup, translate_dispatcher
+from .keysyms import known_keysym
+from .loss import LossCode, LossContext, LossReport
 
 __all__ = [
     "FLAG_OPTIONS",
@@ -67,8 +69,12 @@ FLAG_OPTIONS: dict[str, str] = {
     "x": "allow_input_capture",
 }
 
-#: Legacy key spellings this Hyprland's Lua side rejects, and what they should be. Kept
-#: deliberately small: it holds only names the sources name, not guesses about xkb.
+#: Common spellings that are not xkb keysym names, and the names they meant.
+#:
+#: Every entry is checked both ways by `test_importer_mapping.py`: the key must be one xkb
+#: rejects and the value one it accepts, so this cannot drift into a table of guesses.
+#: Anything not listed here is not renamed -- it is validated and *reported*, because
+#: inventing a target for an unknown name would be a worse failure than naming it.
 _KEY_RENAMES: dict[str, str] = {
     "enter": "Return",
     "esc": "Escape",
@@ -80,29 +86,23 @@ _SPECIAL_EXACT: frozenset[str] = frozenset(
     {"mouse_up", "mouse_down", "mouse_left", "mouse_right", "catchall"}
 )
 
+CATCHALL = "catchall"
+
 
 @dataclass(slots=True)
-class _Ctx:
-    origin: str
-    report: LossReport
-    source: str
+class _Flags:
+    """The four flag letters that change how the *value* is read, not what it means.
 
-    def note(
-        self,
-        code: LossCode,
-        message: str,
-        *,
-        replacement: str = "",
-        loss_class: LossClass | None = None,
-    ) -> None:
-        self.report.add(
-            code,
-            message,
-            origin=self.origin,
-            source=self.source,
-            replacement=replacement,
-            loss_class=loss_class,
-        )
+    Named rather than returned as a tuple of bare booleans, because `d` and `k` each
+    consume a comma field and the order they consume in is load-bearing -- a caller
+    unpacking four anonymous flags is one swap away from reading a device list as a
+    description.
+    """
+
+    has_description: bool = False
+    has_device: bool = False
+    mouse: bool = False
+    multikey: bool = False
 
 
 def canonical_mods(field: str) -> list[str]:
@@ -115,7 +115,7 @@ def canonical_mods(field: str) -> list[str]:
     return [name for name, aliases in _MOD_ALIASES if any(a in upper for a in aliases)]
 
 
-def canonical_key(key: str, ctx: _Ctx | None = None) -> str:
+def canonical_key(key: str, ctx: LossContext | None = None) -> str:
     """One legacy key field as the token Lua expects."""
     stripped = key.strip()
     if not stripped:
@@ -142,10 +142,19 @@ def canonical_key(key: str, ctx: _Ctx | None = None) -> str:
                 replacement=renamed,
             )
         return renamed
+    if ctx is not None and known_keysym(stripped) is False:
+        # hyprlang resolved key names at press time and silently never matched an unknown
+        # one; Lua resolves at bind time and refuses the config. A bind that quietly did
+        # nothing becomes a config that will not load, so it has to be said out loud.
+        ctx.note(
+            LossCode.UNKNOWN_KEYSYM,
+            f"{stripped!r} is not a key name xkb knows, so this bind never fired in "
+            "hyprlang -- and Lua rejects the whole config rather than ignoring it",
+        )
     return stripped
 
 
-def _key_string(mods_field: str, key_field: str, ctx: _Ctx, *, multikey: bool) -> str:
+def _key_string(mods_field: str, key_field: str, ctx: LossContext, *, multikey: bool) -> str:
     """Build `hl.bind`'s single key string from the two legacy fields."""
     if multikey:
         # `binds` joined every token with `&` and made modifiers keysyms too (L4).
@@ -165,6 +174,17 @@ def _key_string(mods_field: str, key_field: str, ctx: _Ctx, *, multikey: bool) -
 
     mods = canonical_mods(mods_field)
     key = canonical_key(key_field, ctx)
+    if key.lower() == CATCHALL and mods:
+        # `catchall` swallows every key in the submap; the modifiers on the line were
+        # already meaningless to hyprlang and are dropped rather than carried into a key
+        # string Lua would read as a modifier requirement (ADR-0009, Needs review).
+        ctx.note(
+            LossCode.UNKNOWN_KEYSYM,
+            f"catchall ignores modifiers, so {' + '.join(mods)} is dropped; the bind still "
+            "catches every key in its submap",
+            replacement=CATCHALL,
+        )
+        return CATCHALL
     if mods_field.strip() and not mods:
         ctx.note(
             LossCode.MODS_SPELLING,
@@ -186,29 +206,31 @@ def _respelled(field: str, mods: list[str]) -> bool:
     return field.strip().upper().replace(" ", "") != "+".join(mods).replace(" ", "")
 
 
-def _read_flags(flags: str, ctx: _Ctx) -> tuple[BindOptions, bool, bool, bool, bool]:
+def _read_flags(flags: str, ctx: LossContext) -> tuple[BindOptions, _Flags]:
     """Split the flag letters into option fields and the four that change parsing."""
-    options: dict[str, object] = {}
-    has_description = has_device = mouse = multikey = False
+    # `Any` rather than `bool`: the keys are `BindOptions` field names, whose types differ
+    # per field, and narrowing here would only move the mismatch to the constructor call.
+    options: dict[str, Any] = {}
+    parsing = _Flags()
     for letter in flags.lower():
         field = FLAG_OPTIONS.get(letter)
         if field is not None:
             options[field] = True
         elif letter == "d":
-            has_description = True
+            parsing.has_description = True
         elif letter == "k":
-            has_device = True
+            parsing.has_device = True
         elif letter == "m":
-            mouse = True
+            parsing.mouse = True
         elif letter == "s":
-            multikey = True
+            parsing.multikey = True
         else:
-            ctx.note(LossCode.DEAD_DISPATCHER, f"unknown bind flag {letter!r}")
+            ctx.note(LossCode.UNSUPPORTED_KEYWORD, f"unknown bind flag {letter!r}")
     if options.get("click") or options.get("drag"):
         # Both imply release on the legacy side; Lua's `click` sets it itself, but making
         # it explicit keeps the entity readable.
         options["release"] = True
-    return BindOptions(**options), has_description, has_device, mouse, multikey  # type: ignore[arg-type]
+    return BindOptions(**options), parsing
 
 
 def _device_field(text: str) -> BindDevice:
@@ -226,6 +248,7 @@ def map_bind(
     origin: str,
     report: LossReport,
     submap: str | None = None,
+    lookup: ScriptLookup | None = None,
 ) -> Bind | None:
     """One `bind[flags] = ...` line as a Bind, or None when nothing survives.
 
@@ -234,8 +257,8 @@ def map_bind(
     emitting none.
     """
     source = f"bind{flags} = {value}"
-    ctx = _Ctx(origin=origin, report=report, source=source)
-    options, has_description, has_device, mouse, multikey = _read_flags(flags, ctx)
+    ctx = LossContext(report=report, origin=origin, source=source)
+    options, parsing = _read_flags(flags, ctx)
 
     fields = value.split(",")
     if len(fields) < 2:
@@ -245,27 +268,25 @@ def map_bind(
     mods_field, key_field = fields[0], fields[1]
     rest = fields[2:]
 
-    if has_description:
+    if parsing.has_description:
         if not rest:
             ctx.note(LossCode.UNSUPPORTED_KEYWORD, "bindd has no description field")
             return None
-        options = _with(options, description=rest[0].strip())
+        options = replace(options, description=rest[0].strip())
         rest = rest[1:]
-        if "," in options.description:  # pragma: no cover -- split above forbids it
-            ctx.note(LossCode.DESCRIPTION_COMMAS, "description kept verbatim")
-    if has_device:
+    if parsing.has_device:
         if not rest:
             ctx.note(LossCode.UNSUPPORTED_KEYWORD, "bindk has no device field")
             return None
-        options = _with(options, device=_device_field(rest[0]))
+        options = replace(options, device=_device_field(rest[0]))
         rest = rest[1:]
 
-    keys = _key_string(mods_field, key_field, ctx, multikey=multikey)
+    keys = _key_string(mods_field, key_field, ctx, multikey=parsing.multikey)
     if not keys:
         ctx.note(LossCode.UNSUPPORTED_KEYWORD, "bind has neither modifiers nor a key")
         return None
 
-    if mouse:
+    if parsing.mouse:
         # `bindm` has no dispatcher field: the third value *is* the mouse action, and Lua
         # expresses the whole thing as a drag/resize dispatcher (L5).
         action = ",".join(rest).strip()
@@ -274,33 +295,19 @@ def map_bind(
             "mouse bind expressed as a drag/resize dispatcher; Lua has no mouse flag",
             replacement=action,
         )
-        call = translate_dispatcher(
-            "mouse", action, origin=origin, report=report, source=source
-        )
-        return _bind(keys, call, options, submap, origin) if call else None
-
-    if not rest:
+        name, args = "mouse", action
+    elif not rest:
         ctx.note(LossCode.UNSUPPORTED_KEYWORD, "bind has no dispatcher")
         return None
-    name, args = rest[0].strip(), ",".join(rest[1:])
-    call = translate_dispatcher(name, args, origin=origin, report=report, source=source)
+    else:
+        name, args = rest[0].strip(), ",".join(rest[1:])
+
+    call = translate_dispatcher(
+        name, args, origin=origin, report=report, source=source, lookup=lookup
+    )
     if call is None:
         return None
-    return _bind(keys, call, options, submap, origin)
-
-
-def _bind(
-    keys: str,
-    call: DispatcherCall,
-    options: BindOptions,
-    submap: str | None,
-    origin: str,
-) -> Bind:
     return Bind(keys=keys, dispatcher=call, options=options, submap=submap, origin=origin)
-
-
-def _with(options: BindOptions, **changes: object) -> BindOptions:
-    return replace(options, **changes)  # type: ignore[arg-type]
 
 
 def map_unbind(
@@ -316,7 +323,7 @@ def map_unbind(
     thing that makes Lua's string comparison find the bind hyprlang's mask would have (L6).
     """
     source = f"unbind = {value}"
-    ctx = _Ctx(origin=origin, report=report, source=source)
+    ctx = LossContext(report=report, origin=origin, source=source)
     if value.strip().lower() == "all":
         return Unbind(keys="all", all=True, submap=submap, origin=origin)
     fields = value.split(",")

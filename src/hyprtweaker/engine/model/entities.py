@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, TypeVar
 
 __all__ = [
     "Animation",
@@ -45,6 +45,7 @@ __all__ = [
     "Unbind",
     "WindowRule",
     "WorkspaceRule",
+    "entity_summary",
 ]
 
 
@@ -407,30 +408,10 @@ class EntitySet:
 
     def add_window_rule(self, rule: WindowRule) -> None:
         """Named rules update in place (keeping position); anonymous ones append."""
-        if rule.name:
-            for index, existing in enumerate(self.window_rules):
-                if existing.name == rule.name:
-                    self.window_rules[index] = replace(
-                        existing,
-                        match={**existing.match, **rule.match},
-                        effects={**existing.effects, **rule.effects},
-                        enabled=rule.enabled,
-                    )
-                    return
-        self.window_rules.append(rule)
+        _merge_named(self.window_rules, rule)
 
     def add_layer_rule(self, rule: LayerRule) -> None:
-        if rule.name:
-            for index, existing in enumerate(self.layer_rules):
-                if existing.name == rule.name:
-                    self.layer_rules[index] = replace(
-                        existing,
-                        match={**existing.match, **rule.match},
-                        effects={**existing.effects, **rule.effects},
-                        enabled=rule.enabled,
-                    )
-                    return
-        self.layer_rules.append(rule)
+        _merge_named(self.layer_rules, rule)
 
     def add_animation(self, animation: Animation) -> None:
         """Last call for a leaf wins -- the animation tree holds one node per leaf."""
@@ -456,11 +437,73 @@ class EntitySet:
         Legacy registered every named rule before any anonymous one, while Lua registers in
         pure call order -- so emitting this order is what preserves legacy precedence (L15).
         """
-        return [r for r in self.window_rules if r.named] + [
-            r for r in self.window_rules if not r.named
-        ]
+        return _named_first(self.window_rules)
 
     def ordered_layer_rules(self) -> list[LayerRule]:
-        return [r for r in self.layer_rules if r.named] + [
-            r for r in self.layer_rules if not r.named
-        ]
+        """The same precedence rule as window rules -- layer rules are registered by the
+        same engine, in the same two passes."""
+        return _named_first(self.layer_rules)
+
+
+_Rule = TypeVar("_Rule", WindowRule, LayerRule)
+
+
+def _named_first(rules: list[_Rule]) -> list[_Rule]:
+    return [rule for rule in rules if rule.named] + [rule for rule in rules if not rule.named]
+
+
+def _merge_named(rules: list[_Rule], rule: _Rule) -> None:
+    """Append, or update the same-named rule in place keeping its original position.
+
+    Shared by window and layer rules because Hyprland shares it: both go through the same
+    `registerRule`, and re-declaring a name updates the existing object rather than adding
+    a second (`LuaBindingsConfigRules.cpp:1189-1197`).
+    """
+    if rule.name:
+        for index, existing in enumerate(rules):
+            if existing.name == rule.name:
+                rules[index] = replace(
+                    existing,
+                    match={**existing.match, **rule.match},
+                    effects={**existing.effects, **rule.effects},
+                    enabled=rule.enabled,
+                )
+                return
+    rules.append(rule)
+
+
+def entity_summary(item: Any) -> str:
+    """One Entity as a single stable line -- for snapshots, goldens and log lines.
+
+    Lives here rather than in the Importer that renders them because it is knowledge of
+    Entity *shape*: a field added to a Bind should change this line, and it will only be
+    noticed if the two sit together.
+    """
+    parts: list[str] = []
+    for name in ("keys", "name", "output", "workspace", "leaf", "command", "path", "binary"):
+        value = getattr(item, name, None)
+        if value:
+            parts.append(f"{name}={value}")
+    for name in ("dispatcher", "match", "effects", "fields", "spec", "value"):
+        value = getattr(item, name, None)
+        if value:
+            parts.append(f"{name}={_stable(value)}")
+    options = getattr(item, "options", None)
+    if options is not None and options.as_table():
+        parts.append(f"options={_stable(options.as_table())}")
+    submap = getattr(item, "submap", None)
+    if submap:
+        parts.append(f"submap={submap}")
+    return " ".join(parts) if parts else repr(item)
+
+
+def _stable(value: Any) -> str:
+    """A value rendered the same way every run -- mappings sorted, no dict ordering luck."""
+    if isinstance(value, DispatcherCall):
+        return str(value)
+    if isinstance(value, Mapping):
+        inner = ", ".join(f"{k}={_stable(v)}" for k, v in sorted(value.items()))
+        return "{" + inner + "}"
+    if isinstance(value, list | tuple):
+        return "[" + ", ".join(_stable(v) for v in value) + "]"
+    return str(value)

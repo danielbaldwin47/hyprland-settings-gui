@@ -30,7 +30,7 @@ the record the app reloads, Markdown as the copy a user can read without the app
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -44,12 +44,24 @@ __all__ = [
     "LOSS_CODES",
     "LossClass",
     "LossCode",
+    "LossContext",
     "LossItem",
     "LossReport",
     "describe",
 ]
 
 FORMAT_VERSION = 1
+
+RESCUE_LINE = (
+    "> **If Hyprland will not start:** from a TTY, run "
+    "`rm ~/.config/hypr/hyprland.lua` to go back to the previous config."
+)
+"""Printed in **every** report, including a clean one (ADR-0009).
+
+Every report, because the reader who needs it is the one who cannot open the app to look
+it up -- and a report that only carries the escape hatch when the Importer predicted
+trouble is missing exactly the case where the prediction was wrong.
+"""
 
 
 class LossClass(StrEnum):
@@ -152,7 +164,8 @@ LOSS_CODES: dict[LossCode, LossSpec] = {
         LossClass.INFO,
     ),
     LossCode.DEAD_DISPATCHER: LossSpec(
-        "Dispatcher no longer exists in this Hyprland", LossClass.NEEDS_REVIEW
+        "Dispatcher, or one of its arguments, is dropped or deprecated in this Hyprland",
+        LossClass.NEEDS_REVIEW,
     ),
     LossCode.GESTURE_DISPATCHER: LossSpec(
         "Gesture dispatcher action becomes a Lua callback", LossClass.NEEDS_REVIEW
@@ -364,7 +377,7 @@ class LossReport:
         )
 
     def render(self) -> str:
-        """The Markdown copy: a summary line, then one section per non-empty class."""
+        """The Markdown copy: a summary line, the rescue line, then a section per class."""
         counts = self.counts()
         lines = ["# Import loss report", ""]
         if self.source:
@@ -373,6 +386,7 @@ class LossReport:
         lines.append("")
         summary = ", ".join(f"{counts[c]} {CLASS_TITLES[c].lower()}" for c in CLASS_ORDER)
         lines.append(f"{len(self.items)} findings -- {summary}.")
+        lines.extend(["", RESCUE_LINE])
         if not self.items:
             lines.append("")
             lines.append("Nothing was lost in conversion.")
@@ -428,12 +442,43 @@ class LossReport:
         return cls.load(stored[-1])
 
 
-def summarise(reports: Sequence[LossItem]) -> str:
-    """A one-line tally, for a toast or a log line."""
-    tally: dict[LossClass, int] = dict.fromkeys(CLASS_ORDER, 0)
-    for item in reports:
-        tally[item.severity] += 1
-    return ", ".join(f"{tally[c]} {CLASS_TITLES[c].lower()}" for c in CLASS_ORDER)
+@dataclass(slots=True)
+class LossContext:
+    """One keyword's findings: the report, plus the origin and source text they share.
+
+    Every mapping module was carrying its own copy of "call `report.add` with this origin
+    and this source". Five copies of a wrapper is five chances for one of them to forget the
+    source text -- and a finding without its original line is one a user cannot act on.
+    """
+
+    report: LossReport
+    origin: str = ""
+    source: str = ""
+
+    def note(
+        self,
+        code: LossCode,
+        message: str,
+        *,
+        replacement: str = "",
+        loss_class: LossClass | None = None,
+    ) -> LossItem:
+        return self.report.add(
+            code,
+            message,
+            origin=self.origin,
+            source=self.source,
+            replacement=replacement,
+            loss_class=loss_class,
+        )
+
+    def at(self, *, origin: str | None = None, source: str | None = None) -> LossContext:
+        """The same report, pointed at a different keyword."""
+        return LossContext(
+            report=self.report,
+            origin=self.origin if origin is None else origin,
+            source=self.source if source is None else source,
+        )
 
 
 def _now(now: datetime | None = None) -> datetime:

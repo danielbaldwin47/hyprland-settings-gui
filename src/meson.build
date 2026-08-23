@@ -35,11 +35,13 @@ package_sources = {
     'binds.py',
     'dispatchers.py',
     'hyprlang.py',
+    'keysyms.py',
     'keywords.py',
     'loss.py',
     'mapping.py',
     'monitors.py',
     'rules.py',
+    'scalars.py',
   ],
   'hyprtweaker/engine/ipc': [
     '__init__.py',

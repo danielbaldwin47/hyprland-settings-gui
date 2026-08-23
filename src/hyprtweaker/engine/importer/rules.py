@@ -23,7 +23,9 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from ..model.entities import LayerRule, WindowRule, WorkspaceRule
-from .loss import LossClass, LossCode, LossReport
+from .loss import LossClass, LossCode, LossContext, LossReport
+from .scalars import number as _number
+from .scalars import truthy as _truthy
 
 __all__ = [
     "map_layer_rule",
@@ -180,11 +182,6 @@ _WORKSPACE_INVERTED: dict[str, str] = {
 }
 
 
-def _truthy(text: str) -> bool:
-    lowered = text.strip().lower()
-    return lowered == "1" or lowered.startswith(("true", "yes", "on"))
-
-
 def _looks_bool(text: str) -> bool:
     return text.strip().lower() in (
         "0",
@@ -198,56 +195,18 @@ def _looks_bool(text: str) -> bool:
     )
 
 
-def _number(text: str) -> int | float | None:
-    stripped = text.strip()
-    try:
-        return int(stripped, 10)
-    except ValueError:
-        pass
-    try:
-        return float(stripped)
-    except ValueError:
-        return None
-
-
-class _Notes:
-    """Loss findings for one rule line, all sharing an origin and source text."""
-
-    def __init__(self, report: LossReport, origin: str, source: str) -> None:
-        self._report = report
-        self._origin = origin
-        self._source = source
-
-    def add(
-        self,
-        code: LossCode,
-        message: str,
-        *,
-        replacement: str = "",
-        loss_class: LossClass | None = None,
-    ) -> None:
-        self._report.add(
-            code,
-            message,
-            origin=self._origin,
-            source=self._source,
-            replacement=replacement,
-            loss_class=loss_class,
-        )
-
-
-def _effect_value(name: str, raw: str, notes: _Notes) -> Any:
+def _effect_value(name: str, raw: str, notes: LossContext) -> Any:
     """Retype one window-rule effect value for Lua, reporting what changed."""
     if name in _BOOL_EFFECTS:
         value = _truthy(raw) if raw.strip() else True
         if raw.strip() and not _looks_bool(raw):
-            notes.add(
+            notes.note(
                 LossCode.RULE_VALUE_TYPE,
                 f"{name} takes a boolean in Lua; read {raw.strip()!r} as {value}",
                 replacement=f"{name} = {str(value).lower()}",
             )
         elif raw.strip().lower() not in ("true", "false", ""):
-            notes.add(
+            notes.note(
                 LossCode.VALUE_NORMALISED,
                 f"{name} = {raw.strip()!r} normalised to a Lua boolean",
                 replacement=f"{name} = {str(value).lower()}",
@@ -256,12 +215,14 @@ def _effect_value(name: str, raw: str, notes: _Notes) -> Any:
     if name in _INT_EFFECTS:
         number = _number(raw)
         if number is None:
-            notes.add(LossCode.RULE_VALUE_TYPE, f"{name} expects a number, got {raw.strip()!r}")
+            notes.note(
+                LossCode.RULE_VALUE_TYPE, f"{name} expects a number, got {raw.strip()!r}"
+            )
             return raw.strip()
         number = int(number)
         bounds = _INT_EFFECTS[name]
         if bounds is not None and not bounds[0] <= number <= bounds[1]:
-            notes.add(
+            notes.note(
                 LossCode.RULE_VALUE_TYPE,
                 f"{name} = {number} is outside the {bounds[0]}..{bounds[1]} range Lua "
                 "accepts and would be rejected",
@@ -271,11 +232,13 @@ def _effect_value(name: str, raw: str, notes: _Notes) -> Any:
     if name in _FLOAT_EFFECTS:
         number = _number(raw)
         if number is None:
-            notes.add(LossCode.RULE_VALUE_TYPE, f"{name} expects a number, got {raw.strip()!r}")
+            notes.note(
+                LossCode.RULE_VALUE_TYPE, f"{name} expects a number, got {raw.strip()!r}"
+            )
             return raw.strip()
         span = _FLOAT_EFFECTS[name]
         if span is not None and not span[0] <= float(number) <= span[1]:
-            notes.add(
+            notes.note(
                 LossCode.RULE_VALUE_TYPE,
                 f"{name} = {number} is outside the {span[0]}..{span[1]} range Lua "
                 "accepts and would be rejected",
@@ -286,7 +249,7 @@ def _effect_value(name: str, raw: str, notes: _Notes) -> Any:
         # Not in this Hyprland's effect table at all. Lua stringifies unknown keys and
         # hands them to the dynamic effect registry, which is how plugin rules work -- so
         # it is passed through, but the report says so rather than implying it was typed.
-        notes.add(
+        notes.note(
             LossCode.RULE_VALUE_TYPE,
             f"{name!r} is not a built-in rule effect; passed through as a raw value for "
             "the dynamic or plugin effect registry",
@@ -294,11 +257,11 @@ def _effect_value(name: str, raw: str, notes: _Notes) -> Any:
     return raw.strip()
 
 
-def _match_value(name: str, raw: str, notes: _Notes) -> Any:
+def _match_value(name: str, raw: str, notes: LossContext) -> Any:
     if name in _BOOL_MATCH:
         value = _truthy(raw) if raw.strip() else True
         if raw.strip() and not _looks_bool(raw):
-            notes.add(
+            notes.note(
                 LossCode.RULE_VALUE_TYPE,
                 f"match:{name} takes a boolean in Lua; read {raw.strip()!r} as {value}",
             )
@@ -309,7 +272,7 @@ def _match_value(name: str, raw: str, notes: _Notes) -> Any:
     return raw.strip()
 
 
-def _pairs_from_keyword(value: str, notes: _Notes) -> list[tuple[str, str]] | None:
+def _pairs_from_keyword(value: str, notes: LossContext) -> list[tuple[str, str]] | None:
     """Split a v3 rule keyword value into `(name, value)` pairs.
 
     Every element must contain a space -- that is the check that distinguishes a v3 rule
@@ -322,7 +285,7 @@ def _pairs_from_keyword(value: str, notes: _Notes) -> list[tuple[str, str]] | No
             continue
         name, sep, raw = stripped.partition(" ")
         if not sep:
-            notes.add(
+            notes.note(
                 LossCode.OLD_WINDOWRULE_SYNTAX,
                 f"element {stripped!r} has no value, which is the pre-0.54 rule syntax; "
                 "this Hyprland rejects it and no published table renames it",
@@ -333,7 +296,7 @@ def _pairs_from_keyword(value: str, notes: _Notes) -> list[tuple[str, str]] | No
 
 
 def _split_rule_pairs(
-    pairs: Iterable[tuple[str, str]], notes: _Notes, *, layer: bool
+    pairs: Iterable[tuple[str, str]], notes: LossContext, *, layer: bool
 ) -> tuple[dict[str, Any], dict[str, Any], str, bool]:
     """Sort `(name, value)` pairs into match props, effects, the name and enabled."""
     match: dict[str, Any] = {}
@@ -356,7 +319,7 @@ def _split_rule_pairs(
             effects.update(_layer_effect(name, raw_value, notes))
             continue
         if name in _RETIRED_EFFECTS:
-            notes.add(
+            notes.note(
                 LossCode.WIKI_DRIFT,
                 f"rule effect {name!r} does not exist in this Hyprland and was dropped",
             )
@@ -365,16 +328,16 @@ def _split_rule_pairs(
     return match, effects, rule_name, enabled
 
 
-def _layer_effect(name: str, raw: str, notes: _Notes) -> dict[str, Any]:
+def _layer_effect(name: str, raw: str, notes: LossContext) -> dict[str, Any]:
     if name == "ignorezero":
-        notes.add(
+        notes.note(
             LossCode.LAYERRULE_DROPPED,
             "'ignorezero' is gone from this Hyprland; ignore_alpha = 0 is what it meant",
             replacement="ignore_alpha = 0",
         )
         return {"ignore_alpha": 0}
     if name == "unset":
-        notes.add(
+        notes.note(
             LossCode.LAYERRULE_DROPPED,
             "'unset' is not a layer rule in this Hyprland; the effect is simply omitted",
         )
@@ -388,7 +351,7 @@ def _layer_effect(name: str, raw: str, notes: _Notes) -> dict[str, Any]:
         number = int(number)
         bounds = _LAYER_INT[name]
         if bounds is not None and not bounds[0] <= number <= bounds[1]:
-            notes.add(
+            notes.note(
                 LossCode.RULE_VALUE_TYPE,
                 f"{name} = {number} is outside the {bounds[0]}..{bounds[1]} range Lua accepts",
                 loss_class=LossClass.BREAKAGE,
@@ -402,13 +365,13 @@ def _layer_effect(name: str, raw: str, notes: _Notes) -> dict[str, Any]:
 
 def map_window_rule(value: str, *, origin: str, report: LossReport) -> WindowRule | None:
     """`windowrule = match:class foo, border_size 10`."""
-    notes = _Notes(report, origin, f"windowrule = {value}")
+    notes = LossContext(report, origin, f"windowrule = {value}")
     pairs = _pairs_from_keyword(value, notes)
     if pairs is None:
         return None
     match, effects, name, enabled = _split_rule_pairs(pairs, notes, layer=False)
     if not match:
-        notes.add(
+        notes.note(
             LossCode.UNSUPPORTED_KEYWORD, "window rule has no match props and matches nothing"
         )
     return WindowRule(match=match, effects=effects, name=name, enabled=enabled, origin=origin)
@@ -416,7 +379,7 @@ def map_window_rule(value: str, *, origin: str, report: LossReport) -> WindowRul
 
 def map_layer_rule(value: str, *, origin: str, report: LossReport) -> LayerRule | None:
     """`layerrule = blur on, match:namespace waybar`."""
-    notes = _Notes(report, origin, f"layerrule = {value}")
+    notes = LossContext(report, origin, f"layerrule = {value}")
     pairs = _pairs_from_keyword(value, notes)
     if pairs is None:
         return None
@@ -433,7 +396,7 @@ def map_rule_block(
     sorting and retyping and differs only in where the pairs came from.
     """
     kind = "layerrule" if layer else "windowrule"
-    notes = _Notes(report, origin, f"{kind} {{ ... }}")
+    notes = LossContext(report, origin, f"{kind} {{ ... }}")
     match, effects, name, enabled = _split_rule_pairs(fields.items(), notes, layer=layer)
     cls = LayerRule if layer else WindowRule
     return cls(match=match, effects=effects, name=name, enabled=enabled, origin=origin)
@@ -445,11 +408,11 @@ def map_workspace_rule(value: str, *, origin: str, report: LossReport) -> Worksp
     The first comma field is the selector; every later one is `key:value`, except
     `layoutopt:KEY:VAL` which collects into a single `layout_opts` table.
     """
-    notes = _Notes(report, origin, f"workspace = {value}")
+    notes = LossContext(report, origin, f"workspace = {value}")
     parts = value.split(",")
     selector = parts[0].strip()
     if not selector:
-        notes.add(LossCode.UNSUPPORTED_KEYWORD, "workspace rule has no selector")
+        notes.note(LossCode.UNSUPPORTED_KEYWORD, "workspace rule has no selector")
         return None
     fields: dict[str, Any] = {}
     layout_opts: dict[str, str] = {}
@@ -459,7 +422,7 @@ def map_workspace_rule(value: str, *, origin: str, report: LossReport) -> Worksp
             continue
         key, sep, raw = stripped.partition(":")
         if not sep:
-            notes.add(
+            notes.note(
                 LossCode.UNSUPPORTED_KEYWORD,
                 f"workspace rule element {stripped!r} is not key:value",
             )
@@ -472,7 +435,7 @@ def map_workspace_rule(value: str, *, origin: str, report: LossReport) -> Worksp
         if key in _WORKSPACE_INVERTED:
             target = _WORKSPACE_INVERTED[key]
             fields[target] = not _truthy(raw)
-            notes.add(
+            notes.note(
                 LossCode.WORKSPACE_INVERTED,
                 f"{key}:{raw.strip()} inverted to {target} = {str(fields[target]).lower()}",
                 replacement=f"{target} = {str(fields[target]).lower()}",
@@ -480,7 +443,7 @@ def map_workspace_rule(value: str, *, origin: str, report: LossReport) -> Worksp
             continue
         mapped = _WORKSPACE_FIELDS.get(key)
         if mapped is None:
-            notes.add(
+            notes.note(
                 LossCode.UNSUPPORTED_KEYWORD,
                 f"workspace rule {key!r} has no field in this Hyprland and was dropped",
             )
@@ -500,7 +463,7 @@ def map_workspace_rule(value: str, *, origin: str, report: LossReport) -> Worksp
     return WorkspaceRule(workspace=selector, fields=fields, origin=origin)
 
 
-def _css_gaps(raw: str, notes: _Notes, name: str) -> Any:
+def _css_gaps(raw: str, notes: LossContext, name: str) -> Any:
     """CSS shorthand to Lua's explicit four sides.
 
     Lua takes an integer (all sides) or a full `{top, right, bottom, left}` table -- the
@@ -523,7 +486,7 @@ def _css_gaps(raw: str, notes: _Notes, name: str) -> Any:
         top, right, bottom, left = values[:4]
         expanded = {"top": top, "right": right, "bottom": bottom, "left": left}
     if len(values) in (2, 3):
-        notes.add(
+        notes.note(
             LossCode.VALUE_NORMALISED,
             f"{name} CSS shorthand expanded to all four sides",
             replacement=str(expanded),

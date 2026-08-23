@@ -18,10 +18,12 @@ from hyprtweaker.engine.importer.loss import (
     LOSS_CODES,
     LossClass,
     LossCode,
+    LossContext,
     LossItem,
     LossReport,
     describe,
 )
+from hyprtweaker.engine.importer.scalars import bool_prefix, direction, number, truthy
 from hyprtweaker.engine.paths import ConfigPaths
 
 
@@ -88,6 +90,52 @@ class TestClassification:
         assert report.code_counts()[LossCode.MODS_SPELLING] == 2
 
 
+class TestLossContext:
+    """One wrapper for "file this against the keyword I am reading"."""
+
+    def test_a_note_carries_the_contexts_origin_and_source(self) -> None:
+        report = LossReport()
+        context = LossContext(report=report, origin="hyprland.conf:4", source="bind = ...")
+        context.note(LossCode.MODS_SPELLING, "respelled")
+        item = report.items[0]
+        assert (item.origin, item.source) == ("hyprland.conf:4", "bind = ...")
+
+    def test_at_repoints_the_same_report(self) -> None:
+        report = LossReport()
+        first = LossContext(report=report, origin="a:1", source="a")
+        first.at(origin="b:2", source="b").note(LossCode.MODS_SPELLING, "x")
+        first.note(LossCode.MODS_SPELLING, "y")
+        assert [(i.origin, i.message) for i in report] == [("b:2", "x"), ("a:1", "y")]
+
+
+class TestScalars:
+    """hyprlang's readings, which are looser than Python's and differ from each other."""
+
+    def test_truthy_follows_the_prefix_rule(self) -> None:
+        assert truthy("on") and truthy("1") and truthy("yes please")
+        assert not truthy("off") and not truthy("0") and not truthy("")
+
+    def test_bool_prefix_can_say_not_a_boolean(self) -> None:
+        """The difference that matters: `truthy` answers False for both `off` and `4`,
+        which is right for a rule effect and wrong for a config value."""
+        assert bool_prefix("yes, please :)") is True
+        assert bool_prefix("off") is False
+        assert bool_prefix("4") is None
+        assert truthy("4") is False
+
+    def test_number_prefers_int_but_falls_back_to_float(self) -> None:
+        assert number("3") == 3
+        assert isinstance(number("3"), int)
+        assert number("3.5") == 3.5
+        assert number("0x1f") == 31
+        assert number("nope") is None
+
+    def test_direction_keeps_only_the_first_letter(self) -> None:
+        assert direction("left") == "l"
+        assert direction("l") == "l"
+        assert direction("") == ""
+
+
 class TestRendering:
     def test_markdown_groups_by_class_worst_first(self) -> None:
         text = _report().render()
@@ -102,6 +150,13 @@ class TestRendering:
     def test_an_empty_report_says_so_rather_than_rendering_nothing(self) -> None:
         text = LossReport().render()
         assert "Nothing was lost in conversion." in text
+
+    def test_the_tty_rescue_line_is_in_every_report(self) -> None:
+        """Including a clean one: the reader who needs it cannot open the app to look it
+        up, and a report that only carries the escape hatch when trouble was predicted is
+        missing the case where the prediction was wrong (ADR-0009)."""
+        assert "rm ~/.config/hypr/hyprland.lua" in LossReport().render()
+        assert "rm ~/.config/hypr/hyprland.lua" in _report().render()
 
     def test_the_summary_line_counts_every_class(self) -> None:
         assert "3 findings -- 1 breakage, 1 needs review, 1 info." in _report().render()
