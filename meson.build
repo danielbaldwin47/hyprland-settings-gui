@@ -5,7 +5,12 @@ project(
   meson_version: '>= 1.0.0',
 )
 
-python = import('python').find_installation('python3')
+# `modules: ['gi']` is the app's one hard runtime dependency expressed as a
+# build-time check, so `meson setup` fails on a box that could never run the
+# app. Deliberately not a pkg-config dependency() on gtk4/libadwaita: those
+# check for development files, which a machine that runs the app fine may not
+# have installed.
+python = import('python').find_installation('python3', modules: ['gi'])
 
 subdir('src')
 subdir('tests')

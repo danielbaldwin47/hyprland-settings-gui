@@ -5,12 +5,15 @@ Deliberately shallow -- no pixel assertions, no widget-state assertions (spec
 come up? Everything with real logic lives in the Engine and is tested headless
 there.
 
-The tier gates itself at import time, because the gate has to run before the
-`gi` imports below: a missing PyGObject or typelib raises during *collection*,
-which pytest reports as an error, not a skip -- and this tier must stay skippable
-so the engine tiers run on a bare machine.
+Two things shape the odd import layout below. The gate has to run before any
+`gi` import, because a missing PyGObject or typelib otherwise raises during
+*collection*, which pytest reports as an error rather than a skip -- and this
+tier must stay skippable so the engine tiers run on a bare machine. But the
+tests still have to be *collected*, since a module-level skip collects nothing
+and pytest exits 5 ("no tests ran"), which `meson test` reads as a failure. So
+the gate is a `skipif` marker and the toolkit imports live inside the tests.
 
-Set ``HYPRTWEAKER_REQUIRE_UI=1`` to turn that skip into a hard failure. CI sets
+Set ``HYPRTWEAKER_REQUIRE_UI=1`` to turn the skip into a hard failure. CI sets
 it on the job that installs GTK, so a broken install surfaces as a red build
 instead of a green one that quietly skipped everything.
 """
@@ -33,6 +36,7 @@ def _unavailable() -> str | None:
 
     try:
         gi.require_version("Gtk", "4.0")
+        gi.require_version("Gdk", "4.0")
         gi.require_version("Adw", "1")
     except ValueError as exc:
         return f"GTK4 / libadwaita typelibs unavailable: {exc}"
@@ -49,23 +53,20 @@ def _unavailable() -> str | None:
 
 
 _reason = _unavailable()
-if _reason is not None:
-    if REQUIRE_UI:
-        raise RuntimeError(
-            f"HYPRTWEAKER_REQUIRE_UI=1 but the UI smoke tier cannot run: {_reason}"
-        )
-    pytest.skip(f"UI smoke tier: {_reason}", allow_module_level=True)
 
+if _reason is not None and REQUIRE_UI:
+    raise RuntimeError(f"HYPRTWEAKER_REQUIRE_UI=1 but the UI smoke tier cannot run: {_reason}")
 
-from gi.repository import Adw, Gio, GLib  # noqa: E402
-
-from hyprtweaker.application import APP_ID, HyprtweakerApplication  # noqa: E402
-from hyprtweaker.ui.shell.window import MainWindow  # noqa: E402
-
-Adw.init()
+pytestmark = pytest.mark.skipif(_reason is not None, reason=f"UI smoke tier: {_reason}")
 
 
 def test_window_constructs() -> None:
+    from gi.repository import Adw
+
+    from hyprtweaker.application import APP_ID
+    from hyprtweaker.ui.shell.window import MainWindow
+
+    Adw.init()
     app = Adw.Application(application_id=APP_ID)
     window = MainWindow(application=app)
 
@@ -75,6 +76,12 @@ def test_window_constructs() -> None:
 
 
 def test_application_boots_and_presents_a_window() -> None:
+    from gi.repository import Adw, Gio, GLib
+
+    from hyprtweaker.application import HyprtweakerApplication
+    from hyprtweaker.ui.shell.window import MainWindow
+
+    Adw.init()
     app = HyprtweakerApplication()
     # The app is single-instance in production, which would make this test
     # activate an already-running copy on a dev box and find no window of its
