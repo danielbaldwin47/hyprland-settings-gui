@@ -24,22 +24,24 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, Graphene, Gtk  # noqa: E402
 
 from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult  # noqa: E402
 from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
-from hyprtweaker.ui.rows.factory import RowFactory  # noqa: E402
+from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
 
 SHOW_ADVANCED_ACTION = "show-advanced"
 """One global switch, in the primary menu -- never per-Page (ADR-0013 §5).
 
-**Shell chrome here, Row chrome in #57.** #57 owns "the global Advanced switch with the
-hidden tier Config-view-only", and what it adds is the *Row* half: the "Advanced" pill, the
-Tasks-view exclusion, and Search's one-off reveal. The filter itself lives in `plan.py` and
-is here now because without it the Config view puts `debug:manual_crash` ("Crash Hyprland")
-at full weight beside `general:gaps_in` -- a tracer nobody should be asked to demo.
+The filter itself lives in `plan.py`, which also carries the tier rule the switch cannot
+express on its own: `hidden` (`debug`, `quirks`, `experimental`, `input-capture`) is
+Config-view-only, so flipping this on can never put "Crash Hyprland" on a curated Tasks
+Page. A revealed Row wears an "Advanced" pill so it is legible as one (`rows/chrome.py`).
+
+Search's one-off reveal -- reaching a withheld Row without flipping this at all -- is
+ADR-0017's and arrives with #67.
 
 Session-scoped: the remembered choice belongs in the Prefs file with the View choice and the
 dialog answers, and that file is #71."""
@@ -52,8 +54,13 @@ class MainWindow(Adw.ApplicationWindow):
         super().__init__(**kwargs)
 
         self._session = session
-        self._factory = RowFactory(session)
+        self._factory = RowFactory(
+            session,
+            on_edited=self._on_option_edited,
+            navigate=self.reveal_option,
+        )
         self._pages: list[ConfigPage] = []
+        self._dependents = _dependents(session.schema)
         self._last_failure: str | None = None
         self._closing = False
 
@@ -65,6 +72,9 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._stack = Gtk.Stack(vexpand=True)
         self._banner = Adw.Banner(revealed=False)
+        # The one surface a failed apply reports through. It has to exist before
+        # `_build_content` wraps the body in it, and before the first `show_result`.
+        self._toasts = Adw.ToastOverlay()
         self._content_page = Adw.NavigationPage(title="Hyprtweaker")
 
         self._split = Adw.NavigationSplitView(
@@ -99,7 +109,8 @@ class MainWindow(Adw.ApplicationWindow):
         body.append(self._banner)
         body.append(self._stack)
 
-        toolbar = Adw.ToolbarView(content=body)
+        toolbar = Adw.ToolbarView(content=self._toasts)
+        self._toasts.set_child(body)
         toolbar.add_top_bar(Adw.HeaderBar())
         self._content_page.set_child(toolbar)
         return self._content_page
@@ -132,6 +143,11 @@ class MainWindow(Adw.ApplicationWindow):
     def show_advanced(self) -> bool:
         return bool(self._advanced_action.get_state().get_boolean())
 
+    @property
+    def visible_section(self) -> str | None:
+        """Which Section's Page the content pane is showing."""
+        return self._stack.get_visible_child_name()
+
     def rebuild(self) -> None:
         """Build one Page per Section, replacing whatever was there.
 
@@ -159,24 +175,89 @@ class MainWindow(Adw.ApplicationWindow):
         """Make every control agree with the model, and the Banner with the connection."""
         for page in self._pages:
             page.refresh()
-            page.set_editable(self._session.live)
 
         reason = self._session.offline_reason
         self._banner.set_title("" if reason is None else f"{reason} — settings are read-only.")
         self._banner.set_revealed(reason is not None)
 
     def show_result(self, result: ApplyResult) -> None:
-        """Report an apply that did not work. A working one needs no announcement.
+        """What a finished Apply transaction changes about the view.
 
-        Instant apply's whole promise is that the change *is* the feedback (ADR-0003), so a
-        toast per successful edit would be noise on every slider tick. The undo toast and the
-        full error surface are #59 and #60.
+        Two things, and the first happens whether or not the write worked: a restart-flagged
+        key that reached the file wants its "Pending restart" pill, and a key that was
+        refused wants no pill at all (`ApplyResult.pending_restart` only names keys whose
+        bytes actually landed -- ADR-0010).
+
+        The failure toast is the second. Instant apply's whole promise is that the change
+        *is* the feedback (ADR-0003), so a toast per *successful* edit would be noise on
+        every slider tick. The undo toast and the full error surface are #59 and #60.
         """
+        for name in result.pending_restart:
+            self._refresh_chrome_for(name)
+
         if result.ok:
             return
         self._toasts.add_toast(Adw.Toast(title=_result_summary(result), timeout=5))
 
+    def reveal_option(self, name: str) -> None:
+        """Show the Row for one Option and put the keyboard on it.
+
+        What the Dependency badge does when clicked (ADR-0013 §3): "Requires Snap floating
+        windows" is only useful if it takes you to that switch. Focusing rather than merely
+        selecting the Section is what scrolls it into view -- and it leaves the user on the
+        control they came to change.
+
+        Silent when the Option has no Row right now, which is the Advanced switch hiding it.
+        Revealing it anyway is the one-off reveal of ADR-0017, and it arrives with Search
+        (#67); a badge that scrolled to nothing would be worse than one that does nothing.
+
+        Putting it on screen waits a turn of the loop, and that is not a hedge: a `GtkStack`
+        allocates only its visible child, so until the Section switch above has been laid
+        out the Page's scroller honestly reports a height of zero and any scroll into it is
+        a no-op (measured -- upper goes 0 -> 5846 across one idle).
+        """
+        for page in self._pages:
+            row = page.row(name)
+            if row is None:
+                continue
+            self._select_section(page.plan.section)
+            GLib.idle_add(self._put_on_screen, row, priority=GLib.PRIORITY_LOW)
+            return
+
+    def _put_on_screen(self, row: OptionRow) -> bool:
+        """Scroll a Row into view and leave the keyboard on it.
+
+        Both, because neither is enough alone: an *insensitive* widget cannot take focus --
+        precisely the case a dependency badge navigates away from, and the case of every Row
+        on a read-only session -- so the explicit scroll is what makes the reveal work at
+        all. The focus is what leaves the user on the control they came to change.
+        """
+        _scroll_into_view(row.widget)
+        if not row.control.grab_focus():
+            row.widget.grab_focus()
+        return False
+
     # --- signals ------------------------------------------------------------------------------
+
+    def _on_option_edited(self, name: str) -> None:
+        """One Option was written. Re-decide the chrome of every Row that can have moved.
+
+        Exactly two can: the edited Row, whose reset arrow appears the moment the model
+        holds a value, and the Rows gated on it, whose Dependency badge and control
+        sensitivity turn on the value that just changed. Refreshing those rather than all
+        353 keeps this cheap enough to run on the per-keystroke edits a spin button emits,
+        and it deliberately does not touch controls -- see `ConfigPage.refresh_chrome`.
+        """
+        self._refresh_chrome_for(name)
+        for dependent in self._dependents.get(name, ()):
+            self._refresh_chrome_for(dependent)
+
+    def _refresh_chrome_for(self, name: str) -> None:
+        for page in self._pages:
+            row = page.row(name)
+            if row is not None:
+                row.chrome.refresh()
+                return
 
     def _on_section_selected(self, _list: Gtk.ListBox, row: Gtk.ListBoxRow | None) -> None:
         if row is None:
@@ -214,6 +295,56 @@ class MainWindow(Adw.ApplicationWindow):
             if row is not None and row.get_name() == section:
                 self._sidebar.select_row(row)
                 return
+
+
+_REVEAL_MARGIN = 24.0
+"""A little air above a revealed Row, so it reads as "here it is" rather than as a Page
+that happens to start there."""
+
+
+def _scroll_into_view(row: Gtk.Widget) -> None:
+    """Put `row` on screen inside whatever scroller holds it.
+
+    Focus alone is not enough, and the reason is worth recording: focusing a widget scrolls
+    it into view, but an *insensitive* widget cannot be focused at all -- which is precisely
+    the case a dependency badge navigates away from. Doing the scroll explicitly makes the
+    reveal independent of whether anything could take focus.
+
+    Silent when the widget has no allocation yet (nothing has been laid out, so there is no
+    honest answer to "where is it?") -- the reveal then simply lands on the Section.
+    """
+    scroller = row.get_ancestor(Gtk.ScrolledWindow)
+    if scroller is None:
+        return
+    child = scroller.get_child()
+    if child is None:
+        return
+
+    ok, point = row.compute_point(child, Graphene.Point().init(0.0, 0.0))
+    if not ok:
+        return
+
+    # `point.y` is measured against the viewport, which is already scrolled -- so it is an
+    # offset from where the view currently sits, not from the top of the content. Adding the
+    # adjustment back is what turns it into the absolute position to scroll to.
+    adjustment = scroller.get_vadjustment()
+    target = adjustment.get_value() + point.y - _REVEAL_MARGIN
+    highest = max(adjustment.get_upper() - adjustment.get_page_size(), adjustment.get_lower())
+    adjustment.set_value(min(max(target, adjustment.get_lower()), highest))
+
+
+def _dependents(schema: Any) -> dict[str, tuple[str, ...]]:
+    """Controlling Option -> the Options whose `depends_on` names it.
+
+    The reverse of what the Schema stores, built once at startup: an edit has to find the
+    Rows it just enabled or disabled, and walking 353 Options per keystroke to answer that
+    is the kind of thing that only shows up as a laggy slider.
+    """
+    reverse: dict[str, list[str]] = {}
+    for option in schema:
+        if option.depends_on is not None:
+            reverse.setdefault(option.depends_on.option, []).append(option.name)
+    return {name: tuple(dependents) for name, dependents in reverse.items()}
 
 
 def _scrolled(page: Adw.PreferencesPage) -> Gtk.ScrolledWindow:

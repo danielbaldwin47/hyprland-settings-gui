@@ -32,6 +32,7 @@ APP_VERSION = "0.0.0-test"
 
 GAPS_IN = "general:gaps_in"
 ROUNDING = "decoration:rounding"
+XWAYLAND_ENABLED = "xwayland:enabled"
 
 
 class Runner:
@@ -179,6 +180,60 @@ def test_edits_made_moments_before_closing_are_still_flushed(tmp_path: Path) -> 
         await session.aclose()
 
         assert fake.requests.count("reload") == 1
+
+    run_with_fake(
+        scenario,
+        FakeHyprland(
+            section_conversation("general", **{GAPS_IN: CssGaps(12, 12, 12, 12)}),
+            reload_emits_event=True,
+        ),
+    )
+
+
+def test_a_restart_flagged_write_is_remembered_before_the_ui_is_told(tmp_path: Path) -> None:
+    """ "Applied to file, effective after Hyprland restart" (`CONTEXT.md`), and the Row's
+    "Pending restart" pill reads it off the session (ADR-0013).
+
+    The ordering is the load-bearing part: `on_applied` is what makes the window re-decide
+    that Row's chrome, so the session has to already know the key is pending by the time it
+    fires -- otherwise the pill lands one apply late.
+    """
+    seen: list[frozenset[str]] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = session_for(fake, tmp_path, runner)
+        session.on_applied = lambda _result: seen.append(session.pending_restart)
+        session.start()
+        await runner.settle()
+        assert session.pending_restart == frozenset()
+
+        session.set_option(XWAYLAND_ENABLED, False)
+        await session.aclose()
+
+        assert session.pending_restart == frozenset({XWAYLAND_ENABLED})
+        assert seen == [frozenset({XWAYLAND_ENABLED})]
+
+    run_with_fake(
+        scenario,
+        FakeHyprland(
+            section_conversation("xwayland", **{XWAYLAND_ENABLED: False}),
+            reload_emits_event=True,
+        ),
+    )
+
+
+def test_an_edit_that_needs_no_restart_leaves_the_pending_set_empty(tmp_path: Path) -> None:
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = session_for(fake, tmp_path, runner)
+        session.start()
+        await runner.settle()
+
+        session.set_option(GAPS_IN, 12)
+        await session.aclose()
+
+        assert session.pending_restart == frozenset()
 
     run_with_fake(
         scenario,

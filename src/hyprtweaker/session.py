@@ -98,6 +98,7 @@ class Session:
         self._applier: Applier | None = None
         self._offline_reason: str | None = _NOT_CONNECTED_YET
         self._closing = False
+        self._pending_restart: set[str] = set()
 
     # --- what the UI reads ------------------------------------------------------------------
 
@@ -118,6 +119,21 @@ class Session:
     def offline_reason(self) -> str | None:
         """Why this session is read-only, in one line fit for the Banner."""
         return self._offline_reason
+
+    @property
+    def pending_restart(self) -> frozenset[str]:
+        """Options this session wrote that need a restart before they take effect.
+
+        "Applied to file, effective after Hyprland restart" (`CONTEXT.md`), which is a claim
+        about a *file*: only keys an Apply transaction actually laid down get in here, never
+        keys that were merely edited and refused. The Row badges from this (ADR-0013).
+
+        Accumulated for the life of the session and never cleared, because the event that
+        would clear it -- Hyprland restarting -- takes the session with it: the event stream
+        drops and the session goes read-only. A `hyprctl reload` is *not* that event, and
+        forgetting on one would tell the user a pending change had landed when it had not.
+        """
+        return frozenset(self._pending_restart)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         """The model's value: a value, `None` for explicit null, or `UNSET`."""
@@ -342,6 +358,7 @@ class Session:
         self.set_read_only("Hyprland is no longer running")
 
     def _applied(self, result: ApplyResult) -> None:
+        self._pending_restart.update(result.pending_restart)
         if self.on_applied is not None:
             self.on_applied(result)
 
