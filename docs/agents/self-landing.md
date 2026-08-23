@@ -15,10 +15,22 @@ All three must hold before merging:
 ```sh
 gh pr ready <n>
 gh pr merge <n> --squash --delete-branch
-git fetch origin && git merge-base --is-ancestor <head-sha> origin/main
+git fetch origin
+git merge-base --is-ancestor "$(gh pr view <n> --json mergeCommit -q .mergeCommit.oid)" origin/main
 ```
 
-The last line verifies the commits reached `main`. On failure the merge landed on a stale base — reland the head branch as a fresh PR against `main` and say so in your report.
+The last line verifies the squash commit reached `main` (the PR head SHA never will — squash rewrites it). On failure the merge landed on a stale base — reland the head branch as a fresh PR against `main` and say so in your report.
+
+## Cleanup
+
+The remote branch is already gone (`--delete-branch`, plus the repo deletes branches on merge). After a verified merge, remove the local leftovers too — worktree and branch — as the session's **very last act**, after the ticket close and your report, using absolute paths against the main checkout:
+
+```sh
+git -C <repo-root> worktree remove --force <your-worktree-path>
+git -C <repo-root> branch -D issue-<n>
+```
+
+Last act because removing the worktree you stand in leaves the shell in a deleted directory — nothing runs after it. A held PR keeps its worktree and branches: they are still the work.
 
 ## Held PRs
 
