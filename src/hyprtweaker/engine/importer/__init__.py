@@ -15,6 +15,8 @@ Lua import (#62) and the Loss report land here too.
 
 from __future__ import annotations
 
+from .binds import canonical_key, canonical_mods, map_bind, map_submap, map_unbind
+from .dispatchers import LEGACY_DISPATCHERS, translate_dispatcher
 from .hyprlang import Parser, ParseResult, parse
 from .keywords import (
     Assignment,
@@ -31,13 +33,30 @@ from .keywords import (
     UnparsedLine,
     VariableDefinition,
 )
+from .loss import (
+    LOSS_CODES,
+    LossClass,
+    LossCode,
+    LossItem,
+    LossReport,
+)
+from .mapping import ImportResult, import_config, map_keywords
+from .monitors import map_monitor, map_monitor_block
+from .rules import map_layer_rule, map_rule_block, map_window_rule, map_workspace_rule
 
 __all__ = [
+    "LEGACY_DISPATCHERS",
+    "LOSS_CODES",
     "Assignment",
     "Diagnostic",
     "DiagnosticCode",
     "Handler",
+    "ImportResult",
     "Keyword",
+    "LossClass",
+    "LossCode",
+    "LossItem",
+    "LossReport",
     "Origin",
     "ParseResult",
     "Parser",
@@ -48,5 +67,19 @@ __all__ = [
     "SpecialField",
     "UnparsedLine",
     "VariableDefinition",
+    "canonical_key",
+    "canonical_mods",
+    "import_config",
+    "map_bind",
+    "map_keywords",
+    "map_layer_rule",
+    "map_monitor",
+    "map_monitor_block",
+    "map_rule_block",
+    "map_submap",
+    "map_unbind",
+    "map_window_rule",
+    "map_workspace_rule",
     "parse",
+    "translate_dispatcher",
 ]

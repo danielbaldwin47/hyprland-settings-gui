@@ -32,8 +32,14 @@ package_sources = {
   ],
   'hyprtweaker/engine/importer': [
     '__init__.py',
+    'binds.py',
+    'dispatchers.py',
     'hyprlang.py',
     'keywords.py',
+    'loss.py',
+    'mapping.py',
+    'monitors.py',
+    'rules.py',
   ],
   'hyprtweaker/engine/ipc': [
     '__init__.py',
@@ -44,6 +50,7 @@ package_sources = {
   ],
   'hyprtweaker/engine/model': [
     '__init__.py',
+    'entities.py',
     'options.py',
     'values.py',
   ],
