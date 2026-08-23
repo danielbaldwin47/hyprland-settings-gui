@@ -1,9 +1,10 @@
 """What chrome a Row wears, decided before a single widget exists.
 
 The same split `plan.py` draws for a Page, drawn again for a Row. Everything ADR-0013 hangs
-off the suffix strip -- which state pills show, whether the dependency badge is up, whether
-the Row counts as modified, what the Help popover says -- is a function of the Schema and
-the model, and none of it needs a toolkit to decide. Keeping it here buys the same two
+off the suffix strip -- which state pills show, what an expander's collapsed Value summary
+reads, whether the dependency badge is up, whether the Row counts as modified, what the Help
+popover says -- is a function of the Schema and the model, and none of it needs a toolkit to
+decide. Keeping it here buys the same two
 things: it is unit-testable on a machine with no display, and "does a sentinel leak into the
 UI?" becomes a question about a string rather than about a widget tree.
 
@@ -21,13 +22,22 @@ import enum
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
-from hyprtweaker.engine.model import UNSET, OptionValue, display_text
+from hyprtweaker.engine.model import (
+    UNSET,
+    CssGaps,
+    Gradient,
+    OptionValue,
+    Vec2,
+    display_text,
+    parse_value,
+)
 from hyprtweaker.engine.schema import (
     OptionType,
     ResolvedOption,
     Restart,
     Schema,
     Visibility,
+    Widget,
     humanise,
 )
 
@@ -150,6 +160,95 @@ def _label_key(value: Any) -> str:
     return str(value)
 
 
+# --- the collapsed value summary --------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ValueSummary:
+    """What an ExpanderRow shows while collapsed (ADR-0013 §4).
+
+    An expander is the one Row shape that hides its own value: collapsed, a gradient with
+    two stops at 45° and a gradient with one stop at 0° look identical. The summary is what
+    makes the Row answer "what is it set to?" without being opened, which is the whole
+    question a settings list exists to answer at a glance.
+    """
+
+    text: str
+    """The dim label: an angle, a gap run, a pair of axes -- or the `null_label`."""
+
+    swatches: tuple[str, ...] = ()
+    """One CSS colour per gradient stop, in gradient order. Empty for every other type.
+
+    Strings rather than parsed colours because this module is toolkit-free on purpose; the
+    chrome hands them straight to `Gdk.RGBA.parse`. `#rrggbbaa` is the spelling both ends
+    agree on -- alpha last, as everywhere outside Hyprland's packed ARGB word.
+    """
+
+
+_SUMMARISED = frozenset({Widget.GRADIENT, Widget.CSS_GAPS, Widget.VEC2})
+"""The three widgets that are expanders, and therefore the three Rows that need a summary.
+
+Keyed on `widget`, not on `type`, because that is what the Row factory dispatches on. The
+two agree throughout the shipped Schema, but the Overlay exists precisely to override
+`widget` -- and keying on `type` would put a collapsed-value preview on a Row that never
+collapses the moment one did.
+
+Colours are not here: a colour button *is* its own preview, and font weights render their
+value in the control. The row catalogue names exactly these three."""
+
+
+def value_summary(option: ResolvedOption, value: OptionValue) -> ValueSummary | None:
+    """The collapsed preview for one Option, or `None` when its Row is not an expander.
+
+    Goes through `shown_value` like every other control, so an Option with no value
+    summarises as "Same as outer gaps" rather than as the `-1` underneath it -- the summary
+    is the most visible thing on a collapsed Row and the least excusable place to leak a
+    sentinel.
+    """
+    if option.widget not in _SUMMARISED:
+        return None
+
+    shown = shown_value(option, value)
+    if shown is NO_VALUE:
+        return ValueSummary(no_value_label(option))
+
+    try:
+        typed = parse_value(option.type, shown)
+    except (ValueError, TypeError):
+        # A value this Option's own parser refuses -- a Hyprland version whose spelling
+        # changed under a schema (ADR-0012). Showing it verbatim beats showing nothing:
+        # the user can at least see what is in there.
+        return ValueSummary(display_text(shown))
+
+    if isinstance(typed, Gradient):
+        return ValueSummary(
+            f"{display_text(typed.angle)}°",
+            tuple(f"#{color.rgba:08x}" for color in typed.colors),
+        )
+    if isinstance(typed, CssGaps):
+        sides = (typed.top, typed.right, typed.bottom, typed.left)
+        if len(set(sides)) == 1:
+            # One number for the uniform case, because four identical numbers is four times
+            # the ink for the same fact -- and uniform is what almost every rice writes.
+            return ValueSummary(str(typed.top))
+        return ValueSummary(" · ".join(str(side) for side in sides))
+    if isinstance(typed, Vec2):
+        return ValueSummary(f"{_axis(typed.x)}, {_axis(typed.y)}")
+
+    return ValueSummary(display_text(typed))
+
+
+def _axis(value: float) -> str:
+    """One vec2 axis, always with a decimal point: `0.0`, not `0`.
+
+    The row catalogue's spelling ("0.0, 0.5"), and it earns the extra character: a vec2 is
+    the one type here that holds fractions, and `0, 0.5` reads as a pair of different kinds
+    of number rather than as a coordinate.
+    """
+    text = f"{value:g}"
+    return f"{text}.0" if "." not in text and "e" not in text else text
+
+
 # --- the suffix strip -------------------------------------------------------------------------
 
 
@@ -189,6 +288,9 @@ class RowState:
     """The whole of one Row's chrome, recomputed whenever the model moves under it."""
 
     pills: tuple[Pill, ...]
+    summary: ValueSummary | None
+    """The collapsed preview, or `None` for every Row that is not an expander."""
+
     dependency: DependencyBadge | None
     """`None` when the Option has no `depends_on`, or when it is satisfied."""
 
@@ -230,6 +332,8 @@ class RowContext(Protocol):
     @property
     def pending_restart(self) -> frozenset[str]: ...
 
+    def value_of(self, option: ResolvedOption) -> OptionValue: ...
+
     def effective_value(self, option: ResolvedOption) -> Any: ...
 
     def is_modified(self, option: ResolvedOption) -> bool: ...
@@ -240,6 +344,7 @@ def row_state(option: ResolvedOption, context: RowContext) -> RowState:
     dependency = unmet_dependency(option, context)
     return RowState(
         pills=_pills(option, context),
+        summary=value_summary(option, context.value_of(option)),
         dependency=dependency,
         modified=context.is_modified(option),
         reset_tooltip=f"Reset to default: {default_label(option)}",

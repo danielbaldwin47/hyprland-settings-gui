@@ -5,14 +5,16 @@ module only has to know how to build each *kind*. That is the whole architecture
 #8 settled, and the reason a new Hyprland option needs an Overlay entry rather than a patch
 here.
 
-The four basic controls -- switch, spinner, combo, entry -- plus the suffix strip every one
-of them wears (`chrome.py`: state pills, Dependency badge, reset, ⓘ Help popover). The
-complex-value editors -- gradient, colour, vec2, css-gaps -- are #58. Until then those
-Options render their value read-only rather than being left out: an Option missing from its
-Page is one a user cannot find, and a blank control is the falsehood prototype #8 measured
-(`[[EMPTY]]` rendering as an empty row).
+The four basic controls -- switch, spinner, combo, entry -- the four complex-value editors
+-- colour, gradient, css-gaps, vec2 -- and the suffix strip every one of them wears
+(`chrome.py`: state pills, Value summary, Dependency badge, reset, ⓘ Help popover). Font
+weights are the one type still rendered read-only: the two Options that have one take either
+a number or a preset name, and offering the names is Overlay curation (`labels`) rather than
+a widget this module can invent. They render their value rather than being left out -- an
+Option missing from its Page is one a user cannot find, and a blank control is the falsehood
+prototype #8 measured (`[[EMPTY]]` rendering as an empty row).
 
-Three conventions worth stating, all from ADR-0013:
+Five conventions worth stating, four from ADR-0013 and one from ADR-0010:
 
 * **A string Option is an `AdwActionRow` with a `GtkEntry` suffix**, never an `AdwEntryRow`.
   `AdwEntryRow` has no subtitle, and 24 description-less Rows is falsehood by omission.
@@ -22,23 +24,37 @@ Three conventions worth stating, all from ADR-0013:
 * **No control ever renders a sentinel as data.** `state.shown_value` answers "is there a
   value here at all?" for every control, so an Option with none reads "Device default"
   rather than `-1`, `[[EMPTY]]`, or the bottom of a spin button's range.
+* **A complex value gets an `AdwExpanderRow`, and therefore a Value summary.** Its editor
+  goes in as *one* child widget rather than a stack of sub-Rows, which is what lets the
+  Row return a single control handle for the dependency badge to desensitise.
+* **A continuous gesture previews, it does not write.** A slider drag is a stream of Eval
+  previews and exactly one Apply transaction, on release (ADR-0010 §Eval preview). The
+  sequencing is `gesture.Gesture`; this module only wires the widget's signals to it.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import Any, TypeVar
 
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
+gi.require_version("Gdk", "4.0")
 
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gtk  # noqa: E402
 
-from hyprtweaker.engine.model import display_text  # noqa: E402
+from hyprtweaker.engine.model import (  # noqa: E402
+    Color,
+    CssGaps,
+    Gradient,
+    Vec2,
+    display_text,
+    parse_value,
+)
 from hyprtweaker.engine.schema import (  # noqa: E402
     OptionType,
     ResolvedOption,
@@ -47,11 +63,14 @@ from hyprtweaker.engine.schema import (  # noqa: E402
 )
 from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.rows.chrome import Navigate, RowChrome  # noqa: E402
+from hyprtweaker.ui.rows.gesture import Gesture  # noqa: E402
 from hyprtweaker.ui.rows.state import (  # noqa: E402
     NO_VALUE,
     no_value_label,
     shown_value,
 )
+
+T = TypeVar("T")
 
 _COMBO_WIDGETS = frozenset({Widget.ENUM_MAP, Widget.ENUM_STRING, Widget.SEGMENTED})
 
@@ -92,6 +111,29 @@ _FLOAT_STEP = 0.01
 """Two decimals: every float Option in 0.56.2 is an opacity, a scale or a strength, and all
 of them read in hundredths. A curated `range.step` overrides it."""
 
+_GAP_BOUND = 500.0
+"""How far a gap spinner reaches. No css-gaps Option carries a curated range, and none needs
+one: a gap is a distance in pixels between windows, so the useful part of the scale is the
+first fifty. The floor is zero rather than the type's -- the negative a css-gaps Option can
+hold is `general:float_gaps`'s `-1`, which is its *null* spelling ("same as outer gaps") and
+is reached by the reset arrow, not by walking a spinner past zero into a marker."""
+
+_DEFAULT_STOP = Color(0xFFFFFFFF)
+"""What a colour control shows when its Option has no value yet -- opaque white.
+
+The value a nullable colour's placeholder writes when clicked, and the single stop a
+nullable gradient's does. White because it is visible against both themes and unmistakably a
+starting point rather than a considered choice; the colour dialog is one click away, and the
+reset arrow is one click back.
+
+*Not* what "add a colour" puts in a gradient — that duplicates the last stop, so the new
+swatch starts from the colour beside it rather than from an unrelated white."""
+
+_ANGLE_MAX = 360.0
+_ANGLE_PAGE = 15.0
+"""Angles are a full turn in degrees, paged in 15° steps -- the increments a gradient is
+actually reasoned about in (45°, 90°), reachable with Page Up rather than 45 arrow presses."""
+
 
 @dataclass(frozen=True, slots=True)
 class OptionRow:
@@ -107,7 +149,22 @@ class OptionRow:
     """Re-read the model into the control, without echoing an edit back to the model."""
 
     chrome: RowChrome
-    """The suffix strip: state pills, Dependency badge, reset, ⓘ (ADR-0013)."""
+    """The suffix strip: state pills, Value summary, Dependency badge, reset, ⓘ (ADR-0013)."""
+
+    gesture: Gesture | None = None
+    """The continuous gesture this Row's control drives, on the Rows that have one.
+
+    Exposed because the Page has to be able to *abandon* it. A drag is the one interaction
+    with state outside the model -- an Eval preview the compositor is showing and no file
+    contains -- and a reload wipes that without telling anyone. The Page refreshing controls
+    from a freshly re-read model while a gesture still thinks it is mid-drag is how the
+    user's half-chosen value would get committed by somebody else's reload.
+    """
+
+    def abandon_gesture(self) -> None:
+        """Drop any gesture in progress without writing it. Safe on every Row."""
+        if self.gesture is not None:
+            self.gesture.abandon()
 
 
 class RowFactory:
@@ -143,6 +200,14 @@ class RowFactory:
             row = self._combo(option)
         elif option.widget in _ENTRY_WIDGETS:
             row = self._entry(option)
+        elif option.widget is Widget.COLOR:
+            row = self._color(option)
+        elif option.widget is Widget.GRADIENT:
+            row = self._gradient(option)
+        elif option.widget is Widget.CSS_GAPS:
+            row = self._css_gaps(option)
+        elif option.widget is Widget.VEC2:
+            row = self._vec2(option)
         else:
             row = self._read_only(option)
 
@@ -172,16 +237,46 @@ class RowFactory:
         superseding the older `CONTEXT.md` wording).
         """
         row = Adw.ActionRow()
+        self._text(row, option)
+        row.add_suffix(control)
+        if control.get_focusable():
+            row.set_activatable_widget(control)
+        return row, self._chrome(row, control, option)
+
+    def _expander(
+        self, option: ResolvedOption, editor: Gtk.Widget
+    ) -> tuple[Adw.ExpanderRow, RowChrome]:
+        """An `AdwExpanderRow` whose one child is the whole editor for a complex value.
+
+        One child rather than a sub-Row per part, and the reason is the same ADR-0013 §3
+        rule that shapes the ActionRow above: only the *control* may go insensitive. A stack
+        of sub-Rows would leave the factory with nothing single to hand back as the control,
+        and the dependency badge would be back to walking the widget tree for it -- named in
+        the ADR as the thing the prototype did and the real factory must not.
+
+        The collapsed Row is not silent about what it holds: the Value summary in the suffix
+        strip answers "what is it set to?" from the same model the editor edits
+        (`state.value_summary`, ADR-0013 §4).
+        """
+        row = Adw.ExpanderRow()
+        self._text(row, option)
+        row.add_row(editor)
+        return row, self._chrome(row, editor, option)
+
+    def _text(self, row: Adw.ActionRow | Adw.ExpanderRow, option: ResolvedOption) -> None:
         row.set_use_markup(False)
         # The unit belongs in the title: "`px` / `ms` / `deg` / `/s` in the title, so the
         # number means something" (prototype #8 FINDINGS, curation policy, 22 Options).
         row.set_title(f"{option.title} ({option.unit})" if option.unit else option.title)
         row.set_subtitle(option.description)
-        row.add_suffix(control)
-        if control.get_focusable():
-            row.set_activatable_widget(control)
 
-        chrome = RowChrome(
+    def _chrome(
+        self,
+        row: Adw.ActionRow | Adw.ExpanderRow,
+        control: Gtk.Widget,
+        option: ResolvedOption,
+    ) -> RowChrome:
+        return RowChrome(
             row,
             control,
             option,
@@ -189,7 +284,6 @@ class RowFactory:
             on_reset=self._unset,
             navigate=self._navigate,
         )
-        return row, chrome
 
     # --- every write to the model goes through these ------------------------------------------
 
@@ -209,6 +303,28 @@ class RowFactory:
         """
         self._session.unset_option(name)
         self._edited(name)
+
+    def _preview(self, option: ResolvedOption, value: Any) -> None:
+        """A tick of a continuous gesture: `eval` only, nothing written (ADR-0010).
+
+        Still reports the edit. The model *has* moved -- the Row's own reset arrow and the
+        Value summary in its suffix strip both turn on it -- and a summary that only caught
+        up when the drag ended would be the collapsed Row lying for the length of the drag,
+        which is the one thing it exists not to do.
+        """
+        self._session.preview_option(option.name, value)
+        self._edited(option.name)
+
+    def _gesture(self, option: ResolvedOption) -> Gesture:
+        """The preview/commit pair for one Option's continuous control.
+
+        Per Option rather than per widget: a gradient's editor is rebuilt as its value
+        changes shape (a stop added, a stop removed) and the pointer may well still be down.
+        """
+        return Gesture(
+            preview=lambda value: self._preview(option, value),
+            commit=lambda value: self._set(option, value),
+        )
 
     def _edited(self, name: str) -> None:
         if self._on_edited is not None:
@@ -254,8 +370,7 @@ class RowFactory:
             value = shown_value(option, self._session.value_of(option))
             with self._quiet():
                 spin.set_value(_as_number(value, _parked(low, high)))
-                if isinstance(control, Gtk.Stack):
-                    control.set_visible_child_name("none" if value is NO_VALUE else "value")
+                _show_value(control, value is not NO_VALUE)
 
         def changed(*_: Any) -> None:
             if self._echo_guard:
@@ -285,28 +400,42 @@ class RowFactory:
         writes it to the model -- verified against GTK 4 here rather than assumed. A stack
         with a button on the other page has no such seam, and it also answers the question
         the placeholder alone leaves open: how the user gets a number in the first place.
-
-        Clicking the placeholder *writes*, and that is deliberate rather than incidental.
-        Under instant apply there is no other kind of gesture (ADR-0003), and revealing the
-        spinner without writing would be worse: the Row would show a number the config does
-        not contain, and the next refresh would snap it back to the placeholder mid-edit. So
-        the click means exactly what its tooltip says -- "click to set a value" -- and the
-        reset arrow it raises is one click back to "Device default".
+        `_placeholder_stack` is that stack, shared with every other nullable control; the
+        parked value is the part only a number has an opinion about.
         """
         if not option.nullable:
             return spin
+        return self._placeholder_stack(
+            option, spin, on_set=lambda: self._set(option, _parked(low, high))
+        )
 
+    def _placeholder_stack(
+        self, option: ResolvedOption, control: Gtk.Widget, *, on_set: Callable[[], None]
+    ) -> Gtk.Stack:
+        """`control`, behind a click-to-set placeholder while the Option has no value.
+
+        The shape every nullable control shares, whatever its type: a number, a colour, a
+        set of gaps. `on_set` is the one part that differs -- the value a click means -- and
+        each caller answers it in its own terms.
+
+        Clicking *writes*, and that is deliberate rather than incidental. Under instant apply
+        there is no other kind of gesture (ADR-0003), and revealing the control without
+        writing would be worse: the Row would show a value the config does not contain, and
+        the next refresh would snap it back to the placeholder mid-edit. So the click means
+        exactly what its tooltip says -- "click to set a value" -- and the reset arrow it
+        raises is one click back to "Device default".
+        """
         placeholder = Gtk.Button(
             label=no_value_label(option),
             css_classes=["flat", "dim-label"],
             valign=Gtk.Align.CENTER,
             tooltip_text=f"{no_value_label(option)} — click to set a value",
         )
-        placeholder.connect("clicked", lambda _button: self._set(option, _parked(low, high)))
+        placeholder.connect("clicked", lambda _button: on_set())
 
         stack = Gtk.Stack(valign=Gtk.Align.CENTER)
-        stack.add_named(placeholder, "none")
-        stack.add_named(spin, "value")
+        stack.add_named(placeholder, _NONE_PAGE)
+        stack.add_named(control, _VALUE_PAGE)
         return stack
 
     def _combo(self, option: ResolvedOption) -> OptionRow:
@@ -381,14 +510,325 @@ class RowFactory:
 
         return OptionRow(option, row, entry, refresh, chrome)
 
-    # --- everything #58 has not built an editor for yet -------------------------------------
+    # --- the four complex-value editors -----------------------------------------------------
+
+    def _color(self, option: ResolvedOption) -> OptionRow:
+        """A colour button. The one control that *is* its own preview, so no summary.
+
+        `GtkColorDialogButton` over the deprecated `GtkColorButton`, and with alpha on:
+        every Hyprland colour is a 32-bit ARGB word and an editor that dropped the alpha
+        channel would silently make half the config opaque.
+
+        The dialog is modal, so a colour is one decided gesture and one Apply transaction --
+        there is no per-tick drag to preview. The continuous half of ADR-0010's colour work
+        lives on the gradient's angle slider, which is the only colour control in the app
+        that moves under a held pointer.
+        """
+        button = Gtk.ColorDialogButton(
+            dialog=Gtk.ColorDialog(with_alpha=True, modal=True),
+            rgba=_rgba(_DEFAULT_STOP),
+            valign=Gtk.Align.CENTER,
+        )
+        control = (
+            self._placeholder_stack(
+                option, button, on_set=lambda: self._set(option, _color_of(button))
+            )
+            if option.nullable
+            else button
+        )
+        row, chrome = self._row(option, control)
+
+        def refresh() -> None:
+            value = shown_value(option, self._session.value_of(option))
+            with self._quiet():
+                # `_DEFAULT_STOP` when there is no value, not "leave whatever was there":
+                # the placeholder's click writes the button's current colour, and a button
+                # still holding the colour the Row was just reset *from* would make reset
+                # then set silently reinstate it rather than start fresh.
+                button.set_rgba(_rgba(_DEFAULT_STOP if value is NO_VALUE else _as_color(value)))
+                _show_value(control, value is not NO_VALUE)
+
+        def changed(*_: Any) -> None:
+            if not self._echo_guard:
+                self._set(option, _color_of(button))
+
+        button.connect("notify::rgba", changed)
+        return OptionRow(option, row, control, refresh, chrome)
+
+    def _gradient(self, option: ResolvedOption) -> OptionRow:
+        """Colour stops plus an angle -- and the app's one genuinely continuous control.
+
+        The angle is a `GtkScale`, so dragging it is ADR-0010's Eval preview tier in full:
+        every tick previews over the socket, and the release lands one Apply transaction.
+        The stops are colour dialogs, which are decided gestures and commit directly.
+
+        The stop row is rebuilt whenever the gradient changes *shape* rather than patched in
+        place. A stop is three widgets (its button, its remove arrow, the trailing add), and
+        keeping index-bound closures agreeing with a list the user is adding to and removing
+        from is a class of bug this simply does not have.
+        """
+        stops = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        angle = Gtk.Scale(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            adjustment=Gtk.Adjustment(
+                lower=0.0, upper=_ANGLE_MAX, step_increment=1.0, page_increment=_ANGLE_PAGE
+            ),
+            digits=0,
+            draw_value=True,
+            hexpand=True,
+        )
+        editor = _editor_box()
+        editor.append(_field("Colours", stops))
+        editor.append(_field("Angle (°)", angle, expand=True))
+        # The two `color_inactive` gradients fall back to their related colour when unset,
+        # and an editor opening on one opaque white stop at 0° would be stating a gradient
+        # the config does not contain -- the same falsehood the collapsed summary avoids by
+        # reading "Same as shadow colour". Expanding a Row must not contradict it.
+        control = (
+            self._placeholder_stack(
+                option, editor, on_set=lambda: self._set(option, _DEFAULT_GRADIENT)
+            )
+            if option.nullable
+            else editor
+        )
+
+        row, chrome = self._expander(option, control)
+        gesture = self._gesture(option)
+
+        def current() -> Gradient:
+            return self._typed(option, _DEFAULT_GRADIENT)
+
+        def write(gradient: Gradient) -> None:
+            self._set(option, gradient)
+            refresh()
+
+        def stop_changed(index: int, button: Gtk.ColorDialogButton) -> None:
+            if self._echo_guard:
+                return
+            gradient = current()
+            if index >= len(gradient.colors):
+                return
+            colors = list(gradient.colors)
+            colors[index] = _color_of(button)
+            self._set(option, replace(gradient, colors=tuple(colors)))
+
+        def add_stop() -> None:
+            gradient = current()
+            write(replace(gradient, colors=(*gradient.colors, gradient.colors[-1])))
+
+        def remove_stop(index: int) -> None:
+            gradient = current()
+            # `Gradient` refuses to hold none, and so does Hyprland's parser. The arrow is
+            # only built while there is more than one, so this is belt and braces.
+            if len(gradient.colors) <= 1:
+                return
+            colors = [*gradient.colors[:index], *gradient.colors[index + 1 :]]
+            write(replace(gradient, colors=tuple(colors)))
+
+        def rebuild(gradient: Gradient) -> None:
+            while (child := stops.get_first_child()) is not None:
+                stops.remove(child)
+            removable = len(gradient.colors) > 1
+            for index, color in enumerate(gradient.colors):
+                # `rgba` in the constructor, not `set_rgba` after it: a property set at
+                # construction emits no `notify`, so a freshly built button cannot echo the
+                # value it was built from straight back into the model.
+                button = Gtk.ColorDialogButton(
+                    dialog=Gtk.ColorDialog(with_alpha=True, modal=True),
+                    rgba=_rgba(color),
+                    valign=Gtk.Align.CENTER,
+                    tooltip_text=f"Colour {index + 1}",
+                )
+                button.connect(
+                    "notify::rgba", lambda widget, _p, at=index: stop_changed(at, widget)
+                )
+                stops.append(button)
+                if removable:
+                    stops.append(
+                        _icon_button(
+                            "list-remove-symbolic",
+                            f"Remove colour {index + 1}",
+                            lambda _b, at=index: remove_stop(at),
+                        )
+                    )
+            stops.append(
+                _icon_button("list-add-symbolic", "Add a colour", lambda _b: add_stop())
+            )
+
+        def refresh() -> None:
+            gradient = current()
+            with self._quiet():
+                angle.set_value(gradient.angle)
+                rebuild(gradient)
+                _show_value(
+                    control, shown_value(option, self._session.value_of(option)) is not NO_VALUE
+                )
+
+        def angle_changed(*_: Any) -> None:
+            if self._echo_guard:
+                return
+            gesture.tick(replace(current(), angle=angle.get_value()))
+
+        angle.connect("value-changed", angle_changed)
+        _ends_gesture(angle, gesture)
+        return OptionRow(option, row, control, refresh, chrome, gesture)
+
+    def _css_gaps(self, option: ResolvedOption) -> OptionRow:
+        """Four gap sides, entered as one number or as four (ADR-0013's "uniform or per-side").
+
+        The uniform switch is the whole point of the control. Every rice in `tests/corpus`
+        writes `gaps_in = 5`, so the common case has to be one number -- and the four-side
+        form has to be there because Hyprland's type is four sides and hiding that would
+        make the per-side configs the app imports uneditable.
+
+        Switching *to* uniform flattens to the top side rather than refusing: the user asked
+        for one number, and the alternative is a switch that silently does nothing whenever
+        the sides currently differ, which is exactly when it was reached for.
+
+        The two shapes get their own spinners rather than sharing the top one. A widget has
+        exactly one parent, so a shared spinner cannot be in both pages of the stack -- and
+        keeping them separate makes the sync on toggle explicit rather than incidental.
+        """
+        all_sides = _gap_spin()
+        spins = {side: _gap_spin() for side in _SIDES}
+        uniform = Gtk.CheckButton(label="Same on all sides")
+
+        sides = Gtk.Grid(column_spacing=12, row_spacing=6)
+        for column, side in enumerate(_SIDES):
+            sides.attach(_caption(side.capitalize()), column, 0, 1, 1)
+            sides.attach(spins[side], column, 1, 1, 1)
+
+        shape = Gtk.Stack()
+        shape.add_named(_field("All sides", all_sides), "uniform")
+        shape.add_named(sides, "sides")
+
+        editor = _editor_box()
+        editor.append(uniform)
+        editor.append(shape)
+        control = (
+            self._placeholder_stack(
+                option, editor, on_set=lambda: self._set(option, CssGaps.uniform(0))
+            )
+            if option.nullable
+            else editor
+        )
+
+        row, chrome = self._expander(option, control)
+
+        def current() -> CssGaps:
+            return self._typed(option, _DEFAULT_GAPS)
+
+        def entered() -> CssGaps:
+            """What the visible half of the editor currently says."""
+            if uniform.get_active():
+                return CssGaps.uniform(int(all_sides.get_value()))
+            return CssGaps(*(int(spins[side].get_value()) for side in _SIDES))
+
+        def show(gaps: CssGaps) -> None:
+            """Fill both halves, so a toggle reveals a shape that already agrees."""
+            all_sides.set_value(gaps.top)
+            for side in _SIDES:
+                spins[side].set_value(getattr(gaps, side))
+            shape.set_visible_child_name("uniform" if uniform.get_active() else "sides")
+
+        def edited(*_: Any) -> None:
+            if self._echo_guard:
+                return
+            # Spin buttons fire per keystroke and per held arrow-key repeat, so this is the
+            # mid-gesture verb: the queue coalesces the burst into one reload once the user
+            # stops. A spinner is a discrete control, so it previews nothing (ADR-0010).
+            self._touch(option, entered())
+
+        def shape_toggled(*_: Any) -> None:
+            if self._echo_guard:
+                shape.set_visible_child_name("uniform" if uniform.get_active() else "sides")
+                return
+            # Each shape takes its opening value from the *other* one, which is the half the
+            # user was looking at a moment ago. Switching to uniform flattens to the top
+            # side: they asked for one number, and that is the number they were reading.
+            source = spins["top"] if uniform.get_active() else all_sides
+            gaps = CssGaps.uniform(int(source.get_value()))
+            with self._quiet():
+                show(gaps)
+            self._touch(option, gaps)
+
+        def refresh() -> None:
+            gaps = current()
+            with self._quiet():
+                uniform.set_active(gaps.top == gaps.right == gaps.bottom == gaps.left)
+                show(gaps)
+                _show_value(
+                    control, shown_value(option, self._session.value_of(option)) is not NO_VALUE
+                )
+
+        uniform.connect("toggled", shape_toggled)
+        all_sides.connect("notify::value", edited)
+        for spin in spins.values():
+            spin.connect("notify::value", edited)
+        return OptionRow(option, row, control, refresh, chrome)
+
+    def _vec2(self, option: ResolvedOption) -> OptionRow:
+        """Two axes. Curated bounds per axis, because `vec2Range` gives each its own."""
+        bounds = option.vec2_range
+        x_spin = _axis_spin(
+            bounds.min_x if bounds else -_FREE_BOUND, bounds.max_x if bounds else _FREE_BOUND
+        )
+        y_spin = _axis_spin(
+            bounds.min_y if bounds else -_FREE_BOUND, bounds.max_y if bounds else _FREE_BOUND
+        )
+
+        editor = _editor_box()
+        editor.append(_field("X", x_spin))
+        editor.append(_field("Y", y_spin))
+        row, chrome = self._expander(option, editor)
+
+        def refresh() -> None:
+            vector = self._typed(option, _DEFAULT_VEC2)
+            with self._quiet():
+                x_spin.set_value(vector.x)
+                y_spin.set_value(vector.y)
+
+        def edited(*_: Any) -> None:
+            if not self._echo_guard:
+                self._touch(option, Vec2(x_spin.get_value(), y_spin.get_value()))
+
+        x_spin.connect("notify::value", edited)
+        y_spin.connect("notify::value", edited)
+        return OptionRow(option, row, editor, refresh, chrome)
+
+    def _typed(self, option: ResolvedOption, fallback: T) -> T:
+        """This Option's current value as its own class, or `fallback` when it has none.
+
+        Two things stand between the model and a typed value, and neither is an error. An
+        Option with no value at all (`NO_VALUE`) is the nullable case, where `fallback` is
+        the value its editor opens on rather than something the config contains. And a
+        schema default arrives as the display text `descriptions` printed (`"ff444444
+        0deg"`), never as a `Gradient` -- so every editor parses, and a spelling this
+        Hyprland version no longer uses falls back rather than taking the Page down with it.
+
+        The fallback names the type as well as the value: `parse_value` answers by
+        `option.type`, and an Overlay that gave an Option a `widget` its `type` disagrees
+        with would otherwise hand a gradient editor a `CssGaps` to unpack.
+        """
+        value = shown_value(option, self._session.value_of(option))
+        if value is NO_VALUE:
+            return fallback
+        try:
+            parsed = parse_value(option.type, value)
+        except (ValueError, TypeError):
+            return fallback
+        return parsed if isinstance(parsed, type(fallback)) else fallback
+
+    # --- what has no editor yet ---------------------------------------------------------------
 
     def _read_only(self, option: ResolvedOption) -> OptionRow:
-        """Gradients, colours, vec2s, css-gaps and font weights, shown but not editable.
+        """Font weights, shown but not editable.
 
-        Their editors are #58. Shown as their display text so the Page still answers "what
-        is this set to?", which is the question the ADR-0013 Value summary exists for and
-        the one an omitted Row cannot answer at all.
+        The two Options that have one take either a number (`400`) or a preset name
+        (`"bold"`), and a control that offered both would be inventing the preset list --
+        which is Overlay curation (`labels`), not a widget. Shown as their display text so
+        the Page still answers "what is this set to?", which is the question an omitted Row
+        cannot answer at all.
         """
         label = Gtk.Label(valign=Gtk.Align.CENTER, css_classes=["dim-label"], selectable=True)
         row, chrome = self._row(option, label)
@@ -421,6 +861,164 @@ class RowFactory:
             yield
         finally:
             self._echo_guard = False
+
+
+# --- the complex editors' widgets -------------------------------------------------------------
+
+_SIDES = ("top", "right", "bottom", "left")
+"""CSS order, and Hyprland's: `LuaConfigCssGap.cpp` reads a four-element table as TRBL, and
+laying the spinners out in any other order would make the Row disagree with every `.conf`
+and every wiki page the user has read."""
+
+_DEFAULT_GRADIENT = Gradient((_DEFAULT_STOP,))
+_DEFAULT_GAPS = CssGaps.uniform(0)
+_DEFAULT_VEC2 = Vec2(0.0, 0.0)
+"""What a complex editor opens on when its Option has no value to show. Never written by
+being displayed -- an editor showing one of these is a Row whose Option is Unset, and it
+stays Unset until the user moves something."""
+
+
+_NONE_PAGE = "none"
+_VALUE_PAGE = "value"
+"""The two pages of a nullable control's stack, named once.
+
+`_placeholder_stack` builds it and four `refresh` closures swap it, so the two names were
+five bare strings in five places -- and a typo in any of them fails silently, as a control
+that simply never leaves its placeholder."""
+
+
+def _show_value(control: Gtk.Widget, has_value: bool) -> None:
+    """Swap a nullable control to its editor, or back to its "no value" placeholder.
+
+    A no-op on a control that is not nullable, so every `refresh` can call it unconditionally
+    rather than each one re-deciding whether its Option got a stack.
+    """
+    if isinstance(control, Gtk.Stack):
+        control.set_visible_child_name(_VALUE_PAGE if has_value else _NONE_PAGE)
+
+
+def _editor_box() -> Gtk.Box:
+    """The expander's one child: everything the editor is, in one insensitivity handle."""
+    return Gtk.Box(
+        orientation=Gtk.Orientation.VERTICAL,
+        spacing=12,
+        margin_top=12,
+        margin_bottom=12,
+        margin_start=12,
+        margin_end=12,
+    )
+
+
+def _field(label: str, control: Gtk.Widget, *, expand: bool = False) -> Gtk.Box:
+    """One labelled line inside an editor. Plain widgets, not sub-Rows -- see `_expander`.
+
+    The slack goes to the label unless the control asks for it: a slider wants every pixel
+    of width it can get, while a spin button stretched across 700 px is a text field with
+    two tiny arrows a long way from the number (seen on the running app).
+    """
+    caption = _caption(label)
+    caption.set_hexpand(not expand)
+    control.set_hexpand(expand)
+    control.set_halign(Gtk.Align.FILL if expand else Gtk.Align.END)
+
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    box.append(caption)
+    box.append(control)
+    return box
+
+
+def _caption(text: str) -> Gtk.Label:
+    return Gtk.Label(label=text, xalign=0.0, css_classes=["caption", "dim-label"])
+
+
+def _icon_button(icon: str, tooltip: str, clicked: Callable[..., None]) -> Gtk.Button:
+    button = Gtk.Button(
+        icon_name=icon, css_classes=["flat"], valign=Gtk.Align.CENTER, tooltip_text=tooltip
+    )
+    button.connect("clicked", clicked)
+    return button
+
+
+def _gap_spin() -> Gtk.SpinButton:
+    return Gtk.SpinButton(
+        adjustment=Gtk.Adjustment(
+            lower=0.0, upper=_GAP_BOUND, step_increment=1.0, page_increment=10.0
+        ),
+        digits=0,
+        numeric=True,
+        valign=Gtk.Align.CENTER,
+    )
+
+
+def _axis_spin(low: float, high: float) -> Gtk.SpinButton:
+    return Gtk.SpinButton(
+        adjustment=Gtk.Adjustment(
+            lower=low, upper=high, step_increment=1.0, page_increment=10.0
+        ),
+        digits=_digits(_FLOAT_STEP),
+        numeric=True,
+        valign=Gtk.Align.CENTER,
+    )
+
+
+def _ends_gesture(widget: Gtk.Widget, gesture: Gesture) -> None:
+    """Wire every way a continuous gesture can finish to `Gesture.end`.
+
+    Three controllers, because a `GtkScale` can be left in as many ways and a gesture that
+    is never ended is a value previewed and never written:
+
+    * **pointer.** `GtkGesture::end` rather than `::released`, and in the capture phase: the
+      scale claims the sequence for its own drag handling, which cancels a bubble-phase
+      click gesture instead of releasing it. `end` fires either way.
+    * **keyboard.** Arrow keys move the scale too, and a key-release is that drag's release.
+    * **focus.** The net under both: tabbing away, switching Section, closing the window.
+      Without it a gesture interrupted by anything unusual would hold its value forever.
+
+    `Gesture.end` is idempotent and no-ops without a tick, so the overlap between the three
+    costs nothing -- which is exactly why it can afford to be belt, braces and a third one.
+    """
+    click = Gtk.GestureClick()
+    click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    click.connect("end", lambda *_: gesture.end())
+    widget.add_controller(click)
+
+    keys = Gtk.EventControllerKey()
+    keys.connect("key-released", lambda *_: gesture.end())
+    widget.add_controller(keys)
+
+    focus = Gtk.EventControllerFocus()
+    focus.connect("leave", lambda *_: gesture.end())
+    widget.add_controller(focus)
+
+
+def _rgba(color: Color) -> Gdk.RGBA:
+    """A model colour as GTK's. Through `#rrggbbaa` -- alpha last, as everywhere but ARGB."""
+    rgba = Gdk.RGBA()
+    rgba.parse(f"#{color.rgba:08x}")
+    return rgba
+
+
+def _color_of(button: Gtk.ColorDialogButton) -> Color:
+    """GTK's colour as the model's packed ARGB word."""
+    rgba = button.get_rgba()
+    return Color(
+        (_byte(rgba.alpha) << 24)
+        | (_byte(rgba.red) << 16)
+        | (_byte(rgba.green) << 8)
+        | _byte(rgba.blue)
+    )
+
+
+def _byte(channel: float) -> int:
+    return max(0, min(255, round(channel * 255)))
+
+
+def _as_color(value: Any) -> Color:
+    """A model value as a `Color`, in whatever spelling it came (a schema default is text)."""
+    try:
+        return Color.parse(value)
+    except (ValueError, TypeError):
+        return _DEFAULT_STOP
 
 
 # --- Schema -> control parameters -----------------------------------------------------------

@@ -13,6 +13,7 @@ Four modules, in dependency order:
 - `transaction.py` -- `ApplyTransaction`, the five steps and the in-flight flag;
 - `queue.py` -- `ApplyQueue`, debounce and serialization, with no idea sockets exist;
 - `foreign.py` -- `ForeignReloadWatch`, the "somebody else reloaded" signal;
+- `preview.py` -- `EvalPreview`, the transient per-tick tier a continuous gesture uses;
 - `reread.py` -- `read_state`, the full state re-read that answers a foreign reload and
   recovers the model at startup;
 - `applier.py` -- `Applier`, the three wired together, which is what the app holds.
@@ -26,16 +27,20 @@ Typical use::
     result.outcome          # ApplyOutcome.OK
     result.pending_restart  # keys that need a Hyprland restart to take effect
 
-The Eval preview tier (#58) is deliberately not here. It is a second, transient apply path
-for continuous widgets, and it must never run between a reload and its Read-back -- `eval`
-clears `configerrors`. Serializing everything through `ApplyQueue` is what makes that
-ordering impossible to get wrong.
+The Eval preview tier is a second, transient apply path for continuous widgets, and it must
+never run between a reload and its Read-back -- `eval` clears `configerrors`. `Applier` is
+what enforces that: `EvalPreview` asks its queue whether a transaction is anywhere in
+progress before every send, so the ordering cannot be got wrong from outside::
+
+    applier.preview("general:col.active_border")   # a drag tick: eval, no file touched
+    applier.commit("general:col.active_border")    # the release: one Apply transaction
 """
 
 from __future__ import annotations
 
 from .applier import Applier
 from .foreign import ForeignReloadWatch
+from .preview import EvalPreview, preview_code
 from .queue import DEBOUNCE_SECONDS, ApplyQueue, Transaction
 from .reread import ReRead, app_owned_options, read_state
 from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch
@@ -55,10 +60,12 @@ __all__ = [
     "ApplyQueue",
     "ApplyResult",
     "ApplyTransaction",
+    "EvalPreview",
     "ForeignReloadWatch",
     "Mismatch",
     "ReRead",
     "Transaction",
     "app_owned_options",
+    "preview_code",
     "read_state",
 ]

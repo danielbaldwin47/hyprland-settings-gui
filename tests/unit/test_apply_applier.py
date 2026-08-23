@@ -118,6 +118,143 @@ def test_a_touched_burst_becomes_one_reload(tmp_path: Path) -> None:
     assert requests.count("reload") == 1
 
 
+def test_a_drag_previews_per_tick_and_costs_exactly_one_reload(tmp_path: Path) -> None:
+    """ADR-0010's Eval preview tier, through the object the app holds.
+
+    The acceptance criterion for the continuous controls, stated as the compositor sees it:
+    every tick of the gesture is an `eval` and the whole drag buys exactly one reload -- the
+    one the release commits. Ten reloads instead of one is not a slow drag, it is ten full
+    teardowns of the compositor's config state.
+    """
+    model = model_with(general__gaps_in=1)
+
+    async def main(started: FakeHyprland) -> list[str]:
+        async with EventStream(started.instance) as events:
+            await started.wait_for_listeners(1)
+            async with Applier(
+                model=model,
+                writer=Writer(ConfigPaths.rooted_at(tmp_path), SAMPLE_APP_VERSION),
+                client=CommandClient(started.instance),
+                events=events,
+                on_foreign_reload=lambda: None,
+                debounce=0.01,
+                reload_timeout=0.5,
+            ) as applier:
+                for gap in range(2, 12):
+                    model.set("general:gaps_in", gap)
+                    applier.preview("general:gaps_in")
+                    # One turn of the loop per tick, so the worker really does send each
+                    # one -- coalescing is tested where it belongs, and hiding behind it
+                    # here would make this pass without a single preview being sent.
+                    await applier.flush_previews()
+                applier.commit("general:gaps_in")
+                await applier.drain()
+        return started.requests
+
+    model.set("general:gaps_in", 11)
+    fake = FakeHyprland(model_conversation(model), reload_emits_event=True)
+    model.set("general:gaps_in", 1)
+    requests = run_with_fake(main, fake)
+
+    assert requests.count("reload") == 1
+    assert len([one for one in requests if one.startswith("eval ")]) == 10
+
+
+def test_a_preview_never_lands_between_a_reload_and_its_read_back(tmp_path: Path) -> None:
+    """`eval` clears `configerrors`, so a tick arriving mid-transaction would erase the
+    errors that transaction is about to read -- and a rejected config would report clean."""
+    model = model_with(general__gaps_in=5)
+
+    async def main(started: FakeHyprland) -> list[str]:
+        async with EventStream(started.instance) as events:
+            await started.wait_for_listeners(1)
+            async with Applier(
+                model=model,
+                writer=Writer(ConfigPaths.rooted_at(tmp_path), SAMPLE_APP_VERSION),
+                client=CommandClient(started.instance),
+                events=events,
+                on_foreign_reload=lambda: None,
+                debounce=0.01,
+                reload_timeout=0.5,
+            ) as applier:
+                applying = asyncio.create_task(applier.apply("general:gaps_in"))
+                # Ticking while that transaction runs is exactly the race: the drag has not
+                # stopped just because the release's write is in flight.
+                while not applier.busy:
+                    await asyncio.sleep(0)
+                applier.preview("general:gaps_in")
+                # A real turn of the loop, so the preview worker genuinely wakes up and
+                # decides -- without it this could pass by the tick never being considered.
+                await asyncio.sleep(0.01)
+                assert applier.busy, "the transaction must still be running when it decided"
+                await applying
+                await applier.flush_previews()
+        return started.requests
+
+    requests = run_with_fake(
+        main,
+        FakeHyprland(model_conversation(model), reload_emits_event=True, reply_delay=0.02),
+    )
+
+    assert [one for one in requests if one.startswith("eval ")] == []
+    assert "j/configerrors" in requests, "the transaction did get to read its errors"
+
+
+def test_a_tick_already_on_the_socket_is_waited_out_before_the_reload(tmp_path: Path) -> None:
+    """The other half of the eval/Read-back guard, and the one a predicate cannot cover.
+
+    `is_blocked` is checked *before* the await, so it stops a new tick but not one already
+    in flight -- and a drag ends in exactly that order every time: last tick, release,
+    transaction. An `eval` still on the wire clears `configerrors` as it lands, which is the
+    list the transaction is about to read (ADR-0010).
+
+    Asserted as elapsed time rather than as request order, because request order alone would
+    pass without the wait: what matters is that the reload is held until the eval has been
+    *answered*, not merely sent first. The compositor holds every reply for `delay`, the
+    release lands `lead` into that, so a transaction that waits cannot reload for another
+    `delay - lead`; one that does not reload after its debounce, an order of magnitude sooner.
+    """
+    model = model_with(general__gaps_in=5)
+    delay = 0.05
+    lead = 0.01
+    seen: dict[str, float] = {}
+
+    async def main(started: FakeHyprland) -> dict[str, float]:
+        started.on_request = lambda request, _count: seen.setdefault(
+            request.split()[0], asyncio.get_running_loop().time()
+        )
+        async with EventStream(started.instance) as events:
+            await started.wait_for_listeners(1)
+            async with Applier(
+                model=model,
+                writer=Writer(ConfigPaths.rooted_at(tmp_path), SAMPLE_APP_VERSION),
+                client=CommandClient(started.instance),
+                events=events,
+                on_foreign_reload=lambda: None,
+                debounce=0.001,
+                reload_timeout=1.0,
+            ) as applier:
+                applier.preview("general:gaps_in")
+                # Long enough for the worker to write the request and block on its reply,
+                # short enough that it is still unanswered -- which is the state the guard
+                # has to cope with. No `flush_previews`: waiting the tick out by hand is
+                # exactly what the transaction must not need its caller to do.
+                await asyncio.sleep(lead)
+                applier.commit("general:gaps_in")
+                await applier.drain()
+        return seen
+
+    times = run_with_fake(
+        main,
+        FakeHyprland(model_conversation(model), reload_emits_event=True, reply_delay=delay),
+    )
+
+    assert "eval" in times, "the tick has to have reached the socket for this to test anything"
+    assert times["reload"] - times["eval"] >= delay - lead, (
+        "the reload must wait for the in-flight eval to be answered"
+    )
+
+
 def test_results_reach_the_subscriber(tmp_path: Path) -> None:
     model = model_with(decoration__rounding=10)
     seen: list[ApplyResult] = []

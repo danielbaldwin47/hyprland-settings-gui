@@ -24,7 +24,7 @@ Typical use::
 
 from __future__ import annotations
 
-from .lua import insert, render_table, table_key
+from .lua import LuaTree, insert, render_table, render_table_inline, table_key
 from .modules import (
     is_option_module,
     module_relpath,
@@ -37,6 +37,7 @@ from .writer import ModuleSet, ProtectedFile, Writer, WriteResult
 
 __all__ = [
     "LuaSyntaxError",
+    "LuaTree",
     "ModuleSet",
     "ProtectedFile",
     "WriteResult",
@@ -50,5 +51,6 @@ __all__ = [
     "render_entrypoint",
     "render_module",
     "render_table",
+    "render_table_inline",
     "table_key",
 ]

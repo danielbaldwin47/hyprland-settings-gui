@@ -38,16 +38,21 @@ one place that could get a literal wrong stays one place.
 """
 
 
-def table_key(key: str) -> str:
+def table_key(key: str, *, spaced: bool = True) -> str:
     """`foo = ` for a plain identifier, `["foo"] = ` for anything else.
 
     Hyprland's key vocabulary happens to be all identifiers today, but `end` and `repeat`
     are exactly the kind of name a future section could take, and a bare `end = 1` is a
     syntax error rather than a wrong value -- it would take the entire Module down.
+
+    `spaced=False` drops the padding for the one-line Eval preview form. The choice of
+    *bracketing* is the part that matters and it is made once either way, so a preview and
+    the Module written after it can never disagree about which keys need quoting.
     """
+    assignment = " = " if spaced else "="
     if _IDENTIFIER.match(key) and key not in LUA_KEYWORDS:
-        return f"{key} = "
-    return f"[{lua_string(key)}] = "
+        return f"{key}{assignment}"
+    return f"[{lua_string(key)}]{assignment}"
 
 
 def render_table(tree: LuaTree, depth: int = 0) -> str:
@@ -67,6 +72,24 @@ def render_table(tree: LuaTree, depth: int = 0) -> str:
         lines.append(f"{pad}{table_key(key)}{rendered},")
     lines.append(f"{INDENT * depth}}}")
     return "\n".join(lines)
+
+
+def render_table_inline(tree: LuaTree) -> str:
+    """The same table on one line -- what the Eval preview puts on the socket (ADR-0010).
+
+    A preview is one request per drag tick and the request *is* the code, so the newlines
+    and the indentation that make a Module readable are bytes on the wire nobody reads.
+    Same keys, same order, same already-rendered leaves as `render_table`: the preview and
+    the Apply transaction that makes it durable render one value exactly one way.
+    """
+    if not tree:
+        return "{}"
+
+    parts = []
+    for key, value in tree.items():
+        rendered = render_table_inline(value) if isinstance(value, dict) else value
+        parts.append(f"{table_key(key, spaced=False)}{rendered}")
+    return "{" + ",".join(parts) + "}"
 
 
 def insert(tree: LuaTree, path: tuple[str, ...], literal: str) -> None:

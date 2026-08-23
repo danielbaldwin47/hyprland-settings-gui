@@ -177,11 +177,36 @@ class Session:
         self._applier.commit(name)  # type: ignore[union-attr]  # _refuse proved it is here
 
     def touch_option(self, name: str, value: Any) -> None:
-        """A mid-gesture edit -- a slider being dragged. Applied once the changes stop."""
+        """A mid-gesture edit that still writes -- a spin button being typed into.
+
+        Applied once the changes stop (~150 ms). The discrete half of "mid-gesture": a
+        keystroke burst is a handful of edits, so coalescing them into one transaction is
+        enough and the value is durable the moment the user stops. A *continuous* gesture is
+        `preview_option`, because fifty ticks a second is fifty reloads however well they
+        coalesce.
+        """
         if self._refuse(name):
             return
         self._model.set(name, value)
         self._applier.touch(name)  # type: ignore[union-attr]  # _refuse proved it is here
+
+    def preview_option(self, name: str, value: Any) -> None:
+        """One tick of a continuous gesture: into the model, echoed over the socket, unwritten.
+
+        The Eval preview tier (ADR-0010). Nothing reaches disk and no reload is issued -- the
+        value is shown by `eval`, which is sub-frame and transient. What makes it durable is
+        the single Apply transaction the gesture's release commits, through `set_option`.
+
+        Between the tick and the release the model is deliberately ahead of the file, and
+        that window is honest rather than a gap: the model is what the app is *about* to
+        write, the Row shows it, and a reload arriving mid-drag wipes the preview and drags
+        the model back to the truth through the foreign-reload re-read. Nothing else in the
+        app has to know a gesture is in progress.
+        """
+        if self._refuse(name):
+            return
+        self._model.set(name, value)
+        self._applier.preview(name)  # type: ignore[union-attr]  # _refuse proved it is here
 
     def _refuse(self, name: str) -> bool:
         """Whether this session must decline an edit -- and leave the model alone doing it.
@@ -334,6 +359,12 @@ class Session:
         """
         if self._closing:
             return
+        # A reload rebuilds the Lua VM, so every Eval preview this session ever sent is
+        # already gone (ADR-0010). Dropping the un-sent tick with them is what keeps the
+        # re-read below from being immediately contradicted by a preview of the value it
+        # just replaced.
+        if self._applier is not None:
+            self._applier.forget_previews()
         self._spawn(self._reread_after_foreign_reload())
 
     async def _reread_after_foreign_reload(self) -> None:

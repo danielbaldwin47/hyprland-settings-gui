@@ -3,11 +3,11 @@
 One convention, 353 Rows: whatever the typed control is, the widgets to its right are the
 same five slots in the same order.
 
-    [typed control] [state pills] [dependency badge] [reset] [ⓘ help]
+    [typed control] [state pills] [value summary] [dependency badge] [reset] [ⓘ help]
 
-The Value summary slot -- the collapsed preview on an `AdwExpanderRow` -- is the one this
-module does not build, because the widgets it previews are #58's; when they arrive it goes
-between the pills and the badge.
+The Value summary is the collapsed preview on an `AdwExpanderRow` (ADR-0013 §4) and shows on
+nothing else: an expander is the one Row shape that hides its own value, and a gradient with
+two stops at 45° reads exactly like a gradient with one stop at 0° until it is opened.
 
 Nothing here decides anything. `state.py` answers every question this asks ("is it
 modified?", "is the dependency met?", "what does the default read as?") without a toolkit,
@@ -19,6 +19,7 @@ whose dependency is unmet is a Row the user most needs to be able to read.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import gi
 
@@ -36,6 +37,10 @@ from hyprtweaker.ui.rows.state import (  # noqa: E402
     help_content,
     row_state,
 )
+
+_SWATCH = 14.0
+"""Side of one gradient swatch, in pixels. Big enough to read a colour off, small enough that
+a four-stop gradient does not start competing with the Row's title for width."""
 
 Navigate = Callable[[str], None]
 """Show the Row for an Option name. The window's job -- the factory only knows the name."""
@@ -57,7 +62,7 @@ class RowChrome:
 
     def __init__(
         self,
-        row: Adw.ActionRow,
+        row: Adw.ActionRow | Adw.ExpanderRow,
         control: Gtk.Widget,
         option: ResolvedOption,
         context: RowContext,
@@ -73,6 +78,22 @@ class RowChrome:
 
         self._pills = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self._pills.set_valign(Gtk.Align.CENTER)
+
+        self._swatches = SwatchStrip()
+        self._summary_label = Gtk.Label(
+            css_classes=["dim-label", "numeric"],
+            valign=Gtk.Align.CENTER,
+            hexpand=False,
+        )
+        self._summary = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=6,
+            valign=Gtk.Align.CENTER,
+            css_classes=["value-summary"],
+            visible=False,
+        )
+        self._summary.append(self._swatches.widget)
+        self._summary.append(self._summary_label)
 
         self._dependency_label = _badge_label()
         self._dependency = Gtk.Button(
@@ -94,12 +115,17 @@ class RowChrome:
 
         self._help = _help_button(help_content(option))
 
-        # Fixed order, left to right. `add_suffix` appends, and the control was added by the
-        # factory before this ran, so the strip lands to its right in exactly this sequence.
-        row.add_suffix(self._pills)
-        row.add_suffix(self._dependency)
-        row.add_suffix(self._reset)
-        row.add_suffix(self._help)
+        # One box holding all five slots, rather than five `add_suffix` calls. The order is
+        # part of the convention (ADR-0013) and the two Row types disagree about what
+        # `add_suffix` means: `AdwActionRow` appends, `AdwExpanderRow` *prepends*, so five
+        # calls put the ⓘ at opposite ends of the strip depending on the widget type --
+        # observed on the running app, where every expander wore its chrome backwards. A box
+        # is ordered by its own appends and both Rows simply carry it.
+        self._strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self._strip.set_valign(Gtk.Align.CENTER)
+        for slot in (self._pills, self._summary, self._dependency, self._reset, self._help):
+            self._strip.append(slot)
+        row.add_suffix(self._strip)
 
         # Built by `refresh`, which is also what puts the strip in its opening state --
         # there is no moment where a Row is on screen wearing chrome nobody decided.
@@ -111,6 +137,21 @@ class RowChrome:
     def state(self) -> RowState:
         """The state this strip is currently showing. The UI tier asserts against it."""
         return self._state
+
+    @property
+    def summary(self) -> Gtk.Box:
+        """The Value summary slot. Invisible on every Row whose control is not an expander."""
+        return self._summary
+
+    @property
+    def summary_text(self) -> str:
+        """The dim collapsed-value label: an angle, a gap run, or the Option's null label."""
+        return self._summary_label.get_text()
+
+    @property
+    def summary_swatches(self) -> tuple[str, ...]:
+        """The gradient stops currently drawn, as the CSS strings they were given."""
+        return self._swatches.colors
 
     @property
     def dependency_badge(self) -> Gtk.Button:
@@ -146,6 +187,7 @@ class RowChrome:
         self._state = state
 
         self._set_pills(state)
+        self._set_summary(state)
 
         badge = state.dependency
         self._dependency.set_visible(badge is not None)
@@ -158,6 +200,20 @@ class RowChrome:
         self._reset.set_tooltip_text(state.reset_tooltip)
 
         self._control.set_sensitive(state.editable)
+
+    def _set_summary(self, state: RowState) -> None:
+        """Redraw the collapsed preview. Refreshed with the rest of the strip, not on expand.
+
+        Every tick of a gradient's angle slider comes back through here, which is what makes
+        the collapsed Row track a drag it is not even showing -- and it costs one label set
+        and one queued redraw, so it can afford to.
+        """
+        summary = state.summary
+        self._summary.set_visible(summary is not None)
+        if summary is None:
+            return
+        self._summary_label.set_label(summary.text)
+        self._swatches.set_colors(summary.swatches)
 
     def _set_pills(self, state: RowState) -> None:
         while (child := self._pills.get_first_child()) is not None:
@@ -185,6 +241,54 @@ class RowChrome:
         # Its own feedback, immediately: the arrow that just unset the Option has no
         # business still being there while the write makes its way round to the Page.
         self.refresh()
+
+
+class SwatchStrip:
+    """The colour-swatch half of a gradient's Value summary (ADR-0013 §4).
+
+    One `GtkDrawingArea` for the whole strip rather than one widget per stop: a gradient can
+    carry any number of colours, and re-parenting a row of widgets on every tick of the
+    angle slider is work with a visible cost for something that is four rectangles.
+
+    Colours arrive as CSS strings from `state.value_summary`, which has no toolkit to parse
+    them with. Anything `Gdk.RGBA` refuses is dropped rather than drawn as black -- a
+    swatch is a claim about a colour, and a wrong one is worse than a missing one.
+    """
+
+    def __init__(self) -> None:
+        self._colors: tuple[str, ...] = ()
+        self._rgba: list[Gdk.RGBA] = []
+        self.widget = Gtk.DrawingArea(valign=Gtk.Align.CENTER, visible=False)
+        self.widget.set_content_height(int(_SWATCH))
+        self.widget.set_draw_func(self._draw)
+
+    @property
+    def colors(self) -> tuple[str, ...]:
+        return self._colors
+
+    def set_colors(self, colors: tuple[str, ...]) -> None:
+        accepted: list[str] = []
+        self._rgba = []
+        for css in colors:
+            rgba = Gdk.RGBA()
+            if rgba.parse(css):
+                accepted.append(css)
+                self._rgba.append(rgba)
+        # Only the ones that will actually be drawn, so `colors` cannot report a swatch the
+        # strip silently dropped -- the property is what the UI tier asserts against.
+        self._colors = tuple(accepted)
+        self.widget.set_content_width(int(_SWATCH * len(self._rgba)))
+        self.widget.set_visible(bool(self._rgba))
+        self.widget.queue_draw()
+
+    def _draw(self, _area: Gtk.DrawingArea, context: Any, width: int, height: int) -> None:
+        if not self._rgba:
+            return
+        span = width / len(self._rgba)
+        for index, rgba in enumerate(self._rgba):
+            context.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
+            context.rectangle(index * span, 0, span, height)
+            context.fill()
 
 
 _BADGE_CHARS = 20

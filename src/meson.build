@@ -20,6 +20,7 @@ package_sources = {
     '__init__.py',
     'applier.py',
     'foreign.py',
+    'preview.py',
     'queue.py',
     'reread.py',
     'result.py',
@@ -73,6 +74,7 @@ package_sources = {
     '__init__.py',
     'chrome.py',
     'factory.py',
+    'gesture.py',
     'state.py',
   ],
   'hyprtweaker/ui/shell': [

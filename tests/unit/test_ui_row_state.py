@@ -16,8 +16,14 @@ from typing import Any
 
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
-from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
-from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, load_schema
+from hyprtweaker.engine.model import UNSET, ConfigModel, CssGaps, Gradient, OptionValue, Vec2
+from hyprtweaker.engine.schema import (
+    ResolvedOption,
+    Schema,
+    Visibility,
+    Widget,
+    load_schema,
+)
 from hyprtweaker.ui.rows.state import (
     ADVANCED_PILL,
     NO_VALUE,
@@ -30,6 +36,7 @@ from hyprtweaker.ui.rows.state import (
     shown_value,
     unmet_dependency,
     value_label,
+    value_summary,
 )
 
 SCHEMA = load_schema(SAMPLE_VERSION, SCHEMA_DIR)
@@ -377,3 +384,82 @@ def test_no_options_subtitle_is_its_dotted_key() -> None:
     for option in SCHEMA:
         assert option.description != option.dotted_key, option.name
         assert option.description != option.name, option.name
+
+
+# --- the collapsed value summary --------------------------------------------------------------
+
+
+class TestValueSummary:
+    """ADR-0013 §4 and the row catalogue's table, over the shipped Schema.
+
+    An expander is the one Row shape that hides its own value, so the summary is the only
+    thing a collapsed gradient Row says about itself -- and the most visible place a
+    sentinel could leak.
+    """
+
+    def test_only_the_three_expander_widgets_get_one(self) -> None:
+        """Keyed on `widget`, which is what the Row factory dispatches on -- keying on
+        `type` would put a collapsed preview on a Row an Overlay override made not-collapse."""
+        summarised = {
+            option.widget for option in SCHEMA if value_summary(option, UNSET) is not None
+        }
+
+        assert summarised == {Widget.GRADIENT, Widget.CSS_GAPS, Widget.VEC2}
+
+    def test_a_gradient_summarises_as_its_stops_and_its_angle(self) -> None:
+        option = SCHEMA["general:col.active_border"]
+        gradient = Gradient.parse("rgba(33ccffee) rgba(00ff99ee) 45deg")
+
+        summary = value_summary(option, gradient)
+
+        assert summary is not None
+        assert summary.text == "45°"
+        assert summary.swatches == ("#33ccffee", "#00ff99ee")
+
+    def test_uniform_gaps_summarise_as_one_number(self) -> None:
+        """Four identical numbers is four times the ink for the same fact, and uniform is
+        what almost every rice in `tests/corpus` writes."""
+        summary = value_summary(SCHEMA["general:gaps_in"], CssGaps.uniform(8))
+
+        assert summary is not None
+        assert summary.text == "8"
+
+    def test_uneven_gaps_summarise_as_all_four_sides_in_css_order(self) -> None:
+        summary = value_summary(SCHEMA["general:gaps_in"], CssGaps(8, 12, 8, 12))
+
+        assert summary is not None
+        assert summary.text == "8 · 12 · 8 · 12"
+
+    def test_a_vec2_summarises_as_a_coordinate(self) -> None:
+        summary = value_summary(SCHEMA["decoration:shadow:offset"], Vec2(0.0, 0.5))
+
+        assert summary is not None
+        assert summary.text == "0.0, 0.5"
+
+    def test_an_option_with_no_value_summarises_as_its_label_not_its_sentinel(self) -> None:
+        """`general:float_gaps` spells "same as the outer gaps" as `-1`, and a summary
+        reading "-1 · -1 · -1 · -1" would be reporting four negative gaps."""
+        option = SCHEMA["general:float_gaps"]
+
+        summary = value_summary(option, None)
+
+        assert summary is not None
+        assert summary.text == option.null_label == "Same as outer gaps"
+        assert summary.swatches == ()
+
+    def test_no_summary_over_the_whole_schema_leaks_a_sentinel(self) -> None:
+        for option in SCHEMA:
+            summary = value_summary(option, UNSET)
+            if summary is None:
+                continue
+            assert not any(marker in summary.text for marker in SENTINEL_MARKERS), option.name
+
+    def test_the_summary_reaches_the_row_state_the_chrome_renders(self) -> None:
+        context = FakeContext()
+        context.model.set("general:gaps_in", 8)
+
+        state = row_state(SCHEMA["general:gaps_in"], context)
+
+        assert state.summary is not None
+        assert state.summary.text == "8"
+        assert row_state(SCHEMA["decoration:rounding"], context).summary is None

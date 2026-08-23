@@ -61,8 +61,16 @@ class ConfigPage:
         return self._by_name.get(name)
 
     def refresh(self) -> None:
-        """Re-read the model into every control on this Page, chrome included."""
+        """Re-read the model into every control on this Page, chrome included.
+
+        Abandons any continuous gesture first. A refresh means the model moved under the UI
+        -- a foreign reload's re-read, a session going read-only -- and that same reload
+        wiped the Eval preview a drag in progress was showing (ADR-0010). Letting the
+        gesture live through it would commit the user's half-chosen value on the strength of
+        somebody else's reload; dropping it leaves the truth the re-read just fetched.
+        """
         for row in self._rows:
+            row.abandon_gesture()
             row.refresh()
             row.chrome.refresh()
 
