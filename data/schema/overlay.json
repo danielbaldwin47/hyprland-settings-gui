@@ -1,0 +1,1038 @@
+{
+  "format_version": 1,
+  "sections": {
+    "general": {
+      "title": "General",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#general"
+    },
+    "decoration": {
+      "title": "Decoration",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#decoration"
+    },
+    "animations": {
+      "title": "Animations",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#animations"
+    },
+    "input": {
+      "title": "Input",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#input"
+    },
+    "gestures": {
+      "title": "Gestures",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#gestures"
+    },
+    "group": {
+      "title": "Groups",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#group"
+    },
+    "misc": {
+      "title": "Miscellaneous",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#misc"
+    },
+    "binds": {
+      "title": "Keybind behaviour",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#binds"
+    },
+    "xwayland": {
+      "title": "XWayland",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#xwayland"
+    },
+    "opengl": {
+      "title": "OpenGL",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#opengl"
+    },
+    "render": {
+      "title": "Rendering",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#render"
+    },
+    "cursor": {
+      "title": "Cursor",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#cursor"
+    },
+    "ecosystem": {
+      "title": "Ecosystem",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#ecosystem"
+    },
+    "debug": {
+      "title": "Debug",
+      "visibility": "hidden",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#debug"
+    },
+    "layout": {
+      "title": "Layout",
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#layout"
+    },
+    "dwindle": {
+      "title": "Dwindle layout",
+      "help_url": "https://wiki.hypr.land/Configuring/Dwindle-Layout/"
+    },
+    "master": {
+      "title": "Master layout",
+      "help_url": "https://wiki.hypr.land/Configuring/Master-Layout/"
+    },
+    "scrolling": {
+      "title": "Scrolling layout",
+      "help_url": "https://wiki.hypr.land/Configuring/Scrolling-Layout/"
+    },
+    "experimental": {
+      "title": "Experimental",
+      "visibility": "hidden"
+    },
+    "input-capture": {
+      "title": "Input capture",
+      "visibility": "hidden"
+    },
+    "quirks": {
+      "title": "Quirks",
+      "visibility": "hidden"
+    }
+  },
+  "options": {
+    "general:border_size": { "title": "Border size", "unit": "px" },
+    "general:gaps_in": { "title": "Inner gaps", "unit": "px" },
+    "general:gaps_out": { "title": "Outer gaps", "unit": "px" },
+    "general:float_gaps": {
+      "title": "Floating window gaps",
+      "unit": "px",
+      "help": "Gaps around floating windows. Set to -1 to reuse the outer gaps."
+    },
+    "general:gaps_workspaces": { "title": "Workspace gaps", "unit": "px" },
+    "general:col.inactive_border": { "title": "Inactive border colour" },
+    "general:col.active_border": { "title": "Active border colour" },
+    "general:col.nogroup_border": { "title": "Ungrouped border colour" },
+    "general:col.nogroup_border_active": { "title": "Active ungrouped border colour" },
+    "general:layout": {
+      "title": "Layout",
+      "known_values": {
+        "values": ["dwindle", "master", "scrolling", "monocle"],
+        "open": true
+      },
+      "labels": {
+        "dwindle": "Dwindle",
+        "master": "Master",
+        "scrolling": "Scrolling",
+        "monocle": "Monocle"
+      },
+      "help": "Which tiling layout to use. Custom Lua layouts are selectable as lua:<name>."
+    },
+    "general:no_focus_fallback": { "title": "Never refocus after closing a window" },
+    "general:resize_on_border": { "title": "Resize windows by dragging their border" },
+    "general:extend_border_grab_area": {
+      "title": "Border grab area",
+      "unit": "px",
+      "depends_on": { "option": "general:resize_on_border", "value": true }
+    },
+    "general:hover_icon_on_border": {
+      "title": "Show the resize cursor on borders",
+      "depends_on": { "option": "general:resize_on_border", "value": true }
+    },
+    "general:allow_tearing": { "title": "Allow tearing" },
+    "general:resize_corner": { "title": "Resize corner" },
+    "general:snap:enabled": { "title": "Snap floating windows" },
+    "general:snap:window_gap": {
+      "title": "Snap distance to windows",
+      "unit": "px",
+      "depends_on": { "option": "general:snap:enabled", "value": true }
+    },
+    "general:snap:monitor_gap": {
+      "title": "Snap distance to monitor edges",
+      "unit": "px",
+      "depends_on": { "option": "general:snap:enabled", "value": true }
+    },
+    "general:snap:border_overlap": {
+      "title": "Overlap borders when snapping",
+      "depends_on": { "option": "general:snap:enabled", "value": true }
+    },
+    "general:snap:respect_gaps": {
+      "title": "Respect gaps when snapping",
+      "depends_on": { "option": "general:snap:enabled", "value": true }
+    },
+    "general:modal_parent_blocking": { "title": "Block interaction with modal parents" },
+    "general:locale": {
+      "title": "Locale",
+      "widget": "string",
+      "nullable": true,
+      "null_label": "System locale",
+      "null_value": ""
+    },
+
+    "decoration:rounding": { "title": "Corner rounding", "unit": "px" },
+    "decoration:rounding_power": { "title": "Rounding power" },
+    "decoration:active_opacity": { "title": "Active window opacity" },
+    "decoration:inactive_opacity": { "title": "Inactive window opacity" },
+    "decoration:fullscreen_opacity": { "title": "Fullscreen window opacity" },
+    "decoration:shadow:enabled": { "title": "Drop shadow" },
+    "decoration:shadow:range": {
+      "title": "Shadow size",
+      "unit": "px",
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+    },
+    "decoration:shadow:render_power": {
+      "title": "Shadow falloff",
+      "widget": "segmented",
+      "labels": { "1": "Softest", "2": "Soft", "3": "Sharp", "4": "Sharpest" },
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+    },
+    "decoration:shadow:sharp": {
+      "title": "Sharp shadow",
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+    },
+    "decoration:shadow:color": {
+      "title": "Shadow colour",
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+    },
+    "decoration:shadow:color_inactive": {
+      "title": "Inactive shadow colour",
+      "nullable": true,
+      "null_label": "Same as shadow colour",
+      "null_value": -1,
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+    },
+    "decoration:shadow:offset": {
+      "title": "Shadow offset",
+      "unit": "px",
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+    },
+    "decoration:shadow:scale": {
+      "title": "Shadow scale",
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+    },
+    "decoration:glow:enabled": { "title": "Inner glow" },
+    "decoration:glow:range": {
+      "title": "Glow size",
+      "unit": "px",
+      "depends_on": { "option": "decoration:glow:enabled", "value": true }
+    },
+    "decoration:glow:render_power": {
+      "title": "Glow falloff",
+      "widget": "segmented",
+      "labels": { "1": "Softest", "2": "Soft", "3": "Sharp", "4": "Sharpest" },
+      "depends_on": { "option": "decoration:glow:enabled", "value": true }
+    },
+    "decoration:glow:color": {
+      "title": "Glow colour",
+      "depends_on": { "option": "decoration:glow:enabled", "value": true }
+    },
+    "decoration:glow:color_inactive": {
+      "title": "Inactive glow colour",
+      "nullable": true,
+      "null_label": "Same as glow colour",
+      "null_value": -1,
+      "depends_on": { "option": "decoration:glow:enabled", "value": true }
+    },
+    "decoration:dim_modal": { "title": "Dim parents of modal windows" },
+    "decoration:dim_inactive": { "title": "Dim inactive windows" },
+    "decoration:dim_strength": {
+      "title": "Dim strength",
+      "depends_on": { "option": "decoration:dim_inactive", "value": true }
+    },
+    "decoration:dim_special": { "title": "Special workspace dim" },
+    "decoration:dim_around": { "title": "Dim around dialogs" },
+    "decoration:screen_shader": {
+      "title": "Screen shader",
+      "widget": "file-picker",
+      "nullable": true,
+      "null_label": "None",
+      "null_value": ""
+    },
+    "decoration:border_part_of_window": { "title": "Border counts as part of the window" },
+    "decoration:blur:enabled": { "title": "Blur" },
+    "decoration:blur:size": {
+      "title": "Blur size",
+      "unit": "px",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:passes": {
+      "title": "Blur passes",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:ignore_opacity": {
+      "title": "Ignore window opacity when blurring",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:new_optimizations": {
+      "title": "Blur optimisations",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:xray": {
+      "title": "X-ray blur",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:noise": {
+      "title": "Blur noise",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:contrast": {
+      "title": "Blur contrast",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:brightness": {
+      "title": "Blur brightness",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:vibrancy": {
+      "title": "Blur vibrancy",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:vibrancy_darkness": {
+      "title": "Blur vibrancy on dark colours",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:special": {
+      "title": "Blur the special workspace",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:popups": {
+      "title": "Blur popups",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:popups_ignorealpha": {
+      "title": "Popup blur alpha threshold",
+      "depends_on": { "option": "decoration:blur:popups", "value": true }
+    },
+    "decoration:blur:input_methods": {
+      "title": "Blur input methods",
+      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+    },
+    "decoration:blur:input_methods_ignorealpha": {
+      "title": "Input method blur alpha threshold",
+      "depends_on": { "option": "decoration:blur:input_methods", "value": true }
+    },
+    "decoration:motion_blur:enabled": { "title": "Motion blur" },
+    "decoration:motion_blur:samples": {
+      "title": "Motion blur samples",
+      "depends_on": { "option": "decoration:motion_blur:enabled", "value": true }
+    },
+
+    "animations:enabled": { "title": "Animations" },
+    "animations:workspace_wraparound": { "title": "Wrap workspace animations" },
+
+    "input:kb_model": {
+      "title": "Keyboard model",
+      "widget": "xkb-model",
+      "nullable": true,
+      "null_label": "Default",
+      "null_value": ""
+    },
+    "input:kb_layout": { "title": "Keyboard layout", "widget": "xkb-layout" },
+    "input:kb_variant": {
+      "title": "Keyboard variant",
+      "widget": "xkb-variant",
+      "nullable": true,
+      "null_label": "None",
+      "null_value": ""
+    },
+    "input:kb_options": {
+      "title": "Keyboard options",
+      "widget": "xkb-options",
+      "nullable": true,
+      "null_label": "None",
+      "null_value": ""
+    },
+    "input:kb_rules": {
+      "title": "Keyboard rules",
+      "widget": "string",
+      "nullable": true,
+      "null_label": "Default",
+      "null_value": "",
+      "visibility": "advanced"
+    },
+    "input:kb_file": {
+      "title": "Keymap file",
+      "widget": "file-picker",
+      "nullable": true,
+      "null_label": "None",
+      "null_value": "",
+      "visibility": "advanced"
+    },
+    "input:numlock_by_default": { "title": "Enable Num Lock at startup" },
+    "input:resolve_binds_by_sym": { "title": "Match keybinds by symbol" },
+    "input:repeat_rate": { "title": "Key repeat rate", "unit": "/s" },
+    "input:repeat_delay": { "title": "Key repeat delay", "unit": "ms" },
+    "input:sensitivity": { "title": "Pointer sensitivity" },
+    "input:accel_profile": {
+      "title": "Pointer acceleration",
+      "nullable": true,
+      "null_label": "Device default",
+      "null_value": "",
+      "known_values": { "values": ["adaptive", "flat", "custom"] },
+      "labels": { "adaptive": "Adaptive", "flat": "Flat", "custom": "Custom" }
+    },
+    "input:force_no_accel": { "title": "Disable pointer acceleration" },
+    "input:rotation": { "title": "Pointer rotation", "unit": "deg" },
+    "input:left_handed": { "title": "Swap left and right buttons" },
+    "input:scroll_points": {
+      "title": "Custom acceleration points",
+      "widget": "float-list",
+      "nullable": true,
+      "null_label": "None",
+      "null_value": "",
+      "visibility": "advanced",
+      "depends_on": { "option": "input:accel_profile", "value": "custom" }
+    },
+    "input:scroll_method": {
+      "title": "Scroll method",
+      "nullable": true,
+      "null_label": "Device default",
+      "null_value": "",
+      "known_values": { "values": ["2fg", "edge", "on_button_down", "no_scroll"] },
+      "labels": {
+        "2fg": "Two fingers",
+        "edge": "Edge",
+        "on_button_down": "While button held",
+        "no_scroll": "Disabled"
+      }
+    },
+    "input:scroll_button": { "title": "Scroll button", "visibility": "advanced" },
+    "input:scroll_button_lock": { "title": "Scroll button lock" },
+    "input:scroll_factor": { "title": "Scroll speed" },
+    "input:natural_scroll": { "title": "Natural scrolling" },
+    "input:follow_mouse": { "title": "Focus follows mouse" },
+    "input:follow_mouse_threshold": { "title": "Focus follows mouse threshold", "unit": "px" },
+    "input:focus_on_close": { "title": "Focus after closing a window" },
+    "input:mouse_refocus": { "title": "Refocus when the mouse moves" },
+    "input:float_switch_override_focus": {
+      "title": "Refocus on float/tile switch",
+      "widget": "segmented",
+      "labels": { "0": "Off", "1": "On", "2": "Also float to float" }
+    },
+    "input:special_fallthrough": { "title": "Special workspace fallthrough" },
+    "input:off_window_axis_events": { "title": "Scroll events outside windows" },
+    "input:emulate_discrete_scroll": { "title": "Emulate discrete scrolling" },
+    "input:follow_mouse_shrink": { "title": "Shrink focus hitboxes by", "unit": "px" },
+    "input:touchpad:disable_while_typing": { "title": "Disable while typing" },
+    "input:touchpad:natural_scroll": { "title": "Natural scrolling" },
+    "input:touchpad:scroll_factor": { "title": "Scroll speed" },
+    "input:touchpad:middle_button_emulation": { "title": "Middle button emulation" },
+    "input:touchpad:tap_button_map": {
+      "title": "Tap button mapping",
+      "nullable": true,
+      "null_label": "Device default",
+      "null_value": "",
+      "known_values": { "values": ["lrm", "lmr"] },
+      "labels": { "lrm": "Left, right, middle", "lmr": "Left, middle, right" }
+    },
+    "input:touchpad:clickfinger_behavior": { "title": "Clickfinger behaviour" },
+    "input:touchpad:tap-to-click": { "title": "Tap to click" },
+    "input:touchpad:drag_lock": {
+      "title": "Drag lock",
+      "widget": "segmented",
+      "labels": { "0": "Disabled", "1": "With timeout", "2": "Sticky" }
+    },
+    "input:touchpad:tap-and-drag": { "title": "Tap and drag" },
+    "input:touchpad:flip_x": { "title": "Flip the horizontal axis" },
+    "input:touchpad:flip_y": { "title": "Flip the vertical axis" },
+    "input:touchpad:drag_3fg": { "title": "Three-finger drag" },
+    "input:touchdevice:transform": {
+      "title": "Rotation",
+      "widget": "enum-map",
+      "labels": {
+        "0": "None",
+        "1": "90°",
+        "2": "180°",
+        "3": "270°",
+        "4": "Flipped",
+        "5": "Flipped, 90°",
+        "6": "Flipped, 180°"
+      }
+    },
+    "input:touchdevice:output": {
+      "title": "Bound monitor",
+      "widget": "monitor-picker",
+      "nullable": true,
+      "null_label": "Auto",
+      "null_value": ""
+    },
+    "input:touchdevice:enabled": { "title": "Enable touch devices" },
+    "input:virtualkeyboard:share_states": {
+      "title": "Share virtual keyboard states",
+      "visibility": "advanced"
+    },
+    "input:virtualkeyboard:release_pressed_on_close": {
+      "title": "Release pressed keys on close",
+      "visibility": "advanced"
+    },
+    "input:tablet:transform": {
+      "title": "Rotation",
+      "widget": "enum-map",
+      "labels": {
+        "0": "None",
+        "1": "90°",
+        "2": "180°",
+        "3": "270°",
+        "4": "Flipped",
+        "5": "Flipped, 90°",
+        "6": "Flipped, 180°"
+      }
+    },
+    "input:tablet:output": {
+      "title": "Bound monitor",
+      "widget": "monitor-picker",
+      "nullable": true,
+      "null_label": "Auto",
+      "null_value": ""
+    },
+    "input:tablet:region_position": { "title": "Region position" },
+    "input:tablet:absolute_region_position": { "title": "Absolute region position" },
+    "input:tablet:region_size": { "title": "Region size" },
+    "input:tablet:relative_input": { "title": "Relative input" },
+    "input:tablet:left_handed": { "title": "Left-handed" },
+    "input:tablet:active_area_size": { "title": "Active area size" },
+    "input:tablet:active_area_position": { "title": "Active area position" },
+    "input:tablettool:eraser_button_mode": {
+      "title": "Eraser button",
+      "widget": "segmented",
+      "range": { "min": 0, "max": 1 },
+      "labels": { "0": "Hardware default", "1": "Send a button event" }
+    },
+    "input:tablettool:eraser_button_override": {
+      "title": "Eraser button code",
+      "range": { "min": 0, "soft_max": 600 },
+      "visibility": "advanced",
+      "depends_on": { "option": "input:tablettool:eraser_button_mode", "value": 1 }
+    },
+    "input:tablettool:pressure_range_min": {
+      "title": "Minimum pressure",
+      "nullable": true,
+      "null_label": "Device default",
+      "null_value": -1
+    },
+    "input:tablettool:pressure_range_max": {
+      "title": "Maximum pressure",
+      "nullable": true,
+      "null_label": "Device default",
+      "null_value": -1
+    },
+
+    "gestures:workspace_swipe_distance": { "title": "Swipe distance", "unit": "px" },
+    "gestures:workspace_swipe_touch": { "title": "Swipe on touchscreens" },
+    "gestures:workspace_swipe_invert": { "title": "Invert swipe direction" },
+    "gestures:workspace_swipe_touch_invert": { "title": "Invert touchscreen swipe direction" },
+    "gestures:workspace_swipe_min_speed_to_force": { "title": "Minimum speed to force a switch" },
+    "gestures:workspace_swipe_cancel_ratio": { "title": "Cancel ratio" },
+    "gestures:workspace_swipe_create_new": { "title": "Create a workspace by swiping past the end" },
+    "gestures:workspace_swipe_direction_lock": { "title": "Direction lock" },
+    "gestures:workspace_swipe_direction_lock_threshold": {
+      "title": "Direction lock threshold",
+      "unit": "px",
+      "depends_on": { "option": "gestures:workspace_swipe_direction_lock", "value": true }
+    },
+    "gestures:workspace_swipe_forever": { "title": "Keep swiping past the last workspace" },
+    "gestures:workspace_swipe_use_r": { "title": "Use the r workspace prefix" },
+    "gestures:close_max_timeout": { "title": "Close gesture timeout", "unit": "ms" },
+    "gestures:scrolling:move_snap_to_grid": { "title": "Snap to the grid when moving" },
+    "gestures:scrolling:move_snap_cursor": { "title": "Snap to the cursor when moving" },
+
+    "group:insert_after_current": { "title": "Insert after the current window" },
+    "group:focus_removed_window": { "title": "Focus a window removed from a group" },
+    "group:merge_groups_on_drag": { "title": "Merge groups on drag" },
+    "group:merge_groups_on_groupbar": { "title": "Merge groups dropped on a group bar" },
+    "group:col.border_active": { "title": "Active group border colour" },
+    "group:col.border_inactive": { "title": "Inactive group border colour" },
+    "group:col.border_locked_inactive": { "title": "Locked inactive group border colour" },
+    "group:col.border_locked_active": { "title": "Locked active group border colour" },
+    "group:auto_group": { "title": "Group new windows automatically" },
+    "group:drag_into_group": { "title": "Drag windows into groups" },
+    "group:merge_floated_into_tiled_on_groupbar": {
+      "title": "Merge floating windows into tiled groups"
+    },
+    "group:group_on_movetoworkspace": { "title": "Group when moving to a workspace" },
+    "group:groupbar:enabled": { "title": "Group bar" },
+    "group:groupbar:disable_when_only": {
+      "title": "Hide when the group has one window",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:font_family": {
+      "title": "Font",
+      "widget": "font-picker",
+      "nullable": true,
+      "null_label": "Inherit the global font",
+      "null_value": "",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:font_weight_active": {
+      "title": "Active title weight",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:font_weight_inactive": {
+      "title": "Inactive title weight",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:font_size": {
+      "title": "Font size",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:gradients": {
+      "title": "Gradient backgrounds",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:height": {
+      "title": "Height",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:indicator_gap": {
+      "title": "Indicator gap",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:indicator_height": {
+      "title": "Indicator height",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:stacked": {
+      "title": "Stack titles vertically",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:priority": {
+      "title": "Decoration priority",
+      "widget": "int-range",
+      "visibility": "advanced",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:render_titles": {
+      "title": "Show window titles",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:scrolling": {
+      "title": "Scroll to switch windows",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:middle_click_close": {
+      "title": "Middle-click to close",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:rounding": {
+      "title": "Corner rounding",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:rounding_power": {
+      "title": "Rounding power",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:gradient_rounding": {
+      "title": "Gradient corner rounding",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:gradients", "value": true }
+    },
+    "group:groupbar:gradient_rounding_power": {
+      "title": "Gradient rounding power",
+      "depends_on": { "option": "group:groupbar:gradients", "value": true }
+    },
+    "group:groupbar:round_only_edges": {
+      "title": "Round only the outer edges",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:gradient_round_only_edges": {
+      "title": "Round only the outer gradient edges",
+      "depends_on": { "option": "group:groupbar:gradients", "value": true }
+    },
+    "group:groupbar:text_color": {
+      "title": "Title colour",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:text_color_inactive": {
+      "title": "Inactive title colour",
+      "nullable": true,
+      "null_label": "Same as the title colour",
+      "null_value": -1,
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:text_color_locked_active": {
+      "title": "Locked active title colour",
+      "nullable": true,
+      "null_label": "Same as the title colour",
+      "null_value": -1,
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:text_color_locked_inactive": {
+      "title": "Locked inactive title colour",
+      "nullable": true,
+      "null_label": "Same as the inactive title colour",
+      "null_value": -1,
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:col.active": {
+      "title": "Active background",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:col.inactive": {
+      "title": "Inactive background",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:col.locked_active": {
+      "title": "Locked active background",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:col.locked_inactive": {
+      "title": "Locked inactive background",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:gaps_out": {
+      "title": "Outer gaps",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:gaps_in": {
+      "title": "Inner gaps",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:keep_upper_gap": {
+      "title": "Keep the upper gap",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:text_offset": {
+      "title": "Text offset",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:text_padding": {
+      "title": "Text padding",
+      "unit": "px",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+    "group:groupbar:blur": {
+      "title": "Blur the background",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+    },
+
+    "misc:disable_hyprland_logo": { "title": "Hide the Hyprland logo" },
+    "misc:disable_splash_rendering": {
+      "title": "Hide the splash text",
+      "restart": "monitor-reload"
+    },
+    "misc:col.splash": { "title": "Splash text colour", "restart": "monitor-reload" },
+    "misc:font_family": { "title": "Font", "widget": "font-picker" },
+    "misc:splash_font_family": {
+      "title": "Splash font",
+      "widget": "font-picker",
+      "nullable": true,
+      "null_label": "Inherit the global font",
+      "null_value": "",
+      "restart": "monitor-reload"
+    },
+    "misc:force_default_wallpaper": {
+      "title": "Default wallpaper",
+      "widget": "enum-map",
+      "nullable": false,
+      "labels": { "-1": "Random", "0": "None", "1": "Variant 1", "2": "Variant 2" }
+    },
+    "misc:vrr": { "title": "Variable refresh rate" },
+    "misc:mouse_move_enables_dpms": { "title": "Wake displays on mouse movement" },
+    "misc:key_press_enables_dpms": { "title": "Wake displays on key press" },
+    "misc:name_vk_after_proc": {
+      "title": "Name virtual keyboards after their process",
+      "visibility": "advanced"
+    },
+    "misc:always_follow_on_dnd": { "title": "Follow drag and drop" },
+    "misc:layers_hog_keyboard_focus": { "title": "Layers may hold keyboard focus" },
+    "misc:animate_manual_resizes": { "title": "Animate manual resizes" },
+    "misc:animate_mouse_windowdragging": { "title": "Animate window dragging" },
+    "misc:disable_autoreload": { "title": "Disable config auto-reload" },
+    "misc:enable_swallow": { "title": "Window swallowing" },
+    "misc:swallow_regex": {
+      "title": "Swallow window class",
+      "widget": "regex",
+      "nullable": true,
+      "null_label": "None",
+      "null_value": "",
+      "depends_on": { "option": "misc:enable_swallow", "value": true }
+    },
+    "misc:swallow_exception_regex": {
+      "title": "Swallow exception title",
+      "widget": "regex",
+      "nullable": true,
+      "null_label": "None",
+      "null_value": "",
+      "depends_on": { "option": "misc:enable_swallow", "value": true }
+    },
+    "misc:focus_on_activate": { "title": "Focus windows that request activation" },
+    "misc:mouse_move_focuses_monitor": { "title": "Mouse movement focuses the monitor" },
+    "misc:allow_session_lock_restore": { "title": "Allow session lock restore" },
+    "misc:session_lock_xray": { "title": "Session lock X-ray" },
+    "misc:session_lock_blur": { "title": "Blur under the session lock" },
+    "misc:background_color": { "title": "Background colour" },
+    "misc:close_special_on_empty": { "title": "Close the special workspace when empty" },
+    "misc:on_focus_under_fullscreen": { "title": "Focusing a window under a fullscreen one" },
+    "misc:exit_window_retains_fullscreen": { "title": "Keep fullscreen when a window exits" },
+    "misc:initial_workspace_tracking": {
+      "title": "Initial workspace tracking",
+      "widget": "segmented",
+      "labels": { "0": "Disabled", "1": "Single-shot", "2": "Persistent" }
+    },
+    "misc:initial_workspace_token_timeout": { "title": "Workspace token timeout", "unit": "ms" },
+    "misc:middle_click_paste": { "title": "Middle-click paste" },
+    "misc:render_unfocused_fps": { "title": "Unfocused render rate", "unit": "fps" },
+    "misc:disable_xdg_env_checks": {
+      "title": "Skip XDG environment checks",
+      "visibility": "advanced"
+    },
+    "misc:disable_hyprland_guiutils_check": {
+      "title": "Skip the hyprland-guiutils check",
+      "visibility": "advanced"
+    },
+    "misc:disable_watchdog_warning": {
+      "title": "Hide the watchdog warning",
+      "visibility": "advanced"
+    },
+    "misc:lockdead_screen_delay": {
+      "title": "Lock-dead screen delay",
+      "unit": "ms",
+      "visibility": "advanced"
+    },
+    "misc:enable_anr_dialog": { "title": "Show the “not responding” dialog" },
+    "misc:anr_missed_pings": {
+      "title": "Missed pings before “not responding”",
+      "visibility": "advanced",
+      "depends_on": { "option": "misc:enable_anr_dialog", "value": true }
+    },
+    "misc:screencopy_force_8b": { "title": "Force 8-bit screen capture" },
+    "misc:disable_scale_notification": { "title": "Hide the scale notification" },
+    "misc:size_limits_tiled": { "title": "Apply size limits to tiled windows" },
+
+    "binds:pass_mouse_when_bound": { "title": "Pass mouse events when bound" },
+    "binds:scroll_event_delay": { "title": "Scroll bind delay", "unit": "ms" },
+    "binds:workspace_back_and_forth": { "title": "Workspace back and forth" },
+    "binds:hide_special_on_workspace_change": {
+      "title": "Hide the special workspace on switch"
+    },
+    "binds:allow_workspace_cycles": { "title": "Allow workspace cycles" },
+    "binds:workspace_center_on": {
+      "title": "Centre the cursor on workspace switch",
+      "widget": "segmented",
+      "labels": { "0": "The workspace", "1": "The last active window" }
+    },
+    "binds:focus_preferred_method": {
+      "title": "Directional focus method",
+      "widget": "segmented",
+      "labels": { "0": "History", "1": "Length" }
+    },
+    "binds:ignore_group_lock": { "title": "Ignore group lock" },
+    "binds:movefocus_cycles_fullscreen": { "title": "Move focus cycles fullscreen windows" },
+    "binds:movefocus_cycles_groupfirst": { "title": "Move focus cycles the group first" },
+    "binds:disable_keybind_grabbing": { "title": "Disable keybind grabbing" },
+    "binds:window_direction_monitor_fallback": {
+      "title": "Fall back to the monitor for directional moves"
+    },
+    "binds:allow_pin_fullscreen": { "title": "Allow pinning fullscreen windows" },
+    "binds:drag_threshold": {
+      "title": "Drag threshold",
+      "unit": "px",
+      "range": { "min": 0, "soft_max": 100 }
+    },
+
+    "xwayland:enabled": { "title": "XWayland", "restart": "hyprland" },
+    "xwayland:use_nearest_neighbor": { "title": "Nearest-neighbour scaling" },
+    "xwayland:force_zero_scaling": { "title": "Force zero scaling" },
+    "xwayland:create_abstract_socket": {
+      "title": "Create an abstract socket",
+      "restart": "xwayland",
+      "visibility": "advanced"
+    },
+
+    "opengl:nvidia_anti_flicker": {
+      "title": "NVIDIA anti-flicker",
+      "visibility": "advanced"
+    },
+
+    "render:direct_scanout": { "title": "Direct scanout" },
+    "render:expand_undersized_textures": { "title": "Expand undersized textures" },
+    "render:xp_mode": { "title": "XP mode" },
+    "render:ctm_animation": { "title": "Colour transform animation" },
+    "render:cm_enabled": { "title": "Colour management", "restart": "hyprland" },
+    "render:send_content_type": { "title": "Send the content type" },
+    "render:cm_auto_hdr": { "title": "Automatic HDR", "visibility": "advanced" },
+    "render:new_render_scheduling": { "title": "New render scheduling" },
+    "render:non_shader_cm": {
+      "title": "Non-shader colour management",
+      "visibility": "advanced"
+    },
+    "render:cm_sdr_eotf": {
+      "title": "SDR transfer function",
+      "widget": "enum-string",
+      "known_values": { "values": ["default", "gamma22", "gamma22force", "srgb"] },
+      "labels": {
+        "default": "Default",
+        "gamma22": "Gamma 2.2",
+        "gamma22force": "Gamma 2.2 (forced)",
+        "srgb": "sRGB"
+      },
+      "visibility": "advanced"
+    },
+    "render:commit_timing_enabled": { "title": "Commit timing", "restart": "hyprland" },
+    "render:icc_vcgt_enabled": { "title": "Apply ICC VCGT tables", "visibility": "advanced" },
+    "render:use_shader_blur_blend": { "title": "Shader blur blending" },
+    "render:use_fp16": { "title": "Use FP16 buffers", "visibility": "advanced" },
+    "render:keep_unmodified_copy": {
+      "title": "Keep an unmodified copy",
+      "visibility": "advanced"
+    },
+    "render:non_shader_cm_interop": {
+      "title": "Non-shader colour management interop",
+      "visibility": "advanced"
+    },
+    "render:fp16_sdr_tf": {
+      "title": "FP16 SDR transfer function",
+      "visibility": "advanced"
+    },
+
+    "cursor:invisible": { "title": "Hide the cursor" },
+    "cursor:no_hardware_cursors": { "title": "Hardware cursors" },
+    "cursor:no_break_fs_vrr": { "title": "Keep VRR in fullscreen" },
+    "cursor:min_refresh_rate": { "title": "Minimum refresh rate", "unit": "Hz" },
+    "cursor:hotspot_padding": { "title": "Hotspot padding", "unit": "px" },
+    "cursor:inactive_timeout": { "title": "Hide after inactivity", "unit": "s" },
+    "cursor:no_warps": { "title": "Disable cursor warps" },
+    "cursor:persistent_warps": { "title": "Persistent warps" },
+    "cursor:warp_on_change_workspace": { "title": "Warp on workspace change" },
+    "cursor:warp_on_toggle_special": { "title": "Warp on special workspace toggle" },
+    "cursor:default_monitor": {
+      "title": "Startup monitor",
+      "widget": "monitor-picker",
+      "nullable": true,
+      "null_label": "Auto",
+      "null_value": ""
+    },
+    "cursor:zoom_factor": { "title": "Zoom factor", "visibility": "advanced" },
+    "cursor:zoom_rigid": { "title": "Rigid zoom" },
+    "cursor:zoom_disable_aa": { "title": "Disable zoom antialiasing" },
+    "cursor:zoom_detached_camera": { "title": "Detached zoom camera" },
+    "cursor:enable_hyprcursor": { "title": "Use hyprcursor" },
+    "cursor:hide_on_key_press": { "title": "Hide on key press" },
+    "cursor:hide_on_touch": { "title": "Hide on touch" },
+    "cursor:hide_on_tablet": { "title": "Hide on tablet input" },
+    "cursor:use_cpu_buffer": { "title": "Use a CPU buffer", "visibility": "advanced" },
+    "cursor:sync_gsettings_theme": { "title": "Sync the cursor theme to GSettings" },
+    "cursor:warp_back_after_non_mouse_input": { "title": "Warp back after non-mouse input" },
+
+    "ecosystem:no_update_news": { "title": "Hide update news" },
+    "ecosystem:no_donation_nag": { "title": "Hide the donation reminder" },
+    "ecosystem:enforce_permissions": {
+      "title": "Enforce permissions",
+      "visibility": "advanced"
+    },
+
+    "debug:overlay": { "title": "Debug overlay" },
+    "debug:damage_blink": { "title": "Blink on damage" },
+    "debug:gl_debugging": { "title": "OpenGL debugging", "restart": "hyprland" },
+    "debug:disable_logs": { "title": "Disable logging" },
+    "debug:disable_time": { "title": "Omit timestamps from logs" },
+    "debug:damage_tracking": { "title": "Damage tracking" },
+    "debug:enable_stdout_logs": { "title": "Log to stdout" },
+    "debug:manual_crash": {
+      "title": "Manual crash",
+      "widget": "segmented",
+      "labels": { "0": "Armed", "1": "Crash Hyprland" }
+    },
+    "debug:suppress_errors": { "title": "Suppress errors" },
+    "debug:disable_scale_checks": { "title": "Disable scale checks" },
+    "debug:error_limit": { "title": "Displayed error limit" },
+    "debug:error_position": { "title": "Error position" },
+    "debug:colored_stdout_logs": { "title": "Colour stdout logs" },
+    "debug:log_damage": { "title": "Log damage" },
+    "debug:pass": { "title": "Log render passes" },
+    "debug:full_cm_proto": {
+      "title": "Full colour-management protocol",
+      "restart": "hyprland"
+    },
+    "debug:ds_handle_same_buffer": { "title": "Direct scanout of the same buffer" },
+    "debug:ds_handle_same_buffer_fifo": {
+      "title": "Direct scanout of the same buffer (FIFO)"
+    },
+    "debug:fifo_pending_workaround": { "title": "FIFO pending workaround" },
+    "debug:render_solitary_wo_damage": { "title": "Render solitary windows without damage" },
+    "debug:vfr": { "title": "Variable frame rate" },
+    "debug:invalidate_fp16": { "title": "Invalidate FP16 buffers" },
+
+    "layout:single_window_aspect_ratio": { "title": "Single window aspect ratio" },
+    "layout:single_window_aspect_ratio_tolerance": { "title": "Aspect ratio tolerance" },
+
+    "dwindle:force_split": { "title": "Force split direction" },
+    "dwindle:preserve_split": { "title": "Preserve the split direction" },
+    "dwindle:smart_split": { "title": "Smart split" },
+    "dwindle:smart_resizing": { "title": "Smart resizing" },
+    "dwindle:permanent_direction_override": { "title": "Permanent direction override" },
+    "dwindle:special_scale_factor": { "title": "Special workspace scale" },
+    "dwindle:split_width_multiplier": { "title": "Split width multiplier" },
+    "dwindle:use_active_for_splits": { "title": "Split from the active window" },
+    "dwindle:default_split_ratio": { "title": "Default split ratio" },
+    "dwindle:split_bias": { "title": "Split bias" },
+    "dwindle:precise_mouse_move": { "title": "Precise mouse move" },
+
+    "master:allow_small_split": { "title": "Allow small splits" },
+    "master:special_scale_factor": { "title": "Special workspace scale" },
+    "master:mfact": { "title": "Master area size" },
+    "master:new_status": {
+      "title": "New window placement",
+      "widget": "enum-string",
+      "known_values": { "values": ["master", "slave", "inherit"] },
+      "labels": {
+        "master": "Becomes master",
+        "slave": "Joins the stack",
+        "inherit": "Inherit from focus"
+      }
+    },
+    "master:new_on_top": { "title": "New windows on top" },
+    "master:new_on_active": {
+      "title": "Place new windows relative to focus",
+      "widget": "enum-string",
+      "known_values": { "values": ["before", "after", "none"] },
+      "labels": { "before": "Before", "after": "After", "none": "Use “new on top”" }
+    },
+    "master:orientation": {
+      "title": "Master area position",
+      "widget": "enum-string",
+      "known_values": { "values": ["left", "right", "top", "bottom", "center"] },
+      "labels": {
+        "left": "Left",
+        "right": "Right",
+        "top": "Top",
+        "bottom": "Bottom",
+        "center": "Centre"
+      }
+    },
+    "master:slave_count_for_center_master": { "title": "Stack windows before centring master" },
+    "master:center_master_fallback": {
+      "title": "Centre master fallback",
+      "widget": "enum-string",
+      "known_values": { "values": ["left", "right", "top", "bottom"] },
+      "labels": { "left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom" },
+      "depends_on": { "option": "master:orientation", "value": "center" }
+    },
+    "master:center_ignores_reserved": { "title": "Centre ignores the reserved area" },
+    "master:smart_resizing": { "title": "Smart resizing" },
+    "master:drop_at_cursor": { "title": "Drop at the cursor" },
+    "master:always_keep_position": { "title": "Always keep position" },
+    "master:focus_master_on_close": { "title": "Focus master when a window closes" },
+
+    "scrolling:fullscreen_on_one_column": { "title": "Fullscreen with a single column" },
+    "scrolling:column_width": { "title": "Column width" },
+    "scrolling:focus_fit_method": { "title": "Focus fit method" },
+    "scrolling:follow_focus": { "title": "Follow focus" },
+    "scrolling:follow_min_visible": { "title": "Minimum visible fraction" },
+    "scrolling:explicit_column_widths": {
+      "title": "Preset column widths",
+      "widget": "float-list"
+    },
+    "scrolling:direction": {
+      "title": "Scroll direction",
+      "widget": "enum-string",
+      "known_values": { "values": ["left", "right", "up", "down"] },
+      "labels": { "left": "Left", "right": "Right", "up": "Up", "down": "Down" }
+    },
+    "scrolling:wrap_focus": { "title": "Wrap focus" },
+    "scrolling:wrap_swapcol": { "title": "Wrap column swapping" },
+
+    "experimental:wp_cm_1_2": { "title": "Colour-management protocol v1.2" },
+
+    "input-capture:capture_modifiers": { "title": "Capture modifiers" },
+    "input-capture:enforce_barriers": { "title": "Enforce barriers" },
+
+    "quirks:prefer_hdr": { "title": "Prefer HDR" },
+    "quirks:skip_non_kms_dmabuf_formats": { "title": "Skip non-KMS DMA-BUF formats" }
+  }
+}
