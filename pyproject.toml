@@ -1,0 +1,37 @@
+# Python tooling only. meson is the canonical build (ADR-0011) -- there is
+# deliberately no [build-system] or [project] table here, so there is exactly
+# one way to build and install the app.
+
+[tool.ruff]
+line-length = 96
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["tests/corpus"]  # third-party rice fixtures, not our code
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "RUF",  # ruff-specific
+]
+
+[tool.mypy]
+# The Engine only: PyGObject stubs are perpetually partial and the UI is the
+# layer with the least logic, so annotating it costs more than it catches
+# (ADR-0011).
+files = ["src/hyprtweaker/engine"]
+mypy_path = "src"
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/ui"]
+pythonpath = ["src"]
+markers = [
+    "hyprland: integration tier; needs a real Hyprland binary (auto-skipped without one)",
+]

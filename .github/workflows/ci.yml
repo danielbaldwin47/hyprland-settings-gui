@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ruff + mypy (engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install ruff mypy
+      - name: ruff check
+        run: ruff check .
+      - name: ruff format
+        run: ruff format --check .
+      - name: mypy (engine only)
+        run: mypy
+
+  unit:
+    name: unit tier (engine, headless)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest
+      # No GTK installed on this runner at all, so the gi-mask seam test is
+      # checked against a machine where gi genuinely does not exist as well as
+      # against the masked one in the ui-smoke job below.
+      - run: pytest tests/unit -v
+
+  ui-smoke:
+    name: UI smoke tier (GTK4 + libadwaita)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK4 / libadwaita
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
+            libgtk-4-1 libadwaita-1-0 xvfb
+      - name: Create venv with system gi visible
+        run: |
+          python3 -m venv --system-site-packages .venv
+          .venv/bin/pip install pytest
+      - name: Boot the app headless
+        env:
+          GDK_BACKEND: x11
+        run: xvfb-run -a .venv/bin/python -m pytest tests/ui tests/unit -v
+
+  build:
+    name: meson build + install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 \
+            libgtk-4-1 libadwaita-1-0
+      - run: meson setup build --prefix=/usr
+      - run: meson compile -C build
+      - run: DESTDIR="$PWD/_install" meson install -C build
+      - name: The installed launcher runs
+        run: |
+          test -x _install/usr/bin/hyprtweaker
+          # dist-packages on Debian/Ubuntu, site-packages elsewhere; a glob that
+          # matches nothing stays literal and is harmless on PYTHONPATH.
+          PYTHONPATH="$(echo _install/usr/lib/python3*/dist-packages \
+                             _install/usr/lib/python3*/site-packages | tr ' ' ':')" \
+            _install/usr/bin/hyprtweaker --help
