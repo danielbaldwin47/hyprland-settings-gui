@@ -335,7 +335,7 @@ class TestManifest:
         therefore silently overwritable -- the exact loss the hash exists to prevent.
         """
         writer.write(model)
-        paths.manifest.write_text('{"format_version": 1, "modu', encoding="utf-8")
+        paths.manifest.write_text('{"format_version": 2, "modu', encoding="utf-8")
         edited = paths.options_dir / "general.lua"
         edited.write_text("-- mine now\n", encoding="utf-8")
 
@@ -343,6 +343,45 @@ class TestManifest:
 
         assert "options/general.lua" in result.hand_edited
         assert edited.read_text(encoding="utf-8") == "-- mine now\n"
+
+    def test_the_protection_survives_the_write_that_repairs_the_manifest(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """The damaged state has to be sticky, or it protects for exactly one write.
+
+        That write lays down a valid Manifest. If it recorded the bytes it *would* have
+        written, the next write would see a healthy Manifest, find no mismatch, and
+        overwrite everything -- protection that lasts one round is a delay, not a guard.
+        """
+        writer.write(model)
+        paths.manifest.write_text('{"format_version": 2, "modu', encoding="utf-8")
+        paths.entrypoint.write_text("-- my entrypoint\n", encoding="utf-8")
+        edited = paths.options_dir / "general.lua"
+        edited.write_text("-- mine now\n", encoding="utf-8")
+
+        for _ in range(3):
+            result = writer.write(model)
+            assert "hyprland.lua" in result.hand_edited
+            assert "options/general.lua" in result.hand_edited
+            assert not result.entrypoint_written
+
+        assert paths.entrypoint.read_text(encoding="utf-8") == "-- my entrypoint\n"
+        assert edited.read_text(encoding="utf-8") == "-- mine now\n"
+
+    def test_overwriting_clears_the_unaccounted_state(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """The user's answer has to end it, or the app stalls forever after one bad file."""
+        writer.write(model)
+        paths.manifest.write_text('{"format_version": 2, "modu', encoding="utf-8")
+        paths.entrypoint.write_text("-- my entrypoint\n", encoding="utf-8")
+        writer.write(model)
+
+        writer.write(model, overwrite_hand_edits=True)
+
+        assert json.loads(paths.manifest.read_text(encoding="utf-8"))["unverified"] == []
+        assert writer.write(model).hand_edited == ()
+        assert paths.entrypoint.read_text(encoding="utf-8").startswith("-- Generated")
 
     def test_an_absent_manifest_protects_nothing(
         self, writer: Writer, paths: ConfigPaths, model: ConfigModel

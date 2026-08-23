@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..model.options import ConfigModel
@@ -186,11 +186,13 @@ class Writer:
             app_version=self._app_version,
             schema_version=model.schema.hyprland_version,
         )
-        hand_edited = (
-            self._everything_here(rendered)
-            if manifest_is_damaged(self._paths.manifest)
-            else manifest.hand_edited(self._paths)
-        )
+        if manifest_is_damaged(self._paths.manifest):
+            # The record was lost, so every file already here is unaccounted for. Recorded
+            # from now on by name rather than by hash: there is no hash to record, and this
+            # write must not be the one that quietly claims authorship of them.
+            manifest = replace(manifest, unverified=self._everything_here(rendered))
+
+        hand_edited = manifest.hand_edited(self._paths)
         off_limits: frozenset[str] = (
             frozenset() if overwrite_hand_edits else frozenset(hand_edited)
         )
@@ -216,16 +218,18 @@ class Writer:
         else:
             entrypoint_written = self._write_if_changed(self._paths.entrypoint, entrypoint_text)
 
-        # The Manifest records what is on disk, so a skipped file keeps the hash it had --
-        # overwriting it with the hash of bytes nobody wrote would erase the hand edit.
+        # A record is the claim "the app wrote exactly these bytes", so it is only ever made
+        # for a file this write actually laid down. A skipped file keeps the record it had,
+        # or -- when there is none, because the Manifest was lost -- keeps its place on
+        # `unverified` instead. Recording bytes nobody wrote would erase the very edit that
+        # was just detected.
         records = {
-            name: manifest.modules.get(name, ModuleRecord.of(text))
-            if name in off_limits
-            else ModuleRecord.of(text)
+            name: ModuleRecord.of(text)
             for name, text in rendered.items()
+            if name not in off_limits
         }
-        # A hand-edited Module the model no longer renders was spared by `_prune`, so its
-        # record has to survive too. Dropping it would leave an orphan file that nothing
+        # A spared Module the model no longer renders was skipped by `_prune` too, so its
+        # record has to survive. Dropping it would leave an orphan file that nothing
         # requires, nothing reports, and no later "overwrite" answer could ever reach.
         records.update(
             {
@@ -242,6 +246,7 @@ class Writer:
             manifest.entrypoint
             if ENTRYPOINT_NAME in off_limits
             else ModuleRecord.of(entrypoint_text),
+            unverified=tuple(name for name in manifest.unverified if name in off_limits),
         )
         self._write_if_changed(self._paths.manifest, manifest.render())
 
@@ -258,13 +263,16 @@ class Writer:
     # --- internals ----------------------------------------------------------------------
 
     def _everything_here(self, rendered: dict[str, str]) -> tuple[str, ...]:
-        """Every file this write would touch that already exists -- the no-Manifest answer.
+        """Every file this write would touch that already exists -- the lost-record answer.
 
         Reached only when a Manifest file is there but will not parse: the app wrote in this
         directory and lost its record, so it cannot vouch for a single byte of it. Refusing
         to overwrite on a guess is the same call as for a real hand edit, and it lands the
         user in the same place -- a Banner offering overwrite (ADR-0016) -- rather than
         quietly replacing files it can no longer account for.
+
+        Scoped to what this write would touch, so a file the app was never going to write is
+        never dragged in.
         """
         return tuple(
             sorted(

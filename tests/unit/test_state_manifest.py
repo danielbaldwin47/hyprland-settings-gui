@@ -53,6 +53,7 @@ class TestRoundTrip:
             entrypoint=ModuleRecord.of("-- entry\n"),
             modules={"options/general.lua": ModuleRecord.of("hl.config({})\n")},
             migration={"date": "2026-08-22"},
+            unverified=("options/misc.lua",),
         )
         path = tmp_path / "manifest.json"
         path.write_text(manifest.render(), encoding="utf-8")
@@ -175,5 +176,21 @@ class TestHandEditDetection:
         text = "-- generated\n"
         paths.entrypoint.write_text(text, encoding="utf-8")
         manifest = Manifest(**VERSIONS, entrypoint=ModuleRecord.of(text))
+
+        assert manifest.hand_edited(paths) == ()
+
+    def test_an_unverified_name_counts_even_with_no_hash_to_compare(
+        self, paths: ConfigPaths
+    ) -> None:
+        """After a lost record there is no hash; the name is the whole claim."""
+        (paths.app_dir / "a.lua").write_text("anything\n", encoding="utf-8")
+        paths.entrypoint.write_text("anything\n", encoding="utf-8")
+        manifest = Manifest(**VERSIONS, unverified=("a.lua", "hyprland.lua"))
+
+        assert manifest.hand_edited(paths) == ("a.lua", "hyprland.lua")
+
+    def test_an_unverified_file_that_is_gone_is_not_reported(self, paths: ConfigPaths) -> None:
+        """Nothing was ever claimed about it and it no longer exists -- nothing to protect."""
+        manifest = Manifest(**VERSIONS, unverified=("a.lua",))
 
         assert manifest.hand_edited(paths) == ()

@@ -109,6 +109,19 @@ class Manifest:
     migration: dict[str, Any] | None = None
     """Provenance written once by the Importer: when, from what tree, at what hash."""
 
+    unverified: tuple[str, ...] = ()
+    """App-owned files the app cannot vouch for, because the record was lost.
+
+    A hash says "the app wrote exactly these bytes". After a corrupt Manifest there is no
+    such claim to make and none can be invented -- recording the bytes the app *would* have
+    written would assert an authorship it does not have, and recording the bytes on disk
+    would assert that whatever an editor left there is the app's own work.
+
+    So the file is named instead, and stays named until a write actually resolves it. That
+    is what makes the state sticky: without it, one write would relabel a directory full of
+    unaccounted files as freshly authored, and the second write would overwrite them all.
+    """
+
     @classmethod
     def load(cls, path: Path, *, app_version: str, schema_version: str) -> Manifest:
         """Read the Manifest, or return an empty one when it is missing or unreadable.
@@ -135,12 +148,18 @@ class Manifest:
                     modules[str(name)] = parsed
 
         migration = payload.get("migration")
+        raw_unverified = payload.get("unverified")
         return cls(
             app_version=str(payload.get("app_version", app_version)),
             schema_version=str(payload.get("schema_version", schema_version)),
             entrypoint=ModuleRecord.from_json(payload.get("entrypoint")),
             modules=modules,
             migration=migration if isinstance(migration, dict) else None,
+            unverified=(
+                tuple(str(name) for name in raw_unverified)
+                if isinstance(raw_unverified, list)
+                else ()
+            ),
         )
 
     def as_json(self) -> dict[str, Any]:
@@ -152,6 +171,7 @@ class Manifest:
             "modules": {
                 name: record.as_json() for name, record in sorted(self.modules.items())
             },
+            "unverified": list(self.unverified),
             "migration": self.migration,
         }
 
@@ -168,26 +188,41 @@ class Manifest:
         return replace(self, app_version=app_version, schema_version=schema_version)
 
     def with_modules(
-        self, modules: dict[str, ModuleRecord], entrypoint: ModuleRecord | None
+        self,
+        modules: dict[str, ModuleRecord],
+        entrypoint: ModuleRecord | None,
+        unverified: tuple[str, ...] = (),
     ) -> Manifest:
         """The Manifest after a write: a fresh Module set, provenance carried over."""
-        return replace(self, modules=dict(modules), entrypoint=entrypoint)
+        return replace(
+            self, modules=dict(modules), entrypoint=entrypoint, unverified=unverified
+        )
+
+    def path_for(self, name: str, paths: ConfigPaths) -> Path:
+        """Where a recorded name lives -- the Entrypoint is the one outside the App dir."""
+        return paths.entrypoint if name == ENTRYPOINT_NAME else paths.app_dir / name
 
     def hand_edited(self, paths: ConfigPaths) -> tuple[str, ...]:
-        """Every app-owned file whose bytes on disk are not the bytes the app wrote.
+        """Every app-owned file the app cannot show it wrote in its current form.
+
+        Two ways to land here: a recorded hash that no longer matches, or a name on
+        `unverified`, where there is no hash to match because the record was lost. Both mean
+        the same thing to a writer -- do not overwrite this without asking.
 
         Includes the Entrypoint, which lives beside the App dir rather than inside it: a
         hand-edited `hyprland.lua` is the one ADR-0016 calls Entrypoint refusal, and storing
         its hash without ever comparing it would be dead data.
 
-        A missing file counts as edited -- someone deleted it, which is a change the app
-        should surface rather than silently re-create.
+        A missing recorded file counts as edited -- someone deleted it, which is a change the
+        app should surface rather than silently re-create. A missing *unverified* file does
+        not: there was never a claim about it, and it is gone, so nothing is left to protect.
         """
-        edited = [
+        edited = {
             name
-            for name, record in sorted(self.modules.items())
+            for name, record in self.modules.items()
             if not record.matches(paths.app_dir / name)
-        ]
+        }
         if self.entrypoint is not None and not self.entrypoint.matches(paths.entrypoint):
-            edited.append(ENTRYPOINT_NAME)
-        return tuple(edited)
+            edited.add(ENTRYPOINT_NAME)
+        edited |= {name for name in self.unverified if self.path_for(name, paths).is_file()}
+        return tuple(sorted(edited))
