@@ -1,7 +1,8 @@
 """The ``Adw.Application`` subclass.
 
-Identity (app id, name) is fixed by ADR-0019 and must not churn: the desktop
-entry, icon theme name and any future Flatpak id all key off ``APP_ID``.
+``APP_ID`` is re-exported from :mod:`hyprtweaker` so callers that already import
+this module keep working; it is defined there, toolkit-free, because reading the
+app id should not require GTK.
 """
 
 from __future__ import annotations
@@ -13,9 +14,10 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio  # noqa: E402
 
+from hyprtweaker import APP_ID  # noqa: E402
 from hyprtweaker.ui.shell.window import MainWindow  # noqa: E402
 
-APP_ID = "io.github.danielbaldwin47.Hyprtweaker"
+__all__ = ["APP_ID", "HyprtweakerApplication"]
 
 
 class HyprtweakerApplication(Adw.Application):

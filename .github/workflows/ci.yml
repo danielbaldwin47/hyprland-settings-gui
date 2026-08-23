@@ -80,11 +80,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 \
             libgtk-4-1 libadwaita-1-0
-      # pytest must be on PATH before `meson setup`: tests/meson.build resolves
-      # it with find_program at configure time, and without it `meson test`
-      # would report "No tests defined" and pass vacuously.
-      - run: pip install pytest
-      - run: meson setup build --prefix=/usr
+      # Deliberately no actions/setup-python here: this job must use the system
+      # python3 that apt's python3-gi belongs to, so `meson setup`'s gi check and
+      # the installed launcher both exercise the interpreter a package would use.
+      # apt (not pip) for pytest for the same reason, and it sidesteps PEP 668.
+      - run: sudo apt-get install -y --no-install-recommends python3-pytest
+      # -Dtests=enabled makes pytest required at configure time, so `meson test`
+      # can never pass by having found no tests to run.
+      - run: meson setup build --prefix=/usr -Dtests=enabled
       - run: meson compile -C build
       - name: meson test
         # Exercises the wiring a PKGBUILD check() will use (ADR-0019). The UI

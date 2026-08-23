@@ -12,7 +12,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[2] / "src"
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
 MESON_BUILD = SRC / "meson.build"
 
 
@@ -48,3 +49,25 @@ def test_every_python_source_is_installed() -> None:
 def test_no_installed_source_is_missing_from_disk() -> None:
     stale = declared_sources() - actual_sources()
     assert not stale, f"src/meson.build installs files that no longer exist: {sorted(stale)}"
+
+
+def test_version_matches_between_build_and_package() -> None:
+    """The build and the package must agree on the version, or a bump half-lands."""
+    meson_version = re.search(
+        r"^project\(.*?^\s*version:\s*'([^']+)'",
+        (ROOT / "meson.build").read_text(),
+        re.DOTALL | re.MULTILINE,
+    )
+    assert meson_version is not None, "could not find the project version in meson.build"
+
+    package_version = re.search(
+        r'^__version__\s*=\s*"([^"]+)"',
+        (SRC / "hyprtweaker" / "__init__.py").read_text(),
+        re.MULTILINE,
+    )
+    assert package_version is not None, "could not find __version__ in hyprtweaker/__init__.py"
+
+    assert meson_version.group(1) == package_version.group(1), (
+        f"meson.build says {meson_version.group(1)} but "
+        f"hyprtweaker.__version__ is {package_version.group(1)}"
+    )

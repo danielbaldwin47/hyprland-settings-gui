@@ -1,0 +1,6 @@
+option(
+  'tests',
+  type: 'feature',
+  value: 'auto',
+  description: 'Wire the per-commit test tiers into `meson test` (needs pytest)',
+)

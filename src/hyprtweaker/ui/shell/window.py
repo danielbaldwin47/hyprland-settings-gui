@@ -26,7 +26,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         placeholder = Adw.StatusPage(
             title="Hyprtweaker",
-            description="The settings shell lands here.",
+            description="Your Hyprland settings will appear here.",
             icon_name="preferences-system-symbolic",
         )
 

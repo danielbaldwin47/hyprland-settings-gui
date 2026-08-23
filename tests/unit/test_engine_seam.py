@@ -21,12 +21,18 @@ import pytest
 ENGINE = "hyprtweaker.engine"
 
 
-class _MaskedImportError(ImportError):
-    """Raised in place of a successful `gi` import while the mask is active."""
+def _is_masked(name: str) -> bool:
+    """True for the module names this mask owns: `gi` and `hyprtweaker`, with subtrees."""
+    return name in ("gi", "hyprtweaker") or name.startswith(("gi.", "hyprtweaker."))
 
 
 class _GiMask(MetaPathFinder):
-    """A meta-path finder that refuses `gi` and everything under it."""
+    """A meta-path finder that refuses `gi` and everything under it.
+
+    Raising from `find_spec` rather than returning None is deliberate: it is what
+    lets the failure carry a message naming the actual rule, which is the whole
+    value of this test to whoever trips it.
+    """
 
     def find_spec(
         self,
@@ -35,7 +41,7 @@ class _GiMask(MetaPathFinder):
         target: object = None,
     ) -> None:
         if fullname == "gi" or fullname.startswith("gi."):
-            raise _MaskedImportError(
+            raise ImportError(
                 f"{fullname} is masked: hyprtweaker.engine must not import gi (ADR-0011)"
             )
         return None
@@ -49,10 +55,16 @@ def gi_masked() -> Iterator[None]:
     modules were already imported (and had already pulled `gi` in) before the
     mask went up, so every `hyprtweaker.*` and `gi*` module is evicted first and
     restored afterwards.
+
+    Entry and exit are deliberately symmetric, touching only the names this mask
+    owns. A blunter restore (clear `sys.modules`, put the snapshot back) also
+    evicts anything *else* first imported inside the block -- a later import then
+    builds a second, distinct module object, silently discarding whatever state
+    the first one held. That corrupts the session for every test that follows.
     """
-    saved = dict(sys.modules)
+    saved = {name: module for name, module in sys.modules.items() if _is_masked(name)}
     for name in list(sys.modules):
-        if name == "gi" or name.startswith(("gi.", "hyprtweaker.")) or name == "hyprtweaker":
+        if _is_masked(name):
             del sys.modules[name]
 
     mask = _GiMask()
@@ -61,7 +73,9 @@ def gi_masked() -> Iterator[None]:
         yield
     finally:
         sys.meta_path.remove(mask)
-        sys.modules.clear()
+        for name in list(sys.modules):
+            if _is_masked(name):
+                del sys.modules[name]
         sys.modules.update(saved)
 
 
