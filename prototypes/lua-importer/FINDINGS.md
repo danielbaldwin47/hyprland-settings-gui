@@ -106,6 +106,14 @@ structured `{name, args}` — the same shape as ADR-0007's typed dispatcher Acti
   with an empty theme.
 - **`define_submap` evaluates its body immediately**; tagging binds with the active submap
   and regrouping on emission round-trips perfectly (end-4's 191-bind `global` submap).
+- **`Hyprland --verify-config` is NOT side-effect-free.** It *executes* the Lua file with
+  live bindings: `hl.exec_cmd` spawns for real, and the spawned process inherits
+  `HYPRLAND_INSTANCE_SIGNATURE` — verifying the HyDE gen file ran its
+  `hyprctl seterror '[HyDE] Hyprland does not detect colors!…'` against the user's live
+  compositor (a persistent bar until `hyprctl seterror disable`). The importer's static
+  gate must run verify with `HYPRLAND_INSTANCE_SIGNATURE` (and ideally the whole
+  `XDG_RUNTIME_DIR` socket path) stripped from the environment so config-time spawns
+  can't reach the live session.
 - **The fixpoint + `--verify-config` combo is the importer's test harness**: fast (~0.3 s
   per config, no compositor), and it caught five real bugs in this prototype (offset-drift
   in comment stripping, long-bracket strings, `for…do` depth, named-function extraction,

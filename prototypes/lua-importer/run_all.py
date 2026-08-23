@@ -49,8 +49,12 @@ def roundtrip(name, entry, basedir, home, policy):
                           HERE / "results" / f"{name}-rt.json", RT],
                          capture_output=True, text=True)
     print("   " + cmp.stdout.strip().splitlines()[0])
+    # verify-config EXECUTES hl.exec_cmd; strip the live-session handles so
+    # config-time spawns (hyprctl seterror/notify) can't reach the compositor
+    venv = {k: v for k, v in __import__("os").environ.items()
+            if k not in ("HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR")}
     vr = subprocess.run(["Hyprland", "--verify-config", "--config", str(gen)],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, env=venv)
     ok = "config ok" in (vr.stdout + vr.stderr)
     print("   engine verify: " + ("config ok" if ok else "FAILED"))
     if not ok:
