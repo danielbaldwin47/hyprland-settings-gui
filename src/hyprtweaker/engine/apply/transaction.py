@@ -22,9 +22,17 @@ No `eval` may run between the reload and the error read: `eval` clears `configer
 slider preview racing a confirming transaction would erase the very errors it is waiting
 for. `ApplyQueue` is what makes that ordering impossible.
 
-Snapshotting the pre-write bytes into the Journal is also part of this transaction in
-ADR-0010; the Journal itself arrives with #59, and this module grows the snapshot step then
-rather than shipping a hook with nothing on the other end.
+Snapshotting the pre-write bytes into the Journal is step 0, and it brackets the other five:
+the Snapshot has to be taken while the previous bytes still exist (before step 3) and the
+entry cannot be written until the transaction has an outcome to record (after step 5). What
+it buys is stated in two ADRs: ADR-0010's auto-revert restores the *pre-write* bytes, and
+ADR-0016's Last known good is the newest bytes whose transaction **confirmed** -- so the
+entry carries both digests and the `confirmed` flag that separates "nothing went wrong" from
+"everything was checked".
+
+A transaction without a Journal still works, and every test that is not about history runs
+that way. History is not config: an app that refused to apply an edit because it could not
+write to the state dir would be the tail wagging the dog.
 """
 
 from __future__ import annotations
@@ -45,7 +53,9 @@ from ..ipc import (
     OptionReply,
 )
 from ..model import UNSET, ConfigModel, UnknownOption, values_match
+from ..paths import ENTRYPOINT_NAME
 from ..schema import ResolvedOption
+from ..state import Draft, Journal
 from ..writer import LuaSyntaxError, ProtectedFile, Writer, WriteResult, module_relpath
 from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch, live_value
 
@@ -86,6 +96,7 @@ class ApplyTransaction:
         writer: Writer,
         client: CommandClient,
         events: EventStream,
+        journal: Journal | None = None,
         reload_timeout: float = RELOAD_TIMEOUT_SECONDS,
         settle_timeout: float = SETTLE_SECONDS,
     ) -> None:
@@ -93,9 +104,19 @@ class ApplyTransaction:
         self._writer = writer
         self._client = client
         self._events = events
+        self._journal = journal
         self._reload_timeout = reload_timeout
         self._settle_timeout = settle_timeout
         self._in_flight = False
+
+    @property
+    def journal(self) -> Journal | None:
+        """The history this transaction writes to, if it has one.
+
+        Exposed so auto-revert can ask the same object what the pre-write bytes were --
+        going back to the Journal for them, rather than being handed a copy, is what keeps
+        the recovery reading the record it will later be judged against."""
+        return self._journal
 
     @property
     def in_flight(self) -> bool:
@@ -126,27 +147,70 @@ class ApplyTransaction:
         except UnknownOption as error:
             return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
 
+        draft = self._open_draft()
         try:
             write = self._writer.write(self._model)
         except (LuaSyntaxError, ProtectedFile, ValueError) as error:
             # ADR-0010's guarantee: the gate runs over every rendered file before the first
-            # one is replaced, so there is nothing on disk to undo here.
+            # one is replaced, so there is nothing on disk to undo -- and therefore nothing
+            # to journal either.
             _log.error("apply aborted before writing: %s", error)
+            self._discard(draft)
             return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
         except OSError as error:
+            # The one path with no `WriteResult` to read: the App dir may be half-updated, so
+            # the Journal records what the disk says changed rather than what was intended.
             _log.error("apply failed mid-write: %s", error)
-            return ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
+            result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
+            self._record(draft, result, draft.dirty() if draft is not None else ())
+            return result
 
         if not write.changed:
             # Nothing on disk moved, so the live config already says what the model says.
             # Spending a full teardown reload to reassert it is a visible stutter for nothing.
             # Nothing became newly pending either: a restart-flagged value that is already
             # on file was reported pending by the transaction that put it there.
+            self._discard(draft)
             return ApplyResult(ApplyOutcome.NOTHING_TO_DO, keys=names, write=write)
 
-        return await self._reload_and_confirm(
+        result = await self._reload_and_confirm(
             names, options, write, self._pending_restart(options, write)
         )
+        self._record(draft, result, (*write.written, *write.removed))
+        return result
+
+    # --- the Journal half ---------------------------------------------------------------------
+
+    def _open_draft(self) -> Draft | None:
+        """Snapshot every file this write could touch, before it touches any of them."""
+        if self._journal is None:
+            return None
+        return self._journal.begin(self._writer.candidate_files(self._model))
+
+    def _record(self, draft: Draft | None, result: ApplyResult, changed: Sequence[str]) -> None:
+        """Journal what happened, once the outcome -- and therefore `confirmed` -- is known.
+
+        `changed` is the Modules whose bytes moved; the Entrypoint joins them when it was
+        rewritten, because the Module set changing is a change to the config as much as a
+        value is, and a rollback that restored Modules to a state the Entrypoint no longer
+        requires would restore nothing the compositor reads.
+        """
+        if draft is None:
+            return
+        names = list(changed)
+        if result.write is not None and result.write.entrypoint_written:
+            names.append(ENTRYPOINT_NAME)
+        draft.commit(
+            keys=result.keys,
+            outcome=str(result.outcome),
+            confirmed=result.confirmed,
+            changed=names,
+        )
+
+    @staticmethod
+    def _discard(draft: Draft | None) -> None:
+        if draft is not None:
+            draft.discard()
 
     @staticmethod
     def _pending_restart(

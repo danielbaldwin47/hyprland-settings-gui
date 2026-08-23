@@ -54,6 +54,7 @@ class HyprtweakerApplication(Adw.Application):
         window = MainWindow(session, application=self)
         session.on_state_changed = window.sync
         session.on_applied = window.show_result
+        session.on_reverted = window.show_revert
 
         # Started only once the window is listening: the session's first act is a re-read,
         # and it reports the result through those two callbacks.

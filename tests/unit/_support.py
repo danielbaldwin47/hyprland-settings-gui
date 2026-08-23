@@ -4,21 +4,35 @@ A plain module rather than `conftest.py`: `tests/unit` is not a package, so a co
 reachable as fixtures but not as an import. pytest puts this directory on `sys.path`,
 which makes `from _support import ...` the working form.
 
-Two things several schema tests need: where the shipped schema files are, and a way to
-read the explicit file lists out of a `meson.build`. Both `src/meson.build` (Python
-sources) and `data/meson.build` (schema data) list their files by hand -- meson says
-nothing about a file no list names -- so both need the same "declared vs on disk" check,
-and it is one helper rather than two copies of the same parser.
+Three groups of them:
+
+* **where the shipped schema files are**, and one loaded `Schema` shared across modules --
+  resolving 353 Options takes long enough that doing it per test module is noticeable;
+* **a way to read the explicit file lists out of a `meson.build`.** Both `src/meson.build`
+  (Python sources) and `data/meson.build` (schema data) list their files by hand -- meson
+  says nothing about a file no list names -- so both need the same "declared vs on disk"
+  check, and it is one helper rather than two copies of the same parser;
+* **the rig every `Session` test needs**: a `spawn` that can be awaited to quiescence, a
+  scripted compositor that answers about whole Sections, and the session over both. Shared
+  because `Session` has more than one test module now, and a second copy of an async test
+  rig is a second thing to get subtly wrong.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
+from collections.abc import Coroutine
+from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from _fake_hyprland import FakeHyprland
+
     from hyprtweaker.engine.model import ConfigModel
+    from hyprtweaker.engine.schema import Schema
+    from hyprtweaker.session import Session
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -76,6 +90,80 @@ def sample_model() -> ConfigModel:
     model.set("input-capture:enforce_barriers", True)
 
     return model
+
+
+@lru_cache(maxsize=1)
+def sample_schema() -> Schema:
+    """The pinned Schema, resolved once for the whole run.
+
+    Shared rather than per-module: `Schema` is immutable once resolved, and every test module
+    that loads its own pays the resolve again for an identical answer.
+    """
+    from hyprtweaker.engine.schema import load_schema
+
+    return load_schema(SAMPLE_VERSION, SCHEMA_DIR)
+
+
+class Runner:
+    """A `Session.spawn` for tests: real tasks on the running loop, awaitable to quiescence.
+
+    `settle` loops rather than gathering once, because the coroutines a session spawns spawn
+    more -- a foreign reload's re-read, an auto-revert's restore transaction -- and a single
+    `gather` would return while the interesting half was still queued.
+    """
+
+    def __init__(self) -> None:
+        self._tasks: list[asyncio.Task[None]] = []
+
+    def spawn(self, coro: Coroutine[Any, Any, None]) -> None:
+        self._tasks.append(asyncio.create_task(coro))
+
+    async def settle(self) -> None:
+        """Wait for every spawned task, including ones spawned by the ones we waited on."""
+        while self._tasks:
+            batch, self._tasks = self._tasks, []
+            await asyncio.gather(*batch)
+
+
+async def drain_events(runner: Runner) -> None:
+    """Let the event stream dispatch, then wait for whatever it spawned."""
+    await asyncio.sleep(0.05)
+    await runner.settle()
+
+
+def section_conversation(*sections: str, **set_values: Any) -> dict[str, str]:
+    """A compositor that answers about whole Sections, not just a handful of keys.
+
+    Startup re-reads every Option of every Section the app owns a Module for, so a script
+    covering only the interesting keys would have the session fall over on the first
+    uninteresting one -- and pass or fail for the wrong reason.
+    """
+    from _fake_hyprland import NO_CONFIG_ERRORS, OK, option_reply
+
+    schema = sample_schema()
+    conversation = {"reload": OK, "j/configerrors": NO_CONFIG_ERRORS}
+    for section in sections:
+        for option in schema.section(section):
+            value = set_values.get(option.name)
+            conversation[f"j/getoption {option.name}"] = option_reply(
+                option,
+                value if value is not None else option.default,
+                live_set=value is not None,
+            )
+    return conversation
+
+
+def session_for(fake: FakeHyprland, root: Path, runner: Runner) -> Session:
+    from hyprtweaker.engine.paths import ConfigPaths
+    from hyprtweaker.session import Session
+
+    return Session(
+        spawn=runner.spawn,
+        schema=sample_schema(),
+        paths=ConfigPaths.rooted_at(root),
+        app_version=SAMPLE_APP_VERSION,
+        connect=lambda: fake.instance,
+    )
 
 
 def meson_quoted_names(text: str, block: str) -> set[str]:

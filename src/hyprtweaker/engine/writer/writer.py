@@ -162,6 +162,31 @@ class Writer:
             for items in (model.section(section),)
         }
 
+    def candidate_files(self, model: ConfigModel) -> tuple[str, ...]:
+        """Every app-owned name a write of `model` could create, replace or delete.
+
+        The Journal's question, asked before the write because by then the answer's evidence
+        is gone: a Snapshot of the previous bytes has to be taken while they still exist, and
+        which files a write *actually* touches is only knowable from its `WriteResult`.
+
+        Three sources, and each catches a case the others miss: what the model implies (a
+        Module about to be created), what is on disk under `options/` (a Module about to be
+        pruned because its Section lost its last set Option), and the Entrypoint, which lives
+        outside the App dir and changes whenever the Module set does.
+
+        Names only, and cheap: the model walk this shares with `module_options` does not
+        render a single line of Lua.
+        """
+        names = set(self.module_options(model))
+        if self._paths.options_dir.is_dir():
+            names.update(
+                path.relative_to(self._paths.app_dir).as_posix()
+                for path in self._paths.options_dir.glob("*.lua")
+                if path.is_file()
+            )
+        names.add(ENTRYPOINT_NAME)
+        return tuple(sorted(names))
+
     def render_entrypoint(self, module_set: ModuleSet) -> str:
         return render_entrypoint(
             modules=module_set.modules,

@@ -22,6 +22,7 @@ from types import TracebackType
 
 from ..ipc import CommandClient, EventStream
 from ..model import ConfigModel
+from ..state import Journal
 from ..writer import Writer
 from .foreign import ForeignReloadWatch
 from .preview import EvalPreview
@@ -81,6 +82,7 @@ class Applier:
         client: CommandClient,
         events: EventStream,
         on_foreign_reload: Callable[[], None],
+        journal: Journal | None = None,
         on_result: Callable[[ApplyResult], None] | None = None,
         debounce: float = DEBOUNCE_SECONDS,
         reload_timeout: float = RELOAD_TIMEOUT_SECONDS,
@@ -99,6 +101,7 @@ class Applier:
             writer=writer,
             client=client,
             events=events,
+            journal=journal,
             reload_timeout=reload_timeout,
         )
         self._preview = EvalPreview(
@@ -190,3 +193,8 @@ class Applier:
     @property
     def busy(self) -> bool:
         return self._queue.busy
+
+    @property
+    def journal(self) -> Journal | None:
+        """The Snapshot/Journal history every transaction here writes to, if any."""
+        return self._transaction.journal

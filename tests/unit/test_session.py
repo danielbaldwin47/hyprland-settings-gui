@@ -12,72 +12,31 @@ write. That is `tests/integration/test_shell_session.py`, against a nested Hyprl
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
 from pathlib import Path
-from typing import Any
 
-from _fake_hyprland import NO_CONFIG_ERRORS, OK, FakeHyprland, option_reply, run_with_fake
-from _support import SAMPLE_VERSION, SCHEMA_DIR
+from _fake_hyprland import FakeHyprland, option_reply, run_with_fake
+from _support import (
+    SAMPLE_APP_VERSION,
+    Runner,
+    drain_events,
+    sample_schema,
+    section_conversation,
+    session_for,
+)
 
 from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
 from hyprtweaker.engine.ipc import Instance, NoInstance
 from hyprtweaker.engine.model import UNSET, CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
-from hyprtweaker.engine.schema import load_schema
 from hyprtweaker.engine.state import Manifest, ModuleRecord
 from hyprtweaker.session import Session
 
-SCHEMA = load_schema(SAMPLE_VERSION, SCHEMA_DIR)
-APP_VERSION = "0.0.0-test"
+SCHEMA = sample_schema()
+APP_VERSION = SAMPLE_APP_VERSION
 
 GAPS_IN = "general:gaps_in"
 ROUNDING = "decoration:rounding"
 XWAYLAND_ENABLED = "xwayland:enabled"
-
-
-class Runner:
-    """A `spawn` for tests: real tasks on the running loop, awaitable to quiescence."""
-
-    def __init__(self) -> None:
-        self._tasks: list[asyncio.Task[None]] = []
-
-    def spawn(self, coro: Coroutine[Any, Any, None]) -> None:
-        self._tasks.append(asyncio.create_task(coro))
-
-    async def settle(self) -> None:
-        """Wait for every spawned task, including ones spawned by the ones we waited on."""
-        while self._tasks:
-            batch, self._tasks = self._tasks, []
-            await asyncio.gather(*batch)
-
-
-def section_conversation(*sections: str, **set_values: Any) -> dict[str, str]:
-    """A compositor that answers about whole Sections, not just a handful of keys.
-
-    Startup re-reads every Option of every Section the app owns a Module for, so a script
-    covering only the interesting keys would have the session fall over on the first
-    uninteresting one -- and pass or fail for the wrong reason.
-    """
-    conversation = {"reload": OK, "j/configerrors": NO_CONFIG_ERRORS}
-    for section in sections:
-        for option in SCHEMA.section(section):
-            value = set_values.get(option.name)
-            conversation[f"j/getoption {option.name}"] = option_reply(
-                option,
-                value if value is not None else option.default,
-                live_set=value is not None,
-            )
-    return conversation
-
-
-def session_for(fake: FakeHyprland, root: Path, runner: Runner) -> Session:
-    return Session(
-        spawn=runner.spawn,
-        schema=SCHEMA,
-        paths=ConfigPaths.rooted_at(root),
-        app_version=APP_VERSION,
-        connect=lambda: fake.instance,
-    )
 
 
 # --- read-only sessions -----------------------------------------------------------------------
@@ -322,7 +281,7 @@ def test_a_foreign_reload_re_reads_the_model_and_tells_the_ui(tmp_path: Path) ->
             SCHEMA[GAPS_IN], CssGaps(9, 9, 9, 9)
         )
         await fake.emit("configreloaded")
-        await _drain_events(runner)
+        await drain_events(runner)
 
         assert session.model.get(GAPS_IN) == CssGaps(9, 9, 9, 9)
         assert notifications, "the window was told to refresh its Rows"
@@ -356,7 +315,7 @@ def test_a_foreign_reload_also_re_reads_owned_keys_the_model_does_not_hold(
             SCHEMA[GAPS_IN], CssGaps(9, 9, 9, 9)
         )
         await fake.emit("configreloaded")
-        await _drain_events(runner)
+        await drain_events(runner)
 
         assert session.model.get(GAPS_IN) == CssGaps(9, 9, 9, 9)
         await session.aclose()
@@ -401,12 +360,6 @@ def _write_manifest(root: Path, modules: dict[str, tuple[str, ...]]) -> None:
         },
     )
     paths.manifest.write_text(manifest.render(), encoding="utf-8")
-
-
-async def _drain_events(runner: Runner) -> None:
-    """Let the event stream dispatch, then wait for whatever it spawned."""
-    await asyncio.sleep(0.05)
-    await runner.settle()
 
 
 def test_closing_a_session_that_never_connected_still_reports_done(tmp_path: Path) -> None:

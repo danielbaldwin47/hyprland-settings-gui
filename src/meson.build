@@ -20,11 +20,13 @@ package_sources = {
     '__init__.py',
     'applier.py',
     'foreign.py',
+    'ownership.py',
     'preview.py',
     'queue.py',
     'reread.py',
     'result.py',
     'transaction.py',
+    'undo.py',
   ],
   'hyprtweaker/engine/importer': [
     '__init__.py',
@@ -54,6 +56,7 @@ package_sources = {
   ],
   'hyprtweaker/engine/state': [
     '__init__.py',
+    'journal.py',
     'manifest.py',
   ],
   'hyprtweaker/engine/writer': [
@@ -64,7 +67,10 @@ package_sources = {
     'writer.py',
   ],
   'hyprtweaker/ui': ['__init__.py'],
-  'hyprtweaker/ui/dialogs': ['__init__.py'],
+  'hyprtweaker/ui/dialogs': [
+    '__init__.py',
+    'errors.py',
+  ],
   'hyprtweaker/ui/pages': [
     '__init__.py',
     'config.py',

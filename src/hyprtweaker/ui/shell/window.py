@@ -10,9 +10,16 @@ the load-bearing one: switching Section stays instant, and "every Section builds
 the shipped Schema" becomes a fact about the running app instead of a claim about code that
 may never have run (the UI smoke tier asserts exactly this).
 
-Errors get a Banner, not a Row badge (ADR-0016). This ticket raises it for one condition --
-there is no compositor, so nothing can be applied -- and the error dialog behind it, the
-`configerrors` attribution, and Quarantine are #60.
+Errors get a Banner, not a Row badge (ADR-0016). This window raises it for one condition --
+there is no compositor, so nothing can be applied -- and the Banner's own error dialog, the
+full `configerrors` attribution, and Quarantine are #60.
+
+Toasts carry the two things instant apply cannot say by simply happening: that the last
+gesture can be taken back, and that one was taken back for you. The first is the undo toast,
+one per finished gesture rather than one per edit -- the Apply queue has already coalesced a
+drag or a keystroke burst into a single transaction, so "one toast per transaction" *is* one
+per gesture, and the previous toast is dismissed rather than queued behind it. The second is
+auto-revert (ADR-0016), which is the only event the ADR reserves a toast for outright.
 """
 
 from __future__ import annotations
@@ -26,12 +33,30 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio, GLib, Graphene, Gtk  # noqa: E402
 
-from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult  # noqa: E402
+from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult, UndoStep  # noqa: E402
 from hyprtweaker.engine.schema import Schema  # noqa: E402
-from hyprtweaker.session import Session  # noqa: E402
+from hyprtweaker.session import AutoRevert, Session  # noqa: E402
+from hyprtweaker.ui.dialogs.errors import error_dialog  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
+
+UNDO_ACTION = "undo"
+UNDO_ACCELERATOR = "<Control>z"
+"""Ctrl+Z, on the window rather than on the focused control (ADR-0010 §Undo).
+
+The stack is *global and linear*: one gesture at a time, wherever on whichever Page it
+happened. A per-widget undo would put a spin button's own text-entry history in front of the
+gesture the user actually means to take back, and would go silent the moment focus left the
+Row they last changed.
+
+Wired twice on purpose -- a `GtkShortcutController` on the window, and the application's
+accelerator when there is an application. The controller is what makes the keystroke work at
+all (and what the UI tier can drive); the accelerator is what makes the menu item show
+"Ctrl+Z" beside itself."""
+
+UNDO_TOAST_SECONDS = 4
+"""Long enough to notice and reach, short enough not to sit over the Row that just changed."""
 
 SHOW_ADVANCED_ACTION = "show-advanced"
 """One global switch, in the primary menu -- never per-Page (ADR-0013 §5).
@@ -64,6 +89,12 @@ class MainWindow(Adw.ApplicationWindow):
         self._dependents = _dependents(session.schema)
         self._last_failure: str | None = None
         self._closing = False
+        self._undo_toast: Adw.Toast | None = None
+        """The undo offer currently on screen, so the next one replaces it.
+
+        Without this a burst of gestures stacks toasts, and the button on the one the user
+        finally reaches is the *oldest* gesture rather than the last -- an undo that takes
+        back something they have since changed twice."""
 
         self.set_title("Hyprtweaker")
         self.set_default_size(1000, 700)
@@ -118,6 +149,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _menu_button(self) -> Gtk.MenuButton:
         menu = Gio.Menu()
+        menu.append("Undo", f"win.{UNDO_ACTION}")
         menu.append("Show advanced settings", f"win.{SHOW_ADVANCED_ACTION}")
         return Gtk.MenuButton(
             icon_name="open-menu-symbolic",
@@ -132,6 +164,26 @@ class MainWindow(Adw.ApplicationWindow):
         advanced.connect("activate", self._on_toggle_advanced)
         self.add_action(advanced)
         self._advanced_action = advanced
+
+        undo = Gio.SimpleAction.new(UNDO_ACTION, None)
+        undo.connect("activate", self._on_undo)
+        self.add_action(undo)
+        self._undo_action = undo
+
+        controller = Gtk.ShortcutController(scope=Gtk.ShortcutScope.MANAGED)
+        controller.add_shortcut(
+            Gtk.Shortcut(
+                trigger=Gtk.ShortcutTrigger.parse_string(UNDO_ACCELERATOR),
+                action=Gtk.NamedAction.new(f"win.{UNDO_ACTION}"),
+            )
+        )
+        self.add_controller(controller)
+
+        application = self.get_application()
+        if application is not None:
+            # Only the label, and only when there is an application to ask: a window built
+            # bare -- which is how the smoke tier builds one -- has no accel map to write to.
+            application.set_accels_for_action(f"win.{UNDO_ACTION}", [UNDO_ACCELERATOR])
 
     # --- the Config view ---------------------------------------------------------------------
 
@@ -180,25 +232,108 @@ class MainWindow(Adw.ApplicationWindow):
         reason = self._session.offline_reason
         self._banner.set_title("" if reason is None else f"{reason} — settings are read-only.")
         self._banner.set_revealed(reason is not None)
+        self._undo_action.set_enabled(self._session.can_undo)
 
     def show_result(self, result: ApplyResult) -> None:
         """What a finished Apply transaction changes about the view.
 
-        Two things, and the first happens whether or not the write worked: a restart-flagged
+        Three things, and the first happens whether or not the write worked: a restart-flagged
         key that reached the file wants its "Pending restart" pill, and a key that was
         refused wants no pill at all (`ApplyResult.pending_restart` only names keys whose
         bytes actually landed -- ADR-0010).
 
-        The failure toast is the second. Instant apply's whole promise is that the change
-        *is* the feedback (ADR-0003), so a toast per *successful* edit would be noise on
-        every slider tick. The undo toast and the full error surface are #59 and #60.
+        Then one toast, never two. A failed transaction gets the failure line; a successful
+        one gets the offer to undo it. Instant apply's whole promise is that the change *is*
+        the feedback (ADR-0003), and the undo offer is the exception that proves it: it says
+        nothing about *what* happened, only that it is reversible -- which is the one thing a
+        Row snapping to a new value cannot show on its own.
         """
         for name in result.pending_restart:
             self._refresh_chrome_for(name)
+        self._undo_action.set_enabled(self._session.can_undo)
 
-        if result.ok:
+        if not result.ok:
+            self._dismiss_undo()
+            self._toasts.add_toast(Adw.Toast(title=_result_summary(result), timeout=5))
             return
-        self._toasts.add_toast(Adw.Toast(title=_result_summary(result), timeout=5))
+        self._offer_undo()
+
+    def show_revert(self, revert: AutoRevert) -> None:
+        """The app has just taken back its own rejected write (ADR-0016 §Auto-revert).
+
+        The one event the ADR reserves a toast for outright, because it is the only time the
+        UI changes without the user having asked: they made a change, Hyprland refused it,
+        and the Row has moved back on its own. **Details** carries the `configerrors` lines,
+        which by now exist nowhere else -- the restore transaction's own reload cleared the
+        compositor's copy.
+        """
+        self._dismiss_undo()
+        toast = Adw.Toast(title=_revert_summary(revert), timeout=8)
+        if revert.errors:
+            toast.set_button_label("Details")
+            toast.connect("button-clicked", lambda *_: error_dialog(self, revert.errors))
+        self._toasts.add_toast(toast)
+
+    # --- undo -------------------------------------------------------------------------------
+
+    @property
+    def undo_toast(self) -> Adw.Toast | None:
+        """The undo offer currently on screen, if there is one.
+
+        View state rather than an accessor for a private field: "is the app offering to undo
+        right now?" is the whole visible consequence of a gesture landing, and the UI tier
+        asserts on it exactly as it asserts on `pages`.
+        """
+        return self._undo_toast
+
+    def _offer_undo(self) -> None:
+        """Put the "Undo" toast up for the gesture that just landed, if there was one."""
+        step = self._session.last_gesture
+        if step is None:
+            return
+
+        self._dismiss_undo()
+        toast = Adw.Toast(title=self._gesture_title(step), timeout=UNDO_TOAST_SECONDS)
+        toast.set_button_label("Undo")
+        toast.connect("button-clicked", lambda *_: self._undo())
+        toast.connect("dismissed", self._on_undo_toast_dismissed)
+        self._undo_toast = toast
+        self._toasts.add_toast(toast)
+
+    def _dismiss_undo(self) -> None:
+        toast, self._undo_toast = self._undo_toast, None
+        if toast is not None:
+            toast.dismiss()
+
+    def _on_undo_toast_dismissed(self, toast: Adw.Toast) -> None:
+        if self._undo_toast is toast:
+            self._undo_toast = None
+
+    def _undo(self) -> None:
+        """Take back the last gesture. The session decides whether there is one."""
+        self._dismiss_undo()
+        if self._session.undo():
+            # `sync` runs on the session's own `on_state_changed` too, but the undo has
+            # already moved the model and the Rows should not wait for the compositor to
+            # confirm what the app is about to write.
+            self.sync()
+        self._undo_action.set_enabled(self._session.can_undo)
+
+    def _on_undo(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        self._undo()
+
+    def _gesture_title(self, step: UndoStep) -> str:
+        """What the undo toast calls the gesture it is offering to reverse.
+
+        The Option's own title, because that is the word on the Row the user just changed --
+        never the dotted key, which lives in the Help popover and the search index (ADR-0013).
+        A gesture spanning several Options is counted rather than listed: the css-gaps editor
+        writes four sides at once, and "Gaps in, Gaps in, Gaps in, Gaps in" is not a sentence.
+        """
+        titles = [self._session.schema[name].title for name in step.names]
+        if len(titles) == 1:
+            return f"{titles[0]} changed"
+        return f"{len(titles)} settings changed"
 
     def reveal_option(self, name: str) -> None:
         """Show the Row for one Option and put the keyboard on it.
@@ -398,3 +533,13 @@ _FAILURE_TEXT = {
 def _result_summary(result: ApplyResult) -> str:
     """One line naming what went wrong, in words rather than in the enum's wire spelling."""
     return _FAILURE_TEXT.get(result.outcome, "The change could not be applied.")
+
+
+def _revert_summary(revert: AutoRevert) -> str:
+    """ADR-0016's toast line, or the honest version when the restore did not land.
+
+    "Reverted" is a claim about the config on disk, and claiming it over a file that is still
+    broken would send the user away from the one screen that could tell them so."""
+    if revert.restored:
+        return "Hyprland rejected the change — reverted."
+    return "Hyprland rejected the change, and it could not be reverted."
