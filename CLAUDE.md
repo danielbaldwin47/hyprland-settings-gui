@@ -31,3 +31,30 @@ Leftovers for the human — tasks or decisions surfacing during ticket work — 
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Working in this repo
+
+### Dev tools
+
+Shared venv at `.venv` (system-site-packages: `gi` importable; ruff, mypy, pytest installed). Use `.venv/bin/<tool>` — never create another venv, in `/tmp` or anywhere.
+
+### Orientation
+
+Read `CONTEXT.md` (95 lines) first; delegate anything broader to a read-only subagent (`cavecrew-investigator` / Explore) and take targeted-range reads only — whole-file surveys of this repo have cost sessions 90k+ context. Map:
+
+- `src/hyprtweaker/engine/` — config engine: `importer/` (hyprlang → model), `schema/` (option schema: sources/resolve/infer), `model/` (options, values), `writer/` (Lua emit), `apply/` (transaction pipeline), `ipc/` (hyprctl commands/events), `state/` (manifest)
+- `src/hyprtweaker/session.py` — session layer bridging engine and UI
+- `src/hyprtweaker/ui/` — `shell/` (window, runtime), `pages/` (plan, config), `rows/` (factory, chrome, state), `dialogs/`
+- `tests/` — `unit/`, `integration/`, `ui/`, `golden/`, `static/`; `corpus/` is third-party rice fixtures, excluded from lint
+
+### UI verification
+
+Probe widget state programmatically (properties, adjustments) before any screenshot loop — a scroll bug once burned 10 screenshot cycles that two probes settled. When a screenshot is warranted, crop to the app window, not the full output.
+
+### Live probes
+
+Hyprland is installed; settle spec/behavior disputes with `hyprctl` (`-j` for JSON) against the running compositor rather than by reading docs harder.
+
+### Ticket sizing (`/to-tickets` sessions)
+
+Budget one implementing session ≈ 120k context per ticket: one package or subsystem, its tests included. Heavy UI-visual verification splits into its own ticket. Every ticket of one audited 7-ticket run overshot this 1.4–3.5x — err small.
