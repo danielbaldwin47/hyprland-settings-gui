@@ -31,27 +31,29 @@ Hyprland would accept the file.
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 
 import pytest
-from harness import Canvas, NestedHyprland, capture, compare, diff, option_names
-from harness.visual import write_determinism_preamble
+from harness import (
+    Canvas,
+    NestedHyprland,
+    capture,
+    compare,
+    diff,
+    option_names,
+    write_determinism_preamble,
+)
+from harness.state import SCHEMA_DIR, SCHEMA_VERSION
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
-
-from hyprtweaker.engine.apply import Applier, ApplyOutcome  # noqa: E402
-from hyprtweaker.engine.ipc import CommandClient, EventStream  # noqa: E402
-from hyprtweaker.engine.model import ConfigModel  # noqa: E402
-from hyprtweaker.engine.paths import ConfigPaths  # noqa: E402
-from hyprtweaker.engine.schema import load_schema  # noqa: E402
-from hyprtweaker.engine.writer import Writer  # noqa: E402
+from hyprtweaker.engine.apply import Applier, ApplyOutcome, ApplyResult
+from hyprtweaker.engine.ipc import CommandClient, EventStream, Instance
+from hyprtweaker.engine.model import ConfigModel
+from hyprtweaker.engine.paths import ConfigPaths
+from hyprtweaker.engine.schema import load_schema
+from hyprtweaker.engine.writer import Writer
 
 pytestmark = pytest.mark.hyprland
 
-SCHEMA_DIR = ROOT / "data" / "schema"
-SCHEMA_VERSION = "0.56.2"
 APP_VERSION = "0.0.0-harness"
 
 #: The config the compositor starts on. Thin borders, square corners, tight gaps.
@@ -90,19 +92,27 @@ def build(home: Path, values: dict[str, object]) -> tuple[ConfigPaths, ConfigMod
     return paths, model, Writer(paths, app_version=APP_VERSION)
 
 
-async def apply_edit(instance: object, model: ConfigModel, writer: Writer, names: list[str]):
-    """Run one real Apply transaction against the nested compositor."""
-    async with EventStream(instance) as events:  # type: ignore[arg-type]
-        client = CommandClient(instance)  # type: ignore[arg-type]
-        foreign = []
+async def apply_edit(
+    instance: Instance, model: ConfigModel, writer: Writer, names: list[str]
+) -> ApplyResult:
+    """Run one real Apply transaction against the nested compositor.
+
+    `on_foreign_reload` is required by `Applier` and must never fire here: nothing else is
+    driving this compositor, so a foreign reload would mean the harness leaked into another
+    session. Asserting that is cheaper than ignoring it.
+    """
+    async with EventStream(instance) as events:
+        foreign: list[None] = []
         async with Applier(
             model=model,
             writer=writer,
-            client=client,
+            client=CommandClient(instance),
             events=events,
-            on_foreign_reload=lambda: foreign.append(True),
+            on_foreign_reload=lambda: foreign.append(None),
         ) as applier:
-            return await applier.apply(*names)
+            result = await applier.apply(*names)
+        assert not foreign, "a reload arrived that this harness did not make"
+        return result
 
 
 def test_a_model_edit_reaches_the_compositor_and_the_screen(

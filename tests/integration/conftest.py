@@ -18,14 +18,17 @@ which reads as a broken test rather than an unsuitable machine. One reason, comp
 attached to every marked item.
 
 `HYPRTWEAKER_REQUIRE_HARNESS=1` turns the skip into a failure -- the same escape hatch
-`tests/ui/conftest.py` gives the UI tier. A nightly job that is *supposed* to have a
-compositor should not go green by quietly skipping everything.
+`tests/ui/conftest.py` gives the UI tier. Any environment that is *supposed* to be able to
+host a compositor should not go green by quietly skipping everything. That variable is also
+what makes the tier safe to schedule the day it can be: an automated run that skips its whole
+point would otherwise report success (ADR-0011 tier 3, amended during #55; #89).
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -36,7 +39,7 @@ for entry in (str(TESTS_INTEGRATION), str(ROOT / "src")):
     if entry not in sys.path:
         sys.path.insert(0, entry)
 
-from harness import unavailable_reason  # noqa: E402
+from harness import HarnessUnavailable, unavailable_reason  # noqa: E402
 
 REQUIRE_VARIABLE = "HYPRTWEAKER_REQUIRE_HARNESS"
 
@@ -72,6 +75,28 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     skip = pytest.mark.skip(reason=f"Harness tier: {reason}")
     for item in marked:
         item.add_marker(skip)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
+    """Turn a `HarnessUnavailable` raised mid-test into a skip.
+
+    `unavailable_reason` is checked at collection time and cannot cover everything: whether
+    Pillow is importable, whether GTK is there for the probe windows, whether the machine
+    lost a dependency between collection and the test body. Those surface as
+    `HarnessUnavailable` from deep inside the harness, and without this they would be errors
+    -- reading as "the Harness is broken" when the truth is "this machine cannot run this
+    half of it". Raising that exception is the harness's whole vocabulary for the
+    distinction, so it is honoured once here rather than guarded at each call site.
+
+    Only `HarnessUnavailable`. Every other exception propagates untouched, so a real failure
+    can never be laundered into a skip -- which would be the one way this hook could hide a
+    broken harness instead of explaining an unsuitable machine.
+    """
+    try:
+        yield
+    except HarnessUnavailable as unavailable:
+        pytest.skip(f"Harness tier: {unavailable}")
 
 
 @pytest.fixture

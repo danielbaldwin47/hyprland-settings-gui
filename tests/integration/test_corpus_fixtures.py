@@ -16,7 +16,14 @@ from pathlib import Path
 
 import pytest
 from harness import NestedHyprland, capture, rice, rices, rices_with_ground_truth, stage
-from harness.corpus import CORPUS_DIR, EXEC_LINE, load_lock
+from harness.corpus import (
+    COMMENT_PREFIX,
+    CORPUS_DIR,
+    DISARM_MARKER,
+    LUA_EXEC_LINE,
+    exec_line_pattern,
+    load_lock,
+)
 
 #: end-4 and ML4W were captured mid-migration and ship upstream's own hand-written Lua beside
 #: the `.conf` at the same commit. They are the only human translations of these configs that
@@ -86,21 +93,80 @@ def test_staging_reproduces_the_home_layout_a_rice_expects(tmp_path: Path) -> No
     assert (staged.home / ".local" / "share" / "hyde" / "hyprland.conf").is_file()
 
 
-def test_staging_disarms_every_exec_line(tmp_path: Path) -> None:
+def surviving_exec_lines(home: Path) -> list[str]:
+    """Every load-time exec still live under a staged home, in either config language."""
+    live = []
+    for suffix in COMMENT_PREFIX:
+        pattern = exec_line_pattern(suffix)
+        assert pattern is not None
+        live.extend(
+            f"{path}:{number}: {line.strip()}"
+            for path in home.rglob(f"*{suffix}")
+            for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1)
+            if pattern.match(line)
+        )
+    return live
+
+
+@pytest.mark.parametrize("name", ["jakoolit", "end-4", "ml4w"])
+def test_staging_disarms_every_exec_line(name: str, tmp_path: Path) -> None:
     """A rice's autostart must never run: it would reach out of the nested compositor.
 
     Several corpus rices autostart tools that rewrite `~/.config`, so this is the check that
     keeps the tier from editing the developer's own dotfiles.
     """
-    staged = stage(rice("jakoolit"), tmp_path / "home")
+    staged = stage(rice(name), tmp_path / "home")
+    live = surviving_exec_lines(staged.home)
+    assert not live, f"exec lines survived staging: {live[:5]}"
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED_GROUND_TRUTH))
+def test_staging_disarms_autostart_in_the_lua_port_too(name: str, tmp_path: Path) -> None:
+    """The regression guard for a real bug: the booted file is the `.lua`, not the `.conf`.
+
+    Both ground-truth ports carry `hl.exec_cmd` autostart -- `gnome-keyring-daemon`,
+    `hypridle`, `wl-paste --watch`, a wallpaper restorer. A sweep that globbed `*.conf` only
+    left exactly the file `test_a_ground_truth_lua_port_boots_in_the_nested_compositor`
+    boots fully armed, so this asserts the Lua half specifically rather than trusting the
+    combined check above to have covered it.
+    """
+    staged = stage(rice(name), tmp_path / "home")
+
+    lua_files = list(staged.home.rglob("*.lua"))
+    assert lua_files, "no Lua files staged at all -- the sweep would pass vacuously"
 
     live = [
         f"{path}:{number}"
-        for path in staged.home.rglob("*.conf")
+        for path in lua_files
         for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1)
-        if EXEC_LINE.match(line)
+        if LUA_EXEC_LINE.match(line)
     ]
-    assert not live, f"exec lines survived staging: {live[:5]}"
+    assert not live, f"Lua autostart survived staging: {live[:5]}"
+
+
+def test_the_disarm_sweep_leaves_bind_dispatchers_alone(tmp_path: Path) -> None:
+    """Disarming must not silently rewrite what the config *declares*.
+
+    `hl.dsp.exec_cmd(...)` inside `hl.bind(...)` is a dispatcher factory that runs only when
+    a key is pressed. Commenting it out would drop keybinds from the config while disarming
+    nothing, quietly changing the very state this tier diffs.
+    """
+    staged = stage(rice("end-4"), tmp_path / "home")
+
+    lines = [
+        line
+        for path in staged.home.rglob("*.lua")
+        for line in path.read_text(errors="replace").splitlines()
+    ]
+    binds_with_exec = [
+        line for line in lines if "hl.dsp.exec_cmd" in line and "hl.bind" in line
+    ]
+    assert binds_with_exec, "fixture no longer exercises this: no bind-with-exec lines found"
+
+    # The staged tree already contains binds upstream itself commented out, so "starts with
+    # --" proves nothing. The harness marker is what identifies a line *this sweep* touched.
+    disarmed_binds = [line for line in binds_with_exec if DISARM_MARKER in line]
+    assert not disarmed_binds, f"the sweep commented out keybinds: {disarmed_binds[:3]}"
 
 
 def test_staging_copies_rather_than_boots_the_checked_in_tree(tmp_path: Path) -> None:

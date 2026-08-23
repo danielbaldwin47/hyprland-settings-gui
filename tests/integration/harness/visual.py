@@ -54,6 +54,24 @@ ANIMATION_SETTLE_SECONDS = 2.5
 WINDOW_SETTLE_SECONDS = 2.2
 DISPATCH_SETTLE_SECONDS = 0.5
 
+#: A dispatch that moves or closes a window needs a beat before the next `clients` read, or
+#: the sweep acts on a list the compositor has already invalidated.
+WINDOW_ACTION_SETTLE_SECONDS = 0.3
+
+#: Above this per-pixel delta a difference is something a human would see, rather than the
+#: GPU blend rounding `BLEND_ROUNDING_TOLERANCE` describes.
+PERCEPTIBLE_CHANNEL_DELTA = 8
+
+#: Every probe window's app-id starts with this, which is how a window we opened is told from
+#: one the compositor did (the donate screen).
+PROBE_PREFIX = "probe."
+
+
+def is_probe(client: object) -> bool:
+    """Whether an `hyprctl clients` record is one of our probe windows."""
+    return isinstance(client, dict) and str(client.get("class", "")).startswith(PROBE_PREFIX)
+
+
 #: One translucent probe, so the compositor's blur is exercised rather than just its borders.
 PROBE_WINDOWS = (
     ("probe.one", "0.85,0.20,0.20,1.0"),
@@ -156,7 +174,7 @@ def compare(before: Path, after: Path, *, heatmap: Path | None = None) -> ImageC
         visually_identical=bool(delta.max() <= BLEND_ROUNDING_TOLERANCE),
         pixels_total=int(per_pixel.size),
         pixels_differing=differing,
-        pixels_differing_strongly=int((per_pixel > 8).sum()),
+        pixels_differing_strongly=int((per_pixel > PERCEPTIBLE_CHANNEL_DELTA).sum()),
         max_channel_delta=int(delta.max()),
         rmse=round(float(numpy.sqrt((delta.astype(numpy.float64) ** 2).mean())), 4),
     )
@@ -205,7 +223,14 @@ class Canvas:
         return self.output
 
     def spawn_probes(self) -> None:
-        """Open the probe windows one at a time, corralling each onto our output."""
+        """Open the probe windows one at a time, corralling each onto our output.
+
+        A machine without GTK4 raises `HarnessUnavailable` (which the conftest turns into a
+        skip) rather than quietly producing an empty canvas: every screenshot would still be
+        taken, still be comparable, and compare *identical* -- a green run that tested
+        nothing. The probes are checked for rather than the toolkit imported, because
+        importing GTK here would open a display in the test process itself.
+        """
         for app_id, colour in PROBE_WINDOWS:
             self._probes.append(
                 subprocess.Popen(
@@ -224,6 +249,18 @@ class Canvas:
         self.corral()
         time.sleep(ANIMATION_SETTLE_SECONDS / 2)
 
+        opened = len(self.client_geometry())
+        if opened == 0:
+            raise HarnessUnavailable(
+                f"none of the {len(PROBE_WINDOWS)} probe windows opened -- GTK4 (PyGObject) "
+                "is most likely missing, so there is nothing to photograph"
+            )
+        if opened != len(PROBE_WINDOWS):
+            raise AssertionError(
+                f"only {opened} of {len(PROBE_WINDOWS)} probe windows opened; a partial "
+                "canvas makes screenshot comparison meaningless"
+            )
+
     def focus_output(self) -> None:
         """`hl.dsp.focus` takes exactly one of direction/monitor/workspace/window."""
         self.nested.dispatch(f'hl.dsp.focus({{ monitor = "{self.output}" }})')
@@ -235,17 +272,18 @@ class Canvas:
         everything else, so a screenshot taken with it open is not a picture of the config.
         """
         for client in self.nested.hyprctl("clients") or []:
-            if not str(client.get("class", "")).startswith("probe."):
-                address = client.get("address")
-                self.nested.dispatch(f'hl.dsp.window.close({{ window = "address:{address}" }})')
-                time.sleep(0.3)
+            if is_probe(client):
+                continue
+            address = client.get("address")
+            self.nested.dispatch(f'hl.dsp.window.close({{ window = "address:{address}" }})')
+            time.sleep(WINDOW_ACTION_SETTLE_SECONDS)
 
     def corral(self) -> None:
         """Move stray probes onto the headless output's workspace."""
         if self.workspace is None:
             return
         for client in self.nested.hyprctl("clients") or []:
-            if not str(client.get("class", "")).startswith("probe."):
+            if not is_probe(client):
                 continue
             if client.get("workspace", {}).get("id") == self.workspace:
                 continue
@@ -256,7 +294,7 @@ class Canvas:
                 f"hl.dsp.window.move({{ workspace = {self.workspace}, follow = false, "
                 f'window = "address:{address}" }})'
             )
-            time.sleep(0.3)
+            time.sleep(WINDOW_ACTION_SETTLE_SECONDS)
 
     def screenshot(self, path: Path) -> Path:
         """`grim` the headless output. The output name, never the whole session."""
@@ -278,7 +316,7 @@ class Canvas:
         return [
             {key: client.get(key) for key in ("class", "at", "size", "floating")}
             for client in (self.nested.hyprctl("clients") or [])
-            if str(client.get("class", "")).startswith("probe.")
+            if is_probe(client)
         ]
 
     def _workspace_of(self, output: str) -> int | None:

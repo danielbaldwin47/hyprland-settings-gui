@@ -40,18 +40,17 @@ import os
 import shutil
 import signal
 import subprocess
-import sys
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT / "src") not in sys.path:
-    sys.path.insert(0, str(ROOT / "src"))
+from hyprtweaker.engine.ipc import Instance
 
-from hyprtweaker.engine.ipc import Instance  # noqa: E402
+#: The repo root. `harness/__init__.py` has already put `<root>/src` on sys.path by the time
+#: any submodule is imported, which is what makes the engine import above resolve.
+ROOT = Path(__file__).resolve().parents[3]
 
 REGISTER_TIMEOUT_SECONDS = 40.0
 IPC_TIMEOUT_SECONDS = 20.0
@@ -99,6 +98,8 @@ def unavailable_reason() -> str | None:
         return "no Hyprland binary on this machine"
     if shutil.which("hyprctl") is None:
         return "no hyprctl binary on this machine"
+    if shutil.which("grim") is None:
+        return "no grim binary on this machine (the screenshot half cannot run)"
     if not os.environ.get("WAYLAND_DISPLAY"):
         return (
             "no host Wayland session (WAYLAND_DISPLAY unset): a nested Hyprland cannot "
@@ -133,14 +134,24 @@ def make_home(root: Path) -> Path:
     return home
 
 
-def home_environment(home: Path, base: Mapping[str, str] | None = None) -> dict[str, str]:
-    """`base` with every XDG variable repointed inside `home`.
+def config_errors_of(payload: Any) -> tuple[str, ...]:
+    """`configerrors` as real errors: Hyprland answers a healthy session with `[""]`.
+
+    Read naively that is one blank error, and every clean run looks broken.
+    """
+    if not isinstance(payload, list):
+        return ()
+    return tuple(line for line in payload if isinstance(line, str) and line.strip())
+
+
+def home_environment(home: Path) -> dict[str, str]:
+    """The current environment with every XDG variable repointed inside `home`.
 
     All four are set explicitly rather than letting the fallbacks apply: Hyprland and the
     app both consult `XDG_*` first, and a single unset variable would silently route one
     file back into the developer's real dotfiles.
     """
-    environment = dict(os.environ if base is None else base)
+    environment = dict(os.environ)
     environment["HOME"] = str(home)
     environment["XDG_CONFIG_HOME"] = str(home / ".config")
     environment["XDG_DATA_HOME"] = str(home / ".local" / "share")
@@ -411,16 +422,9 @@ class NestedHyprland:
         """
         return self.hyprctl_text("dispatch", expression)
 
-    def dispatch_legacy(self, name: str, *args: str) -> str:
-        """The hyprlang spelling, for the corpus `.conf` trees."""
-        return self.hyprctl_text("dispatch", name, *args)
-
     def config_errors(self) -> tuple[str, ...]:
         """`configerrors`, with Hyprland's `[""]` for "none" read as empty."""
-        raw = self.hyprctl("configerrors")
-        if not isinstance(raw, list):
-            return ()
-        return tuple(line for line in raw if isinstance(line, str) and line.strip())
+        return config_errors_of(self.hyprctl("configerrors"))
 
 
 def _decode_batch(text: str) -> list[Any]:

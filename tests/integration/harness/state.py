@@ -25,21 +25,22 @@ Comparing everything would make every diff non-empty and the check useless.
 from __future__ import annotations
 
 import json
-import sys
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .nested import STATE_SURFACES, NestedHyprland
+from hyprtweaker.engine.schema import load_schema
 
-ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT / "src") not in sys.path:
-    sys.path.insert(0, str(ROOT / "src"))
-
-from hyprtweaker.engine.schema import load_schema  # noqa: E402
+from .nested import ROOT, STATE_SURFACES, NestedHyprland, config_errors_of
 
 SCHEMA_DIR = ROOT / "data" / "schema"
+
+#: The Hyprland release whose Generated schema this tier reads. One constant, because the
+#: version is a moving per-release fact (ADR-0011, "Schema versioning") and a second copy
+#: would drift at the next release check.
+SCHEMA_VERSION = "0.56.2"
 
 #: `hyprctl binds` cannot report a Lua bind's action -- the dispatcher is always `__lua` and
 #: the argument a registry index -- so those two fields are left out rather than compared as
@@ -94,7 +95,7 @@ LIST_SURFACES: dict[str, tuple[str, ...] | None] = {
 }
 
 
-def option_names(version: str = "0.56.2") -> tuple[str, ...]:
+def option_names(version: str = SCHEMA_VERSION) -> tuple[str, ...]:
     """Every option the shipped schema knows, which is what makes the sweep exhaustive.
 
     Deliberately the whole schema rather than the options a test touched: a writer bug that
@@ -150,12 +151,25 @@ class ListDelta:
 
     @property
     def empty(self) -> bool:
-        return not self.only_before and not self.only_after
+        """Nothing changed: same records, same count, same order.
+
+        Count and order are part of the answer, not decoration. Prototype #9 §7 judged the
+        hand-written Lua ports precisely on bind *counts* (197 vs 191) and noted that bind
+        order is preserved -- a reordered bind list is a different config, because
+        duplicates fire in file order and last-match-wins governs rules.
+        """
+        return (
+            not self.only_before
+            and not self.only_after
+            and self.before_total == self.after_total
+            and self.order_identical
+        )
 
     def __str__(self) -> str:
+        order = "" if self.order_identical else ", reordered"
         return (
             f"{self.surface}: {self.before_total} -> {self.after_total} "
-            f"(-{len(self.only_before)}/+{len(self.only_after)})"
+            f"(-{len(self.only_before)}/+{len(self.only_after)}{order})"
         )
 
 
@@ -168,10 +182,7 @@ class CompositorState:
 
     @property
     def config_errors(self) -> tuple[str, ...]:
-        raw = self.surfaces.get("configerrors")
-        if not isinstance(raw, list):
-            return ()
-        return tuple(line for line in raw if isinstance(line, str) and line.strip())
+        return config_errors_of(self.surfaces.get("configerrors"))
 
     def option(self, name: str) -> Any:
         """One option's live value, already unwrapped from its `getoption` envelope."""
@@ -270,11 +281,17 @@ def _diff_options(before: dict[str, Any], after: dict[str, Any]) -> tuple[Option
     return tuple(deltas)
 
 
-def _canonical(record: Any, keys: tuple[str, ...] | None) -> Any:
-    """A record reduced to the keys worth comparing, in a form that compares by value."""
+def _canonical(record: Any, keys: tuple[str, ...] | None) -> str:
+    """A record reduced to the keys worth comparing, as a stable string.
+
+    A string rather than a decoded object so records can go into a `Counter`: these lists
+    hold genuine duplicates -- a config may bind the same key twice and every duplicate
+    fires (`lua-api-surface.md` §4) -- and a membership test would read "three identical
+    binds" and "one" as the same state.
+    """
     if keys is not None and isinstance(record, dict):
         record = {key: record.get(key) for key in keys}
-    return json.loads(json.dumps(record, sort_keys=True))
+    return json.dumps(record, sort_keys=True)
 
 
 def _diff_list(
@@ -282,12 +299,17 @@ def _diff_list(
 ) -> ListDelta:
     old = [_canonical(record, keys) for record in (before or [])]
     new = [_canonical(record, keys) for record in (after or [])]
+
+    # Multiset difference, so losing one of N identical records still shows up.
+    removed = Counter(old) - Counter(new)
+    added = Counter(new) - Counter(old)
+
     return ListDelta(
         surface=surface,
         before_total=len(old),
         after_total=len(new),
-        only_before=tuple(record for record in old if record not in new),
-        only_after=tuple(record for record in new if record not in old),
+        only_before=tuple(json.loads(record) for record in removed.elements()),
+        only_after=tuple(json.loads(record) for record in added.elements()),
         order_identical=old == new,
     )
 

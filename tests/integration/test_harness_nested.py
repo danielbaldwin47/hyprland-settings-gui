@@ -19,8 +19,15 @@ import os
 from pathlib import Path
 
 import pytest
-from harness import Canvas, NestedHyprland, capture, diff, option_names
-from harness.visual import HEADLESS_OUTPUT, write_determinism_preamble
+from harness import (
+    HEADLESS_OUTPUT,
+    Canvas,
+    NestedHyprland,
+    capture,
+    diff,
+    option_names,
+    write_determinism_preamble,
+)
 
 pytestmark = pytest.mark.hyprland
 

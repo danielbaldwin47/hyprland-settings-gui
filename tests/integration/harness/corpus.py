@@ -9,11 +9,17 @@ nested compositor can be pointed at, which takes three things the raw tree does 
    out-of-tree files under `<rice>/_home/`. Staging rebuilds that layout inside a throwaway
    home so every absolute path resolves to the fixture rather than to the developer's own
    config.
-2. **`exec` disarmed.** A rice's autostart lines launch bars, wallpaper daemons and shell
-   integrations. Run unmodified in a nested compositor they reach straight out into the
-   developer's session -- and several corpus rices autostart things that rewrite
-   `~/.config`. Every `exec`-family line is commented out during staging. This is also what
-   makes a `.conf` and a `.lua` side comparable: neither gets to run anything.
+2. **`exec` disarmed, in both config languages.** A rice's autostart lines launch bars,
+   wallpaper daemons and shell integrations. Run unmodified in a nested compositor they
+   reach straight out into the developer's session -- and several corpus rices autostart
+   things that rewrite `~/.config`. Every load-time exec is commented out during staging.
+   This is also what makes a `.conf` and a `.lua` side comparable: neither gets to run
+   anything.
+
+   Both languages, because the ground-truth Lua ports carry their own autostart
+   (`end-4/hyprland/execs.lua`, `ml4w/conf/autostart.lua`) and the Lua port is exactly what
+   a harness test boots -- a sweep over `*.conf` alone would disarm every tree except the
+   one being run.
 3. **Ground truth, where it exists.** end-4 and ML4W were captured mid-migration and ship
    upstream's own hand-written `hyprland.lua` beside the `.conf` at the same commit. That is
    the only human translation of these configs that exists, so it is the reference an
@@ -33,7 +39,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+from .nested import ROOT, make_home
+
 CORPUS_DIR = ROOT / "tests" / "corpus"
 LOCK_FILE = CORPUS_DIR / "corpus.lock.json"
 
@@ -42,6 +49,23 @@ LOCK_FILE = CORPUS_DIR / "corpus.lock.json"
 EXEC_LINE = re.compile(
     r"^(\s*)(exec|execr|exec-once|execr-once|exec-shutdown)\s*=", re.IGNORECASE
 )
+
+#: The Lua spelling of the same hazard. Two rices ship autostart in their Lua ports, and the
+#: ground-truth port is precisely the file this harness boots -- so scanning only `.conf`
+#: would disarm every tree except the one actually being run.
+#:
+#: Anchored at the start of the statement on purpose. `hl.dsp.exec_cmd(...)` appears inside
+#: `hl.bind(...)` all over these configs; that is a dispatcher *factory* that runs only when
+#: a key is pressed, so commenting it out would change what the config declares while
+#: disarming nothing. Only `hl.exec_cmd`/`hl.exec_raw` as a statement runs at load time.
+LUA_EXEC_LINE = re.compile(r"^(\s*)hl\.exec_(cmd|raw)\s*\(")
+
+#: Comment syntax per config language, for `disarm_exec_lines`.
+COMMENT_PREFIX = {".conf": "#", ".lua": "--"}
+
+#: Stamped onto every line the sweep disables, so a disarmed line can be told from one the
+#: rice's own author had already commented out.
+DISARM_MARKER = "[harness: exec disabled]"
 
 ENTRYPOINT_CONF = "hyprland.conf"
 ENTRYPOINT_LUA = "hyprland.lua"
@@ -144,8 +168,7 @@ def stage(target: Rice, destination: Path, *, disarm_exec: bool = True) -> Stage
     if extra.is_dir():
         shutil.copytree(extra, home, dirs_exist_ok=True, symlinks=True)
 
-    for relative in (".local/share", ".local/state", ".cache"):
-        (home / relative).mkdir(parents=True, exist_ok=True)
+    make_home(home)
 
     if disarm_exec:
         disarm_exec_lines(home)
@@ -161,22 +184,35 @@ def stage(target: Rice, destination: Path, *, disarm_exec: bool = True) -> Stage
     )
 
 
+def exec_line_pattern(suffix: str) -> re.Pattern[str] | None:
+    """The load-time-exec pattern for a config language, or `None` if it has none."""
+    return {".conf": EXEC_LINE, ".lua": LUA_EXEC_LINE}.get(suffix)
+
+
 def disarm_exec_lines(home: Path) -> int:
-    """Comment out every `exec`-family line under `home`. Returns how many were disarmed."""
+    """Comment out every load-time exec under `home`, in both config languages.
+
+    Returns how many were disarmed, so a caller can assert the sweep actually found the
+    autostart it expected rather than silently matching nothing.
+    """
     disarmed = 0
-    for path in sorted(home.rglob("*.conf")):
-        try:
-            lines = path.read_text(errors="replace").splitlines()
-        except OSError:
+    for suffix, comment in COMMENT_PREFIX.items():
+        pattern = exec_line_pattern(suffix)
+        if pattern is None:  # pragma: no cover - defensive
             continue
-        rewritten, hits = [], 0
-        for line in lines:
-            if EXEC_LINE.match(line):
-                rewritten.append(f"# [harness: exec disabled] {line}")
-                hits += 1
-            else:
-                rewritten.append(line)
-        if hits:
-            path.write_text("\n".join(rewritten) + "\n")
-            disarmed += hits
+        for path in sorted(home.rglob(f"*{suffix}")):
+            try:
+                lines = path.read_text(errors="replace").splitlines()
+            except OSError:
+                continue
+            rewritten, hits = [], 0
+            for line in lines:
+                if pattern.match(line):
+                    rewritten.append(f"{comment} {DISARM_MARKER} {line}")
+                    hits += 1
+                else:
+                    rewritten.append(line)
+            if hits:
+                path.write_text("\n".join(rewritten) + "\n")
+                disarmed += hits
     return disarmed
