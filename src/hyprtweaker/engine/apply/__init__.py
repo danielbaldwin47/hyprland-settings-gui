@@ -16,7 +16,14 @@ Four modules, in dependency order:
 - `preview.py` -- `EvalPreview`, the transient per-tick tier a continuous gesture uses;
 - `reread.py` -- `read_state`, the full state re-read that answers a foreign reload and
   recovers the model at startup;
+- `ownership.py` -- `attribute`, whose file a `configerrors` line blames (ADR-0016);
+- `undo.py` -- `UndoStack`, one gesture per step, replayed through the pipeline above;
 - `applier.py` -- `Applier`, the three wired together, which is what the app holds.
+
+Two of those are inputs to recovery rather than to applying, and the split is deliberate.
+`ownership` and `undo` decide *nothing*: they answer "whose file is this?" and "what did the
+last gesture change?", and the policy that acts on both -- auto-revert -- lives in `Session`,
+which is the only object holding the model, the stack and the queue at once.
 
 Typical use::
 
@@ -40,6 +47,7 @@ from __future__ import annotations
 
 from .applier import Applier
 from .foreign import ForeignReloadWatch
+from .ownership import ConfigError, Ownership, attribute, own_write_modules
 from .preview import EvalPreview, preview_code
 from .queue import DEBOUNCE_SECONDS, ApplyQueue, Transaction
 from .reread import ReRead, app_owned_options, read_state
@@ -49,23 +57,32 @@ from .transaction import (
     SETTLE_SECONDS,
     ApplyTransaction,
 )
+from .undo import UNDO_MAX_DEPTH, Edit, UndoStack, UndoStep
 
 __all__ = [
     "DEBOUNCE_SECONDS",
     "RELOAD_TIMEOUT_SECONDS",
     "SETTLE_SECONDS",
+    "UNDO_MAX_DEPTH",
     "UNREADABLE",
     "Applier",
     "ApplyOutcome",
     "ApplyQueue",
     "ApplyResult",
     "ApplyTransaction",
+    "ConfigError",
+    "Edit",
     "EvalPreview",
     "ForeignReloadWatch",
     "Mismatch",
+    "Ownership",
     "ReRead",
     "Transaction",
+    "UndoStack",
+    "UndoStep",
     "app_owned_options",
+    "attribute",
+    "own_write_modules",
     "preview_code",
     "read_state",
 ]

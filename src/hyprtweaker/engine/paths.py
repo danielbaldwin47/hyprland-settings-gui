@@ -30,6 +30,8 @@ VARS_MODULE = "vars"
 OPTIONS_DIR = "options"
 BRIDGE_DIR = "bridge"
 MANIFEST_NAME = "manifest.json"
+SNAPSHOT_DIR = "snapshots"
+JOURNAL_NAME = "journal.jsonl"
 
 
 def _xdg_dir(variable: str, fallback: str) -> Path:
@@ -89,6 +91,20 @@ class ConfigPaths:
     @property
     def manifest(self) -> Path:
         return self.app_dir / MANIFEST_NAME
+
+    @property
+    def snapshots_dir(self) -> Path:
+        """The content-addressed Snapshot store: one file per distinct Module version.
+
+        In the state dir rather than the App dir, so a user's dotfile repo never sees the
+        churn of one copy per write.
+        """
+        return self.state_dir / SNAPSHOT_DIR
+
+    @property
+    def journal(self) -> Path:
+        """The change log: one JSON object per Apply transaction, newest last."""
+        return self.state_dir / JOURNAL_NAME
 
     @property
     def hyprland_conf(self) -> Path:

@@ -191,7 +191,8 @@ class ApplyResult:
 
         ADR-0016's Last-known-good gate: "the newest Journal Snapshot whose transaction
         confirmed clean (empty `configerrors` + read-back ok). Journal entries gain a
-        `confirmed` flag written after Read-back." This is that flag (#59 writes it).
+        `confirmed` flag written after Read-back." This is that flag, and the Journal records
+        it per transaction.
 
         Stricter than `ok` on purpose. A transaction that could not read half its keys back
         has verified nothing about them, and promoting its Snapshot to last-known-good would

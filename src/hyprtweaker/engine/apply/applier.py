@@ -22,6 +22,7 @@ from types import TracebackType
 
 from ..ipc import CommandClient, EventStream
 from ..model import ConfigModel
+from ..state import Journal
 from ..writer import Writer
 from .foreign import ForeignReloadWatch
 from .preview import EvalPreview
@@ -81,6 +82,7 @@ class Applier:
         client: CommandClient,
         events: EventStream,
         on_foreign_reload: Callable[[], None],
+        journal: Journal | None = None,
         on_result: Callable[[ApplyResult], None] | None = None,
         debounce: float = DEBOUNCE_SECONDS,
         reload_timeout: float = RELOAD_TIMEOUT_SECONDS,
@@ -99,6 +101,7 @@ class Applier:
             writer=writer,
             client=client,
             events=events,
+            journal=journal,
             reload_timeout=reload_timeout,
         )
         self._preview = EvalPreview(
@@ -152,6 +155,14 @@ class Applier:
     async def apply(self, *names: str) -> ApplyResult:
         """Commit and await the transaction that carries `names`."""
         return await self._queue.apply(*names)
+
+    async def apply_now(self, *names: str) -> ApplyResult:
+        """Apply `names` ahead of anything waiting, and over those keys alone.
+
+        ADR-0016's priority restore transaction. The recovery path only -- an ordinary edit
+        that jumped the queue would reorder the user's own changes behind their back.
+        """
+        return await self._queue.apply_now(*names)
 
     # --- lifecycle --------------------------------------------------------------------------
 
