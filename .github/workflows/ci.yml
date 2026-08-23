@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ruff + mypy (engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install ruff mypy
+      - name: ruff check
+        run: ruff check .
+      - name: ruff format
+        run: ruff format --check .
+      - name: mypy (engine only)
+        run: mypy
+
+  unit:
+    name: unit tier (engine, headless)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest
+      # No GTK installed on this runner at all, so the gi-mask seam test is
+      # checked against a machine where gi genuinely does not exist as well as
+      # against the masked one in the ui-smoke job below.
+      - run: pytest tests/unit -v
+
+  ui-smoke:
+    name: UI smoke tier (GTK4 + libadwaita)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK4 / libadwaita
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
+            libgtk-4-1 libadwaita-1-0 xvfb
+      - name: Create venv with system gi visible
+        run: |
+          python3 -m venv --system-site-packages .venv
+          .venv/bin/pip install pytest
+      - name: Boot the app headless
+        env:
+          GDK_BACKEND: x11
+          # This job installed GTK on purpose, so a skipped UI tier here means
+          # the install regressed -- fail instead of going green on zero tests.
+          HYPRTWEAKER_REQUIRE_UI: '1'
+        # tests/unit runs here too: this is the only runner where gi genuinely
+        # imports, so it is the only place the seam test's mask is proven to be
+        # doing work rather than passing because gi was absent anyway.
+        run: xvfb-run -a .venv/bin/python -m pytest tests/ui tests/unit -v
+
+  build:
+    name: meson build + install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 \
+            libgtk-4-1 libadwaita-1-0
+      # Deliberately no actions/setup-python here: this job must use the system
+      # python3 that apt's python3-gi belongs to, so `meson setup`'s gi check and
+      # the installed launcher both exercise the interpreter a package would use.
+      # apt (not pip) for pytest for the same reason, and it sidesteps PEP 668.
+      - run: sudo apt-get install -y --no-install-recommends python3-pytest
+      # -Dtests=enabled makes pytest required at configure time, so `meson test`
+      # can never pass by having found no tests to run.
+      - run: meson setup build --prefix=/usr -Dtests=enabled
+      - run: meson compile -C build
+      - name: meson test
+        # Exercises the wiring a PKGBUILD check() will use (ADR-0019). The UI
+        # tier skips here -- no display on this job, and no HYPRTWEAKER_REQUIRE_UI.
+        run: meson test -C build --print-errorlogs
+      - run: DESTDIR="$PWD/_install" meson install -C build
+      - name: The installed launcher runs, and the install is complete
+        run: |
+          test -x _install/usr/bin/hyprtweaker
+          # Locate the install by finding it, not by predicting it: Debian puts
+          # it in dist-packages while sysconfig reports site-packages, so every
+          # formula for this path is wrong on some distro.
+          PKG_INIT="$(find _install -path '*/hyprtweaker/__init__.py' | head -1)"
+          test -n "$PKG_INIT" || { echo "package was not installed"; exit 1; }
+          export PYTHONPATH="$(dirname "$(dirname "$PKG_INIT")")"
+          echo "installed package dir: $PYTHONPATH"
+          _install/usr/bin/hyprtweaker --help
+          # Import every installed module, so a source missing from
+          # src/meson.build's lists fails here as well as in the unit tier.
+          python3 - <<'PY'
+          import importlib, pkgutil
+          import hyprtweaker
+          names = [m.name for m in pkgutil.walk_packages(
+              hyprtweaker.__path__, prefix="hyprtweaker.")]
+          assert names, "installed package exposes no modules"
+          for name in names:
+              importlib.import_module(name)
+          print(f"imported {len(names)} installed modules")
+          PY
