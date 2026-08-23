@@ -1,0 +1,28 @@
+[hyprland]
+description = "hyprland with lua"
+conflicts = ["hyprland_legacy", "hyprland-legacy"]
+version = "0.55.0"
+pre_command = "hyprctl eval 'hl.config({misc={disable_autoreload=true}})' || true" # Make sure the global run hyprctl reload
+post_command = "echo 'Please run 'hyprctl reload' Just incase for errors and to apply the new configuration'"
+
+[[hyprland.dependency]]
+pacman = ["hyprland"]
+dnf = ["hyprland"]
+
+[[hyprland.files]]
+action = "sync"
+source_root = "Configs/.local/share/hypr/"
+target_root = "${XDG_DATA_HOME}/hypr/"
+paths = ["lua", "hyde.lua"]
+ignored_paths = ["*.conf", ".vscode"]
+
+# [[hyprland.files]]
+# action = "preserve"
+# source_root = "Configs/.local/state/hyde"
+# target_root = "${XDG_STATE_HOME}/hyde/"
+# paths = ["lua_state/*.lua"]
+[[hyprland.files]]
+action = "preserve"
+source_root = "Configs/.config/hypr"
+target_root = "${XDG_CONFIG_HOME}/hypr/"
+paths = ["hyprland.lua"]
