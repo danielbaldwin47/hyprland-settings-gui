@@ -14,16 +14,16 @@ All three must hold before merging:
 
 ```sh
 gh pr ready <n>
-gh pr merge <n> --squash --delete-branch
+gh pr merge <n> --squash
 git fetch origin
 git merge-base --is-ancestor "$(gh pr view <n> --json mergeCommit -q .mergeCommit.oid)" origin/main
 ```
 
-The last line verifies the squash commit reached `main` (the PR head SHA never will — squash rewrites it). On failure the merge landed on a stale base — reland the head branch as a fresh PR against `main` and say so in your report.
+Merge without `--delete-branch`: the repo deletes the remote branch on merge already, and the flag's local deletion fails from a worktree (`fatal: 'main' is already used by worktree`). The last line verifies the squash commit reached `main` (the PR head SHA never will — squash rewrites it). On failure the merge landed on a stale base — reland the head branch as a fresh PR against `main` and say so in your report. On success the landing is fully confirmed — close the ticket now; a vigil on post-merge CI only delays the baton.
 
 ## Cleanup
 
-The remote branch is already gone (`--delete-branch`, plus the repo deletes branches on merge). After a verified merge, remove the local leftovers too — worktree and branch — as the session's **very last act**, after the ticket close and your report, using absolute paths against the main checkout:
+The remote branch is already gone (the repo deletes branches on merge). After a verified merge, remove the local leftovers too — worktree and branch — as the session's **very last act**, after the ticket close and your report, using absolute paths against the main checkout:
 
 ```sh
 git -C <repo-root> worktree remove --force <your-worktree-path>
