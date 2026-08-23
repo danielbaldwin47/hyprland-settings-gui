@@ -1,0 +1,90 @@
+"""What a Bind Row says, settled without a display (#64).
+
+The Binds Page module imports `gi` at module scope like the rest of the UI, so these tests
+skip where PyGObject is absent -- but the functions under test are pure string work, and
+asserting them here rather than in the smoke tier is what keeps that tier shallow.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall
+
+pytest.importorskip("gi", reason="the Binds Page imports gi at module scope")
+
+from hyprtweaker.ui.pages.binds import (  # noqa: E402
+    action_text,
+    flag_text,
+    is_read_only,
+    trigger_text,
+)
+
+
+def exec_bind(keys: str = "SUPER + Q", command: str = "kitty", **kwargs: object) -> Bind:
+    return Bind(
+        keys=keys,
+        dispatcher=DispatcherCall(path="exec_cmd", args={"command": command}),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+class TestTrigger:
+    def test_plain_keys_read_back_as_written(self) -> None:
+        assert trigger_text(exec_bind("SUPER + SHIFT + Q")) == "SUPER + SHIFT + Q"
+
+    def test_key_codes_are_spelled_out(self) -> None:
+        """The one Trigger a user cannot recognise, and the one IPC will not identify."""
+        assert trigger_text(exec_bind("SUPER + code:10")) == "SUPER + key code 10"
+
+    def test_spacing_is_normalised(self) -> None:
+        assert trigger_text(exec_bind("SUPER+Q")) == "SUPER + Q"
+
+    def test_a_lone_key_survives(self) -> None:
+        assert trigger_text(exec_bind("XF86AudioPlay")) == "XF86AudioPlay"
+
+
+class TestAction:
+    def test_exec_shows_the_command_itself(self) -> None:
+        """Exec is the majority bind; the command is the useful thing to show."""
+        assert action_text(exec_bind(command="kitty --title x")) == "kitty --title x"
+
+    def test_a_known_dispatcher_shows_its_label(self) -> None:
+        bind = Bind(keys="A", dispatcher=DispatcherCall(path="window.close"))
+        assert action_text(bind) == "Close the window"
+
+    def test_arguments_are_appended(self) -> None:
+        bind = Bind(keys="A", dispatcher=DispatcherCall(path="window.tag", args={"tag": "x"}))
+        assert action_text(bind) == "Tag the window (tag: x)"
+
+    def test_an_unknown_dispatcher_shows_its_call(self) -> None:
+        """A plugin or a newer Hyprland: showing the call beats showing nothing."""
+        bind = Bind(keys="A", dispatcher=DispatcherCall(path="plugin.thing"))
+        assert action_text(bind) == "hl.dsp.plugin.thing"
+
+    def test_a_function_action_says_so(self) -> None:
+        assert action_text(Bind(keys="A", dispatcher=None)) == "Runs a Lua function"
+
+
+class TestFlags:
+    def test_set_flags_are_named(self) -> None:
+        bind = exec_bind(options=BindOptions(locked=True, repeating=True))
+        assert flag_text(bind) == "locked, repeating"
+
+    def test_no_flags_is_empty(self) -> None:
+        assert flag_text(exec_bind()) == ""
+
+    def test_the_description_is_not_a_flag(self) -> None:
+        assert flag_text(exec_bind(options=BindOptions(description="hi"))) == ""
+
+
+class TestReadOnly:
+    def test_an_ordinary_bind_is_editable(self) -> None:
+        assert is_read_only(exec_bind()) == ""
+
+    def test_a_function_action_is_not(self) -> None:
+        assert "user.lua" in is_read_only(Bind(keys="A", dispatcher=None))
+
+    def test_a_multi_key_bind_is_not(self) -> None:
+        """0 uses in the corpus and only approximate under Lua (ADR-0007)."""
+        assert is_read_only(exec_bind("SUPER + A&B")) != ""

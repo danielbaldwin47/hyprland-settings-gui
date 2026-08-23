@@ -96,6 +96,7 @@ class ApplyQueue:
         self._on_result = on_result
 
         self._dirty: set[str] = set()
+        self._entities_dirty = False
         self._waiters: list[asyncio.Future[ApplyResult]] = []
         self._priority: list[_Priority] = []
         self._immediate = False
@@ -168,6 +169,22 @@ class ApplyQueue:
         than starting a second. "Immediate" is about the debounce, never about the lock.
         """
         self._mark(names, immediate=True)
+
+    def commit_entities(self) -> None:
+        """An Entity changed -- a Bind added, edited, reordered or removed (ADR-0007).
+
+        Carries no keys, and that is not an omission. A transaction renders the *whole*
+        model, so the changed `binds.lua` is written either way; `keys` exist only to scope
+        the Read-back, and binds have nothing to read back. `hyprctl binds` is blind to
+        `code:N`, so ADR-0007 makes binds write-only over IPC and their post-reload
+        verification `configerrors` alone -- which is exactly a transaction with no keys.
+
+        Hence the separate flag rather than an empty `commit()`: the worker drops a batch
+        with nothing dirty in it, and without this an edit to a bind would be silently
+        swallowed by the queue instead of reaching disk.
+        """
+        self._entities_dirty = True
+        self._mark((), immediate=True)
 
     async def apply(self, *names: str) -> ApplyResult:
         """Commit `names` and return the result of the transaction that carries them.
@@ -278,13 +295,15 @@ class ApplyQueue:
 
             keys = tuple(sorted(self._dirty))
             waiters = self._waiters
+            entities = self._entities_dirty
             self._dirty.clear()
+            self._entities_dirty = False
             self._waiters = []
             self._immediate = False
             self._commit_now.clear()
             self._work_available.clear()
 
-            if not keys:
+            if not keys and not entities:
                 self._settle()
                 continue
 
