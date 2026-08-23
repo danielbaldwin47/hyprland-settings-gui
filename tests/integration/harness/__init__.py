@@ -13,14 +13,15 @@ Four pieces, each usable on its own:
 - `corpus.py` -- the pinned rice corpus staged into throwaway homes, with upstream's own Lua
   ports as ground truth where they exist.
 
-**Scope.** What ships here is the rig plus the *apply* direction: a config this app wrote,
-booted and verified. The *import* direction -- staging a rice's `.conf`, converting it, and
-diffing the two engines against each other (prototype #9 §3) -- needs an importer to diff,
-and belongs with the ticket that builds one. The pieces that direction will want are already
-here and deliberately kept: `stage` disarms `.conf` and `.lua` alike so both sides run
-inert, `option_value` reads the value out of a `getoption` reply under either engine's key
-naming, and `ImageComparison.visually_identical` carries the GPU-blend tolerance that a
-cross-engine screenshot diff needs and a same-engine one does not.
+**Scope.** The rig, plus both directions. The *apply* direction -- a config this app wrote,
+booted and verified -- shipped with the harness. The *import* direction (prototype #9 §3)
+arrived with the mapping half of the Importer in #61 as `test_import_matches_port.py`:
+a rice's `.conf` tree staged, converted, booted, and diffed against the hand-written
+`hyprland.lua` its own author ships. The pieces that direction needed were kept here from
+the start and all three earned their keep: `stage` disarms `.conf` and `.lua` alike so both
+sides run inert, `option_value` reads the value out of a `getoption` reply under either
+engine's key naming, and `ImageComparison.visually_identical` carries the GPU-blend
+tolerance that a cross-engine screenshot diff needs and a same-engine one does not.
 
 The tier is slow by construction (~45 s per config). It stays out of the per-commit run by
 living outside `testpaths`, and the `hyprland` marker is what makes the compositor-bound half
@@ -28,6 +29,13 @@ skip cleanly on a machine that cannot host one::
 
     pytest tests/integration              # the whole tier; skips what this machine cannot run
     pytest tests/integration -m hyprland  # only the tests that need a compositor
+
+**Run it by hand before merging a change to the Importer or the Writer.** CI cannot: a
+GitHub runner has no seat, so the job could only ever skip and report green, which ADR-0011
+§tier-3 rates worse than no job at all. That makes `test_import_matches_port.py` the only
+end-to-end proof that a real rice still converts to a config Hyprland accepts, and nothing
+automatic will notice when it stops being true. Nightly is blocked on the virtual-seat spike
+the ADR names (`seatd` + `vkms`, or nesting inside a headless sway/cage).
 """
 
 from __future__ import annotations
