@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 SCHEMA_DIR = ROOT / "data" / "schema"
 GOLDEN_DIR = ROOT / "tests" / "golden"
+FIXTURE_DIR = ROOT / "tests" / "fixtures"
+CORPUS_DIR = ROOT / "tests" / "corpus"
 
 SAMPLE_VERSION = "0.56.2"
 """The schema the writer fixtures are pinned to, so a new shipped schema cannot silently

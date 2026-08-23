@@ -15,7 +15,11 @@ package_sources = {
     '__init__.py',
     'paths.py',
   ],
-  'hyprtweaker/engine/importer': ['__init__.py'],
+  'hyprtweaker/engine/importer': [
+    '__init__.py',
+    'hyprlang.py',
+    'keywords.py',
+  ],
   'hyprtweaker/engine/ipc': [
     '__init__.py',
     'commands.py',

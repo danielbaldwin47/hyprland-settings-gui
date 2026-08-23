@@ -1,0 +1,87 @@
+# keyword stream
+kind | where | detail
+enter | hyprland.conf | -
+var | hyprland.conf:5 | $mainMod = SUPER
+var | hyprland.conf:6 | $mainModAlt = SUPER ALT
+var | hyprland.conf:7 | $gap = 5
+var | hyprland.conf:8 | $doubled = 10
+var | hyprland.conf:9 | $thirds = 0.33333334
+var | hyprland.conf:10 | $rounding = 0.3
+var | hyprland.conf:11 | $escapedExpr = literal \{{ gap * 2 }}
+var | hyprland.conf:14 | $col = ff
+var | hyprland.conf:15 | $colour = 00ff99
+var | hyprland.conf:16 | $both = 00ff99ANDff
+assign | hyprland.conf:19 | general:border_size = 5
+assign | hyprland.conf:20 | general:gaps_in = 6
+assign | hyprland.conf:21 | general:gaps_out = 10
+assign | hyprland.conf:22 | general:col.active_border = rgba(33ccffee) rgba(00ff99ee) 45deg
+assign | hyprland.conf:24 | general:snap:enabled = true
+assign | hyprland.conf:29 | general:snap:window_gap = 10
+assign | hyprland.conf:30 | decoration:blur:enabled = true
+assign | hyprland.conf:35 | input:kb_layout = us
+handler | hyprland.conf:36 | bind = SUPER, T, exec, inside-a-category
+enter | scoped/kb.conf | -
+assign | scoped/kb.conf:3 | input:kb_variant = intl
+handler | scoped/kb.conf:4 | bind = SUPER, K, exec, from-a-sourced-file
+leave | scoped/kb.conf | -
+handler | hyprland.conf:41 | bind = SUPER, equal, exec, echo a=b=c
+handler | hyprland.conf:42 | bind = SUPER ALT, Q, exec, kitty
+handler | hyprland.conf:45 | bind(le) = , XF86AudioRaiseVolume, exec, volume up
+handler | hyprland.conf:46 | bind(m) = SUPER, mouse:272, movewindow
+handler | hyprland.conf:47 | env(d) = XCURSOR_SIZE,24
+handler | hyprland.conf:48 | gesture = 3, horizontal, workspace
+assign | hyprland.conf:51 | misc:background_color = 0xff111111 # not a comment
+assign | hyprland.conf:52 | misc:vfr = true
+handler | hyprland.conf:54 | windowrule = float, class:^(pavucontrol)$
+handler | hyprland.conf:55 | layerrule = blur, waybar
+handler | hyprland.conf:58 | windowrulev2 = float, class:^(legacy)$
+handler | hyprland.conf:59 | layerrulev2 = blur, legacy
+assign | hyprland.conf:62 | misc:broken_expression = {{ 1 ^ 2 }}
+handler | hyprland.conf:68 | exec-once = long-command    --with-a-flag    --and-another
+assign | hyprland.conf:73 | misc:disable_hyprland_logo = true {
+special | hyprland.conf:76 | device name=epic-mouse-v1 [block] { name = epic-mouse-v1; sensitivity = -0.5; accel_profile = flat }
+special | hyprland.conf:83 | device name=late-key-mouse [block] { sensitivity = 0.1; name = late-key-mouse }
+special | hyprland.conf:89 | device name=another-mouse [inline] { sensitivity = 0.3 }
+special | hyprland.conf:91 | monitorv2 output=DP-1 [block] { output = DP-1; mode = 2560x1440@144 }
+special | hyprland.conf:97 | plugin [block] { hyprbars:bar_height = 20 }
+assign | hyprland.conf:102 | plugin:hyprexpo:columns = 3
+assign | hyprland.conf:107 | misc:vrr = 1
+unparsed | hyprland.conf:115 | source-no-match: source = ./does-not-exist.conf
+unparsed | hyprland.conf:119 | invalid-line: this line has no equals sign and no brace
+unparsed | hyprland.conf:120 | empty-lhs: = empty left hand side
+unparsed | hyprland.conf:121 | stray-category-close: }
+assign | hyprland.conf:124 | misc:font_family = Escaped {braces} and a \ backslash
+assign | hyprland.conf:127 | misc:splash_font_family = $NOT_DEFINED
+assign | hyprland.conf:130 | workspace_swipe = true [orphan]
+enter | parts/a-first.conf | -
+var | parts/a-first.conf:2 | $layer = a-first
+handler | parts/a-first.conf:3 | animation = windows, 1, 3, default
+leave | parts/a-first.conf | -
+enter | parts/b-second.conf | -
+handler | parts/b-second.conf:2 | animation = border, 1, 10, default
+assign | parts/b-second.conf:3 | misc:disable_splash_rendering = a-first
+leave | parts/b-second.conf | -
+enter | nested/entry.conf | -
+handler | nested/entry.conf:2 | bezier = easeOutQuint, 0.23, 1, 0.32, 1
+enter | nested/sub/deep.conf | -
+handler | nested/sub/deep.conf:1 | submap = clean
+handler | nested/sub/deep.conf:2 | bind = , escape, submap, reset
+handler | nested/sub/deep.conf:3 | submap = reset
+leave | nested/sub/deep.conf | -
+leave | nested/entry.conf | -
+leave | hyprland.conf | -
+
+# diagnostics
+severity | code | where | message
+error | deprecated-keyword | hyprland.conf:58 | `windowrulev2` is the pre-0.54 spelling and is refused by Hyprland 0.56.2
+error | deprecated-keyword | hyprland.conf:59 | `layerrulev2` is the pre-0.54 spelling and is refused by Hyprland 0.56.2
+error | bad-expression | hyprland.conf:62 | expected `A op B` with op in + - * /, got '1 ^ 2'
+error | stray-endif | hyprland.conf:65 | stray endif
+error | special-key-not-first | hyprland.conf:83 | `device` block must open with `name = ...`
+warning | conditional-baked | hyprland.conf:106 | `# hyprlang if MY_FLAG` evaluated True while importing and was baked in; Lua has no equivalent
+warning | conditional-baked | hyprland.conf:109 | `# hyprlang if !MY_FLAG` evaluated False while importing and was baked in; Lua has no equivalent
+error (suppressed) | source-no-match | hyprland.conf:115 | source= matched no file: ./does-not-exist.conf
+error | invalid-line | hyprland.conf:119 | invalid config line
+error | empty-lhs | hyprland.conf:120 | empty lhs
+error | stray-category-close | hyprland.conf:121 | stray category close
+error | orphan-key | hyprland.conf:130 | `workspace_swipe` sits outside any category, so hyprlang never applied it
