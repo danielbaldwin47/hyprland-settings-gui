@@ -9,6 +9,9 @@ read the explicit file lists out of a `meson.build`. Both `src/meson.build` (Pyt
 sources) and `data/meson.build` (schema data) list their files by hand -- meson says
 nothing about a file no list names -- so both need the same "declared vs on disk" check,
 and it is one helper rather than two copies of the same parser.
+
+The Importer adds a third: one renderer for the hyprlang keyword stream, shared by the
+synthetic-grammar golden and the corpus golden so the two can be read side by side.
 """
 
 from __future__ import annotations
@@ -17,6 +20,17 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from hyprtweaker.engine.importer import (
+    Assignment,
+    Handler,
+    ParseResult,
+    SourceEnter,
+    SourceLeave,
+    SpecialCategory,
+    UnparsedLine,
+    VariableDefinition,
+)
+
 if TYPE_CHECKING:
     from hyprtweaker.engine.model import ConfigModel
 
@@ -24,6 +38,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 SCHEMA_DIR = ROOT / "data" / "schema"
 GOLDEN_DIR = ROOT / "tests" / "golden"
+FIXTURE_DIR = ROOT / "tests" / "fixtures"
+CORPUS_DIR = ROOT / "tests" / "corpus"
 
 SAMPLE_VERSION = "0.56.2"
 """The schema the writer fixtures are pinned to, so a new shipped schema cannot silently
@@ -100,3 +116,62 @@ def assert_lists_match(declared: set[str], actual: set[str], meson_file: Path) -
 
     stale = declared - actual
     assert not stale, f"{meson_file.name} installs files that no longer exist: {sorted(stale)}"
+
+
+def _relative(path: Path, root: Path) -> str:
+    """Tree-relative path, so a golden does not encode where the checkout lives."""
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _keyword_row(keyword: object, root: Path) -> str:
+    """One `kind | where | detail` row, mirroring the schema golden's column style."""
+    if isinstance(keyword, SourceEnter):
+        return f"enter | {_relative(keyword.file, root)} | -"
+    if isinstance(keyword, SourceLeave):
+        return f"leave | {_relative(keyword.file, root)} | -"
+
+    where = f"{_relative(keyword.origin.file, root)}:{keyword.origin.line}"
+
+    if isinstance(keyword, VariableDefinition):
+        return f"var | {where} | ${keyword.name} = {keyword.value}"
+    if isinstance(keyword, Assignment):
+        suffix = " [orphan]" if keyword.orphan else ""
+        return f"assign | {where} | {keyword.key} = {keyword.value}{suffix}"
+    if isinstance(keyword, Handler):
+        name = f"{keyword.name}({keyword.flags})" if keyword.flags else keyword.name
+        return f"handler | {where} | {name} = {keyword.value}"
+    if isinstance(keyword, SpecialCategory):
+        key = (
+            f" {keyword.key_field}={keyword.key_value}"
+            if keyword.key_field is not None and keyword.key_value is not None
+            else ""
+        )
+        shape = "inline" if keyword.inline else "block"
+        fields = "; ".join(f"{f.key} = {f.value}" for f in keyword.fields)
+        return f"special | {where} | {keyword.category}{key} [{shape}] {{ {fields} }}"
+    if isinstance(keyword, UnparsedLine):
+        return f"unparsed | {where} | {keyword.code.value}: {keyword.text.strip()}"
+    raise AssertionError(f"unrendered keyword kind: {type(keyword).__name__}")
+
+
+def render_keyword_stream(result: ParseResult, root: Path) -> str:
+    """The full parse as reviewable text: the ordered stream, then every finding.
+
+    A golden over this is the only way a change in the grammar shows up as a diff a human
+    reads rather than as a rice that silently converts differently.
+    """
+    lines = ["# keyword stream", "kind | where | detail"]
+    lines += [_keyword_row(keyword, root) for keyword in result.keywords]
+
+    lines += ["", "# diagnostics", "severity | code | where | message"]
+    for diagnostic in result.diagnostics:
+        severity = diagnostic.severity.value
+        if diagnostic.suppressed:
+            severity += " (suppressed)"
+        where = f"{_relative(diagnostic.origin.file, root)}:{diagnostic.origin.line}"
+        lines.append(f"{severity} | {diagnostic.code.value} | {where} | {diagnostic.message}")
+
+    return "\n".join(lines) + "\n"
