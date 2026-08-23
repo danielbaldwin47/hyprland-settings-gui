@@ -245,15 +245,23 @@ class BindEditor(Adw.Dialog):
                 args[key.strip()] = _coerce(value.strip())
             return args, ()
 
-        values = {
-            name: row.get_text().strip()
-            for name, row in self._arg_entries.items()
-            if isinstance(row, Adw.EntryRow) and row.get_text().strip()
-        }
+        # Typed, not stringly: `ArgSpec.type` exists so an int argument reaches Lua as `9`
+        # rather than `"9"`. The catalog carries the type precisely because the compositor
+        # checks it -- emitting the wrong one is a config error, not a coercion.
+        specs = {spec.name: spec for spec in entry.args}
+        values: dict[str, object] = {}
+        for name, row in self._arg_entries.items():
+            if not isinstance(row, Adw.EntryRow):
+                continue
+            text = row.get_text().strip()
+            if not text:
+                continue
+            values[name] = _typed(text, specs[name].type if name in specs else "string")
+
         if entry.positional:
             first = entry.args[0].name if entry.args else ""
             return {}, (values[first],) if first in values else ()
-        return dict(values), ()
+        return values, ()
 
     def _validate(self) -> str:
         if not self._trigger.get_text().strip():
@@ -306,6 +314,23 @@ class BindEditor(Adw.Dialog):
             )
         )
         self.close()
+
+
+def _typed(text: str, arg_type: str) -> object:
+    """One form field's text as the type the catalog says the dispatcher wants.
+
+    A field the user left in a shape the type cannot take comes back as the string they
+    typed rather than raising: `_validate` has already run, and silently substituting `0`
+    for what someone wrote would emit a bind that works and does the wrong thing.
+    """
+    if arg_type == "int":
+        try:
+            return int(text)
+        except ValueError:
+            return text
+    if arg_type == "bool":
+        return text.strip().lower() in {"true", "yes", "1"}
+    return text
 
 
 def _coerce(text: str) -> object:
