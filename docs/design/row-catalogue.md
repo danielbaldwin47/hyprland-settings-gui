@@ -62,3 +62,17 @@ Shown: **Model**, **Rules**, **Custom keymap file** appear with Advanced pills o
 - The factory must expose each Row's inner control so the dependency badge can desensitise it directly — the prototype walked the widget tree; the real factory returns the handle.
 - "Modified" is the ADR-0005 tri-state: the Option is modified exactly when the model emits it. (Superseded the per-type is-default check during #57 — see the amendment on ADR-0013 §6. The check was prototype #8's only option because #8 had no model; comparing values would hide the reset arrow on an Option deliberately set to today's default, which is the one Row that most needs it.)
 - Pills are `GtkLabel` with a `.pill` style class; summaries `.value-summary` + `dim-label`.
+- **The suffix strip is one box, added once.** `AdwActionRow.add_suffix` appends but
+  `AdwExpanderRow.add_suffix` *prepends*, so adding the five slots one call at a time puts
+  the ⓘ at opposite ends of the strip depending on which Row type an Option resolved to —
+  observed on the running app during #58, where every expander wore its chrome backwards.
+  Building the strip as a `GtkBox` and handing the Row that one widget makes the order a
+  property of the convention rather than of the widget.
+- **An expander's editor goes in as one child**, not as a sub-Row per part. That is what
+  leaves the factory a single control handle to hand back, so the dependency badge and the
+  read-only state can desensitise the editor without touching the Row's own text (ADR-0013
+  §3) and without walking the widget tree for it.
+- **Continuous vs discrete is a property of the widget, not of the type.** The only control
+  in the generated Rows that moves under a held pointer is the gradient's angle slider, so
+  it is the only one wired to the Eval preview tier (ADR-0010); a colour dialog is modal and
+  a spin button is discrete, and both commit through the normal Apply path.

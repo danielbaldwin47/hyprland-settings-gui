@@ -118,6 +118,88 @@ def test_a_touched_burst_becomes_one_reload(tmp_path: Path) -> None:
     assert requests.count("reload") == 1
 
 
+def test_a_drag_previews_per_tick_and_costs_exactly_one_reload(tmp_path: Path) -> None:
+    """ADR-0010's Eval preview tier, through the object the app holds.
+
+    The acceptance criterion for the continuous controls, stated as the compositor sees it:
+    every tick of the gesture is an `eval` and the whole drag buys exactly one reload -- the
+    one the release commits. Ten reloads instead of one is not a slow drag, it is ten full
+    teardowns of the compositor's config state.
+    """
+    model = model_with(general__gaps_in=1)
+
+    async def main(started: FakeHyprland) -> list[str]:
+        async with EventStream(started.instance) as events:
+            await started.wait_for_listeners(1)
+            async with Applier(
+                model=model,
+                writer=Writer(ConfigPaths.rooted_at(tmp_path), SAMPLE_APP_VERSION),
+                client=CommandClient(started.instance),
+                events=events,
+                on_foreign_reload=lambda: None,
+                debounce=0.01,
+                reload_timeout=0.5,
+            ) as applier:
+                for gap in range(2, 12):
+                    model.set("general:gaps_in", gap)
+                    applier.preview("general:gaps_in")
+                    # One turn of the loop per tick, so the worker really does send each
+                    # one -- coalescing is tested where it belongs, and hiding behind it
+                    # here would make this pass without a single preview being sent.
+                    await applier.flush_previews()
+                applier.commit("general:gaps_in")
+                await applier.drain()
+        return started.requests
+
+    model.set("general:gaps_in", 11)
+    fake = FakeHyprland(model_conversation(model), reload_emits_event=True)
+    model.set("general:gaps_in", 1)
+    requests = run_with_fake(main, fake)
+
+    assert requests.count("reload") == 1
+    assert len([one for one in requests if one.startswith("eval ")]) == 10
+
+
+def test_a_preview_never_lands_between_a_reload_and_its_read_back(tmp_path: Path) -> None:
+    """`eval` clears `configerrors`, so a tick arriving mid-transaction would erase the
+    errors that transaction is about to read -- and a rejected config would report clean."""
+    model = model_with(general__gaps_in=5)
+
+    async def main(started: FakeHyprland) -> list[str]:
+        async with EventStream(started.instance) as events:
+            await started.wait_for_listeners(1)
+            async with Applier(
+                model=model,
+                writer=Writer(ConfigPaths.rooted_at(tmp_path), SAMPLE_APP_VERSION),
+                client=CommandClient(started.instance),
+                events=events,
+                on_foreign_reload=lambda: None,
+                debounce=0.01,
+                reload_timeout=0.5,
+            ) as applier:
+                applying = asyncio.create_task(applier.apply("general:gaps_in"))
+                # Ticking while that transaction runs is exactly the race: the drag has not
+                # stopped just because the release's write is in flight.
+                while not applier.busy:
+                    await asyncio.sleep(0)
+                applier.preview("general:gaps_in")
+                # A real turn of the loop, so the preview worker genuinely wakes up and
+                # decides -- without it this could pass by the tick never being considered.
+                await asyncio.sleep(0.01)
+                assert applier.busy, "the transaction must still be running when it decided"
+                await applying
+                await applier.flush_previews()
+        return started.requests
+
+    requests = run_with_fake(
+        main,
+        FakeHyprland(model_conversation(model), reload_emits_event=True, reply_delay=0.02),
+    )
+
+    assert [one for one in requests if one.startswith("eval ")] == []
+    assert "j/configerrors" in requests, "the transaction did get to read its errors"
+
+
 def test_results_reach_the_subscriber(tmp_path: Path) -> None:
     model = model_with(decoration__rounding=10)
     seen: list[ApplyResult] = []

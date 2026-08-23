@@ -17,9 +17,18 @@ from __future__ import annotations
 import os
 
 import pytest
-from _support import GOLDEN_DIR, SAMPLE_APP_VERSION, sample_model
+from _support import GOLDEN_DIR, SAMPLE_APP_VERSION, SAMPLE_VERSION, SCHEMA_DIR, sample_model
 
-from hyprtweaker.engine.model import ConfigModel
+from hyprtweaker.engine.model import (
+    Color,
+    ConfigModel,
+    CssGaps,
+    Gradient,
+    Vec2,
+    display_text,
+    parse_value,
+)
+from hyprtweaker.engine.schema import OptionType, load_schema
 from hyprtweaker.engine.writer import module_relpath, render_module, syntax
 
 WRITER_GOLDEN_DIR = GOLDEN_DIR / "writer"
@@ -200,3 +209,69 @@ class TestSyntaxGate:
 
         assert not result.ok
         assert "options/general.lua" in result.detail
+
+
+@pytest.fixture(scope="module")
+def edited() -> str:
+    """One Section rendered from values built the way the complex editors build them."""
+    model = ConfigModel(load_schema(SAMPLE_VERSION, SCHEMA_DIR))
+    model.set(
+        "general:col.active_border",
+        Gradient(
+            (Color(0xEE33CCFF), Color(0xEE00FF99), Color(0x8022DDAA)),
+            # A `GtkScale` reads a float; `descriptions` prints a whole float without its
+            # `.0`, and so must the writer, or the content hash moves for nothing.
+            135.0,
+        ),
+    )
+    model.set("general:col.inactive_border", Gradient((Color(0xFF444444),)))
+    model.set("general:gaps_in", CssGaps(4, 8, 4, 8))
+    model.set("general:gaps_out", CssGaps.uniform(12))
+    return render_module(model.section("general"), app_version=SAMPLE_APP_VERSION)
+
+
+class TestEditedValues:
+    """The values the complex editors build, rendered (#58).
+
+    Everything above starts from display text -- a schema default, an imported `.conf` line.
+    The editors do not: a colour button hands the model a `Color`, a gradient's stop row a
+    `Gradient` of them, four spin buttons a `CssGaps`. Same classes, reached a different way,
+    and the way that matters most because a gradient reaching `hl.config` as a string is a
+    config error rather than a wrong colour (ADR-0005).
+
+    So this is a golden over exactly the shapes an editor can produce: a gradient the user
+    added a third stop to and dragged to 135°, gaps typed side by side, gaps flattened back
+    to uniform.
+    """
+
+    def test_the_edited_module_matches_its_golden(self, edited: str) -> None:
+        _golden("edits/general.lua", edited)
+
+    def test_an_edited_gradient_still_reaches_lua_as_a_table(self, edited: str) -> None:
+        assert "135deg" not in edited
+        assert "angle = 135 }" in edited
+
+    def test_edited_values_survive_the_trip_through_display_text(self) -> None:
+        """The third representation, and the one the compositor answers Read-back in.
+
+        An editor's value has to mean the same thing after a `descriptions`-spelling round
+        trip, or the Apply transaction that wrote it would report its own write as a
+        mismatch and ADR-0016 would badge the Row "didn't apply".
+        """
+        values = (
+            Gradient((Color(0xEE33CCFF), Color(0x8022DDAA)), 135.0),
+            CssGaps(4, 8, 4, 8),
+            CssGaps.uniform(12),
+            Vec2(0.0, 2.0),
+            Color(0xFF8800FF),
+        )
+        for value in values:
+            assert parse_value(_TYPE_OF[type(value)], display_text(value)) == value
+
+
+_TYPE_OF = {
+    Gradient: OptionType.GRADIENT,
+    CssGaps: OptionType.CSS_GAPS,
+    Vec2: OptionType.VEC2,
+    Color: OptionType.COLOR,
+}
