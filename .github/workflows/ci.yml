@@ -94,10 +94,13 @@ jobs:
       - name: The installed launcher runs, and the install is complete
         run: |
           test -x _install/usr/bin/hyprtweaker
-          # dist-packages on Debian/Ubuntu, site-packages elsewhere -- ask the
-          # interpreter rather than guessing, and prefix it with the DESTDIR.
-          PURELIB="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-          export PYTHONPATH="$PWD/_install$PURELIB"
+          # Locate the install by finding it, not by predicting it: Debian puts
+          # it in dist-packages while sysconfig reports site-packages, so every
+          # formula for this path is wrong on some distro.
+          PKG_INIT="$(find _install -path '*/hyprtweaker/__init__.py' | head -1)"
+          test -n "$PKG_INIT" || { echo "package was not installed"; exit 1; }
+          export PYTHONPATH="$(dirname "$(dirname "$PKG_INIT")")"
+          echo "installed package dir: $PYTHONPATH"
           _install/usr/bin/hyprtweaker --help
           # Import every installed module, so a source missing from
           # src/meson.build's lists fails here as well as in the unit tier.
