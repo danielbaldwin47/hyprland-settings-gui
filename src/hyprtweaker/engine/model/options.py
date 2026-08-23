@@ -69,6 +69,7 @@ class ConfigModel:
         self._schema = schema
         self._values: dict[str, Any] = {}
         self._entities = EntitySet()
+        self._entities_loaded = False
 
     @property
     def schema(self) -> Schema:
@@ -89,9 +90,27 @@ class ConfigModel:
         """
         return self._entities
 
+    @property
+    def entities_loaded(self) -> bool:
+        """Whether the Entity half was actually read, as opposed to merely being empty.
+
+        The two are not the same and confusing them destroys data. An empty `EntitySet`
+        means "this config has no binds", and the Writer prunes `binds.lua` accordingly --
+        correct when the user deleted their last bind, catastrophic when the truth is that
+        nobody has read the file yet. A session that could not parse `binds.lua` leaves this
+        `False`, and the Writer then leaves the Module alone rather than deleting the binds
+        it could not understand.
+        """
+        return self._entities_loaded
+
     def adopt_entities(self, entities: EntitySet) -> None:
         """Replace the Entity half wholesale -- what an Importer hands back (ADR-0009)."""
         self._entities = entities
+        self._entities_loaded = True
+
+    def mark_entities_loaded(self) -> None:
+        """Record that the Entity half now reflects the file, so pruning may act on it."""
+        self._entities_loaded = True
 
     # --- reading ------------------------------------------------------------------------
 

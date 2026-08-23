@@ -17,6 +17,7 @@ goes in the list -- because position is identity, and only the list knows the po
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 import gi
 
@@ -95,7 +96,7 @@ class BindEditor(Adw.Dialog):
     # --- door 1: which kind of action -----------------------------------------------------
 
     def _door_page(self) -> Adw.NavigationPage:
-        page = _page("Add keybind")
+        page = Adw.NavigationPage(title="Add keybind")
         group = Adw.PreferencesGroup(
             title="What should this key do?",
             description="Most keybinds run a command.",
@@ -119,13 +120,13 @@ class BindEditor(Adw.Dialog):
         action.connect("activated", lambda _row: self._view.push(self._picker_page()))
         group.add(action)
 
-        page.set_child(_scrolled(group))
+        page.set_child(_dialog_body(group))
         return page
 
     # --- door 2: the dispatcher picker ----------------------------------------------------
 
     def _picker_page(self) -> Adw.NavigationPage:
-        page = _page("Choose an action")
+        page = Adw.NavigationPage(title="Choose an action")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
 
         for name, entries in namespaces().items():
@@ -139,7 +140,7 @@ class BindEditor(Adw.Dialog):
                 group.add(row)
             box.append(group)
 
-        page.set_child(_scrolled(box))
+        page.set_child(_dialog_body(box))
         return page
 
     def _choose(self, entry: Dispatcher | None) -> None:
@@ -150,7 +151,7 @@ class BindEditor(Adw.Dialog):
 
     def _form_page(self) -> Adw.NavigationPage:
         entry = self._chosen
-        page = _page(entry.label if entry else "Keybind")
+        page = Adw.NavigationPage(title=entry.label if entry else "Keybind")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
 
         trigger_group = Adw.PreferencesGroup(title="Trigger", description=TRIGGER_HELP)
@@ -175,7 +176,7 @@ class BindEditor(Adw.Dialog):
         save.connect("clicked", lambda _button: self._save())
         box.append(save)
 
-        page.set_child(_scrolled(box))
+        page.set_child(_dialog_body(box))
         return page
 
     def _args_group(self, entry: Dispatcher | None) -> Adw.PreferencesGroup:
@@ -280,8 +281,20 @@ class BindEditor(Adw.Dialog):
         entry = self._chosen
         args, positional = self._collect_args()
         path = entry.path if entry else EXEC_PATH
-        flags = {name: row.get_active() for name, row in self._flag_switches.items()}
-        options = BindOptions(description=self._description.get_text().strip(), **flags)
+
+        # `replace` rather than a fresh `BindOptions`, so editing a bind keeps the fields
+        # this dialog does not show. `device`, `auto_consuming`, `click`, `drag` and
+        # `submap_universal` all belong to binds this app can import but not yet edit
+        # (#105, #66), and building the options from the switches alone would delete them
+        # the first time a user touched an unrelated flag -- exactly the silent overwrite
+        # ADR-0007 forbids. `origin` is carried for the same reason: it is where the bind
+        # came from, and this edit does not move it.
+        base = self._original.options if self._original else BindOptions()
+        options = replace(
+            base,
+            description=self._description.get_text().strip(),
+            **{name: row.get_active() for name, row in self._flag_switches.items()},
+        )
 
         self._on_done(
             Bind(
@@ -289,6 +302,7 @@ class BindEditor(Adw.Dialog):
                 dispatcher=DispatcherCall(path=path, args=args, positional=positional),
                 options=options,
                 submap=self._original.submap if self._original else None,
+                origin=self._original.origin if self._original else "",
             )
         )
         self.close()
@@ -310,12 +324,7 @@ def _coerce(text: str) -> object:
         return text
 
 
-def _page(title: str) -> Adw.NavigationPage:
-    page = Adw.NavigationPage(title=title)
-    return page
-
-
-def _scrolled(child: Gtk.Widget) -> Gtk.Widget:
+def _dialog_body(child: Gtk.Widget) -> Gtk.Widget:
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
     header = Adw.HeaderBar()
     box.append(header)

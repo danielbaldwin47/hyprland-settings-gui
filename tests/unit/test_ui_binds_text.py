@@ -16,7 +16,7 @@ pytest.importorskip("gi", reason="the Binds Page imports gi at module scope")
 from hyprtweaker.ui.pages.binds import (
     action_text,
     flag_text,
-    is_read_only,
+    read_only_reason,
     trigger_text,
 )
 
@@ -78,13 +78,13 @@ class TestFlags:
         assert flag_text(exec_bind(options=BindOptions(description="hi"))) == ""
 
 
-class TestReadOnly:
+class TestReadOnlyReason:
     def test_an_ordinary_bind_is_editable(self) -> None:
-        assert is_read_only(exec_bind()) == ""
+        assert read_only_reason(exec_bind()) == ""
 
     def test_a_function_action_is_not(self) -> None:
-        assert "user.lua" in is_read_only(Bind(keys="A", dispatcher=None))
+        assert "user.lua" in read_only_reason(Bind(keys="A", dispatcher=None))
 
     def test_a_multi_key_bind_is_not(self) -> None:
         """0 uses in the corpus and only approximate under Lua (ADR-0007)."""
-        assert is_read_only(exec_bind("SUPER + A&B")) != ""
+        assert read_only_reason(exec_bind("SUPER + A&B")) != ""

@@ -490,9 +490,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _add_bind(self) -> None:
         def done(bind: Bind) -> None:
-            # Appended: `hl.bind` appends and identity is position, so a new bind belongs at
-            # the end unless the user moves it (ADR-0007).
-            if self._session.edit_binds(lambda binds: binds.append(bind)):
+            if self._session.add_bind(bind):
                 self._refresh_binds()
 
         BindEditor(on_done=done).present(self)
@@ -505,20 +503,13 @@ class MainWindow(Adw.ApplicationWindow):
             return
 
         def done(bind: Bind) -> None:
-            # Replaced in place, never removed-and-appended: position is identity, and a
-            # bind that jumped to the end of the list would change which of two duplicates
-            # fires first (ADR-0007).
-            if self._session.edit_binds(lambda items: items.__setitem__(index, bind)):
+            if self._session.replace_bind(index, bind):
                 self._refresh_binds()
 
         BindEditor(on_done=done, bind=binds[index]).present(self)
 
     def _remove_bind(self, index: int) -> None:
-        def drop(binds: list[Bind]) -> None:
-            if 0 <= index < len(binds):
-                del binds[index]
-
-        if self._session.edit_binds(drop):
+        if self._session.remove_bind(index):
             self._refresh_binds()
 
     def _refresh_binds(self) -> None:

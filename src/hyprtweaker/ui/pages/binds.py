@@ -76,13 +76,27 @@ def action_text(bind: Bind) -> str:
 
 
 def flag_text(bind: Bind) -> str:
-    """The set flags, as the names the user will find in the file."""
+    """The set flags, as the names the user will find in the file.
+
+    `device` is spelled out rather than listed as a bare flag name: ADR-0007 puts per-device
+    binds on the row, and "device" alone would say a bind is restricted without saying to
+    what -- which is the part that tells a user why their key does nothing on one keyboard.
+    """
     table = bind.options.as_table()
-    return ", ".join(key for key, value in table.items() if value is True)
+    names = [key for key, value in table.items() if value is True]
+    if bind.options.device is not None:
+        device = bind.options.device
+        listed = ", ".join(device.names) or "no devices"
+        names.append(f"{'only on' if device.inclusive else 'not on'} {listed}")
+    return ", ".join(names)
 
 
-def is_read_only(bind: Bind) -> str:
-    """Why this bind cannot be edited here, or `""` when it can be."""
+def read_only_reason(bind: Bind) -> str:
+    """Why this bind cannot be edited here, or `""` when it can be.
+
+    A reason rather than a bool: the row shows it on the badge, and "read-only" with no
+    explanation is the kind of dead end that sends a user looking for a bug.
+    """
     if bind.dispatcher is None:
         return "Defined by a Lua function in user.lua"
     if MULTI_KEY in bind.keys:
@@ -105,18 +119,24 @@ class BindRow:
         self.bind = bind
         self.index = index
 
-        reason = is_read_only(bind)
-        subtitle = action_text(bind)
+        reason = read_only_reason(bind)
+
+        # The description is what the user named this bind, so it is the line they will scan
+        # for -- shown, not hidden in a tooltip. The call itself stays visible underneath:
+        # a description can be stale or wrong, and the action is the truth.
+        lines = [action_text(bind)]
         if flags := flag_text(bind):
-            subtitle = f"{subtitle}\n{flags}"
+            lines.append(flags)
 
         self.widget = Adw.ActionRow(
             title=trigger_text(bind),
-            subtitle=subtitle,
-            subtitle_lines=2,
+            subtitle="\n".join(lines),
+            subtitle_lines=len(lines),
         )
         if description := bind.options.description:
-            self.widget.set_tooltip_text(description)
+            label = Gtk.Label(label=description, css_classes=["dim-label"], wrap=True)
+            label.set_max_width_chars(28)
+            self.widget.add_suffix(label)
 
         if reason:
             badge = Gtk.Label(label="Read-only", css_classes=["dim-label", "caption"])
@@ -168,13 +188,7 @@ class BindsPage:
         self._rows: list[BindRow] = []
 
         self._page = Adw.PreferencesPage(title=self.title)
-        self._group = Adw.PreferencesGroup(title="Keybinds")
-        self._group.set_header_suffix(self._add_button())
-        self._page.add(self._group)
-        self._empty = Adw.ActionRow(
-            title="No keybinds yet",
-            subtitle="Add one with the button above, or import an existing config.",
-        )
+        self._groups: list[Adw.PreferencesGroup] = []
         self.refresh()
 
     def _add_button(self) -> Gtk.Widget:
@@ -198,26 +212,70 @@ class BindsPage:
         return list(self._session.model.entities.binds)
 
     def refresh(self) -> None:
-        """Rebuild the list from the model."""
-        for row in self._rows:
-            self._group.remove(row.widget)
-        if self._empty.get_parent() is not None:
-            self._group.remove(self._empty)
+        """Rebuild the list from the model: root binds, then one group per Submap.
+
+        The grouping is ADR-0007's Placement, and it is not decoration. Identity is
+        position and duplicates fire in order, but they only race *within* one submap -- so
+        a flat list would put two binds on the same trigger side by side and imply a
+        conflict that does not exist, while hiding the ones that do.
+
+        Rows keep their index into the model's flat list, not into the group, because that
+        index is what an edit or a delete addresses.
+        """
+        for group in self._groups:
+            self._page.remove(group)
+        self._groups = []
         self._rows = []
 
         editable = bool(self._session.live)
         binds = self.binds
-        if not binds:
-            self._group.add(self._empty)
-            return
 
-        for index, bind in enumerate(binds):
-            row = BindRow(
-                bind,
-                index,
-                on_edit=self._on_edit,
-                on_remove=self._on_remove,
-                editable=editable,
+        root = Adw.PreferencesGroup(title="Keybinds")
+        root.set_header_suffix(self._add_button())
+        self._add_group(root)
+
+        indexed = list(enumerate(binds))
+        rooted = [(index, bind) for index, bind in indexed if bind.submap is None]
+        if rooted:
+            for index, bind in rooted:
+                root.add(self._row(bind, index, editable))
+        else:
+            root.add(
+                Adw.ActionRow(
+                    title="No keybinds yet",
+                    subtitle="Add one with the button above, or import an existing config.",
+                )
             )
-            self._rows.append(row)
-            self._group.add(row.widget)
+
+        for name in self._submap_order(binds):
+            group = Adw.PreferencesGroup(
+                title=f"Submap: {name}",
+                description="These keybinds only fire while this submap is active.",
+            )
+            self._add_group(group)
+            for index, bind in indexed:
+                if bind.submap == name:
+                    group.add(self._row(bind, index, editable))
+
+    def _submap_order(self, binds: list[Bind]) -> list[str]:
+        """Every Submap that owns a bind, in the order the model holds them."""
+        seen: dict[str, None] = {}
+        for bind in binds:
+            if bind.submap is not None:
+                seen.setdefault(bind.submap, None)
+        return list(seen)
+
+    def _add_group(self, group: Adw.PreferencesGroup) -> None:
+        self._groups.append(group)
+        self._page.add(group)
+
+    def _row(self, bind: Bind, index: int, editable: bool) -> Gtk.Widget:
+        row = BindRow(
+            bind,
+            index,
+            on_edit=self._on_edit,
+            on_remove=self._on_remove,
+            editable=editable,
+        )
+        self._rows.append(row)
+        return row.widget

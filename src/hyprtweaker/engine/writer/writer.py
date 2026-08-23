@@ -34,6 +34,7 @@ from . import syntax
 from .binds import render_binds_module
 from .modules import (
     ENTITY_MODULES,
+    is_entity_module,
     is_generated_module,
     module_relpath,
     render_entrypoint,
@@ -314,7 +315,12 @@ class Writer:
             else:
                 unchanged.append(name)
 
-        removed = self._prune(manifest, keep=set(rendered), off_limits=off_limits)
+        removed = self._prune(
+            manifest,
+            keep=set(rendered),
+            off_limits=off_limits,
+            prune_entities=model.entities_loaded,
+        )
 
         if ENTRYPOINT_NAME in off_limits:
             skipped.append(ENTRYPOINT_NAME)
@@ -519,7 +525,12 @@ class Writer:
         return True
 
     def _prune(
-        self, manifest: Manifest, keep: set[str], off_limits: frozenset[str]
+        self,
+        manifest: Manifest,
+        keep: set[str],
+        off_limits: frozenset[str],
+        *,
+        prune_entities: bool = True,
     ) -> list[str]:
         """Delete Modules the model no longer produces.
 
@@ -538,6 +549,12 @@ class Writer:
         removed: list[str] = []
         for name in sorted(manifest.modules):
             if name in keep or name in off_limits or not is_generated_module(name):
+                continue
+            if is_entity_module(name) and not prune_entities:
+                # The model's Entity half was never read, so "the model renders no binds"
+                # is ignorance, not a decision -- and deleting the file on the strength of
+                # it would throw away every bind the user has. An Option Module cannot
+                # reach this state: Options are recovered from the compositor at startup.
                 continue
             path = self._paths.app_dir / name
             if path.is_file():

@@ -13,7 +13,6 @@ from hyprtweaker.engine.dispatchers import (
     CATALOG,
     EXEC_PATH,
     NAMESPACE_LABELS,
-    coverage,
     lookup,
     namespaces,
 )
@@ -73,9 +72,3 @@ class TestCatalogShape:
     def test_an_unknown_path_is_none_not_an_error(self) -> None:
         """A plugin or a newer Hyprland: the caller renders it read-only (ADR-0012)."""
         assert lookup("plugin.whatever") is None
-
-    def test_coverage_is_reported_honestly(self) -> None:
-        report = coverage()
-        assert report.total == len(CATALOG)
-        assert report.formed + len(report.free_form) == report.total
-        assert report.free_form, "if every shape became known, update this test"

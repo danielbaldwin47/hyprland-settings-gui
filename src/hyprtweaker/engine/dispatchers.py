@@ -36,7 +36,7 @@ fact about Hyprland, and the Binds writer needs it to validate a path it is abou
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 ArgType = Literal["string", "int", "bool", "window", "workspace", "direction"]
@@ -240,20 +240,6 @@ def lookup(path: str) -> Dispatcher | None:
     return BY_PATH.get(path)
 
 
-@dataclass(frozen=True, slots=True)
-class Coverage:
-    """How much of the catalog has curated argument forms -- reported by a test."""
-
-    total: int = 0
-    formed: int = 0
-    free_form: tuple[str, ...] = field(default_factory=tuple)
-
-
-def coverage() -> Coverage:
-    free = tuple(entry.path for entry in CATALOG if entry.free_form)
-    return Coverage(total=len(CATALOG), formed=len(CATALOG) - len(free), free_form=free)
-
-
 __all__ = [
     "BY_PATH",
     "CATALOG",
@@ -261,9 +247,7 @@ __all__ = [
     "NAMESPACE_LABELS",
     "ArgSpec",
     "ArgType",
-    "Coverage",
     "Dispatcher",
-    "coverage",
     "lookup",
     "namespaces",
 ]

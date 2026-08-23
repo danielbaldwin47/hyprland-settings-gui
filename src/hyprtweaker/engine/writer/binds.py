@@ -35,14 +35,6 @@ from ..model.values import lua_string
 from ..paths import BINDS_MODULE
 from .lua import GENERATED_BANNER, INDENT, table_key
 
-BINDS_RELPATH = BINDS_MODULE
-"""Where the Module lives in the App dir -- beside `options/`, not inside it.
-
-Re-exported from `paths` so that reading this module does not require knowing where the
-name is kept; `paths` owns it because `modules.py` needs it too, and importing it from
-here would close a cycle (`modules` renders Options, this renders Entities).
-"""
-
 
 @dataclass(frozen=True, slots=True)
 class ReadOnlyBind:
@@ -243,13 +235,18 @@ def parse_binds_module(source: str | Path, *, timeout: float = 5.0) -> ParsedBin
         return _parse_path(source, timeout=timeout)
 
     with tempfile.TemporaryDirectory(prefix="hyprtweaker-binds-") as scratch:
-        path = Path(scratch) / BINDS_RELPATH
+        path = Path(scratch) / BINDS_MODULE
         path.write_text(source, encoding="utf-8")
         return _parse_path(path, timeout=timeout)
 
 
 def _parse_path(path: Path, *, timeout: float) -> ParsedBinds:
-    from ..importer.lua.mapping import bind_options_from_value, dispatcher_from_value
+    from ..importer.lua.mapping import (
+        bind_options_from_value,
+        dispatcher_from_value,
+        positional_args,
+        table_fields,
+    )
     from ..importer.lua.sandbox import Consent, LuaUnavailable, evaluate
 
     try:
@@ -266,7 +263,7 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedBinds:
 
     for call in recording.calls:
         if call.name == "bind":
-            args = _args(call)
+            args = positional_args(call)
             keys = args[0] if args and isinstance(args[0], str) else ""
             action = args[1] if len(args) > 1 else None
             dispatcher = dispatcher_from_value(action)
@@ -289,13 +286,13 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedBinds:
                 )
             )
         elif call.name == "unbind":
-            args = _args(call)
+            args = positional_args(call)
             keys = args[0] if args and isinstance(args[0], str) else ""
             unbinds.append(
                 Unbind(keys=keys, all=not keys, submap=call.submap, origin=call.origin)
             )
         elif call.name == "define_submap":
-            table = args_table(call.args)
+            table = table_fields(call.args)
             name = table.get("name")
             if isinstance(name, str) and name:
                 submaps.append(
@@ -315,20 +312,7 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedBinds:
     )
 
 
-def _args(call: Any) -> list[Any]:
-    if call.argc == 0:
-        return []
-    if call.argc == 1 or not isinstance(call.args, list):
-        return [call.args]
-    return list(call.args)
-
-
-def args_table(value: Any) -> dict[str, Any]:
-    return {str(key): item for key, item in value.items()} if isinstance(value, Mapping) else {}
-
-
 __all__ = [
-    "BINDS_RELPATH",
     "ParsedBinds",
     "ReadOnlyBind",
     "lua_value",

@@ -586,6 +586,32 @@ class Session:
         self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
         return True
 
+    def add_bind(self, bind: Bind) -> bool:
+        """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes."""
+        return self.edit_binds(lambda binds: binds.append(bind))
+
+    def replace_bind(self, index: int, bind: Bind) -> bool:
+        """Replace the Bind at `index`, keeping its position.
+
+        In place rather than remove-and-append: position *is* identity, so a bind that
+        jumped to the end of the list would change which of two duplicates fires first.
+        """
+
+        def swap(binds: list[Bind]) -> None:
+            if 0 <= index < len(binds):
+                binds[index] = bind
+
+        return self.edit_binds(swap)
+
+    def remove_bind(self, index: int) -> bool:
+        """Delete the Bind at `index`."""
+
+        def drop(binds: list[Bind]) -> None:
+            if 0 <= index < len(binds):
+                del binds[index]
+
+        return self.edit_binds(drop)
+
     def _refuse(self, name: str) -> bool:
         """Whether this session must decline an edit -- and leave the model alone doing it.
 
@@ -720,10 +746,13 @@ class Session:
     async def _recover(self, client: CommandClient) -> ReRead:
         """Re-read the Options this app already wrote (ADR-0010, `reread.py`).
 
-        The app cannot yet parse its own Lua back (that reader is #62), so what it wrote
-        last session is recovered from the compositor that loaded it. An install that has
-        written nothing owns nothing, adopts nothing, and opens Unset.
+        Options are recovered from the compositor that loaded them. Binds cannot be --
+        `hyprctl binds` is blind to `code:N` and reports every Lua bind as `__lua` -- so
+        they are read from `binds.lua` itself first (ADR-0007). Without that read the model
+        would open holding no binds while the file holds dozens, the Page would say the
+        user has none, and the next Option write would prune the file as stale.
         """
+        self._load_binds()
         owned = self._owned()
         result = await read_state(self._model, client, owned)
         _log.info(
@@ -898,15 +927,47 @@ class Session:
         if record is not None and record.sha256 == content_hash(current):
             return
 
-        parsed = parse_binds_module(path)
-        if not parsed.ok:
-            _log.warning("binds.lua was edited but would not evaluate: %s", parsed.errors[0])
+        self._load_binds()
+
+    def _load_binds(self) -> None:
+        """Read `binds.lua` into the model, or leave the model alone saying why.
+
+        The startup read as well as the foreign-reload one: binds are the half of the model
+        the compositor cannot answer for, so the file is the only place they come from.
+
+        A file that will not evaluate leaves `entities_loaded` false, and that flag is load
+        bearing rather than informational -- it is what stops the Writer from reading "the
+        model renders no binds" as "the user deleted their binds" and pruning the file.
+        """
+        path = self._paths.app_dir / BINDS_MODULE
+        if not path.is_file():
+            # No file is a real answer: a fresh install has no binds, and the model saying
+            # so is correct rather than ignorant.
+            self._model.mark_entities_loaded()
             return
 
-        _log.info("adopting %d hand-edited bind(s) from binds.lua", len(parsed.binds))
-        self._model.entities.binds[:] = list(parsed.binds)
+        parsed = parse_binds_module(path)
+        if not parsed.ok:
+            _log.warning("binds.lua would not evaluate, leaving it alone: %s", parsed.errors[0])
+            return
+
+        binds = list(parsed.binds)
+        # Constructs the model cannot represent are kept as action-less Binds rather than
+        # dropped, so the Page lists them read-only with their trigger intact (ADR-0007:
+        # "never silently dropped"). The file itself is protected separately -- its hash no
+        # longer matches the Manifest, so the Writer treats it as hand-edited and skips it.
+        binds.extend(
+            Bind(keys=entry.keys, dispatcher=None, origin=entry.origin)
+            for entry in parsed.read_only
+        )
+
+        _log.info(
+            "read %d bind(s) from binds.lua (%d read-only)", len(binds), len(parsed.read_only)
+        )
+        self._model.entities.binds[:] = binds
         self._model.entities.unbinds[:] = list(parsed.unbinds)
         self._model.entities.submaps[:] = list(parsed.submaps)
+        self._model.mark_entities_loaded()
 
     def _on_stream_lost(self) -> None:
         """Hyprland closed the event stream -- it has exited."""

@@ -79,8 +79,13 @@ BIND_FLAGS = frozenset(
 )
 
 
-def _positional(call: Call) -> list[Any]:
-    """A call's arguments as a list, whatever shape the recorder stored them in."""
+def positional_args(call: Call) -> list[Any]:
+    """A call's arguments as a list, whatever shape the recorder stored them in.
+
+    Public, like `dispatcher_from_value` beside it, because the writer reads its own
+    `binds.lua` back through this same recorder (#64) -- a second copy of the shape logic
+    would be a second place for the read and write forms to drift apart.
+    """
     if call.argc == 0:
         return []
     if call.argc == 1 or not isinstance(call.args, list):
@@ -88,7 +93,7 @@ def _positional(call: Call) -> list[Any]:
     return list(call.args)
 
 
-def _table(value: Any) -> dict[str, Any]:
+def table_fields(value: Any) -> dict[str, Any]:
     return {str(key): item for key, item in value.items()} if isinstance(value, Mapping) else {}
 
 
@@ -103,10 +108,10 @@ def dispatcher_from_value(value: Any) -> DispatcherCall | None:
         return None
     raw = value.get("args")
     if isinstance(raw, Mapping):
-        return DispatcherCall(path=str(value["__dsp"]), args=_table(raw))
+        return DispatcherCall(path=str(value["__dsp"]), args=table_fields(raw))
     if isinstance(raw, list):
         if len(raw) == 1 and isinstance(raw[0], Mapping):
-            return DispatcherCall(path=str(value["__dsp"]), args=_table(raw[0]))
+            return DispatcherCall(path=str(value["__dsp"]), args=table_fields(raw[0]))
         return DispatcherCall(path=str(value["__dsp"]), positional=tuple(raw))
     return DispatcherCall(path=str(value["__dsp"]))
 
@@ -119,7 +124,7 @@ def bind_options_from_value(value: Any) -> BindOptions:
     accepted too because it is what this reader looked for before the writer existed, and a
     config imported by an older build should not lose its device list on the next read.
     """
-    table = _table(value)
+    table = table_fields(value)
     flags = {name: bool(table[name]) for name in BIND_FLAGS if name in table}
     description = table.get("description") or table.get("desc")
     device = table.get("device")
@@ -338,7 +343,7 @@ class _Mapper:
             self.legacy.append(f"{header}\n{body}\n")
 
     def _keep_script(self, call: Call) -> None:
-        args = _table(call.args)
+        args = table_fields(call.args)
         if call.name == "on":
             handler = args.get("handler")
             body = f"hl.on({lua_value(args.get('event'))}, {lua_value(handler, self.scripts)})"
@@ -360,7 +365,7 @@ class _Mapper:
         )
 
     def _keep_hybrid(self, call: Call) -> None:
-        rendered = ", ".join(lua_value(arg, self.scripts) for arg in _positional(call))
+        rendered = ", ".join(lua_value(arg, self.scripts) for arg in positional_args(call))
         self._block(call, f"hl.{call.name}({rendered})", "inline function")
         self.report.add(
             LossCode.SCRIPT_TO_LEGACY,
@@ -381,13 +386,13 @@ class _Mapper:
         return f"hl.{call.name}"
 
     def _keep_unmodelled(self, call: Call) -> None:
-        rendered = ", ".join(lua_value(arg, self.scripts) for arg in _positional(call))
+        rendered = ", ".join(lua_value(arg, self.scripts) for arg in positional_args(call))
         self._block(call, f"{self._spelling(call)}({rendered})", "not modelled")
 
     # ---------- hl.config ----------
 
     def _map_config(self, call: Call) -> None:
-        self._flatten(_table(call.args), (), self._context(call))
+        self._flatten(table_fields(call.args), (), self._context(call))
 
     def _flatten(
         self, table: Mapping[str, Any], prefix: tuple[str, ...], ctx: LossContext
@@ -450,7 +455,7 @@ class _Mapper:
     # ---------- entities ----------
 
     def _map_bind(self, call: Call) -> None:
-        args = _positional(call)
+        args = positional_args(call)
         if not args or not isinstance(args[0], str):
             self.report.add(
                 LossCode.UNMODELLED_CALL, "hl.bind without a trigger", origin=call.origin
@@ -475,14 +480,14 @@ class _Mapper:
         return bind_options_from_value(value)
 
     def _map_unbind(self, call: Call) -> None:
-        args = _positional(call)
+        args = positional_args(call)
         keys = args[0] if args and isinstance(args[0], str) else ""
         self.entities.unbinds.append(
             Unbind(keys=keys, all=not keys, submap=call.submap, origin=call.origin)
         )
 
     def _map_define_submap(self, call: Call) -> None:
-        args = _table(call.args)
+        args = table_fields(call.args)
         name = args.get("name")
         if isinstance(name, str) and name:
             self.entities.submaps.append(
@@ -490,14 +495,14 @@ class _Mapper:
             )
 
     def _map_monitor(self, call: Call) -> None:
-        fields = _table(call.args)
+        fields = table_fields(call.args)
         output = fields.pop("output", "")
         rule = MonitorRule(output=str(output), fields=fields, origin=call.origin)
         self.entities.add_monitor_rule(rule, merge=True)
 
     def _rule_parts(self, call: Call) -> tuple[dict[str, Any], dict[str, Any], str, bool]:
-        fields = _table(call.args)
-        match = _table(fields.pop("match", {}))
+        fields = table_fields(call.args)
+        match = table_fields(fields.pop("match", {}))
         name = str(fields.pop("name", "") or "")
         enabled = bool(fields.pop("enabled", True))
         return match, fields, name, enabled
@@ -519,7 +524,7 @@ class _Mapper:
         )
 
     def _map_workspace_rule(self, call: Call) -> None:
-        fields = _table(call.args)
+        fields = table_fields(call.args)
         workspace = str(fields.pop("workspace", "") or "")
         if not workspace:
             self.report.add(
@@ -533,7 +538,7 @@ class _Mapper:
         )
 
     def _map_animation(self, call: Call) -> None:
-        fields = _table(call.args)
+        fields = table_fields(call.args)
         leaf = str(fields.pop("leaf", "") or "")
         if not leaf:
             self.report.add(
@@ -543,7 +548,7 @@ class _Mapper:
         self.entities.add_animation(Animation(leaf=leaf, fields=fields, origin=call.origin))
 
     def _map_curve(self, call: Call) -> None:
-        args = _positional(call)
+        args = positional_args(call)
         if len(args) < 2 or not isinstance(args[0], str):
             self.report.add(
                 LossCode.UNMODELLED_CALL,
@@ -552,11 +557,11 @@ class _Mapper:
             )
             return
         self.entities.curves.append(
-            Curve(name=args[0], spec=_table(args[1]), origin=call.origin)
+            Curve(name=args[0], spec=table_fields(args[1]), origin=call.origin)
         )
 
     def _map_device(self, call: Call) -> None:
-        fields = _table(call.args)
+        fields = table_fields(call.args)
         name = str(fields.pop("name", "") or "")
         if not name:
             self.report.add(
@@ -566,10 +571,12 @@ class _Mapper:
         self.entities.add_device(Device(name=name, fields=fields, origin=call.origin))
 
     def _map_gesture(self, call: Call) -> None:
-        self.entities.gestures.append(Gesture(fields=_table(call.args), origin=call.origin))
+        self.entities.gestures.append(
+            Gesture(fields=table_fields(call.args), origin=call.origin)
+        )
 
     def _map_env(self, call: Call) -> None:
-        args = _positional(call)
+        args = positional_args(call)
         if len(args) < 2 or not isinstance(args[0], str):
             self.report.add(
                 LossCode.UNMODELLED_CALL,
@@ -587,11 +594,11 @@ class _Mapper:
         )
 
     def _map_permission(self, call: Call) -> None:
-        args = _positional(call)
+        args = positional_args(call)
         if len(args) >= 3:
             binary, kind, mode = str(args[0]), str(args[1]), str(args[2])
         else:
-            fields = _table(args[0] if args else None)
+            fields = table_fields(args[0] if args else None)
             binary = str(fields.get("binary") or fields.get("target") or "")
             kind, mode = str(fields.get("type") or ""), str(fields.get("mode") or "")
         if not (binary and kind and mode):
@@ -604,12 +611,12 @@ class _Mapper:
         )
 
     def _map_plugin_load(self, call: Call) -> None:
-        args = _positional(call)
+        args = positional_args(call)
         if args and isinstance(args[0], str):
             self.entities.plugins.append(PluginLoad(path=args[0], origin=call.origin))
 
     def _map_exec_cmd(self, call: Call) -> None:
-        args = _positional(call)
+        args = positional_args(call)
         if args and isinstance(args[0], str):
             self.entities.startup.append(StartupCommand(command=args[0], origin=call.origin))
 

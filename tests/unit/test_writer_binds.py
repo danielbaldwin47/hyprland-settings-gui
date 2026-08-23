@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from hyprtweaker.engine.model import ConfigModel
 from hyprtweaker.engine.model.entities import (
     Bind,
     BindDevice,
@@ -13,13 +14,16 @@ from hyprtweaker.engine.model.entities import (
     Submap,
     Unbind,
 )
-from hyprtweaker.engine.writer.binds import (
-    BINDS_RELPATH,
-    parse_binds_module,
-    render_binds_module,
-)
+from hyprtweaker.engine.paths import BINDS_MODULE
+from hyprtweaker.engine.writer.binds import parse_binds_module, render_binds_module
 
 VERSION = "0.1.0"
+
+
+def _schema():  # type: ignore[no-untyped-def]
+    from hyprtweaker.engine.schema import load_schema
+
+    return load_schema("0.56.2")
 
 
 def render(entities: EntitySet) -> str:
@@ -215,8 +219,56 @@ class TestRelpath:
         """`options/` is pruned against the model; an entity Module must not be caught."""
         from hyprtweaker.engine.writer.modules import is_option_module
 
-        assert not is_option_module(BINDS_RELPATH)
+        assert not is_option_module(BINDS_MODULE)
 
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__]))
+
+
+class TestPruning:
+    """A binds Module is only deleted on the strength of a model that actually read it."""
+
+    def build(self, tmp_path, *, binds: bool):  # type: ignore[no-untyped-def]
+        from hyprtweaker.engine.paths import BINDS_MODULE, ConfigPaths
+        from hyprtweaker.engine.writer import Writer
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        schema = _schema()
+        model = ConfigModel(schema)
+        model.set("general:border_size", 2)
+        if binds:
+            model.entities.binds.append(exec_bind("SUPER + Q", "kitty"))
+            model.mark_entities_loaded()
+        return paths, model, Writer(paths, app_version=VERSION), BINDS_MODULE
+
+    def test_a_binds_module_is_kept_when_the_model_never_read_one(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """The regression: an unread model must not be mistaken for an emptied one.
+
+        Session 1 writes binds.lua. Session 2 opens without reading it and the user nudges
+        an unrelated Option -- and before this guard, that write deleted every bind they had.
+        """
+        paths, model, writer, relpath = self.build(tmp_path, binds=True)
+        writer.write(model)
+        assert (paths.app_dir / relpath).is_file()
+
+        fresh = ConfigModel(model.schema)
+        fresh.set("general:border_size", 4)
+        assert not fresh.entities_loaded
+
+        writer.write(fresh)
+
+        assert (paths.app_dir / relpath).is_file(), "an unread binds.lua was pruned"
+
+    def test_a_binds_module_is_pruned_once_the_model_has_read_it(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """Deleting the last bind really does remove the file -- the guard is not a veto."""
+        paths, model, writer, relpath = self.build(tmp_path, binds=True)
+        writer.write(model)
+        assert (paths.app_dir / relpath).is_file()
+
+        model.entities.binds.clear()
+        result = writer.write(model)
+
+        assert relpath in result.removed
+        assert not (paths.app_dir / relpath).is_file()
