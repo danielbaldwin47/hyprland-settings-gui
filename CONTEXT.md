@@ -57,9 +57,14 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | **Instant apply** | Write-on-change; Hyprland reloads on save; per-option reset and undo instead of an Apply button. |
 | **Apply transaction** | One coalesced write cycle: render dirty Modules whole, syntax-gate, atomic-rename all, one explicit reload, Read-back. Serialized — one in flight, later edits coalesce (ADR-0010). |
 | **Read-back** | The confirm pass after a reload: `configerrors` + `getoption` of touched keys over the IPC socket. Doubles as the drift-badge scan. `configreloaded` means "reload started", not "apply done". |
-| **ApplyResult** | The structured outcome of an Apply transaction — ok, config errors, read-back mismatch, or timeout. Consumed by error surfacing (#31). |
+| **ApplyResult** | The structured outcome of an Apply transaction — ok, config errors, read-back mismatch, or timeout. Consumed by error surfacing (ADR-0016). |
 | **Eval preview** | Transient per-tick apply during a continuous gesture (slider, colour) via `eval 'hl.config{...}'` on the socket; wiped by any reload; made durable by the Apply transaction on release. |
-| **Restore-last-good** | Writing a Module's pre-write Snapshot bytes back through a normal Apply transaction. Mechanism in ADR-0010; firing policy in #31. |
+| **Restore-last-good** | Writing a Module's Last-known-good Snapshot bytes back through a normal Apply transaction, implicated Modules only. Mechanism in ADR-0010; firing policy in ADR-0016. |
+| **Ownership class** | The attribution of a `configerrors` line by its `file:line` prefix — own write this transaction, app Module hand-edited, `user.lua`/Bridge, or Entrypoint. Decides the recovery policy (ADR-0016). |
+| **Auto-revert** | The no-confirmation recovery when a transaction's own write is rejected: restore that Module's pre-write Snapshot, revert the model delta, drop the gesture from the undo stack, toast with Details (ADR-0016). |
+| **Last known good** | Per-Module, the newest Journal Snapshot whose transaction confirmed clean (empty `configerrors` + Read-back ok, recorded as a `confirmed` flag) (ADR-0016). |
+| **Quarantine** | Consent-gated disabling of `user.lua` or a Bridge module by regenerating the Entrypoint without its require; badged, one-click reversible. The app's only recovery for files it never writes (ADR-0016). |
+| **Banner** | The single persistent unhealthy-state surface (`Adw.Banner` under the header): shown for config errors, Entrypoint refusal, or active Quarantine; opens the one error dialog. Errors are file-scoped and never badge Rows (ADR-0016). |
 | **Undo step** | One user gesture as a model-level delta, on a global linear in-memory stack, replayed through the Apply pipeline. Dies with the session; the Journal is history, not undo. |
 | **Pending restart** | State of a restart-flagged Option after a write: applied to file, effective after Hyprland restart; Read-back skipped, Row badged. |
 | **Retired** | State of an Option a newer Hyprland removed while the user still sets it: no longer emitted, value kept in the Manifest and restored if the option returns (downgrade or `renamed_from`), Row badged, one-time notice per release (ADR-0012). |
