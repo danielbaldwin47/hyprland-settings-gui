@@ -293,12 +293,13 @@ class MainWindow(Adw.ApplicationWindow):
         would only ever appear on a startup or a foreign reload -- leaving the state ADR-0016
         exists to surface invisible in the one case the user just caused.
 
-        Then a failure toast, but only for a failure with **no** config errors behind it.
-        ADR-0016 is explicit that toasts are "only for transient auto-revert events", and an
-        error with a file attached belongs to the Banner and its dialog, which can actually
-        offer to fix it. What is left for a toast is the handful of failures that never
-        reached the compositor at all -- a refused write, a full disk -- which would otherwise
-        happen in silence.
+        Then a failure toast, but only for a failure the Banner has nothing to say about.
+        ADR-0016 is explicit that toasts are "only for transient auto-revert events", and
+        both kinds of failure the Banner *does* carry are excluded here: a config error,
+        which belongs to the Banner and its dialog because they can offer to fix it, and a
+        read-back mismatch, which raises the Banner and badges its Row. What is left for a
+        toast is the handful of failures that never reached the compositor at all -- a
+        refused write, a full disk -- which would otherwise happen in silence.
 
         A *successful* transaction gets no toast: instant apply's whole promise is that the
         change is the feedback (ADR-0003), and the offer to undo it arrives separately through
@@ -315,7 +316,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         if not result.ok:
             self._dismiss_undo()
-        if not result.ok and not result.errors:
+        if not result.ok and not result.errors and not result.mismatches:
             self._toasts.add_toast(Adw.Toast(title=_result_summary(result), timeout=5))
 
     def show_revert(self, revert: AutoRevert) -> None:

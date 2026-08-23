@@ -174,17 +174,18 @@ class Health:
             return "Hyprland rejected the last write and is running the previous config."
         if self.halted:
             return "Hyprland rejected a change, and the app could not put it back."
+        if self.recovery.unhealthy:
+            return "Hyprland reported a problem with your config."
         if self.rescued:
-            # Ranked above the plain error line because it is the only one reporting
-            # something the app *did* rather than something it found -- and the user did not
-            # ask for it.
+            # Ranked *below* the error line, not above it. A rescue that did not fix things
+            # leaves both true at once, and in that case the live problem is what the user
+            # needs -- the alternative pairs a reassuring title with a Details button opening
+            # a dialog full of errors it never mentioned.
             files = ", ".join(name.rsplit("/", 1)[-1] for name in self.rescued)
             return (
                 f"Restored {files} so your keybinds would load again. "
                 f"Your edited version is saved in this app's history."
             )
-        if self.recovery.unhealthy:
-            return "Hyprland reported a problem with your config."
         if self.unapplied:
             return f"{self._unapplied_summary} was written but did not take effect."
         if self.quarantined:
@@ -334,6 +335,10 @@ class Session:
 
         self._rescued: tuple[str, ...] = ()
         """Modules the emergency restore overwrote without asking, so the Banner can say so."""
+
+        self._pending_rescue: tuple[str, ...] = ()
+        """A rescue announced only once its own restore has been observed -- see
+        `_emergency_restore`, which explains why it cannot be announced any earlier."""
 
         self._repolled = False
         """Whether the current timeout has already been re-polled once (ADR-0016 §Timeout).
@@ -960,9 +965,24 @@ class Session:
         One body for both callers, because "what is wrong" and "does that strand the user"
         are the same two steps whoever asked -- and a second copy of the emergency gate is a
         second place for it to drift from `Recovery.auto_restorable`.
+
+        Every field it touches is *replaced*, never merged. `configerrors` describes the last
+        parse and nothing older, so a Banner assembled from anything but the newest reload
+        would name a file the user has since fixed.
         """
         self._recovery = plan(errors, written=written, binds=binds)
         self._unapplied = tuple(mismatch.name for mismatch in mismatches if mismatch.unapplied)
+        # Cleared with the rest: the rescue notice belongs to the reload that prompted it.
+        # `_restore_transaction` re-raises it *after* observing its own result, which is what
+        # lets the notice outlive the restore that earned it without outliving anything else.
+        self._rescued = ()
+        if not errors:
+            # A reload the compositor accepted is proof the app can write to this config
+            # again, which is the plainest reading of ADR-0016's "stop auto-writing **until
+            # the user acts**". Without this the halt is permanent for the session, and a
+            # stale one from an unrelated auto-revert would silently disable the zero-binds
+            # rescue -- the one recovery a stranded user cannot start themselves.
+            self._recovery_halted = False
         if self._recovery.auto_restorable and self._may_recover():
             self._emergency_restore(self._recovery.auto_restorable)
 
@@ -990,11 +1010,13 @@ class Session:
         restore snapshots the bytes it replaces into the Journal before touching them.
         """
         _log.error("no keybinds after a failed reload; restoring %s", ", ".join(modules))
-        # Recorded before the restore runs, because the Banner has to be able to say what it
-        # took: "the overwritten hand edit is preserved in the Journal *and reported in the
-        # Banner*" (ADR-0016 §Zero-binds). A restore the user never asked for and is never
-        # told about is indistinguishable from the app having eaten their work.
-        self._rescued = tuple(modules)
+        # Held, not announced yet. The Banner has to be able to say what was taken -- "the
+        # overwritten hand edit is preserved in the Journal *and reported in the Banner*"
+        # (ADR-0016 §Zero-binds), and a restore the user never asked for and is never told
+        # about is indistinguishable from the app having eaten their work. But the restore's
+        # own reload observes the config afresh, and announcing before that would have the
+        # notice wiped by the very transaction it describes.
+        self._pending_rescue = tuple(modules)
         self.restore_last_good(*modules)
 
     # --- the recovery actions -----------------------------------------------------------------
@@ -1056,6 +1078,9 @@ class Session:
         # The restore re-read the model itself, so the Rows have moved; and its own reload's
         # errors are the current truth about the config, replacing the ones it was answering.
         self._observe(result)
+        # After the observation, which clears the field: this notice is about what the
+        # restore just did, so it has to survive the restore's own reload and nothing later.
+        self._rescued, self._pending_rescue = self._pending_rescue, ()
         self._report(result)
         self._changed()
 

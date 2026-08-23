@@ -352,6 +352,81 @@ def test_the_banner_reports_what_the_emergency_overwrote(tmp_path: Path) -> None
     )
 
 
+def test_the_rescue_notice_clears_on_the_next_reload(tmp_path: Path) -> None:
+    """A notice about a rescue that has scrolled into history is a Banner that never goes
+    away -- and one that outranks nothing, so it would sit on top of the next real problem."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+
+        (app_dir(tmp_path) / GENERAL_MODULE).write_bytes(b"-- hand edited, and broken\n")
+        break_once(fake, APP_ERROR, NO_BINDS)
+        await foreign_reload(fake, session, runner)
+        assert session.health.rescued, "the precondition: the rescue was announced"
+
+        await foreign_reload(fake, session, runner)
+
+        assert session.health.rescued == ()
+        assert not session.health.unhealthy, "a healthy config shows no Banner at all"
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_a_live_error_outranks_the_rescue_notice(tmp_path: Path) -> None:
+    """If the rescue did not fix things, both are true and the live problem is what the user
+    needs -- otherwise a reassuring title sits over a Details button full of errors."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+
+        (app_dir(tmp_path) / GENERAL_MODULE).write_bytes(b"-- hand edited, and broken\n")
+        fake.conversation["j/configerrors"] = APP_ERROR
+        fake.conversation["j/binds"] = NO_BINDS
+        await foreign_reload(fake, session, runner)
+
+        assert "Restored" not in session.health.title
+        assert session.health.button == "Details", "the button and the line agree"
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_a_clean_reload_lets_the_app_recover_again(tmp_path: Path) -> None:
+    """ADR-0016 halts automatic recovery "until the user acts". A config the compositor now
+    accepts is the plainest evidence that they did -- and a permanent halt would silently
+    disable the one recovery a stranded user cannot start themselves."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+
+        (app_dir(tmp_path) / GENERAL_MODULE).write_bytes(b"-- broken\n")
+        fake.conversation["j/configerrors"] = APP_ERROR
+        fake.conversation["j/binds"] = NO_BINDS
+        await foreign_reload(fake, session, runner)
+        assert session.recovery_halted
+
+        fake.conversation["j/configerrors"] = '[\n\t""\n]\n'
+        await foreign_reload(fake, session, runner)
+
+        assert not session.recovery_halted
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
 def test_an_emergency_restore_that_does_not_help_stops_rather_than_looping(
     tmp_path: Path,
 ) -> None:
@@ -373,13 +448,19 @@ def test_an_emergency_restore_that_does_not_help_stops_rather_than_looping(
         # Stays broken however many times the app tries: the error is somewhere else.
         fake.conversation["j/configerrors"] = APP_ERROR
         fake.conversation["j/binds"] = NO_BINDS
-        await foreign_reload(fake, session, runner)
 
-        reloads = fake.requests.count("reload")
+        # The first one is allowed to try -- and to fail, which is what halts recovery.
         await foreign_reload(fake, session, runner)
-
         assert session.recovery_halted
-        assert fake.requests.count("reload") - reloads <= 1, "it must not keep hammering"
+        spent = fake.requests.count("reload")
+
+        # The second finds the app in exactly the same stranded state. Ungated, it restores
+        # again, and every restore after that finds the same state again.
+        await foreign_reload(fake, session, runner)
+
+        assert fake.requests.count("reload") == spent, (
+            "a halted session must not answer the same stranded state with another restore"
+        )
 
     run_with_fake(
         scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)

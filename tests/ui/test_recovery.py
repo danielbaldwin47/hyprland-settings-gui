@@ -191,6 +191,24 @@ def test_a_config_error_does_not_also_toast(tmp_path: Path) -> None:
     assert _toast_count(window) == 0
 
 
+def test_a_value_that_did_not_take_does_not_also_toast(tmp_path: Path) -> None:
+    """A read-back mismatch already raises the Banner and badges its Row; a toast would be a
+    third surface saying the same sentence."""
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult, Mismatch
+
+    _session, window = build_window(tmp_path)
+
+    window.show_result(
+        ApplyResult(
+            ApplyOutcome.READ_BACK_MISMATCH,
+            keys=("decoration:rounding",),
+            mismatches=(Mismatch("decoration:rounding", 12, None, live_set=False),),
+        )
+    )
+
+    assert _toast_count(window) == 0
+
+
 def test_a_failure_with_no_config_errors_still_toasts(tmp_path: Path) -> None:
     """A refused write never reached the compositor, so no Banner state describes it."""
     from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
