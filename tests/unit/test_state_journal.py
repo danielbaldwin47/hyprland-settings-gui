@@ -182,6 +182,24 @@ def test_last_known_good_is_per_module(tmp_path: Path) -> None:
     assert journal.last_known_good(DECORATION) is None
 
 
+def test_the_previous_digest_is_the_newest_write_confirmed_or_not(tmp_path: Path) -> None:
+    """Auto-revert's question, and deliberately the looser one: the state a rejected write
+    replaced was live a moment earlier whether or not the app got to verify it."""
+    journal, paths = journal_for(tmp_path)
+
+    transaction(journal, paths, GENERAL, "-- confirmed\n", confirmed=True)
+    transaction(journal, paths, GENERAL, "-- never verified\n", confirmed=False)
+
+    assert journal.snapshot(journal.previous_digest(GENERAL)) == b"-- confirmed\n"
+    assert journal.last_known_good(GENERAL) == b"-- confirmed\n"
+
+    transaction(journal, paths, GENERAL, "-- rejected\n", confirmed=False)
+
+    # The revert target moves with every write; Last known good does not.
+    assert journal.snapshot(journal.previous_digest(GENERAL)) == b"-- never verified\n"
+    assert journal.last_known_good(GENERAL) == b"-- confirmed\n"
+
+
 def test_a_module_with_no_confirmed_write_has_no_last_known_good(tmp_path: Path) -> None:
     """`None` means "there is nothing to restore to", never "restore whatever is newest" --
     the newest may be exactly what broke."""

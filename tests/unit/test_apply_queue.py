@@ -352,3 +352,106 @@ class TestClosing:
 
         with pytest.raises(asyncio.CancelledError):
             run(scenario)
+
+
+# --- the priority restore (ADR-0016) ----------------------------------------------------------
+
+
+class TestPriorityRestore:
+    """AC: the queue admits a priority restore transaction.
+
+    ADR-0016's Consequences ask for one by name, because auto-revert has to write *while the
+    failed transaction is still being reported*. Two properties, and the second is the one
+    with the bug in it: the restore must not wait, and it must not swallow.
+    """
+
+    def test_a_restore_runs_over_its_own_keys_alone(self) -> None:
+        """A restore that absorbed the pending edits would confirm keys the user is still
+        choosing -- and the byte-for-byte check that proves the recovery worked would then
+        start failing on perfectly healthy configs."""
+
+        async def scenario() -> StubTransaction:
+            transaction = StubTransaction()
+            async with ApplyQueue(transaction, debounce=SLOW) as queue:
+                queue.touch("general:gaps_in")
+                await queue.apply_now("decoration:rounding")
+            return transaction
+
+        transaction = run(scenario)
+
+        assert transaction.calls == [("decoration:rounding",)]
+
+    def test_the_edits_it_jumped_are_still_applied_afterwards(self) -> None:
+        """Jumping the queue is not the same as emptying it."""
+
+        async def scenario() -> StubTransaction:
+            transaction = StubTransaction()
+            async with ApplyQueue(transaction, debounce=FAST) as queue:
+                queue.commit("general:gaps_in")
+                await queue.apply_now("decoration:rounding")
+                await queue.drain()
+            return transaction
+
+        transaction = run(scenario)
+
+        assert transaction.calls == [("decoration:rounding",), ("general:gaps_in",)]
+
+    def test_a_restore_does_not_wait_out_a_debounce(self) -> None:
+        """A restore queued behind a burst leaves the user looking at a config Hyprland
+        rejected for as long as they keep typing."""
+
+        async def scenario() -> ApplyResult:
+            transaction = StubTransaction()
+            async with ApplyQueue(transaction, debounce=SLOW) as queue:
+                queue.touch("general:gaps_in")
+                async with asyncio.timeout(1.0):
+                    return await queue.apply_now("decoration:rounding")
+
+        assert run(scenario).outcome is ApplyOutcome.OK
+
+    def test_a_restore_still_waits_for_the_transaction_in_flight(self) -> None:
+        """ "Priority" is about which transaction runs next, never about running two: a
+        reload is O(whole config) and `configerrors` is one global slot (ADR-0010)."""
+
+        async def scenario() -> StubTransaction:
+            transaction = StubTransaction(duration=0.05)
+            async with ApplyQueue(transaction, debounce=FAST) as queue:
+                queue.commit("general:gaps_in")
+                while not queue.busy:
+                    await asyncio.sleep(0)
+                await queue.apply_now("decoration:rounding")
+            return transaction
+
+        transaction = run(scenario)
+
+        assert transaction.overlaps == 0
+        assert transaction.calls == [("general:gaps_in",), ("decoration:rounding",)]
+
+    def test_a_queue_is_not_idle_while_a_restore_is_waiting(self) -> None:
+        """`drain` is what a caller waits on to know the config is settled, and a recovery
+        that had not run yet is the least settled the config ever gets."""
+
+        async def scenario() -> list[tuple[str, ...]]:
+            transaction = StubTransaction(duration=0.02)
+            async with ApplyQueue(transaction, debounce=FAST) as queue:
+                waiting = asyncio.create_task(queue.apply_now("decoration:rounding"))
+                # Let the task reach the queue: `drain` can only account for work that has
+                # actually been submitted, here and in the app.
+                while not queue.recovering:
+                    await asyncio.sleep(0)
+                await queue.drain()
+                # Snapshot at the moment `drain` returned, not after awaiting the task.
+                settled = list(transaction.calls)
+                await waiting
+            return settled
+
+        assert run(scenario) == [("decoration:rounding",)]
+
+    def test_a_closed_queue_refuses_a_restore_rather_than_dropping_it(self) -> None:
+        async def scenario() -> None:
+            queue = ApplyQueue(StubTransaction(), debounce=FAST)
+            await queue.aclose()
+            with pytest.raises(RuntimeError):
+                await queue.apply_now("decoration:rounding")
+
+        run(scenario)

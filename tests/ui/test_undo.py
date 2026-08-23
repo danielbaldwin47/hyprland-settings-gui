@@ -70,21 +70,11 @@ def build_window(tmp_path: Path) -> Any:
     return session, MainWindow(session, application=app)
 
 
-def ok_result() -> Any:
-    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
-    from hyprtweaker.engine.writer import WriteResult
+def a_gesture() -> Any:
+    """One recorded gesture, as `Session.on_recorded` hands it over."""
+    from hyprtweaker.engine.apply import Edit, UndoStep
 
-    return ApplyResult(
-        ApplyOutcome.OK,
-        keys=(ROUNDING,),
-        write=WriteResult(
-            written=("options/decoration.lua",),
-            unchanged=(),
-            removed=(),
-            entrypoint_written=False,
-            hand_edited=(),
-        ),
-    )
+    return UndoStep.of([Edit(ROUNDING, 8, 12)])
 
 
 def failed_result() -> Any:
@@ -138,7 +128,7 @@ def test_activating_the_action_asks_the_session_to_undo(tmp_path: Path) -> None:
 def test_a_landed_gesture_is_offered_back(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
 
-    window.show_result(ok_result())
+    window.offer_undo(a_gesture())
 
     toast = window.undo_toast
     assert toast is not None
@@ -148,7 +138,7 @@ def test_a_landed_gesture_is_offered_back(tmp_path: Path) -> None:
 
 def test_the_toasts_button_asks_the_session_to_undo(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
-    window.show_result(ok_result())
+    window.offer_undo(a_gesture())
 
     assert window.undo_toast is not None
     window.undo_toast.emit("button-clicked")
@@ -163,21 +153,19 @@ def test_a_second_gesture_replaces_the_offer_rather_than_stacking_one(
     gesture -- an undo that takes back something they have since changed twice."""
     _session, window = build_window(tmp_path)
 
-    window.show_result(ok_result())
+    window.offer_undo(a_gesture())
     first = window.undo_toast
-    window.show_result(ok_result())
+    window.offer_undo(a_gesture())
 
     assert window.undo_toast is not None
     assert window.undo_toast is not first
 
 
-def test_a_failed_apply_reports_the_failure_and_offers_nothing_to_undo(
-    tmp_path: Path,
-) -> None:
+def test_a_failed_apply_withdraws_the_offer(tmp_path: Path) -> None:
     """One toast, never two: an offer to take back a change that did not land would be an
     offer to undo nothing."""
     _session, window = build_window(tmp_path)
-    window.show_result(ok_result())
+    window.offer_undo(a_gesture())
 
     window.show_result(failed_result())
 
@@ -193,7 +181,7 @@ def test_an_auto_revert_toasts_and_withdraws_the_undo_offer(tmp_path: Path) -> N
     from hyprtweaker.session import AutoRevert
 
     _session, window = build_window(tmp_path)
-    window.show_result(ok_result())
+    window.offer_undo(a_gesture())
 
     window.show_revert(
         AutoRevert(keys=(ROUNDING,), modules=("options/general.lua",), errors=(ERROR_LINE,))

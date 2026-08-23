@@ -31,7 +31,7 @@ from dataclasses import dataclass
 
 from ..model import UNSET, OptionValue
 
-MAX_DEPTH = 200
+UNDO_MAX_DEPTH = 200
 """How many gestures the stack remembers. Deep enough to walk back a whole sitting; bounded
 so a long-lived session cannot grow without limit. Overflow drops the *oldest* step, which is
 the one furthest from anything the user still means to take back."""
@@ -88,7 +88,7 @@ class UndoStep:
 class UndoStack:
     """A linear in-memory stack of `UndoStep`s. One per session, global across Pages."""
 
-    def __init__(self, *, max_depth: int = MAX_DEPTH) -> None:
+    def __init__(self, *, max_depth: int = UNDO_MAX_DEPTH) -> None:
         self._steps: list[UndoStep] = []
         self._max_depth = max(1, max_depth)
 

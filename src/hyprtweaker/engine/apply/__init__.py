@@ -57,13 +57,13 @@ from .transaction import (
     SETTLE_SECONDS,
     ApplyTransaction,
 )
-from .undo import MAX_DEPTH, Edit, UndoStack, UndoStep
+from .undo import UNDO_MAX_DEPTH, Edit, UndoStack, UndoStep
 
 __all__ = [
     "DEBOUNCE_SECONDS",
-    "MAX_DEPTH",
     "RELOAD_TIMEOUT_SECONDS",
     "SETTLE_SECONDS",
+    "UNDO_MAX_DEPTH",
     "UNREADABLE",
     "Applier",
     "ApplyOutcome",

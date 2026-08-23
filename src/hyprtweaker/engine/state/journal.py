@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -48,8 +48,12 @@ from .manifest import content_hash
 
 _log = logging.getLogger(__name__)
 
-FORMAT_VERSION = 1
-"""Stamped on every line. A line from a future format is skipped rather than guessed at."""
+JOURNAL_FORMAT_VERSION = 1
+"""Stamped on every line. A line from a future format is skipped rather than guessed at.
+
+Spelled out rather than `FORMAT_VERSION`, because `manifest.py` already has one of those in
+this package and the two version different files -- the same reason `engine.schema` carries
+`SCHEMA_FORMAT_VERSION` and `OVERLAY_FORMAT_VERSION` rather than one ambiguous name."""
 
 MAX_ENTRIES = 200
 """How many transactions the Journal keeps before the oldest are dropped.
@@ -130,7 +134,7 @@ class JournalEntry:
 
     def as_json(self) -> dict[str, Any]:
         return {
-            "format_version": FORMAT_VERSION,
+            "format_version": JOURNAL_FORMAT_VERSION,
             "at": self.at,
             "keys": list(self.keys),
             "outcome": self.outcome,
@@ -140,7 +144,9 @@ class JournalEntry:
 
     @classmethod
     def from_json(cls, payload: Any) -> JournalEntry | None:
-        if not isinstance(payload, dict) or payload.get("format_version") != FORMAT_VERSION:
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("format_version") != JOURNAL_FORMAT_VERSION:
             return None
         raw_changes = payload.get("changes")
         if not isinstance(raw_changes, list):
@@ -246,10 +252,6 @@ class Journal:
         self._paths = paths
         self._max_entries = max(1, max_entries)
 
-    @property
-    def paths(self) -> ConfigPaths:
-        return self._paths
-
     # --- the transaction's two moments --------------------------------------------------
 
     def begin(self, modules: Iterable[str]) -> Draft:
@@ -350,17 +352,43 @@ class Journal:
 
         A Module the transaction *deleted* answers `None` too: its confirmed state is
         absence, and there are no bytes that spell that.
+
+        The *write-back* half of ADR-0010's Restore-last-good -- putting these bytes on disk
+        through a normal Apply transaction -- is not here, and cannot honestly be until #62.
+        The Writer renders Modules whole from the model, so laying down bytes the model did
+        not produce would leave the two disagreeing, and the next edit would re-render over
+        the restore. Turning bytes back into model values is reading the app's own Lua, which
+        is #62's; ADR-0016's firing policy and the Banner that offers the action are #60's.
         """
         digest = self.last_known_good_digest(module)
         return self.snapshot(digest) if digest is not None else None
 
     def last_known_good_digest(self, module: str) -> str | None:
+        return self._digest(module, lambda entry: entry.confirmed, lambda change: change.after)
+
+    def previous_digest(self, module: str) -> str | None:
+        """The bytes `module` held before the newest write that touched it.
+
+        The Snapshot ADR-0016's auto-revert restores to, and deliberately *not* filtered by
+        `confirmed`: the state a rejected write replaced is the state that was live a moment
+        earlier, whether or not the app got to verify it. Sibling to
+        `last_known_good_digest`, which asks the stricter question.
+        """
+        return self._digest(module, lambda _entry: True, lambda change: change.before)
+
+    def _digest(
+        self,
+        module: str,
+        wanted: Callable[[JournalEntry], bool],
+        side: Callable[[ModuleChange], str | None],
+    ) -> str | None:
+        """The newest entry matching `wanted` that touched `module`, on the side asked for."""
         for entry in reversed(self.entries()):
-            if not entry.confirmed:
+            if not wanted(entry):
                 continue
             change = entry.change(module)
-            if change is not None and change.after is not None:
-                return change.after
+            if change is not None and (digest := side(change)) is not None:
+                return digest
         return None
 
     # --- writing the log ----------------------------------------------------------------

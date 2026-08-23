@@ -22,7 +22,7 @@ from pathlib import Path
 from _fake_hyprland import FakeHyprland, run_with_fake
 from _support import Runner, drain_events, section_conversation, session_for
 
-from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult, UndoStep
 from hyprtweaker.engine.model import UNSET, CssGaps
 from hyprtweaker.session import AutoRevert, Session
 
@@ -458,5 +458,88 @@ def test_a_restore_that_is_itself_rejected_stops_auto_writing(tmp_path: Path) ->
         assert session.recovery_halted
         # Exactly two: the rejected write and its one restore. A third would be the loop.
         assert fake.requests.count("reload") == 2
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_halted_session_reports_the_next_rejection_instead_of_writing_again(
+    tmp_path: Path,
+) -> None:
+    """ADR-0016's halt is a gate on the *next* rejection, not just on the one that tripped
+    it: "stop auto-writing until the user acts". Without it the app answers every rejected
+    write with another write, for as long as the compositor keeps refusing."""
+    reverts: list[AutoRevert] = []
+    results: list[ApplyResult] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_reverted = reverts.append
+        session.on_applied = results.append
+
+        reject_every_reload(fake)
+        session.set_option(BORDER_SIZE, 9)
+        await settle(session, runner)
+        assert session.recovery_halted
+        reloads = fake.requests.count("reload")
+
+        session.set_option(BORDER_SIZE, 12)
+        await settle(session, runner)
+
+        # One reload for the edit, and no restore chasing it.
+        assert fake.requests.count("reload") == reloads + 1
+        assert len(reverts) == 1
+        assert results[-1].outcome is ApplyOutcome.CONFIG_ERRORS
+        assert session.model.get(BORDER_SIZE) == 12
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+# --- what the window is told ------------------------------------------------------------------
+
+
+def test_the_recorded_gesture_is_handed_over_rather_than_left_on_the_stack(
+    tmp_path: Path,
+) -> None:
+    """The window is told *which* gesture landed. Reading the stack top instead would have a
+    transaction that recorded nothing re-offer whatever gesture was underneath."""
+    recorded: list[UndoStep] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_recorded = recorded.append
+
+        fake.conversation.update(conversation(**{ROUNDING: 12}))
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+
+        assert len(recorded) == 1
+        assert recorded[0].names == (ROUNDING,)
+
+        # An undo is not a gesture of the user's, so it announces nothing.
+        fake.conversation.update(conversation())
+        session.undo()
+        await settle(session, runner)
+
+        assert len(recorded) == 1
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_rejected_gesture_is_never_announced_as_recorded(tmp_path: Path) -> None:
+    recorded: list[UndoStep] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_recorded = recorded.append
+        session.on_reverted = lambda _revert: None
+
+        reject_the_next_reload(fake)
+        session.set_option(BORDER_SIZE, 9)
+        await settle(session, runner)
+
+        assert recorded == []
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))

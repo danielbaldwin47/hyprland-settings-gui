@@ -154,7 +154,7 @@ def _module_for_path(path: str) -> str | None:
     equal the one the app computed. The names it matches on are `paths`' own constants, so a
     layout change moves both this and the writer together.
     """
-    cleaned = path.strip().replace("\\", "/").rstrip("/")
+    cleaned = _normalise(path).rstrip("/")
     if not cleaned or _is_foreign(cleaned):
         return None
 
@@ -171,6 +171,11 @@ def _module_for_path(path: str) -> str | None:
     return None
 
 
+def _normalise(path: str) -> str:
+    """The file part with the whitespace Hyprland pads its messages with taken off."""
+    return path.strip()
+
+
 def _is_foreign(path: str) -> bool:
     """Whether a path names one of the files the app has promised never to rewrite.
 
@@ -180,7 +185,7 @@ def _is_foreign(path: str) -> bool:
     a `legacy.lua` error would be attributed to the app and, if the same transaction had
     written a Module, could authorise an automatic write over somebody else's file.
     """
-    cleaned = path.strip().replace("\\", "/")
+    cleaned = _normalise(path)
     if f"/{BRIDGE_DIR}/" in cleaned or cleaned.startswith(f"{BRIDGE_DIR}/"):
         return True
     return any(

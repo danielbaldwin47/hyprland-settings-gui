@@ -242,11 +242,12 @@ class MainWindow(Adw.ApplicationWindow):
         refused wants no pill at all (`ApplyResult.pending_restart` only names keys whose
         bytes actually landed -- ADR-0010).
 
-        Then one toast, never two. A failed transaction gets the failure line; a successful
-        one gets the offer to undo it. Instant apply's whole promise is that the change *is*
-        the feedback (ADR-0003), and the undo offer is the exception that proves it: it says
-        nothing about *what* happened, only that it is reversible -- which is the one thing a
-        Row snapping to a new value cannot show on its own.
+        Then the failure line, if there was a failure. A *successful* transaction gets
+        nothing from here -- instant apply's whole promise is that the change is the feedback
+        (ADR-0003) -- and the offer to undo it arrives separately, through `offer_undo`, from
+        the session that knows whether a gesture was actually recorded. One toast, never two:
+        a failure withdraws any offer still on screen, because a change that did not land is
+        not a change to take back.
         """
         for name in result.pending_restart:
             self._refresh_chrome_for(name)
@@ -255,8 +256,6 @@ class MainWindow(Adw.ApplicationWindow):
         if not result.ok:
             self._dismiss_undo()
             self._toasts.add_toast(Adw.Toast(title=_result_summary(result), timeout=5))
-            return
-        self._offer_undo()
 
     def show_revert(self, revert: AutoRevert) -> None:
         """The app has just taken back its own rejected write (ADR-0016 §Auto-revert).
@@ -286,12 +285,15 @@ class MainWindow(Adw.ApplicationWindow):
         """
         return self._undo_toast
 
-    def _offer_undo(self) -> None:
-        """Put the "Undo" toast up for the gesture that just landed, if there was one."""
-        step = self._session.last_gesture
-        if step is None:
-            return
+    def offer_undo(self, step: UndoStep) -> None:
+        """Offer to take back the gesture that just landed.
 
+        Told which gesture rather than reading the stack top, and the difference is visible:
+        a transaction that recorded no step -- an undo's own write, or one whose bytes were
+        already on disk -- would otherwise raise an offer for whatever gesture happened to be
+        underneath, naming a Row the user has not touched for a while.
+        """
+        self._undo_action.set_enabled(self._session.can_undo)
         self._dismiss_undo()
         toast = Adw.Toast(title=self._gesture_title(step), timeout=UNDO_TOAST_SECONDS)
         toast.set_button_label("Undo")

@@ -110,15 +110,6 @@ class ApplyTransaction:
         self._in_flight = False
 
     @property
-    def journal(self) -> Journal | None:
-        """The history this transaction writes to, if it has one.
-
-        Exposed so auto-revert can ask the same object what the pre-write bytes were --
-        going back to the Journal for them, rather than being handed a copy, is what keeps
-        the recovery reading the record it will later be judged against."""
-        return self._journal
-
-    @property
     def in_flight(self) -> bool:
         """True from arming the reload wait until Read-back is done.
 

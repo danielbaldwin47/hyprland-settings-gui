@@ -142,6 +142,15 @@ class Session:
         self.on_reverted: Callable[[AutoRevert], None] | None = None
         """Called when the app has just taken back its own rejected write (ADR-0016)."""
 
+        self.on_recorded: Callable[[UndoStep], None] | None = None
+        """Called with the gesture a finished transaction put on the undo stack.
+
+        The step is handed over rather than left for the window to read off the stack top.
+        Those are not the same thing: a transaction that recorded nothing -- an undo's own
+        write, or one whose rendered bytes were already on disk -- would otherwise have the
+        window offer to take back whatever gesture happened to be underneath, which is a
+        gesture the user did not just make."""
+
         self._model = ConfigModel(self._schema)
         self._writer = Writer(self._paths, app_version=app_version)
         self._journal = Journal(self._paths)
@@ -154,7 +163,7 @@ class Session:
         self._pending_restart: set[str] = set()
 
         self._undo = UndoStack()
-        self._open: dict[str, OptionValue] = {}
+        self._open_gestures: dict[str, OptionValue] = {}
         """Per Option, what it held when the current gesture's first edit arrived.
 
         Opened by any edit that finds no entry, closed by the transaction that carries the
@@ -295,8 +304,8 @@ class Session:
         built from is press-to-release rather than tick-to-tick, with nothing in the widget
         layer having to know when a gesture began.
         """
-        if name not in self._open:
-            self._open[name] = self._model.get(name)
+        if name not in self._open_gestures:
+            self._open_gestures[name] = self._model.get(name)
 
     def _refuse(self, name: str) -> bool:
         """Whether this session must decline an edit -- and leave the model alone doing it.
@@ -359,12 +368,12 @@ class Session:
     def _restore(self, values: Mapping[str, OptionValue]) -> None:
         """Put the model back to `values`, and forget any gesture open on those Options.
 
-        The forgetting matters: an Option mid-gesture has an entry in `_open` holding a
+        The forgetting matters: an Option mid-gesture has an entry in `_open_gestures` holding a
         pre-gesture value that the restore has just made wrong, and leaving it there would
         have the *next* transaction record an undo step spanning both.
         """
         for name, value in values.items():
-            self._open.pop(name, None)
+            self._open_gestures.pop(name, None)
             if value is UNSET:
                 self._model.unset(name)
             else:
@@ -528,7 +537,7 @@ class Session:
         # model delta and replays through a normal transaction whatever else has happened
         # since (ADR-0010 §Undo) -- but a half-open one would produce a delta spanning
         # somebody else's reload.
-        self._open.clear()
+        self._open_gestures.clear()
         self._spawn(self._reread_after_foreign_reload())
 
     async def _reread_after_foreign_reload(self) -> None:
@@ -571,20 +580,20 @@ class Session:
             # The restore transaction's own result. It carries no gesture of the user's, and
             # a second auto-revert on top of a failed one is the loop ADR-0016 forbids.
             #
-            # An edit made in the ~25 ms the restore takes would coalesce into it, and its
-            # gesture is deliberately *not* closed here: the entry stays open in `_open`, so
-            # the next transaction records it with the value it really started from rather
-            # than with the one the revert put back.
+            # A restore carries its own keys alone (`apply_now`), so an edit made in the
+            # ~25 ms it takes is still mid-gesture: its entry stays open in
+            # `_open_gestures`, and the next transaction records it from the value it really
+            # started at rather than from the one the revert put back.
             self._recovery_result(result)
             self._report(result)
             return
 
         delta = self._close(result.keys)
         blamed = self._own_write_errors(result)
-        if blamed and delta:
+        if blamed and self._may_auto_revert(delta):
             self._auto_revert(result, delta, blamed)
             return
-        if blamed:
+        if blamed and not self._recovery_halted:
             # Our own write, rejected, with nothing recorded to put back -- which the app
             # cannot reach by editing, only by writing without an edit. Reverting blind would
             # mean re-rendering the same model into the same bad bytes, so this reports and
@@ -592,8 +601,24 @@ class Session:
             _log.error("own write rejected with no model delta to revert: %s", result.errors)
             self._recovery_halted = True
 
-        self._undo.record(self._step(delta))
+        step = self._step(delta)
+        self._undo.record(step)
         self._report(result)
+        if step is not None and result.ok and self.on_recorded is not None:
+            # After `on_applied`, and only for a transaction that stands: the window shows one
+            # toast, and an offer to undo a change that did not land would be an offer to undo
+            # nothing.
+            self.on_recorded(step)
+
+    def _may_auto_revert(self, delta: Mapping[str, OptionValue]) -> bool:
+        """Whether the app is still allowed to answer a rejected write by writing again.
+
+        Two gates, and ADR-0016 names both. There has to be a delta to put back -- reverting
+        blind would re-render the same model into the same bad bytes. And recovery must not
+        already have failed: "if the restore transaction itself errors ... stop auto-writing
+        until the user acts", which is a gate on the *next* rejection as much as on this one.
+        """
+        return bool(delta) and not self._recovery_halted
 
     def _report(self, result: ApplyResult) -> None:
         self._pending_restart.update(result.pending_restart)
@@ -603,11 +628,13 @@ class Session:
     def _close(self, keys: Sequence[str]) -> dict[str, OptionValue]:
         """Take the pre-gesture values of every Option this transaction carried.
 
-        Scoped to `keys` rather than draining `_open`, because coalescing is per key: a
+        Scoped to `keys` rather than draining `_open_gestures`, because coalescing is per key: a
         transaction confirms exactly the Options it was handed, and an edit that arrived
         while it was in flight belongs to the *next* one and is still mid-gesture.
         """
-        return {name: self._open.pop(name) for name in keys if name in self._open}
+        return {
+            name: self._open_gestures.pop(name) for name in keys if name in self._open_gestures
+        }
 
     def _step(self, delta: Mapping[str, OptionValue]) -> UndoStep | None:
         return UndoStep.of(
@@ -655,17 +682,8 @@ class Session:
         self._spawn(self._revert_transaction(result, tuple(delta), expected))
 
     def _snapshot_digests(self, modules: Sequence[str]) -> dict[str, str | None]:
-        """Each Module's pre-write Snapshot digest, from the newest entry that touched it."""
-        entries = self._journal.entries()
-        digests: dict[str, str | None] = {}
-        for module in modules:
-            digests[module] = None
-            for entry in reversed(entries):
-                change = entry.change(module)
-                if change is not None:
-                    digests[module] = change.before
-                    break
-        return digests
+        """Each Module's pre-write Snapshot digest -- what the revert has to reproduce."""
+        return {module: self._journal.previous_digest(module) for module in modules}
 
     async def _revert_transaction(
         self, result: ApplyResult, keys: tuple[str, ...], expected: Mapping[str, str | None]
@@ -676,7 +694,7 @@ class Session:
 
         self._reverting = True
         try:
-            await applier.apply(*keys)
+            await applier.apply_now(*keys)
         except (IpcError, RuntimeError) as error:
             _log.error("could not re-apply after reverting: %s", error)
             self._recovery_halted = True

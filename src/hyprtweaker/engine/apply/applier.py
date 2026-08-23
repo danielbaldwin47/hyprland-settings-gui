@@ -156,6 +156,14 @@ class Applier:
         """Commit and await the transaction that carries `names`."""
         return await self._queue.apply(*names)
 
+    async def apply_now(self, *names: str) -> ApplyResult:
+        """Apply `names` ahead of anything waiting, and over those keys alone.
+
+        ADR-0016's priority restore transaction. The recovery path only -- an ordinary edit
+        that jumped the queue would reorder the user's own changes behind their back.
+        """
+        return await self._queue.apply_now(*names)
+
     # --- lifecycle --------------------------------------------------------------------------
 
     def start(self) -> None:
@@ -193,8 +201,3 @@ class Applier:
     @property
     def busy(self) -> bool:
         return self._queue.busy
-
-    @property
-    def journal(self) -> Journal | None:
-        """The Snapshot/Journal history every transaction here writes to, if any."""
-        return self._transaction.journal

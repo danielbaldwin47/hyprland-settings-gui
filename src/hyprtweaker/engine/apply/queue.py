@@ -16,6 +16,15 @@ picking from a combo is a `commit`, and a user who has finished deciding should 
 watch a progress-shaped pause (ADR-0003). So `commit` skips the wait outright rather than
 shortening it.
 
+**One gesture is not coalesced: the recovery.** ADR-0016 requires the queue to "admit a
+priority restore transaction while the failed one is being reported", and `apply_now` is
+that admission. It jumps whatever is waiting *and* runs over its own keys alone, leaving the
+dirty set untouched for the batch behind it. Both halves matter: a restore queued behind a
+debounce leaves the user looking at a config Hyprland rejected for as long as they keep
+typing, and a restore that swallowed the pending edits would be confirming keys the user is
+still in the middle of choosing -- which is exactly how the byte-for-byte check that proves
+the recovery worked would start failing on healthy configs.
+
 This module knows nothing about sockets or files. Its collaborator is anything with an
 `async run(keys)`, which is what lets the sequencing rules -- the ones with the races in
 them -- be tested without a compositor at all.
@@ -71,9 +80,11 @@ class ApplyQueue:
 
         self._dirty: set[str] = set()
         self._waiters: list[asyncio.Future[ApplyResult]] = []
+        self._priority: list[tuple[tuple[str, ...], asyncio.Future[ApplyResult]]] = []
         self._immediate = False
         self._deadline = 0.0
         self._busy = False
+        self._running_priority = False
         self._closed = False
 
         self._work_available = asyncio.Event()
@@ -108,10 +119,11 @@ class ApplyQueue:
             with suppress(asyncio.CancelledError):
                 await worker
 
-        for waiter in self._waiters:
+        for waiter in (*self._waiters, *(future for _keys, future in self._priority)):
             if not waiter.done():
                 waiter.cancel()
         self._waiters.clear()
+        self._priority.clear()
         self._idle.set()
 
     async def __aenter__(self) -> ApplyQueue:
@@ -157,6 +169,25 @@ class ApplyQueue:
         self.commit(*names)
         return await waiter
 
+    async def apply_now(self, *names: str) -> ApplyResult:
+        """Run a transaction over exactly `names`, ahead of anything else waiting.
+
+        The recovery path, and the only caller is auto-revert (ADR-0016). Two things it does
+        that `apply` does not: it goes to the front, and it carries *only* these keys -- the
+        dirty set is left for the batch behind it. Still serialized, because a reload is a
+        reload: "priority" is about which transaction runs next, never about running two.
+        """
+        if self._closed:
+            raise RuntimeError("this ApplyQueue is closed")
+        waiter: asyncio.Future[ApplyResult] = asyncio.get_running_loop().create_future()
+        self._priority.append((tuple(names), waiter))
+        self._idle.clear()
+        self._work_available.set()
+        # Wakes a worker part-way through a debounce wait, exactly as a commit gesture does.
+        self._commit_now.set()
+        self.start()
+        return await waiter
+
     async def drain(self) -> None:
         """Wait until nothing is pending and nothing is in flight."""
         await self._idle.wait()
@@ -170,6 +201,11 @@ class ApplyQueue:
     def pending(self) -> frozenset[str]:
         """Options marked dirty and not yet carried by a transaction."""
         return frozenset(self._dirty)
+
+    @property
+    def recovering(self) -> bool:
+        """Whether a priority restore is queued or running."""
+        return bool(self._priority) or (self._busy and self._running_priority)
 
     # --- internals --------------------------------------------------------------------------
 
@@ -200,6 +236,10 @@ class ApplyQueue:
 
             await self._debounced()
 
+            if self._priority:
+                await self._run_priority()
+                continue
+
             keys = tuple(sorted(self._dirty))
             waiters = self._waiters
             self._dirty.clear()
@@ -221,10 +261,29 @@ class ApplyQueue:
         rather than one wait per edit. The wait is on an event rather than a plain sleep so
         that a commit landing mid-burst ends it immediately.
         """
-        while not self._immediate and (delay := self._deadline - self._now()) > 0:
+        while (
+            not self._immediate
+            and not self._priority
+            and (delay := self._deadline - self._now()) > 0
+        ):
             with suppress(TimeoutError):
                 async with asyncio.timeout(delay):
                     await self._commit_now.wait()
+
+    async def _run_priority(self) -> None:
+        """Take the front recovery job and run it, leaving the dirty set where it is."""
+        keys, waiter = self._priority.pop(0)
+        if not self._priority and not self._dirty:
+            self._work_available.clear()
+        if not self._immediate:
+            # Only ours to clear: a commit gesture that arrived alongside still needs it set,
+            # or the batch behind this one would sit out a debounce it had already skipped.
+            self._commit_now.clear()
+        self._running_priority = True
+        try:
+            await self._run_once(keys, [waiter])
+        finally:
+            self._running_priority = False
 
     async def _run_once(
         self, keys: tuple[str, ...], waiters: list[asyncio.Future[ApplyResult]]
@@ -258,8 +317,8 @@ class ApplyQueue:
         self._settle()
 
     def _settle(self) -> None:
-        """Report idle unless an edit arrived while the last transaction was running."""
-        if not self._dirty:
+        """Report idle unless an edit or a recovery arrived while the last one was running."""
+        if not self._dirty and not self._priority:
             self._idle.set()
 
     def _notify(self, result: ApplyResult) -> None:
