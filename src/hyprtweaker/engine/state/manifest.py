@@ -26,17 +26,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from ..paths import ENTRYPOINT_NAME, ConfigPaths
 
-FORMAT_VERSION = 2
-"""Bumped from 1 when `ModuleRecord`'s `bytes` key became `size` (#51, pre-release).
+FORMAT_VERSION = 3
+"""Bumped from 1 when `ModuleRecord`'s `bytes` key became `size` (#51, pre-release), and
+from 2 when a record gained the `options` it carries (#56, still pre-release).
 
 An older file therefore reads as damaged rather than as a Manifest whose every record
-happens to be unparseable -- which would look exactly like an empty App dir.
+happens to be unparseable -- which would look exactly like an empty App dir. That is the
+right reading for both bumps: a version 2 record cannot say which Options it wrote, and
+guessing "all of the Section's" is exactly the over-claim `options` exists to end.
 """
 
 
@@ -72,10 +76,19 @@ class ModuleRecord:
     size: int
     """Length in bytes. A cheap first comparison, and a sanity check on the digest."""
 
+    options: tuple[str, ...] = ()
+    """The colon-form Options this Module sets, in the order it emits them.
+
+    The Manifest's third question -- "what, exactly, did the app write?" -- and the finest
+    grain there is, because the app cannot read its own Lua back (#62). Without it the only
+    available answer is the Module's whole Section, and a re-read would adopt Options that
+    `user.lua` or a Bridge set, render them as the app's own, and emit them into the app's
+    Module on the next write. Empty for the Entrypoint, which sets no Options."""
+
     @classmethod
-    def of(cls, text: str) -> ModuleRecord:
+    def of(cls, text: str, options: Sequence[str] = ()) -> ModuleRecord:
         data = text.encode("utf-8")
-        return cls(sha256=content_hash(data), size=len(data))
+        return cls(sha256=content_hash(data), size=len(data), options=tuple(options))
 
     def matches(self, path: Path) -> bool:
         """True when the file on disk is byte-for-byte what the app wrote."""
@@ -86,7 +99,7 @@ class ModuleRecord:
         return len(data) == self.size and content_hash(data) == self.sha256
 
     def as_json(self) -> dict[str, Any]:
-        return {"sha256": self.sha256, "size": self.size}
+        return {"sha256": self.sha256, "size": self.size, "options": list(self.options)}
 
     @classmethod
     def from_json(cls, payload: Any) -> ModuleRecord | None:
@@ -95,7 +108,12 @@ class ModuleRecord:
         digest, size = payload.get("sha256"), payload.get("size")
         if not isinstance(digest, str) or not isinstance(size, int):
             return None
-        return cls(sha256=digest, size=size)
+        options = payload.get("options")
+        return cls(
+            sha256=digest,
+            size=size,
+            options=tuple(str(name) for name in options) if isinstance(options, list) else (),
+        )
 
 
 @dataclass(frozen=True, slots=True)

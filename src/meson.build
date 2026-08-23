@@ -10,6 +10,7 @@ package_sources = {
     '__main__.py',
     'application.py',
     'main.py',
+    'session.py',
   ],
   'hyprtweaker/engine': [
     '__init__.py',
@@ -20,6 +21,7 @@ package_sources = {
     'applier.py',
     'foreign.py',
     'queue.py',
+    'reread.py',
     'result.py',
     'transaction.py',
   ],
@@ -62,10 +64,18 @@ package_sources = {
   ],
   'hyprtweaker/ui': ['__init__.py'],
   'hyprtweaker/ui/dialogs': ['__init__.py'],
-  'hyprtweaker/ui/pages': ['__init__.py'],
-  'hyprtweaker/ui/rows': ['__init__.py'],
+  'hyprtweaker/ui/pages': [
+    '__init__.py',
+    'config.py',
+    'plan.py',
+  ],
+  'hyprtweaker/ui/rows': [
+    '__init__.py',
+    'factory.py',
+  ],
   'hyprtweaker/ui/shell': [
     '__init__.py',
+    'runtime.py',
     'window.py',
   ],
 }

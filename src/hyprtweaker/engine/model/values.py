@@ -571,6 +571,22 @@ def lua_literal_for(option: ResolvedOption, value: Any) -> str:
     return lua_literal(value)
 
 
+def getoption_raw(option: ResolvedOption, payload: dict[str, Any]) -> Any:
+    """The reply's value, still in the shape Hyprland sent it.
+
+    Split out of `parse_getoption` for the one caller that must look at the value *before*
+    it is typed: a `str` reply of `[[EMPTY]]` parses perfectly well into the string
+    `"[[EMPTY]]"`, and only the raw form still shows that it was a sentinel rather than a
+    value a user chose (prototype #8's most damaging defect class).
+    """
+    key = option.getoption_key.value
+    if key not in payload and GetOptionKey.CUSTOM.value in payload:
+        key = GetOptionKey.CUSTOM.value
+    if key not in payload:
+        raise KeyError(f"getoption reply for {option.name} has no {key!r} key: {payload!r}")
+    return payload[key]
+
+
 def parse_getoption(option: ResolvedOption, payload: dict[str, Any]) -> Any:
     """One `hyprctl -j getoption` reply -> the model's Python value.
 
@@ -579,13 +595,7 @@ def parse_getoption(option: ResolvedOption, payload: dict[str, Any]) -> Any:
     records the expected key and `custom` stays a fallback, so the same reader survives
     both engines (`schema/types.py`).
     """
-    key = option.getoption_key.value
-    if key not in payload and GetOptionKey.CUSTOM.value in payload:
-        key = GetOptionKey.CUSTOM.value
-    if key not in payload:
-        raise KeyError(f"getoption reply for {option.name} has no {key!r} key: {payload!r}")
-
-    raw = payload[key]
+    raw = getoption_raw(option, payload)
     if (complex_type := COMPLEX_TYPES.get(option.type)) is not None:
         return complex_type.from_getoption(raw)
     return parse_value(option.type, raw)
