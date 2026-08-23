@@ -56,16 +56,28 @@ def ui_unavailable() -> str | None:
     return None
 
 
+# trylast: pytest applies -k/-m deselection in its own copy of this hook, so
+# running after it means `items` is the final selection. Otherwise `-k` picking
+# only engine tests would still see UI items here and trip the gate below.
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    reason = ui_unavailable()
-    if reason is None:
-        return
-
     # This hook is global: even though it lives in tests/ui/conftest.py, pytest
     # hands it every collected item in the run. Skipping the lot would silently
-    # disable the engine tiers, so match on path.
-    ui_items = [item for item in items if UI_TESTS_DIR in Path(item.path).parents]
+    # disable the engine tiers, so match on path first. `item.path` is typed
+    # optional, and a pathless item from some future plugin should not become
+    # the INTERNALERROR this gate exists to avoid.
+    ui_items = [
+        item for item in items if item.path is not None and UI_TESTS_DIR in item.path.parents
+    ]
+
+    # Selecting no UI test at all is not a failure, whatever REQUIRE_UI says --
+    # and returning here also keeps `ui_unavailable()` from opening a display
+    # during collection for runs that never touch the UI.
     if not ui_items:
+        return
+
+    reason = ui_unavailable()
+    if reason is None:
         return
 
     if os.environ.get("HYPRTWEAKER_REQUIRE_UI") == "1":
