@@ -6,7 +6,7 @@ Agents merge their own PRs in this repo — background agents included. Putting 
 
 All three must hold before merging:
 
-1. **Tests green** on the branch. _(No repo-wide test runner exists yet; when one lands, name its command here — it becomes this gate.)_
+1. **Tests green** on the branch: the PR's CI checks all pass (`gh pr checks <n>` — the workflow runs ruff, mypy, and the meson test suite). Locally, `meson test -C build` covers the same suite.
 2. **Review clean** — `/code-review` has run and the PR body carries `Review: clean`. Findings held → write `Review: findings held` instead and leave the PR for a human.
 3. **Base is `main`.** A PR stacked on an unmerged branch waits: once its base lands, retarget to `main`, rebase, and re-check these gates.
 
