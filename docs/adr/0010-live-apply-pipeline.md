@@ -29,6 +29,8 @@ One user-visible change = one **Apply transaction**:
 4. Write all dirty Modules via atomic rename, then one explicit `reload` over the socket. Guaranteed single reload per transaction; no partial file is ever executed.
 5. Confirm: wait for `configreloaded` (timeout 2 s = 1.5 s watchdog + margin), treat it as "reload started", then read `configerrors` and `getoption` for the touched keys (**Read-back**). No eval between reload and the error read. The Read-back pass doubles as the ADR-0005 drift-badge scan.
 
+Read-back carries a **settle window** (amended during #54): because `configreloaded` fires ~11 ms before the new values are readable, a key that disagrees on the first read is re-read for up to 250 ms before it counts as a mismatch. A key that agrees is never re-read, so the common path stays at one round-trip per key. Without it the first `getoption` after a reload can honestly still answer with the pre-write value — and a false mismatch is the expensive direction, since ADR-0016 wires mismatch to auto-revert, which would undo a change that had in fact applied.
+
 Applies are **serialized through one queue**: one transaction in flight; edits arriving meanwhile coalesce into the next. Reload is O(whole config) and `configerrors` is one global slot — parallel applies cannot attribute errors.
 
 The transaction returns a structured **ApplyResult** — ok / config errors (file:line-prefixed) / read-back mismatch / timeout — which #31 consumes.

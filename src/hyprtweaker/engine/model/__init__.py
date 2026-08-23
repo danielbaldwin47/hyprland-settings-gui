@@ -47,6 +47,7 @@ from .values import (
     lua_string,
     parse_getoption,
     parse_value,
+    values_match,
 )
 
 __all__ = [
@@ -70,4 +71,5 @@ __all__ = [
     "lua_string",
     "parse_getoption",
     "parse_value",
+    "values_match",
 ]

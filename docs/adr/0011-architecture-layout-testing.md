@@ -20,7 +20,8 @@ ADR-0001 fixed the stack (Python + GTK4 + libadwaita) and demanded a clean engin
 - **`engine/`** — no GTK, importable headless:
   - `schema/` — load Generated schema + Overlay, resolve widget/nullability/visibility per Option
   - `model/` — Options (tri-state unset) + Entities; the single in-memory truth
-  - `writer/` — deterministic Module rendering, Apply transaction (ADR-0010)
+  - `writer/` — deterministic Module rendering and the `luac -p` syntax gate; synchronous, and ignorant of the compositor
+  - `apply/` — the Apply transaction, its queue and ApplyResult (ADR-0010). Split out of `writer/` during #54: the transaction is async and socket-bound, and folding an event loop into the renderer would have made the one part of the engine that must stay pure the hardest part to test
   - `importer/` — hyprlang Importer + Lua importer + Loss report (ADR-0009)
   - `ipc/` — socket/socket2 clients, `getoption`/`configerrors`/events; never spawns `hyprctl`
   - `state/` — Snapshots, Journal, Manifest (ADR-0005)
