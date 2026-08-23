@@ -416,7 +416,7 @@ class TestPendingRestart:
             getoption("decoration:rounding")
         ]
 
-    def test_pending_survives_a_failed_apply(self, tmp_path: Path) -> None:
+    def test_pending_survives_a_rejected_reload(self, tmp_path: Path) -> None:
         """Pending is about the file, and the file was written whatever the reload said."""
         model = model_with(xwayland__enabled=False)
         fake = FakeHyprland(
@@ -427,6 +427,27 @@ class TestPendingRestart:
 
         assert result.outcome is ApplyOutcome.CONFIG_ERRORS
         assert result.pending_restart == (self.RESTART_KEY,)
+
+    def test_an_aborted_apply_promises_nothing(self, tmp_path: Path) -> None:
+        """The Row would otherwise badge "takes effect after Hyprland restart" for a change
+        that never reached disk -- promising the user a restart will produce a setting they
+        never wrote."""
+        model = model_with(xwayland__enabled=False)
+        result, _ = run_apply(tmp_path, model, self.RESTART_KEY, "xwayland:nope")
+
+        assert result.outcome is ApplyOutcome.ABORTED
+        assert result.pending_restart == ()
+
+    def test_a_re_applied_model_promises_nothing_new(self, tmp_path: Path) -> None:
+        """Nothing was written, so nothing became newly pending: the transaction that put
+        the value on file is the one that reported it."""
+        model = model_with(xwayland__enabled=False)
+        run_apply(tmp_path, model, self.RESTART_KEY)
+
+        result, _ = run_apply(tmp_path, model, self.RESTART_KEY)
+
+        assert result.outcome is ApplyOutcome.NOTHING_TO_DO
+        assert result.pending_restart == ()
 
 
 # --- the pre-disk guarantee ---------------------------------------------------------------

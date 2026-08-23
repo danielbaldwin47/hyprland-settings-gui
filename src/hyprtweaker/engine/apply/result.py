@@ -93,13 +93,7 @@ class Mismatch:
     """The live value, or `UNREADABLE`."""
 
     live_set: bool
-    """Whether the running config sets this Option at all.
-
-    `False` with a value expected is the loud case: not a wrong value but *no* value, which
-    means the Module never ran -- a failed `require`, or a hand-edited file the Writer
-    stood down from. Worth telling apart from a plain value disagreement, which is usually
-    `user.lua` or a Bridge winning the override order on purpose.
-    """
+    """Whether the running config sets this Option at all."""
 
     @property
     def unapplied(self) -> bool:
@@ -107,7 +101,8 @@ class Mismatch:
 
         The loud shape of mismatch, and worth a name: a `require` that failed, or a Module
         the Writer stood down from because an editor had touched it. A plain value
-        disagreement is usually somebody winning the override order on purpose.
+        disagreement is the quiet shape, and usually means `user.lua` or a Bridge won the
+        override order on purpose.
         """
         return not self.live_set and self.expected is not UNSET
 

@@ -30,9 +30,7 @@ rather than shipping a hook with nothing on the other end.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
-import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -46,9 +44,9 @@ from ..ipc import (
     NoSuchOption,
     OptionReply,
 )
-from ..model import UNSET, ConfigModel, UnknownOption, parse_getoption
+from ..model import UNSET, ConfigModel, UnknownOption, parse_getoption, values_match
 from ..schema import ResolvedOption
-from ..writer import LuaSyntaxError, ProtectedFile, Writer, WriteResult
+from ..writer import LuaSyntaxError, ProtectedFile, Writer, WriteResult, module_relpath
 from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch
 
 _log = logging.getLogger(__name__)
@@ -69,13 +67,6 @@ round-trip per key."""
 
 SETTLE_POLL_SECONDS = 0.01
 """Gap between Read-back re-reads. A round-trip is 0.4 ms, so this paces rather than costs."""
-
-FLOAT_RELATIVE_TOLERANCE = 1e-6
-"""Hyprland holds config floats as 32-bit `float`, so a `0.95` written from a Python double
-reads back as the nearest float32. Comparing exactly would report a mismatch on every
-fractional Option the app has ever written correctly."""
-
-FLOAT_ABSOLUTE_TOLERANCE = 1e-9
 
 
 class ApplyTransaction:
@@ -115,9 +106,7 @@ class ApplyTransaction:
         """
         return self._in_flight
 
-    async def run(
-        self, keys: Sequence[str], *, overwrite_hand_edits: bool = False
-    ) -> ApplyResult:
+    async def run(self, keys: Sequence[str]) -> ApplyResult:
         """Apply the model, then confirm `keys` against the live compositor.
 
         `keys` are the Options this transaction is accountable for -- what the user touched
@@ -125,8 +114,9 @@ class ApplyTransaction:
         whole); `keys` only scope the Read-back, because asking about 353 Options per
         transaction would spend 140 ms confirming values nobody changed.
 
-        `overwrite_hand_edits` carries the user's answer to the ADR-0016 Banner back in. The
-        default stands down and reports the skipped files instead.
+        Hand-edited Modules are left alone and reported on `result.skipped`, never
+        overwritten. Carrying the user's answer to the ADR-0016 Banner back in is #60's,
+        along with the Banner that asks the question.
         """
         names = tuple(keys)
         try:
@@ -134,42 +124,45 @@ class ApplyTransaction:
         except UnknownOption as error:
             return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
 
-        # Restart-flagged keys are pending the moment the bytes land, whatever the rest of
-        # the transaction concludes -- the file is what "pending" is about.
-        pending_restart = tuple(option.name for option in options if option.restart is not None)
-
         try:
-            write = self._writer.write(self._model, overwrite_hand_edits=overwrite_hand_edits)
+            write = self._writer.write(self._model)
         except (LuaSyntaxError, ProtectedFile, ValueError) as error:
             # ADR-0010's guarantee: the gate runs over every rendered file before the first
             # one is replaced, so there is nothing on disk to undo here.
             _log.error("apply aborted before writing: %s", error)
-            return ApplyResult(
-                ApplyOutcome.ABORTED,
-                keys=names,
-                detail=str(error),
-                pending_restart=pending_restart,
-            )
+            return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
         except OSError as error:
             _log.error("apply failed mid-write: %s", error)
-            return ApplyResult(
-                ApplyOutcome.WRITE_FAILED,
-                keys=names,
-                detail=str(error),
-                pending_restart=pending_restart,
-            )
+            return ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
 
         if not write.changed:
             # Nothing on disk moved, so the live config already says what the model says.
             # Spending a full teardown reload to reassert it is a visible stutter for nothing.
-            return ApplyResult(
-                ApplyOutcome.NOTHING_TO_DO,
-                keys=names,
-                write=write,
-                pending_restart=pending_restart,
-            )
+            # Nothing became newly pending either: a restart-flagged value that is already
+            # on file was reported pending by the transaction that put it there.
+            return ApplyResult(ApplyOutcome.NOTHING_TO_DO, keys=names, write=write)
 
-        return await self._reload_and_confirm(names, options, write, pending_restart)
+        return await self._reload_and_confirm(
+            names, options, write, self._pending_restart(options, write)
+        )
+
+    @staticmethod
+    def _pending_restart(
+        options: Sequence[ResolvedOption], write: WriteResult
+    ) -> tuple[str, ...]:
+        """Restart-flagged keys whose bytes this transaction actually laid down.
+
+        Pending restart is a statement about a *file* -- "applied to file, effective after
+        Hyprland restart" (CONTEXT.md) -- so it is only ever claimed after the write landed.
+        Badging a Row "takes effect after Hyprland restart" for a change that was aborted,
+        or for one whose Module the Writer stood down from because an editor had touched it,
+        promises the user a restart will produce a setting they never wrote.
+        """
+        return tuple(
+            option.name
+            for option in options
+            if option.restart is not None and module_relpath(option) not in write.skipped
+        )
 
     # --- the compositor half ----------------------------------------------------------------
 
@@ -288,7 +281,7 @@ class ApplyTransaction:
             return Mismatch(option.name, expected, UNREADABLE, live_set=False)
 
         live = self._live_value(option, reply)
-        if reply.set_by_user and _matches(expected, live):
+        if reply.set_by_user and values_match(expected, live):
             return None
         return Mismatch(option.name, expected, live, live_set=reply.set_by_user)
 
@@ -305,33 +298,3 @@ class ApplyTransaction:
         except (KeyError, ValueError, TypeError) as error:
             _log.warning("unreadable getoption reply for %s: %s", option.name, error)
             return UNREADABLE
-
-
-def _matches(expected: Any, actual: Any) -> bool:
-    """Whether a live value is the value the model asked for, to float32 precision.
-
-    Exact equality is wrong here for one boring reason and one structural one: Hyprland
-    stores config floats as 32-bit, and the complex types (`Gradient`, `Vec2`, ...) carry
-    floats inside frozen dataclasses where a top-level `==` would compare them exactly.
-    """
-    if isinstance(expected, bool) or isinstance(actual, bool):
-        return bool(expected == actual)
-    if isinstance(expected, int | float) and isinstance(actual, int | float):
-        return math.isclose(
-            expected,
-            actual,
-            rel_tol=FLOAT_RELATIVE_TOLERANCE,
-            abs_tol=FLOAT_ABSOLUTE_TOLERANCE,
-        )
-    if dataclasses.is_dataclass(expected) and type(expected) is type(actual):
-        return all(
-            _matches(getattr(expected, item.name), getattr(actual, item.name))
-            for item in dataclasses.fields(expected)
-        )
-    if (
-        isinstance(expected, tuple | list)
-        and isinstance(actual, tuple | list)
-        and len(expected) == len(actual)
-    ):
-        return all(_matches(one, other) for one, other in zip(expected, actual, strict=True))
-    return bool(expected == actual)

@@ -47,17 +47,19 @@ class Applier:
         writer: Writer,
         client: CommandClient,
         events: EventStream,
+        on_foreign_reload: Callable[[], None],
         on_result: Callable[[ApplyResult], None] | None = None,
-        on_foreign_reload: Callable[[], None] | None = None,
         debounce: float = DEBOUNCE_SECONDS,
         reload_timeout: float = RELOAD_TIMEOUT_SECONDS,
     ) -> None:
-        """`on_foreign_reload` is optional and worth passing.
+        """`on_foreign_reload` is required, unlike `on_result`.
 
-        Without it the app never learns that a Bridge tool or a hand edit changed the config
-        under it, and every value it shows stays whatever it last read (ADR-0010 §Foreign
-        reloads). It is optional only because the re-read is the model layer's to perform,
-        not because skipping it is free.
+        ADR-0010 does not offer it as an option: "any `configreloaded` not correlated with
+        an in-flight transaction ... triggers a full state re-read + drift scan". The
+        re-read itself has to live above the engine -- it repopulates the model and the
+        Rows -- but making the callback optional would have left the app free to skip it
+        and silently show a config that stopped being true, which is the failure the clause
+        exists to prevent. Pass a re-read; there is no sensible default.
         """
         self._transaction = ApplyTransaction(
             model=model,
@@ -67,14 +69,10 @@ class Applier:
             reload_timeout=reload_timeout,
         )
         self._queue = ApplyQueue(self._transaction, debounce=debounce, on_result=on_result)
-        self._watch = (
-            ForeignReloadWatch(
-                events,
-                is_ours=lambda: self._transaction.in_flight,
-                on_foreign_reload=on_foreign_reload,
-            )
-            if on_foreign_reload is not None
-            else None
+        self._watch = ForeignReloadWatch(
+            events,
+            is_ours=lambda: self._transaction.in_flight,
+            on_foreign_reload=on_foreign_reload,
         )
 
     # --- edits ------------------------------------------------------------------------------
@@ -109,8 +107,7 @@ class Applier:
         Pending edits are dropped rather than flushed -- `await drain()` first if the session
         is closing cleanly and the last edit should still land.
         """
-        if self._watch is not None:
-            self._watch.close()
+        self._watch.close()
         await self._queue.aclose()
 
     async def __aenter__(self) -> Applier:

@@ -46,7 +46,7 @@ def with_applier(
     scenario: Callable[[Applier, FakeHyprland], Awaitable[T]],
     *,
     on_result: Callable[[ApplyResult], None] | None = None,
-    on_foreign_reload: Callable[[], None] | None = None,
+    on_foreign_reload: Callable[[], None] = lambda: None,
     debounce: float = 0.01,
 ) -> T:
     """Run `scenario` against a started Applier over a scripted compositor."""
@@ -106,6 +106,7 @@ def test_a_touched_burst_becomes_one_reload(tmp_path: Path) -> None:
                 writer=Writer(ConfigPaths.rooted_at(tmp_path), SAMPLE_APP_VERSION),
                 client=CommandClient(started.instance),
                 events=events,
+                on_foreign_reload=lambda: None,
                 debounce=0.01,
                 reload_timeout=0.5,
             ) as applier:

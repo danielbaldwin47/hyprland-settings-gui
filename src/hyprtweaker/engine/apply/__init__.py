@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from .applier import Applier
 from .foreign import ForeignReloadWatch
-from .queue import DEBOUNCE_SECONDS, Applies, ApplyQueue
+from .queue import DEBOUNCE_SECONDS, ApplyQueue, Transaction
 from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch
 from .transaction import (
     RELOAD_TIMEOUT_SECONDS,
@@ -48,11 +48,11 @@ __all__ = [
     "SETTLE_SECONDS",
     "UNREADABLE",
     "Applier",
-    "Applies",
     "ApplyOutcome",
     "ApplyQueue",
     "ApplyResult",
     "ApplyTransaction",
     "ForeignReloadWatch",
     "Mismatch",
+    "Transaction",
 ]

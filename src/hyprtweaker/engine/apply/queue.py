@@ -39,8 +39,12 @@ DEBOUNCE_SECONDS = 0.15
 enough that a user who stops typing does not notice waiting for it."""
 
 
-class Applies(Protocol):
-    """Whatever the queue serializes. `ApplyTransaction` is the one implementation."""
+class Transaction(Protocol):
+    """Whatever the queue serializes. `ApplyTransaction` is the one implementation.
+
+    Named for the thing rather than for the verb: `Applies` next to `Applier` was two
+    near-identical words for a protocol and the object that composes it.
+    """
 
     async def run(self, keys: Sequence[str]) -> ApplyResult: ...
 
@@ -50,7 +54,7 @@ class ApplyQueue:
 
     def __init__(
         self,
-        transaction: Applies,
+        transaction: Transaction,
         *,
         debounce: float = DEBOUNCE_SECONDS,
         on_result: Callable[[ApplyResult], None] | None = None,

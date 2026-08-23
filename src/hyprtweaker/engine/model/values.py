@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from ..schema import GetOptionKey, OptionType, ResolvedOption
@@ -589,3 +589,51 @@ def parse_getoption(option: ResolvedOption, payload: dict[str, Any]) -> Any:
     if (complex_type := COMPLEX_TYPES.get(option.type)) is not None:
         return complex_type.from_getoption(raw)
     return parse_value(option.type, raw)
+
+
+FLOAT_RELATIVE_TOLERANCE = 1e-6
+"""Hyprland holds config floats as 32-bit, so a `0.95` written from a Python double reads
+back as the nearest float32. Comparing exactly would call every fractional Option the app
+has ever written correctly a mismatch."""
+
+FLOAT_ABSOLUTE_TOLERANCE = 1e-9
+
+
+def values_match(expected: Any, actual: Any) -> bool:
+    """Whether two model values mean the same thing, to the precision the wire preserves.
+
+    The fourth question a value has to answer, and it belongs here with the other three:
+    only this module knows that a `Gradient` is a dataclass wrapping floats, that a `Color`
+    is an exact integer word, and that Hyprland's own storage is 32-bit. A caller comparing
+    with `==` gets the right answer for colours and the wrong one for opacities.
+
+    Used by the Apply transaction's Read-back and, later, by the ADR-0005 drift scan --
+    which ask the same question of the same pair of values.
+    """
+    if isinstance(expected, bool) or isinstance(actual, bool):
+        # Checked before the numeric branch: `True` is an `int`, and `isclose(True, 1)` is
+        # true, which would make a bool Option agree with a value it does not have.
+        return bool(expected == actual)
+    if isinstance(expected, int | float) and isinstance(actual, int | float):
+        return math.isclose(
+            expected,
+            actual,
+            rel_tol=FLOAT_RELATIVE_TOLERANCE,
+            abs_tol=FLOAT_ABSOLUTE_TOLERANCE,
+        )
+    if is_dataclass(expected) and type(expected) is type(actual):
+        # The five complex types. A top-level `==` on `Gradient` would compare its angle
+        # exactly, so the walk has to reach the floats inside.
+        return all(
+            values_match(getattr(expected, item.name), getattr(actual, item.name))
+            for item in fields(expected)
+        )
+    if (
+        isinstance(expected, tuple | list)
+        and isinstance(actual, tuple | list)
+        and len(expected) == len(actual)
+    ):
+        return all(
+            values_match(one, other) for one, other in zip(expected, actual, strict=True)
+        )
+    return bool(expected == actual)
