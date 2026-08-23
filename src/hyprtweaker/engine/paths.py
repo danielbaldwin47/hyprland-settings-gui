@@ -31,6 +31,7 @@ OPTIONS_DIR = "options"
 BRIDGE_DIR = "bridge"
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"
+REPORTS_DIR = "reports"
 JOURNAL_NAME = "journal.jsonl"
 
 
@@ -100,6 +101,17 @@ class ConfigPaths:
         churn of one copy per write.
         """
         return self.state_dir / SNAPSHOT_DIR
+
+    @property
+    def reports_dir(self) -> Path:
+        """Persisted Loss reports, one `<timestamp>.json` + `.md` pair per import.
+
+        In the state dir beside the Snapshots (ADR-0009): a report is a record of what an
+        import did, not config, so it must not land in a dotfile repo -- and it has to
+        outlive the wizard that produced it, since "view the last import" is offered long
+        afterwards.
+        """
+        return self.state_dir / REPORTS_DIR
 
     @property
     def journal(self) -> Path:

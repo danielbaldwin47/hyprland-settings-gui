@@ -9,7 +9,9 @@ The single in-memory truth (ADR-0005). Two halves:
   text, Lua literal, and the `getoption` parse. Gradients and css-gaps are Lua *tables*;
   emitting `descriptions`' text for them produces a config Hyprland rejects.
 
-Entities (Binds, Rules, monitors, ...) join this package in #64 and later.
+- **Entities** (`entities.py`) -- every config object with its own `hl.*` constructor:
+  Binds, Rules, monitor rules, animations. No Schema describes them, so their shapes are
+  declared rather than generated, and they are held in an `EntitySet` per config.
 
 Typical use::
 
@@ -24,6 +26,27 @@ Typical use::
 
 from __future__ import annotations
 
+from .entities import (
+    Animation,
+    Bind,
+    BindDevice,
+    BindOptions,
+    Curve,
+    Device,
+    DispatcherCall,
+    EntitySet,
+    EnvVar,
+    Gesture,
+    LayerRule,
+    MonitorRule,
+    Permission,
+    PluginLoad,
+    StartupCommand,
+    Submap,
+    Unbind,
+    WindowRule,
+    WorkspaceRule,
+)
 from .options import (
     UNSET,
     ConfigModel,
@@ -54,17 +77,36 @@ from .values import (
 __all__ = [
     "COMPLEX_TYPES",
     "UNSET",
+    "Animation",
+    "Bind",
+    "BindDevice",
+    "BindOptions",
     "Color",
     "ComplexValue",
     "ConfigModel",
     "CssGaps",
+    "Curve",
+    "Device",
+    "DispatcherCall",
+    "EntitySet",
+    "EnvVar",
     "FontWeight",
+    "Gesture",
     "Gradient",
+    "LayerRule",
     "LuaValue",
+    "MonitorRule",
     "NotNullable",
     "OptionValue",
+    "Permission",
+    "PluginLoad",
+    "StartupCommand",
+    "Submap",
+    "Unbind",
     "UnknownOption",
     "Vec2",
+    "WindowRule",
+    "WorkspaceRule",
     "display_text",
     "getoption_raw",
     "has_emittable_null",

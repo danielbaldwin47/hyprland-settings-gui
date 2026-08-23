@@ -31,6 +31,21 @@ Adding to this is a real decision, not a formality: whatever goes here must be a
 is not Hyprland. Talking to the compositor has exactly one route, and it is the socket.
 """
 
+MAY_NAME_HYPRCTL = {
+    "importer/dispatchers.py": (
+        "the fragments a user's own exec command is scanned for -- read as data about "
+        "their config, never issued"
+    ),
+    "importer/loss.py": "the finding those fragments produce, in its human-readable text",
+}
+"""Engine modules allowed to name `hyprctl` in a runtime string, and why.
+
+Naming is not spawning. The Importer has to *recognise* `hyprctl dispatch` inside a shell
+command a user wrote, because that is the one thing the engine swap breaks which no syntax
+check can see. Those modules remain barred from spawning anything -- `MAY_SPAWN` is
+unchanged and is what the rule actually protects.
+"""
+
 SPAWN_PREFIXES = ("exec", "spawn", "posix_spawn", "popen", "fork", "create_subprocess")
 """Matched by prefix rather than by an explicit list of names.
 
@@ -77,6 +92,8 @@ def docstring_nodes(tree: ast.AST) -> set[int]:
 
 @pytest.mark.parametrize("module", engine_modules(), ids=relative)
 def test_no_engine_module_names_hyprctl_in_code(module: Path) -> None:
+    if relative(module) in MAY_NAME_HYPRCTL:
+        pytest.skip(MAY_NAME_HYPRCTL[relative(module)])
     tree = ast.parse(module.read_text(encoding="utf-8"))
     skip = docstring_nodes(tree)
 
@@ -139,6 +156,19 @@ def test_the_scan_leaves_innocent_names_alone() -> None:
     """A method called `execute` is not a process spawn, and a false positive here would
     push a future author to work around the test rather than trust it."""
     assert not spawners_in("class Query:\n    def execute(self): ...\nQuery().execute()")
+
+
+def test_every_exemption_names_a_module_that_exists() -> None:
+    """An exemption for a module that has moved is a hole nobody can see."""
+    present = {relative(module) for module in engine_modules()}
+    assert set(MAY_NAME_HYPRCTL) <= present, set(MAY_NAME_HYPRCTL) - present
+    assert set(MAY_SPAWN) <= present, set(MAY_SPAWN) - present
+
+
+def test_naming_hyprctl_never_grants_spawning_it() -> None:
+    """The two lists are separate on purpose: the rule protects against spawning, and
+    reading a string out of a user's config is not that."""
+    assert not set(MAY_NAME_HYPRCTL) & set(MAY_SPAWN)
 
 
 @pytest.mark.parametrize("module", engine_modules(), ids=relative)

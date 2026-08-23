@@ -1,0 +1,625 @@
+# options
+general:border_size = 1
+general:gaps_in = 4 4 4 4
+general:gaps_out = 5 5 5 5
+general:gaps_workspaces = 50
+general:col.inactive_border = 30a58a8d 0deg
+general:col.active_border = 39f7dcde 0deg
+general:no_focus_fallback = true
+general:resize_on_border = true
+general:allow_tearing = true
+general:snap:enabled = true
+general:snap:window_gap = 4
+general:snap:monitor_gap = 5
+general:snap:respect_gaps = true
+decoration:rounding = 18
+decoration:rounding_power = 2
+decoration:shadow:enabled = true
+decoration:shadow:range = 20
+decoration:shadow:render_power = 10
+decoration:shadow:color = 20000000 0deg
+decoration:shadow:offset = 0 2
+decoration:dim_inactive = true
+decoration:dim_strength = 0.05
+decoration:dim_special = 0.2
+decoration:blur:enabled = true
+decoration:blur:size = 10
+decoration:blur:passes = 3
+decoration:blur:new_optimizations = true
+decoration:blur:xray = true
+decoration:blur:noise = 0.05
+decoration:blur:contrast = 0.89
+decoration:blur:brightness = 1
+decoration:blur:vibrancy = 0.5
+decoration:blur:vibrancy_darkness = 0.5
+decoration:blur:special = false
+decoration:blur:popups = false
+decoration:blur:popups_ignorealpha = 0.6
+decoration:blur:input_methods = true
+decoration:blur:input_methods_ignorealpha = 0.8
+animations:enabled = true
+input:kb_layout = us
+input:numlock_by_default = true
+input:repeat_rate = 35
+input:repeat_delay = 250
+input:follow_mouse = 1
+input:off_window_axis_events = 2
+input:touchpad:disable_while_typing = true
+input:touchpad:natural_scroll = true
+input:touchpad:scroll_factor = 0.7
+input:touchpad:clickfinger_behavior = true
+gestures:workspace_swipe_distance = 700
+gestures:workspace_swipe_min_speed_to_force = 5
+gestures:workspace_swipe_cancel_ratio = 0.2
+gestures:workspace_swipe_create_new = true
+gestures:workspace_swipe_direction_lock = true
+gestures:workspace_swipe_direction_lock_threshold = 10
+misc:disable_hyprland_logo = true
+misc:disable_splash_rendering = true
+misc:vrr = 0
+misc:mouse_move_enables_dpms = true
+misc:key_press_enables_dpms = true
+misc:animate_manual_resizes = false
+misc:animate_mouse_windowdragging = false
+misc:enable_swallow = false
+misc:swallow_regex = (foot|kitty|allacritty|Alacritty)
+misc:focus_on_activate = true
+misc:allow_session_lock_restore = true
+misc:session_lock_xray = true
+misc:background_color = ff1d1011
+misc:on_focus_under_fullscreen = 2
+misc:initial_workspace_tracking = 0
+binds:scroll_event_delay = 0
+binds:hide_special_on_workspace_change = true
+xwayland:force_zero_scaling = true
+cursor:hotspot_padding = 1
+cursor:zoom_factor = 1
+cursor:zoom_rigid = false
+cursor:zoom_disable_aa = true
+debug:vfr = true
+dwindle:preserve_split = true
+dwindle:smart_split = false
+dwindle:smart_resizing = false
+
+# entities
+submaps | name=global
+submaps | name=virtual-machine
+binds | keys=SUPER + Super_L dispatcher=hl.dsp.global('quickshell:searchToggleRelease') options={description=Toggle search, ignore_mods=True} submap=global
+binds | keys=SUPER + Super_R dispatcher=hl.dsp.global('quickshell:searchToggleRelease') options={description=Toggle search, ignore_mods=True} submap=global
+binds | keys=SUPER + Super_L dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pkill fuzzel || fuzzel') submap=global
+binds | keys=SUPER + Super_R dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pkill fuzzel || fuzzel') submap=global
+binds | keys=catchall dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') options={ignore_mods=True, non_consuming=True, transparent=True} submap=global
+binds | keys=CTRL + Super_L dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=CTRL + Super_R dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=SUPER + mouse:272 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=SUPER + mouse:273 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=SUPER + mouse:274 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=SUPER + mouse:275 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=SUPER + mouse:276 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=SUPER + mouse:277 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=SUPER + mouse_up dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=SUPER + mouse_down dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt') submap=global
+binds | keys=Super_L dispatcher=hl.dsp.global('quickshell:workspaceNumber') options={ignore_mods=True, transparent=True} submap=global
+binds | keys=Super_R dispatcher=hl.dsp.global('quickshell:workspaceNumber') options={ignore_mods=True, transparent=True} submap=global
+binds | keys=SUPER + Tab dispatcher=hl.dsp.global('quickshell:overviewWorkspacesToggle') submap=global
+binds | keys=SUPER + V dispatcher=hl.dsp.global('quickshell:overviewClipboardToggle') options={description=Clipboard history >> clipboard} submap=global
+binds | keys=SUPER + Period dispatcher=hl.dsp.global('quickshell:overviewEmojiToggle') options={description=Emoji >> clipboard} submap=global
+binds | keys=SUPER + A dispatcher=hl.dsp.global('quickshell:sidebarLeftToggle') submap=global
+binds | keys=ALT + SUPER + A dispatcher=hl.dsp.global('quickshell:sidebarLeftToggleDetach') submap=global
+binds | keys=SUPER + B dispatcher=hl.dsp.global('quickshell:sidebarLeftToggle') submap=global
+binds | keys=SUPER + O dispatcher=hl.dsp.global('quickshell:sidebarLeftToggle') submap=global
+binds | keys=SUPER + N dispatcher=hl.dsp.global('quickshell:sidebarRightToggle') options={description=Toggle right sidebar} submap=global
+binds | keys=SUPER + Slash dispatcher=hl.dsp.global('quickshell:cheatsheetToggle') options={description=Toggle cheatsheet} submap=global
+binds | keys=SUPER + K dispatcher=hl.dsp.global('quickshell:oskToggle') options={description=Toggle on-screen keyboard} submap=global
+binds | keys=SUPER + M dispatcher=hl.dsp.global('quickshell:mediaControlsToggle') options={description=Toggle media controls} submap=global
+binds | keys=SUPER + G dispatcher=hl.dsp.global('quickshell:overlayToggle') submap=global
+binds | keys=CTRL + ALT + Delete dispatcher=hl.dsp.global('quickshell:sessionToggle') options={description=Toggle session menu} submap=global
+binds | keys=SUPER + J dispatcher=hl.dsp.global('quickshell:barToggle') options={description=Toggle bar} submap=global
+binds | keys=CTRL + ALT + Delete dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pkill wlogout || wlogout -p layer-shell') submap=global
+binds | keys=SHIFT + ALT + SUPER + Slash dispatcher=hl.dsp.exec_cmd('qs -p ~/.config/quickshell/ii/welcome.qml') submap=global
+binds | keys=XF86MonBrightnessUp dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call brightness increment || brightnessctl s 5%+') options={locked=True, repeating=True} submap=global
+binds | keys=XF86MonBrightnessDown dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call brightness decrement || brightnessctl s 5%-') options={locked=True, repeating=True} submap=global
+binds | keys=XF86AudioRaiseVolume dispatcher=hl.dsp.exec_cmd('wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%+ -l 1.5') options={locked=True, repeating=True} submap=global
+binds | keys=XF86AudioLowerVolume dispatcher=hl.dsp.exec_cmd('wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%-') options={locked=True, repeating=True} submap=global
+binds | keys=XF86AudioMute dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SINK@ toggle') options={locked=True} submap=global
+binds | keys=SHIFT + SUPER + M dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SINK@ toggle') options={description=Toggle mute, locked=True} submap=global
+binds | keys=ALT + XF86AudioMute dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SOURCE@ toggle') options={locked=True} submap=global
+binds | keys=XF86AudioMicMute dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SOURCE@ toggle') options={locked=True} submap=global
+binds | keys=ALT + SUPER + M dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SOURCE@ toggle') options={description=Toggle mic, locked=True} submap=global
+binds | keys=CTRL + SUPER + T dispatcher=hl.dsp.global('quickshell:wallpaperSelectorToggle') options={description=Toggle wallpaper selector} submap=global
+binds | keys=CTRL + ALT + SUPER + T dispatcher=hl.dsp.global('quickshell:wallpaperSelectorRandom') options={description=Select random wallpaper} submap=global
+binds | keys=CTRL + SUPER + T dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || ~/.config/quickshell/ii/scripts/colors/switchwall.sh') options={description=Change wallpaper} submap=global
+binds | keys=CTRL + SUPER + R dispatcher=hl.dsp.exec_cmd('killall ydotool qs quickshell; qs -c ii &') submap=global
+binds | keys=CTRL + SUPER + P dispatcher=hl.dsp.global('quickshell:panelFamilyCycle') submap=global
+binds | keys=SUPER + V dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pkill fuzzel || cliphist list | fuzzel --match-mode fzf --dmenu | cliphist decode | wl-copy') options={description=Copy clipboard history entry} submap=global
+binds | keys=SUPER + Period dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pkill fuzzel || ~/.config/hypr/hyprland/scripts/fuzzel-emoji.sh copy') options={description=Copy an emoji} submap=global
+binds | keys=SHIFT + SUPER + S dispatcher=hl.dsp.global('quickshell:regionScreenshot') submap=global
+binds | keys=SHIFT + SUPER + S dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pidof slurp || hyprshot --freeze --clipboard-only --mode region --silent') submap=global
+binds | keys=SHIFT + SUPER + A dispatcher=hl.dsp.global('quickshell:regionSearch') submap=global
+binds | keys=SHIFT + SUPER + A dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pidof slurp || ~/.config/hypr/hyprland/scripts/snip_to_search.sh') submap=global
+binds | keys=SHIFT + SUPER + X dispatcher=hl.dsp.global('quickshell:regionOcr') submap=global
+binds | keys=SHIFT + SUPER + T dispatcher=hl.dsp.global('quickshell:screenTranslate') submap=global
+binds | keys=SHIFT + SUPER + X dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || pidof slurp || grim -g "$(slurp $SLURP_ARGS)" "/tmp/ocr_image.png" && tesseract "/tmp/ocr_image.png" stdout -l $(tesseract --list-langs | awk \'NR>1{print $1}\' | tr \'\\n\' \'+\' | sed \'s/\\+$/\\n/\') | wl-copy && rm "/tmp/ocr_image.png"') submap=global
+binds | keys=SHIFT + SUPER + C dispatcher=hl.dsp.exec_cmd('hyprpicker -a') options={description=Color picker} submap=global
+binds | keys=SHIFT + SUPER + R dispatcher=hl.dsp.global('quickshell:regionRecord') options={locked=True} submap=global
+binds | keys=SHIFT + SUPER + R dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || ~/.config/quickshell/ii/scripts/videos/record.sh') options={locked=True} submap=global
+binds | keys=ALT + SUPER + R dispatcher=hl.dsp.global('quickshell:regionRecord') options={locked=True} submap=global
+binds | keys=ALT + SUPER + R dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || ~/.config/quickshell/ii/scripts/videos/record.sh') options={locked=True} submap=global
+binds | keys=CTRL + ALT + R dispatcher=hl.dsp.exec_cmd('~/.config/quickshell/ii/scripts/videos/record.sh --fullscreen') options={locked=True} submap=global
+binds | keys=SHIFT + ALT + SUPER + R dispatcher=hl.dsp.exec_cmd('~/.config/quickshell/ii/scripts/videos/record.sh --fullscreen --sound') options={locked=True} submap=global
+binds | keys=Print dispatcher=hl.dsp.exec_cmd('grim -o "$(hyprctl activeworkspace -j | jq -r \'.monitor\')" - | wl-copy') options={locked=True} submap=global
+binds | keys=CTRL + Print dispatcher=hl.dsp.exec_cmd('mkdir -p $(xdg-user-dir PICTURES)/Screenshots && grim -o "$(hyprctl activeworkspace -j | jq -r \'.monitor\')" $(xdg-user-dir PICTURES)/Screenshots/Screenshot_"$(date \'+%Y-%m-%d_%H.%M.%S\')".png') options={locked=True, non_consuming=True} submap=global
+binds | keys=CTRL + Print dispatcher=hl.dsp.exec_cmd('grim -o "$(hyprctl activeworkspace -j | jq -r \'.monitor\')" - | wl-copy') options={locked=True, non_consuming=True} submap=global
+binds | keys=SHIFT + ALT + SUPER + mouse:273 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/ai/primary-buffer-query.sh') options={description=Generate AI summary for selected text} submap=global
+binds | keys=SUPER + mouse:272 dispatcher=hl.dsp.window.drag() submap=global
+binds | keys=SUPER + mouse:274 dispatcher=hl.dsp.window.drag() submap=global
+binds | keys=SUPER + mouse:273 dispatcher=hl.dsp.window.resize() submap=global
+binds | keys=SUPER + Left dispatcher=hl.dsp.focus{direction='l'} submap=global
+binds | keys=SUPER + Right dispatcher=hl.dsp.focus{direction='r'} submap=global
+binds | keys=SUPER + Up dispatcher=hl.dsp.focus{direction='u'} submap=global
+binds | keys=SUPER + Down dispatcher=hl.dsp.focus{direction='d'} submap=global
+binds | keys=SUPER + BracketLeft dispatcher=hl.dsp.focus{direction='l'} submap=global
+binds | keys=SUPER + BracketRight dispatcher=hl.dsp.focus{direction='r'} submap=global
+binds | keys=SHIFT + SUPER + Left dispatcher=hl.dsp.window.move{direction='l'} submap=global
+binds | keys=SHIFT + SUPER + Right dispatcher=hl.dsp.window.move{direction='r'} submap=global
+binds | keys=SHIFT + SUPER + Up dispatcher=hl.dsp.window.move{direction='u'} submap=global
+binds | keys=SHIFT + SUPER + Down dispatcher=hl.dsp.window.move{direction='d'} submap=global
+binds | keys=ALT + F4 dispatcher=hl.dsp.window.close() submap=global
+binds | keys=SUPER + Q dispatcher=hl.dsp.window.close() submap=global
+binds | keys=SHIFT + ALT + SUPER + Q dispatcher=hl.dsp.exec_cmd('hyprctl kill') submap=global
+binds | keys=SUPER + Semicolon dispatcher=hl.dsp.layout('splitratio -0.1') options={repeating=True} submap=global
+binds | keys=SUPER + Apostrophe dispatcher=hl.dsp.layout('splitratio +0.1') options={repeating=True} submap=global
+binds | keys=ALT + SUPER + Space dispatcher=hl.dsp.window.float() submap=global
+binds | keys=SUPER + D dispatcher=hl.dsp.window.fullscreen{mode='1'} submap=global
+binds | keys=SUPER + F dispatcher=hl.dsp.window.fullscreen{mode='0'} submap=global
+binds | keys=ALT + SUPER + F dispatcher=hl.dsp.window.fullscreen_state{internal=0, client=3} submap=global
+binds | keys=SUPER + P dispatcher=hl.dsp.window.pin() submap=global
+binds | keys=ALT + SUPER + code:10 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 1') submap=global
+binds | keys=ALT + SUPER + code:11 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 2') submap=global
+binds | keys=ALT + SUPER + code:12 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 3') submap=global
+binds | keys=ALT + SUPER + code:13 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 4') submap=global
+binds | keys=ALT + SUPER + code:14 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 5') submap=global
+binds | keys=ALT + SUPER + code:15 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 6') submap=global
+binds | keys=ALT + SUPER + code:16 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 7') submap=global
+binds | keys=ALT + SUPER + code:17 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 8') submap=global
+binds | keys=ALT + SUPER + code:18 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 9') submap=global
+binds | keys=ALT + SUPER + code:19 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 10') submap=global
+binds | keys=ALT + SUPER + code:87 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 1') submap=global
+binds | keys=ALT + SUPER + code:88 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 2') submap=global
+binds | keys=ALT + SUPER + code:89 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 3') submap=global
+binds | keys=ALT + SUPER + code:83 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 4') submap=global
+binds | keys=ALT + SUPER + code:84 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 5') submap=global
+binds | keys=ALT + SUPER + code:85 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 6') submap=global
+binds | keys=ALT + SUPER + code:79 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 7') submap=global
+binds | keys=ALT + SUPER + code:80 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 8') submap=global
+binds | keys=ALT + SUPER + code:81 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 9') submap=global
+binds | keys=ALT + SUPER + code:90 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh movetoworkspacesilent 10') submap=global
+binds | keys=SHIFT + SUPER + mouse_down dispatcher=hl.dsp.window.move{workspace='r-1'} submap=global
+binds | keys=SHIFT + SUPER + mouse_up dispatcher=hl.dsp.window.move{workspace='r+1'} submap=global
+binds | keys=ALT + SUPER + mouse_down dispatcher=hl.dsp.window.move{workspace='-1'} submap=global
+binds | keys=ALT + SUPER + mouse_up dispatcher=hl.dsp.window.move{workspace='+1'} submap=global
+binds | keys=ALT + SUPER + Page_Down dispatcher=hl.dsp.window.move{workspace='+1'} submap=global
+binds | keys=ALT + SUPER + Page_Up dispatcher=hl.dsp.window.move{workspace='-1'} submap=global
+binds | keys=SHIFT + SUPER + Page_Down dispatcher=hl.dsp.window.move{workspace='r+1'} submap=global
+binds | keys=SHIFT + SUPER + Page_Up dispatcher=hl.dsp.window.move{workspace='r-1'} submap=global
+binds | keys=SHIFT + CTRL + SUPER + Right dispatcher=hl.dsp.window.move{workspace='r+1'} submap=global
+binds | keys=SHIFT + CTRL + SUPER + Left dispatcher=hl.dsp.window.move{workspace='r-1'} submap=global
+binds | keys=ALT + SUPER + S dispatcher=hl.dsp.window.move{workspace='special', follow=False} submap=global
+binds | keys=CTRL + SUPER + S dispatcher=hl.dsp.workspace.toggle_special() submap=global
+binds | keys=SUPER + code:10 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 1') submap=global
+binds | keys=SUPER + code:11 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 2') submap=global
+binds | keys=SUPER + code:12 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 3') submap=global
+binds | keys=SUPER + code:13 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 4') submap=global
+binds | keys=SUPER + code:14 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 5') submap=global
+binds | keys=SUPER + code:15 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 6') submap=global
+binds | keys=SUPER + code:16 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 7') submap=global
+binds | keys=SUPER + code:17 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 8') submap=global
+binds | keys=SUPER + code:18 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 9') submap=global
+binds | keys=SUPER + code:19 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 10') submap=global
+binds | keys=SUPER + code:87 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 1') options={dont_inhibit=True} submap=global
+binds | keys=SUPER + code:88 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 2') options={dont_inhibit=True} submap=global
+binds | keys=SUPER + code:89 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 3') options={dont_inhibit=True} submap=global
+binds | keys=SUPER + code:83 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 4') options={dont_inhibit=True} submap=global
+binds | keys=SUPER + code:84 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 5') options={dont_inhibit=True} submap=global
+binds | keys=SUPER + code:85 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 6') options={dont_inhibit=True} submap=global
+binds | keys=SUPER + code:79 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 7') options={dont_inhibit=True} submap=global
+binds | keys=SUPER + code:80 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 8') options={dont_inhibit=True} submap=global
+binds | keys=SUPER + code:81 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 9') options={dont_inhibit=True} submap=global
+binds | keys=SUPER + code:90 dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/workspace_action.sh workspace 10') options={dont_inhibit=True} submap=global
+binds | keys=CTRL + SUPER + Right dispatcher=hl.dsp.focus{workspace='r+1'} submap=global
+binds | keys=CTRL + SUPER + Left dispatcher=hl.dsp.focus{workspace='r-1'} submap=global
+binds | keys=CTRL + ALT + SUPER + Right dispatcher=hl.dsp.focus{workspace='m+1'} submap=global
+binds | keys=CTRL + ALT + SUPER + Left dispatcher=hl.dsp.focus{workspace='m-1'} submap=global
+binds | keys=SUPER + Page_Down dispatcher=hl.dsp.focus{workspace='+1'} submap=global
+binds | keys=SUPER + Page_Up dispatcher=hl.dsp.focus{workspace='-1'} submap=global
+binds | keys=CTRL + SUPER + Page_Down dispatcher=hl.dsp.focus{workspace='r+1'} submap=global
+binds | keys=CTRL + SUPER + Page_Up dispatcher=hl.dsp.focus{workspace='r-1'} submap=global
+binds | keys=SUPER + mouse_up dispatcher=hl.dsp.focus{workspace='+1'} submap=global
+binds | keys=SUPER + mouse_down dispatcher=hl.dsp.focus{workspace='-1'} submap=global
+binds | keys=CTRL + SUPER + mouse_up dispatcher=hl.dsp.focus{workspace='r+1'} submap=global
+binds | keys=CTRL + SUPER + mouse_down dispatcher=hl.dsp.focus{workspace='r-1'} submap=global
+binds | keys=SUPER + S dispatcher=hl.dsp.workspace.toggle_special() submap=global
+binds | keys=SUPER + mouse:275 dispatcher=hl.dsp.workspace.toggle_special() submap=global
+binds | keys=CTRL + SUPER + BracketLeft dispatcher=hl.dsp.focus{workspace='-1'} submap=global
+binds | keys=CTRL + SUPER + BracketRight dispatcher=hl.dsp.focus{workspace='+1'} submap=global
+binds | keys=CTRL + SUPER + Up dispatcher=hl.dsp.focus{workspace='r-5'} submap=global
+binds | keys=CTRL + SUPER + Down dispatcher=hl.dsp.focus{workspace='r+5'} submap=global
+binds | keys=ALT + SUPER + F1 dispatcher=hl.dsp.exec_cmd("notify-send 'Entered Virtual Machine submap' 'Keybinds disabled. Hit Super+Alt+F1 to escape' -a 'Hyprland' && hyprctl dispatch submap virtual-machine") submap=global
+binds | keys=ALT + SUPER + F1 dispatcher=hl.dsp.exec_cmd("notify-send 'Exited Virtual Machine submap' 'Keybinds re-enabled' -a 'Hyprland' && hyprctl dispatch submap global") submap=virtual-machine
+binds | keys=ALT + SUPER + f11 dispatcher=hl.dsp.exec_cmd('bash -c \'RANDOM_IMAGE=$(find ~/Pictures -type f | grep -v -i "nipple" | grep -v -i "pussy" | shuf -n 1); ACTION=$(notify-send "Test notification with body image" "This notification should contain your user account <b>image</b> and <a href=\\"https://discord.com/app\\">Discord</a> <b>icon</b>. Oh and here is a random image in your Pictures folder: <img src=\\"$RANDOM_IMAGE\\" alt=\\"Testing image\\"/>" -a "Hyprland keybind" -p -h "string:image-path:/var/lib/AccountsService/icons/$USER" -t 6000 -i "discord" -A "openImage=Profile image" -A "action2=Open the random image" -A "action3=Useless button"); [[ $ACTION == *openImage ]] && xdg-open "/var/lib/AccountsService/icons/$USER"; [[ $ACTION == *action2 ]] && xdg-open \\"$RANDOM_IMAGE\\"\'') submap=global
+binds | keys=ALT + SUPER + f12 dispatcher=hl.dsp.exec_cmd('bash -c \'RANDOM_IMAGE=$(find ~/Pictures -type f | grep -v -i "nipple" | grep -v -i "pussy" | shuf -n 1); ACTION=$(notify-send "Test notification" "This notification should contain a random image in your <b>Pictures</b> folder and <a href=\\"https://discord.com/app\\">Discord</a> <b>icon</b>.\\n<i>Flick right to dismiss!</i>" -a "Discord (fake)" -p -h "string:image-path:$RANDOM_IMAGE" -t 6000 -i "discord" -A "openImage=Profile image" -A "action2=Useless button"); [[ $ACTION == *openImage ]] && xdg-open "/var/lib/AccountsService/icons/$USER"\'') submap=global
+binds | keys=ALT + SUPER + Equal dispatcher=hl.dsp.exec_cmd('notify-send "Urgent notification" "Ah hell no" -u critical -a \'Hyprland keybind\'') submap=global
+binds | keys=SUPER + L dispatcher=hl.dsp.exec_cmd('loginctl lock-session') options={description=Lock} submap=global
+binds | keys=SHIFT + SUPER + L dispatcher=hl.dsp.exec_cmd('systemctl suspend || loginctl suspend') options={description=Suspend system, locked=True} submap=global
+binds | keys=SHIFT + CTRL + ALT + SUPER + Delete dispatcher=hl.dsp.exec_cmd('systemctl poweroff || loginctl poweroff') options={description=Shutdown} submap=global
+binds | keys=SUPER + Minus dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/zoom.sh decrease 0.3') options={repeating=True} submap=global
+binds | keys=SUPER + Equal dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/zoom.sh increase 0.3') options={repeating=True} submap=global
+binds | keys=SUPER + code:82 dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call zoom zoomOut') options={repeating=True} submap=global
+binds | keys=SUPER + code:86 dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call zoom zoomIn') options={repeating=True} submap=global
+binds | keys=SUPER + code:82 dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || ~/.config/hypr/hyprland/scripts/zoom.sh decrease 0.1') options={repeating=True} submap=global
+binds | keys=SUPER + code:86 dispatcher=hl.dsp.exec_cmd('qs -c ii ipc call TEST_ALIVE || ~/.config/hypr/hyprland/scripts/zoom.sh increase 0.1') options={repeating=True} submap=global
+binds | keys=SHIFT + SUPER + N dispatcher=hl.dsp.exec_cmd('playerctl next || playerctl position `bc <<< "100 * $(playerctl metadata mpris:length) / 1000000 / 100"`') options={locked=True} submap=global
+binds | keys=XF86AudioNext dispatcher=hl.dsp.exec_cmd('playerctl next || playerctl position `bc <<< "100 * $(playerctl metadata mpris:length) / 1000000 / 100"`') options={locked=True} submap=global
+binds | keys=XF86AudioPrev dispatcher=hl.dsp.exec_cmd('playerctl previous') options={locked=True} submap=global
+binds | keys=SHIFT + ALT + SUPER + mouse:275 dispatcher=hl.dsp.exec_cmd('playerctl previous') submap=global
+binds | keys=SHIFT + ALT + SUPER + mouse:276 dispatcher=hl.dsp.exec_cmd('playerctl next || playerctl position `bc <<< "100 * $(playerctl metadata mpris:length) / 1000000 / 100"`') submap=global
+binds | keys=SHIFT + SUPER + B dispatcher=hl.dsp.exec_cmd('playerctl previous') options={locked=True} submap=global
+binds | keys=SHIFT + SUPER + P dispatcher=hl.dsp.exec_cmd('playerctl play-pause') options={locked=True} submap=global
+binds | keys=XF86AudioPlay dispatcher=hl.dsp.exec_cmd('playerctl play-pause') options={locked=True} submap=global
+binds | keys=XF86AudioPause dispatcher=hl.dsp.exec_cmd('playerctl play-pause') options={locked=True} submap=global
+binds | keys=SUPER + Return dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "kitty -1" "foot" "alacritty" "wezterm" "konsole" "kgx" "uxterm" "xterm"') submap=global
+binds | keys=SUPER + T dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "kitty -1" "foot" "alacritty" "wezterm" "konsole" "kgx" "uxterm" "xterm"') submap=global
+binds | keys=CTRL + ALT + T dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "kitty -1" "foot" "alacritty" "wezterm" "konsole" "kgx" "uxterm" "xterm"') submap=global
+binds | keys=SUPER + E dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "dolphin" "nautilus" "nemo" "thunar" "kitty -1 fish -c yazi"') submap=global
+binds | keys=SUPER + W dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "google-chrome-stable" "zen-browser" "firefox" "brave" "chromium" "microsoft-edge-stable" "opera" "librewolf"') submap=global
+binds | keys=SUPER + C dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "antigravity" "code" "codium" "cursor" "zed" "zedit" "zeditor" "kate" "gnome-text-editor" "emacs" "command -v nvim && kitty -1 nvim" "command -v micro && kitty -1 micro"') submap=global
+binds | keys=SHIFT + CTRL + ALT + SUPER + W dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "wps" "onlyoffice-desktopeditors" "libreoffice"') submap=global
+binds | keys=SUPER + X dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "kate" "gnome-text-editor" "emacs"') submap=global
+binds | keys=CTRL + SUPER + V dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "pavucontrol-qt" "pavucontrol"') submap=global
+binds | keys=SUPER + I dispatcher=hl.dsp.exec_cmd('XDG_CURRENT_DESKTOP=gnome ~/.config/hypr/hyprland/scripts/launch_first_available.sh "qs -p ~/.config/quickshell/ii/settings.qml" "systemsettings" "gnome-control-center" "better-control"') submap=global
+binds | keys=SHIFT + CTRL + Escape dispatcher=hl.dsp.exec_cmd('~/.config/hypr/hyprland/scripts/launch_first_available.sh "gnome-system-monitor" "plasma-systemmonitor --page-name Processes" "command -v btop && kitty -1 fish -c btop"') submap=global
+binds | keys=CTRL + SUPER + Backslash dispatcher=hl.dsp.window.resize{x=640, y=480, relative=False} submap=global
+binds | keys=CTRL + SUPER + Slash dispatcher=hl.dsp.exec_cmd('xdg-open ~/.config/illogical-impulse/config.json') submap=global
+binds | keys=CTRL + ALT + SUPER + Slash dispatcher=hl.dsp.exec_cmd('xdg-open ~/.config/hypr/custom/keybinds.conf') submap=global
+window_rules | match={class=^()$, title=^()$} effects={no_blur=True}
+window_rules | match={class=.*} effects={no_blur=True}
+window_rules | match={title=^(Open File)(.*)$} effects={center=True}
+window_rules | match={title=^(Open File)(.*)$} effects={float=True}
+window_rules | match={title=^(Select a File)(.*)$} effects={center=True}
+window_rules | match={title=^(Select a File)(.*)$} effects={float=True}
+window_rules | match={title=^(Choose wallpaper)(.*)$} effects={center=True}
+window_rules | match={title=^(Choose wallpaper)(.*)$} effects={float=True}
+window_rules | match={title=^(Choose wallpaper)(.*)$} effects={size=(monitor_w*.60) (monitor_h*.65)}
+window_rules | match={title=^(Open Folder)(.*)$} effects={center=True}
+window_rules | match={title=^(Open Folder)(.*)$} effects={float=True}
+window_rules | match={title=^(Save As)(.*)$} effects={center=True}
+window_rules | match={title=^(Save As)(.*)$} effects={float=True}
+window_rules | match={title=^(Library)(.*)$} effects={center=True}
+window_rules | match={title=^(Library)(.*)$} effects={float=True}
+window_rules | match={title=^(File Upload)(.*)$} effects={center=True}
+window_rules | match={title=^(File Upload)(.*)$} effects={float=True}
+window_rules | match={title=^(.*)(wants to save)$} effects={center=True}
+window_rules | match={title=^(.*)(wants to save)$} effects={float=True}
+window_rules | match={title=^(.*)(wants to open)$} effects={center=True}
+window_rules | match={title=^(.*)(wants to open)$} effects={float=True}
+window_rules | match={class=^(blueberry\.py)$} effects={float=True}
+window_rules | match={class=^(guifetch)$} effects={float=True}
+window_rules | match={class=^(pavucontrol)$} effects={float=True}
+window_rules | match={class=^(pavucontrol)$} effects={size=(monitor_w*.45) (monitor_h*.45)}
+window_rules | match={class=^(pavucontrol)$} effects={center=True}
+window_rules | match={class=^(org.pulseaudio.pavucontrol)$} effects={float=True}
+window_rules | match={class=^(org.pulseaudio.pavucontrol)$} effects={size=(monitor_w*.45) (monitor_h*.45)}
+window_rules | match={class=^(org.pulseaudio.pavucontrol)$} effects={center=True}
+window_rules | match={class=^(nm-connection-editor)$} effects={float=True}
+window_rules | match={class=^(nm-connection-editor)$} effects={size=(monitor_w*.45) (monitor_h*.45)}
+window_rules | match={class=^(nm-connection-editor)$} effects={center=True}
+window_rules | match={class=.*plasmawindowed.*} effects={float=True}
+window_rules | match={class=kcm_.*} effects={float=True}
+window_rules | match={class=.*bluedevilwizard} effects={float=True}
+window_rules | match={title=.*Welcome} effects={float=True}
+window_rules | match={title=^(illogical-impulse Settings)$} effects={float=True}
+window_rules | match={title=.*Shell conflicts.*} effects={float=True}
+window_rules | match={class=org.freedesktop.impl.portal.desktop.kde} effects={float=True}
+window_rules | match={class=org.freedesktop.impl.portal.desktop.kde} effects={size=(monitor_w*.60) (monitor_h*.65)}
+window_rules | match={class=^(Zotero)$} effects={float=True}
+window_rules | match={class=^(Zotero)$} effects={size=(monitor_w*.45) (monitor_h*.45)}
+window_rules | match={class=^(plasma-changeicons)$} effects={float=True}
+window_rules | match={class=^(plasma-changeicons)$} effects={no_initial_focus=True}
+window_rules | match={class=^(plasma-changeicons)$} effects={move=999999 999999}
+window_rules | match={title=^(Copying — Dolphin)$} effects={move=40 80}
+window_rules | match={class=^dev\.warp\.Warp$} effects={tile=True}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={float=True}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={keep_aspect_ratio=True}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={move=(monitor_w*.73) (monitor_h*.72)}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={size=(monitor_w*.25) (monitor_h*.25)}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={float=True}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={pin=True}
+window_rules | match={title=.*is sharing (a window|your screen).*} effects={float=True}
+window_rules | match={title=.*is sharing (a window|your screen).*} effects={pin=True}
+window_rules | match={title=.*is sharing (a window|your screen).*} effects={move=(monitor_w*.5-window_w*.5) (monitor_h-window_h-12)}
+window_rules | match={title=.*\.exe} effects={immediate=True}
+window_rules | match={title=.*minecraft.*} effects={immediate=True}
+window_rules | match={class=^(steam_app).*} effects={immediate=True}
+window_rules | match={class=^jetbrains-.*$, float=True, title=^$|^\s$|^win\d+$} effects={no_initial_focus=True}
+window_rules | match={float=False} effects={no_shadow=True}
+window_rules | match={pin=True} effects={border_color=rgba(FFB2BCAA) rgba(FFB2BC77)}
+layer_rules | match={namespace=.*} effects={xray=True}
+layer_rules | match={namespace=walker} effects={no_anim=True}
+layer_rules | match={namespace=selection} effects={no_anim=True}
+layer_rules | match={namespace=overview} effects={no_anim=True}
+layer_rules | match={namespace=anyrun} effects={no_anim=True}
+layer_rules | match={namespace=indicator.*} effects={no_anim=True}
+layer_rules | match={namespace=osk} effects={no_anim=True}
+layer_rules | match={namespace=hyprpicker} effects={no_anim=True}
+layer_rules | match={namespace=noanim} effects={no_anim=True}
+layer_rules | match={namespace=gtk-layer-shell} effects={blur=True}
+layer_rules | match={namespace=gtk-layer-shell} effects={ignore_alpha=0.0}
+layer_rules | match={namespace=launcher} effects={blur=True}
+layer_rules | match={namespace=launcher} effects={ignore_alpha=0.5}
+layer_rules | match={namespace=notifications} effects={blur=True}
+layer_rules | match={namespace=notifications} effects={ignore_alpha=0.69}
+layer_rules | match={namespace=logout_dialog}
+layer_rules | match={namespace=sideleft.*} effects={animation=slide left}
+layer_rules | match={namespace=sideright.*} effects={animation=slide right}
+layer_rules | match={namespace=session[0-9]*} effects={blur=True}
+layer_rules | match={namespace=bar[0-9]*} effects={blur=True}
+layer_rules | match={namespace=bar[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=barcorner.*} effects={blur=True}
+layer_rules | match={namespace=barcorner.*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=dock[0-9]*} effects={blur=True}
+layer_rules | match={namespace=dock[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=indicator.*} effects={blur=True}
+layer_rules | match={namespace=indicator.*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=overview[0-9]*} effects={blur=True}
+layer_rules | match={namespace=overview[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=cheatsheet[0-9]*} effects={blur=True}
+layer_rules | match={namespace=cheatsheet[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=sideright[0-9]*} effects={blur=True}
+layer_rules | match={namespace=sideright[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=sideleft[0-9]*} effects={blur=True}
+layer_rules | match={namespace=sideleft[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=indicator.*} effects={blur=True}
+layer_rules | match={namespace=indicator.*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=osk[0-9]*} effects={blur=True}
+layer_rules | match={namespace=osk[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=quickshell:.*} effects={blur_popups=True}
+layer_rules | match={namespace=quickshell:.*} effects={blur=True}
+layer_rules | match={namespace=quickshell:.*} effects={ignore_alpha=0.79}
+layer_rules | match={namespace=quickshell:bar} effects={animation=slide}
+layer_rules | match={namespace=quickshell:actionCenter} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:cheatsheet} effects={animation=slide bottom}
+layer_rules | match={namespace=quickshell:dock} effects={animation=slide bottom}
+layer_rules | match={namespace=quickshell:screenCorners} effects={animation=popin 120%}
+layer_rules | match={namespace=quickshell:lockWindowPusher} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:notificationPopup} effects={animation=fade}
+layer_rules | match={namespace=quickshell:overlay} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:overlay} effects={ignore_alpha=1.0}
+layer_rules | match={namespace=quickshell:overview} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:osk} effects={animation=slide bottom}
+layer_rules | match={namespace=quickshell:polkit} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:popup} effects={xray=False}
+layer_rules | match={namespace=quickshell:popup} effects={ignore_alpha=1.0}
+layer_rules | match={namespace=quickshell:mediaControls} effects={ignore_alpha=1.0}
+layer_rules | match={namespace=quickshell:reloadPopup} effects={animation=slide}
+layer_rules | match={namespace=quickshell:regionSelector} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:screenshot} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:session} effects={blur=True}
+layer_rules | match={namespace=quickshell:session} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:session} effects={ignore_alpha=0.0}
+layer_rules | match={namespace=quickshell:sidebarRight} effects={animation=slide right}
+layer_rules | match={namespace=quickshell:sidebarLeft} effects={animation=slide left}
+layer_rules | match={namespace=quickshell:verticalBar} effects={animation=slide}
+layer_rules | match={namespace=quickshell:osk} effects={order=-1}
+layer_rules | match={namespace=quickshell:wallpaperSelector} effects={animation=slide top}
+layer_rules | match={namespace=quickshell:wNotificationCenter} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:wOnScreenDisplay} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:wStartMenu} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:wTaskView} effects={ignore_alpha=0.0}
+layer_rules | match={namespace=quickshell:wTaskView} effects={no_anim=True}
+layer_rules | match={namespace=gtk4-layer-shell} effects={no_anim=True}
+workspace_rules | workspace=special:special fields={gaps_out=30}
+monitors | fields={mode=preferred, position=auto, scale=1}
+curves | name=expressiveFastSpatial spec={points=[[0.42, 1.67], [0.21, 0.9]], type=bezier}
+curves | name=expressiveSlowSpatial spec={points=[[0.39, 1.29], [0.35, 0.98]], type=bezier}
+curves | name=expressiveDefaultSpatial spec={points=[[0.38, 1.21], [0.22, 1.0]], type=bezier}
+curves | name=emphasizedDecel spec={points=[[0.05, 0.7], [0.1, 1.0]], type=bezier}
+curves | name=emphasizedAccel spec={points=[[0.3, 0.0], [0.8, 0.15]], type=bezier}
+curves | name=standardDecel spec={points=[[0.0, 0.0], [0.0, 1.0]], type=bezier}
+curves | name=menu_decel spec={points=[[0.1, 1.0], [0.0, 1.0]], type=bezier}
+curves | name=menu_accel spec={points=[[0.52, 0.03], [0.72, 0.08]], type=bezier}
+curves | name=stall spec={points=[[1.0, -0.1], [0.7, 0.85]], type=bezier}
+animations | leaf=windowsIn fields={bezier=emphasizedDecel, enabled=True, speed=3.0, style=popin 80%}
+animations | leaf=fadeIn fields={bezier=emphasizedDecel, enabled=True, speed=3.0}
+animations | leaf=windowsOut fields={bezier=emphasizedDecel, enabled=True, speed=2.0, style=popin 90%}
+animations | leaf=fadeOut fields={bezier=emphasizedDecel, enabled=True, speed=2.0}
+animations | leaf=windowsMove fields={bezier=emphasizedDecel, enabled=True, speed=3.0, style=slide}
+animations | leaf=border fields={bezier=emphasizedDecel, enabled=True, speed=10.0}
+animations | leaf=layersIn fields={bezier=emphasizedDecel, enabled=True, speed=2.7, style=popin 93%}
+animations | leaf=layersOut fields={bezier=menu_accel, enabled=True, speed=2.4, style=popin 94%}
+animations | leaf=fadeLayersIn fields={bezier=menu_decel, enabled=True, speed=0.5}
+animations | leaf=fadeLayersOut fields={bezier=stall, enabled=True, speed=2.7}
+animations | leaf=workspaces fields={bezier=menu_decel, enabled=True, speed=7.0, style=slide}
+animations | leaf=specialWorkspaceIn fields={bezier=emphasizedDecel, enabled=True, speed=2.8, style=slidevert}
+animations | leaf=specialWorkspaceOut fields={bezier=emphasizedAccel, enabled=True, speed=1.2, style=slidevert}
+animations | leaf=zoomFactor fields={bezier=standardDecel, enabled=True, speed=3.0}
+gestures | fields={action=move, direction=swipe, fingers=3}
+gestures | fields={action=float, direction=pinch, fingers=3}
+gestures | fields={action=workspace, direction=horizontal, fingers=4}
+gestures | fields={direction=up, dispatch=hl.dsp.global('quickshell:overviewWorkspacesToggle'), fingers=4}
+gestures | fields={direction=down, dispatch=hl.dsp.global('quickshell:overviewWorkspacesClose'), fingers=4}
+env | name=ELECTRON_OZONE_PLATFORM_HINT value=auto
+env | name=XDG_DATA_DIRS value=/home/tester/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share:/usr/share
+env | name=QT_QPA_PLATFORM value=wayland;xcb
+env | name=QT_QPA_PLATFORMTHEME value=kde
+env | name=XDG_MENU_PREFIX value=plasma-
+env | name=ILLOGICAL_IMPULSE_VIRTUAL_ENV value=~/.local/state/quickshell/.venv
+startup | command=~/.config/hypr/hyprland/scripts/start_geoclue_agent.sh
+startup | command=qs -c ii &
+startup | command=~/.config/hypr/custom/scripts/__restore_video_wallpaper.sh
+startup | command=gnome-keyring-daemon --start --components=secrets
+startup | command=hypridle
+startup | command=dbus-update-activation-environment --all
+startup | command=sleep 1 && dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
+startup | command=easyeffects --hide-window --service-mode
+startup | command=wl-paste --type text --watch bash -c 'cliphist store && qs -c ii ipc call cliphistService update'
+startup | command=wl-paste --type image --watch bash -c 'cliphist store && qs -c ii ipc call cliphistService update'
+startup | command=hyprctl setcursor Bibata-Modern-Classic 24
+startup | command=hyprctl dispatch submap global
+
+# loss
+L23 info | hyprland/env.conf was inlined; the Lua config requires a converted module instead
+L23 info | custom/env.conf was inlined; the Lua config requires a converted module instead
+L23 info | hyprland/variables.conf was inlined; the Lua config requires a converted module instead
+L28 needs-review | variable $settingsApp still contains an unresolved reference
+L23 info | custom/variables.conf was inlined; the Lua config requires a converted module instead
+L23 info | hyprland/execs.conf was inlined; the Lua config requires a converted module instead
+L23 info | hyprland/general.conf was inlined; the Lua config requires a converted module instead
+L12 needs-review | gesture dispatcher actions have no string form in Lua and become a callback that runs the dispatcher
+L12 needs-review | gesture dispatcher actions have no string form in Lua and become a callback that runs the dispatcher
+L25 needs-review | decoration:shadow:ignore_window was removed after 0.54 and is dropped
+L24 info | input:touchpad:natural_scroll = yes normalised to a Lua boolean
+L25 info | misc:vfr is now debug:vfr in this Hyprland
+L24 info | misc:initial_workspace_tracking = 'false' was read by hyprlang's prefix rule as 0
+L23 info | hyprland/rules.conf was inlined; the Lua config requires a converted module instead
+L24 info | no_blur = 'on' normalised to a Lua boolean
+L24 info | no_blur = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | center = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | no_initial_focus = 'on' normalised to a Lua boolean
+L24 info | tile = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | keep_aspect_ratio = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | pin = 'on' normalised to a Lua boolean
+L24 info | float = 'on' normalised to a Lua boolean
+L24 info | pin = 'on' normalised to a Lua boolean
+L24 info | immediate = 'on' normalised to a Lua boolean
+L24 info | immediate = 'on' normalised to a Lua boolean
+L24 info | immediate = 'on' normalised to a Lua boolean
+L24 info | no_initial_focus = 'on' normalised to a Lua boolean
+L24 info | no_shadow = 'on' normalised to a Lua boolean
+L23 info | hyprland/colors.conf was inlined; the Lua config requires a converted module instead
+L21 needs-review | plugin options need a guard in Lua: unknown keys of a plugin that is not loaded are an error, where hyprlang ignored them
+L23 info | hyprland/keybinds.conf was inlined; the Lua config requires a converted module instead
+L29 breakage | command runs `hyprctl dispatch`, which drives the legacy config engine and stops working once the config is Lua
+L22 info | exec ran on every reload and, on the first launch, only once Hyprland had started; the Lua form spawns while the config is parsed
+L3 needs-review | catchall ignores modifiers, so SUPER is dropped; the bind still catches every key in its submap
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Shift+Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Ctrl+Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift+Alt' respelled for Lua's strict '+' tokens
+L5 info | mouse bind expressed as a drag/resize dispatcher; Lua has no mouse flag
+L5 info | mouse bind expressed as a drag/resize dispatcher; Lua has no mouse flag
+L5 info | mouse bind expressed as a drag/resize dispatcher; Lua has no mouse flag
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Ctrl+Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Ctrl+Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Ctrl+Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Ctrl+Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L29 breakage | command runs `hyprctl dispatch`, which drives the legacy config engine and stops working once the config is Lua
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L29 breakage | command runs `hyprctl dispatch`, which drives the legacy config engine and stops working once the config is Lua
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Ctrl+Shift+Alt+Super' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Super+Shift' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Ctrl+Super+Shift+Alt' respelled for Lua's strict '+' tokens
+L1 info | modifiers 'Ctrl+Shift' respelled for Lua's strict '+' tokens
+L23 info | custom/execs.conf was inlined; the Lua config requires a converted module instead
+L23 info | custom/general.conf was inlined; the Lua config requires a converted module instead
+L23 info | custom/rules.conf was inlined; the Lua config requires a converted module instead
+L23 info | custom/keybinds.conf was inlined; the Lua config requires a converted module instead
+L1 info | modifiers 'Ctrl+Super+Alt' respelled for Lua's strict '+' tokens
+L23 info | workspaces.conf was inlined; the Lua config requires a converted module instead
+L23 info | monitors.conf was inlined; the Lua config requires a converted module instead
+L23 info | hyprland/shellOverrides/main.conf was inlined; the Lua config requires a converted module instead
