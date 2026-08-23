@@ -309,6 +309,89 @@ class TestReadBackMismatch:
         assert fake.requests.count(getoption("decoration:rounding")) == 1
 
 
+class TestUnconfirmed:
+    """A reply the app cannot read is not evidence that the write was wrong.
+
+    ADR-0016 wires mismatch to auto-revert, so anything filed under `mismatches` gets a
+    correct change undone. These keys have to land somewhere else.
+    """
+
+    def test_an_unreadable_reply_is_not_a_mismatch(self, tmp_path: Path) -> None:
+        """Hyprland 0.56.2 answers `getoption` for both font-weight Options with
+        `invalid type (internal error)` -- an upstream bug recorded against #51, and the
+        exact shape #54 was warned it would meet."""
+        model = model_with(group__groupbar__font_weight_active="bold")
+        name = "group:groupbar:font_weight_active"
+        fake = FakeHyprland(
+            model_conversation(model, **{getoption(name): "invalid type (internal error)"}),
+            reload_emits_event=True,
+        )
+        result, _ = run_apply(tmp_path, model, name, fake=fake)
+
+        assert result.outcome is ApplyOutcome.OK
+        assert result.mismatches == ()
+        assert result.unconfirmed == (name,)
+
+    def test_a_key_the_running_hyprland_lacks_is_unconfirmed(self, tmp_path: Path) -> None:
+        """Version drift (ADR-0012): the app is newer than the compositor, or older."""
+        model = model_with(decoration__rounding=10)
+        fake = FakeHyprland(
+            model_conversation(model, **{getoption("decoration:rounding"): "no such option"}),
+            reload_emits_event=True,
+        )
+        result, _ = run_apply(tmp_path, model, "decoration:rounding", fake=fake)
+
+        assert result.outcome is ApplyOutcome.OK
+        assert result.unconfirmed == ("decoration:rounding",)
+
+    def test_a_real_mismatch_still_reverts(self, tmp_path: Path) -> None:
+        """The guard must not swallow the signal it sits next to."""
+        model = model_with(decoration__rounding=10)
+        option = model.option("decoration:rounding")
+        fake = FakeHyprland(
+            model_conversation(model, **{getoption(option.name): option_reply(option, 8)}),
+            reload_emits_event=True,
+        )
+        result, _ = run_apply(tmp_path, model, option.name, fake=fake)
+
+        assert result.outcome is ApplyOutcome.READ_BACK_MISMATCH
+        assert result.unconfirmed == ()
+
+    def test_an_unconfirmed_key_does_not_stop_its_neighbours(self, tmp_path: Path) -> None:
+        model = model_with(group__groupbar__font_weight_active="bold", decoration__rounding=10)
+        weight = "group:groupbar:font_weight_active"
+        option = model.option("decoration:rounding")
+        fake = FakeHyprland(
+            model_conversation(
+                model,
+                **{
+                    getoption(weight): "invalid type (internal error)",
+                    getoption(option.name): option_reply(option, 8),
+                },
+            ),
+            reload_emits_event=True,
+        )
+        result, _ = run_apply(tmp_path, model, weight, option.name, fake=fake)
+
+        assert result.outcome is ApplyOutcome.READ_BACK_MISMATCH
+        assert [m.name for m in result.mismatches] == [option.name]
+        assert result.unconfirmed == (weight,)
+
+    def test_an_unconfirmed_key_is_not_re_read_for_the_settle_window(
+        self, tmp_path: Path
+    ) -> None:
+        """The window is for values still settling; a broken reply will not un-break."""
+        model = model_with(group__groupbar__font_weight_active="bold")
+        name = "group:groupbar:font_weight_active"
+        fake = FakeHyprland(
+            model_conversation(model, **{getoption(name): "invalid type (internal error)"}),
+            reload_emits_event=True,
+        )
+        run_apply(tmp_path, model, name, fake=fake)
+
+        assert fake.requests.count(getoption(name)) == 1
+
+
 class TestTimeout:
     """AC: a timeout yields its own ApplyResult -- an unknown outcome, not a failed one."""
 

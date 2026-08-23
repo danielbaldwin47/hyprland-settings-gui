@@ -30,6 +30,7 @@ rather than shipping a hook with nothing on the other end.
 from __future__ import annotations
 
 import asyncio
+import enum
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -67,6 +68,23 @@ round-trip per key."""
 
 SETTLE_POLL_SECONDS = 0.01
 """Gap between Read-back re-reads. A round-trip is 0.4 ms, so this paces rather than costs."""
+
+
+class _Unconfirmed(enum.Enum):
+    """`_compare`'s third answer, beside a `Mismatch` and `None`.
+
+    A sentinel rather than a `bool` flag on `Mismatch`: "could not tell" is not a weaker
+    kind of disagreement, it is the absence of one, and the two go to different fields of
+    `ApplyResult` because ADR-0016 reverts on one and not the other.
+    """
+
+    TOKEN = enum.auto()
+
+    def __repr__(self) -> str:
+        return "UNCONFIRMED"
+
+
+UNCONFIRMED = _Unconfirmed.TOKEN
 
 
 class ApplyTransaction:
@@ -207,7 +225,7 @@ class ApplyTransaction:
                 if errors:
                     return outcome(ApplyOutcome.CONFIG_ERRORS, errors=errors)
 
-                mismatches = await self._read_back(options)
+                mismatches, unconfirmed = await self._read_back(options)
             except IpcTimeout as error:
                 return outcome(ApplyOutcome.TIMEOUT, detail=str(error))
             except IpcError as error:
@@ -216,30 +234,56 @@ class ApplyTransaction:
             self._in_flight = False
 
         if mismatches:
-            return outcome(ApplyOutcome.READ_BACK_MISMATCH, mismatches=mismatches)
-        return outcome(ApplyOutcome.OK)
+            return outcome(
+                ApplyOutcome.READ_BACK_MISMATCH,
+                mismatches=mismatches,
+                unconfirmed=unconfirmed,
+            )
+        # Unconfirmed keys leave the outcome OK on purpose: nothing is known to be wrong,
+        # and ADR-0016 reverts on mismatch.
+        return outcome(ApplyOutcome.OK, unconfirmed=unconfirmed)
 
-    async def _read_back(self, options: Sequence[ResolvedOption]) -> tuple[Mismatch, ...]:
-        """Confirm each key against the live compositor, restart-flagged ones excepted.
+    async def _read_back(
+        self, options: Sequence[ResolvedOption]
+    ) -> tuple[tuple[Mismatch, ...], tuple[str, ...]]:
+        """Confirm each key against the live compositor: what disagreed, and what could not
+        be asked.
 
-        A restart-flagged Option cannot be confirmed at all: the value is on file and the
+        A restart-flagged Option is not confirmed at all: the value is on file and the
         running compositor will keep reporting the old one until it restarts, so reading it
         back would manufacture a mismatch on every correct write (ADR-0010 §Restart-flagged).
+
+        Keys the compositor will not answer usefully about come back as `unconfirmed` rather
+        than as mismatches -- see `ApplyResult.unconfirmed` for why the difference matters.
         """
         outstanding = [option for option in options if option.restart is None]
         if not outstanding:
-            return ()
+            return (), ()
 
+        unconfirmed: dict[str, None] = {}
         deadline = asyncio.get_running_loop().time() + self._settle_timeout
         while True:
             found: list[Mismatch] = []
             for option in outstanding:
-                mismatch = await self._compare(option)
-                if mismatch is not None:
+                try:
+                    reply = await self._client.getoption(option.name)
+                except (NoSuchOption, MalformedReply) as error:
+                    # The running Hyprland has no such key, or answered in a shape that is
+                    # not a reply at all -- 0.56.2 says `invalid type (internal error)` for
+                    # both font-weight Options. Version drift (ADR-0012), and no evidence
+                    # either way about what the config now holds.
+                    _log.warning("read-back could not read %s: %s", option.name, error)
+                    unconfirmed.setdefault(option.name, None)
+                    continue
+
+                mismatch = self._compare(option, reply)
+                if mismatch is UNCONFIRMED:
+                    unconfirmed.setdefault(option.name, None)
+                elif isinstance(mismatch, Mismatch):
                     found.append(mismatch)
 
             if not found or asyncio.get_running_loop().time() >= deadline:
-                return tuple(found)
+                return tuple(found), tuple(unconfirmed)
 
             # Still settling: re-ask only about the keys that disagreed.
             outstanding = [
@@ -247,18 +291,11 @@ class ApplyTransaction:
             ]
             await asyncio.sleep(SETTLE_POLL_SECONDS)
 
-    async def _compare(self, option: ResolvedOption) -> Mismatch | None:
+    def _compare(
+        self, option: ResolvedOption, reply: OptionReply
+    ) -> Mismatch | _Unconfirmed | None:
         """The model's value for one Option against the live one. `None` means they agree."""
         expected = self._model.get(option.name)
-        try:
-            reply = await self._client.getoption(option.name)
-        except (NoSuchOption, MalformedReply) as error:
-            # The running Hyprland does not have this key, or answers about it in a shape
-            # this Option's parser cannot read. Both are version drift (ADR-0012) rather
-            # than a value disagreement, and both leave the app with no live value to show
-            # -- but neither is a reason to abandon the other keys in the transaction.
-            _log.warning("read-back could not read %s: %s", option.name, error)
-            return Mismatch(option.name, expected, UNREADABLE, live_set=False)
 
         if expected is UNSET:
             # Reset to Hyprland's default: the model emits nothing, so the live config must
@@ -281,6 +318,11 @@ class ApplyTransaction:
             return Mismatch(option.name, expected, UNREADABLE, live_set=False)
 
         live = self._live_value(option, reply)
+        if live is UNREADABLE and reply.set_by_user:
+            # The live config sets the key and the reply about it is unreadable, so there is
+            # nothing to disagree with. Saying "mismatch" here would revert a write whose
+            # only sin is that the app cannot parse the answer.
+            return UNCONFIRMED
         if reply.set_by_user and values_match(expected, live):
             return None
         return Mismatch(option.name, expected, live, live_set=reply.set_by_user)

@@ -131,6 +131,20 @@ class ApplyResult:
     """
 
     mismatches: tuple[Mismatch, ...] = field(default=())
+    unconfirmed: tuple[str, ...] = ()
+    """Keys Read-back could not settle either way -- not agreed, and not disagreed.
+
+    A reply the app cannot read is not evidence that the value is wrong. Hyprland 0.56.2
+    answers `getoption` for both font-weight Options with `invalid type (internal error)`
+    (upstream bug, recorded against #51), and a key whose name the running compositor does
+    not know at all answers `no such option` -- neither says anything about what the config
+    now holds.
+
+    Kept apart from `mismatches` because the two have opposite recoveries: ADR-0016 wires a
+    mismatch to auto-revert, so filing "could not read" under it would undo correct writes.
+    An unconfirmed key leaves the outcome `OK` and gives #60 something honest to badge.
+    """
+
     pending_restart: tuple[str, ...] = ()
     """Restart-flagged keys this transaction wrote: on file, effective after a restart."""
 
