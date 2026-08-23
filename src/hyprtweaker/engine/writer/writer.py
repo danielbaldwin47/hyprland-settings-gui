@@ -310,6 +310,13 @@ class Writer:
         never claimed is somebody else's, and deleting it would be exactly the "manager over
         your dots" behaviour the app refuses (ADR-0005). A hand-edited Module is somebody
         else's too now, so deleting it is as wrong as overwriting it.
+
+        A consequence worth stating: after a lost record there is nothing the app can claim,
+        so a stale Module can outlive the Section that produced it. That is the right trade.
+        The Manifest is the *only* thing separating the app's files from the user's, and
+        with it gone, scanning the directory and deleting what looks familiar is precisely
+        the guess this method exists to refuse. The file is inert -- no Entrypoint requires
+        it -- and an explicit overwrite re-establishes the record that makes it prunable.
         """
         removed: list[str] = []
         for name in sorted(manifest.modules):

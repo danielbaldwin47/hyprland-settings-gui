@@ -18,7 +18,8 @@ Typical use::
     writer = Writer(ConfigPaths.default(), app_version="0.1.0")
     result = writer.write(model)
     result.written        # ('options/decoration.lua',)
-    result.hand_edited    # Modules an editor got to first (ADR-0016)
+    result.skipped        # left alone rather than overwritten
+    result.hand_edited    # app-owned files the app cannot show it wrote (ADR-0016)
 """
 
 from __future__ import annotations
