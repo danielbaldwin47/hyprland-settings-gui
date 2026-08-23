@@ -466,6 +466,29 @@ class TestWindowRules:
 
 
 class TestLayerRules:
+    def test_named_layer_rules_are_ordered_before_anonymous_ones(
+        self, schema, tmp_path
+    ) -> None:
+        """Layer rules go through the same two-pass registration as window rules, so they
+        need the same emission order to keep legacy precedence (L15)."""
+        result = _map(
+            "layerrule = blur on, match:namespace anon\n"
+            "layerrule = name named, match:namespace n, no_anim on\n",
+            schema,
+            tmp_path,
+        )
+        assert [r.name for r in result.entities.ordered_layer_rules()] == ["named", ""]
+
+    def test_a_named_layer_rule_updates_in_place(self, schema, tmp_path) -> None:
+        result = _map(
+            "layerrule = name lr, match:namespace waybar, blur on\n"
+            "layerrule = name lr, match:namespace waybar, no_anim on\n",
+            schema,
+            tmp_path,
+        )
+        assert len(result.entities.layer_rules) == 1
+        assert result.entities.layer_rules[0].effects == {"blur": True, "no_anim": True}
+
     def test_ignorezero_becomes_ignore_alpha_zero(self, report: LossReport) -> None:
         rule = map_layer_rule(
             "ignorezero on, match:namespace waybar", origin="x:1", report=report
