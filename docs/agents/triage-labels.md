@@ -12,4 +12,6 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
+Applying `ready-for-human` also files an inbox item ("Implement yourself: <title> → #<n>") per `docs/agents/needs-from-you.md` — the label alone leaves the ticket invisible to the human, who reads the inbox, not label queries.
+
 Edit the right-hand column to match whatever vocabulary you actually use.
