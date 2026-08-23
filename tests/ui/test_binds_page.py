@@ -43,7 +43,7 @@ def exec_bind(keys: str, command: str, **kwargs: Any) -> Any:
 
     return Bind(
         keys=keys,
-        dispatcher=DispatcherCall(path="exec_cmd", args={"command": command}),
+        dispatcher=DispatcherCall(path="exec_cmd", positional=(command,)),
         **kwargs,
     )
 

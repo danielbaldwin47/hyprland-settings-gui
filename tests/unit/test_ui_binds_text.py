@@ -13,7 +13,7 @@ from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall
 
 pytest.importorskip("gi", reason="the Binds Page imports gi at module scope")
 
-from hyprtweaker.ui.pages.binds import (  # noqa: E402
+from hyprtweaker.ui.pages.binds import (
     action_text,
     flag_text,
     is_read_only,
@@ -24,7 +24,7 @@ from hyprtweaker.ui.pages.binds import (  # noqa: E402
 def exec_bind(keys: str = "SUPER + Q", command: str = "kitty", **kwargs: object) -> Bind:
     return Bind(
         keys=keys,
-        dispatcher=DispatcherCall(path="exec_cmd", args={"command": command}),
+        dispatcher=DispatcherCall(path="exec_cmd", positional=(command,)),
         **kwargs,  # type: ignore[arg-type]
     )
 

@@ -17,6 +17,19 @@ form -- it would present invented field names as though Hyprland documented them
 wrong key is a config error, not a no-op. A free-form table lets a user write the call they
 already know how to write, and the round-trip through `binds.lua` preserves it exactly.
 
+**`positional` is load-bearing and was settled by probing 0.56.2, not by reading.** The two
+forms are not interchangeable and the compositor refuses the wrong one outright:
+
+    hl.dsp.exec_cmd("kitty")            -- ok
+    hl.dsp.exec_cmd{ command = "kitty" }  -- "bad argument 1: expected string, got table"
+    hl.dsp.window.tag{ tag = "x" }      -- ok
+    hl.dsp.window.tag("x")              -- "expected a table { tag, window? }"
+
+So exec takes a bare string and `window.tag` takes a table, in opposite directions, and
+nothing in the stub says so. The same probe found `workspace.move` requires `monitor` --
+not the `workspace` its name suggests -- which is why it stays `free_form` rather than
+carrying a field this module would have got wrong.
+
 Engine-side and GTK-free on purpose: the picker is UI, but "what dispatchers exist" is a
 fact about Hyprland, and the Binds writer needs it to validate a path it is about to emit.
 """
@@ -101,11 +114,13 @@ CATALOG: tuple[Dispatcher, ...] = (
                 placeholder="kitty",
             ),
         ),
+        positional=True,
     ),
     Dispatcher(
         path="exec_raw",
         label="Run a command without shell processing",
         args=(ArgSpec(name="command", required=True, label="Command"),),
+        positional=True,
     ),
     Dispatcher(
         path="submap",
