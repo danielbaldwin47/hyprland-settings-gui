@@ -82,4 +82,7 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | **Discovered layout** | A `lua:<name>` custom layout found by the Scripting inventory; joins the `general:layout` combo and workspace-rule layout picker as selectable, never authorable (ADR-0018). |
 | **Plugin load list** | The editable, ordered `hl.plugin.load` path list (add/remove/enable-toggle) on the Scripting page, rendered into canonical `plugins.lua`. Loaded state via `hl.get_loaded_plugins`; hyprpm out of scope (ADR-0018). |
 | **Profile-match toast** | App-open-only toast when the connected-output set matches a saved Monitor profile, offering one-click activation; rides the canvas's socket2 listener. Auto-activation (app closed) is out of scope (ADR-0018). |
+| **App id** | `io.github.danielbaldwin47.Hyprtweaker` — the reverse-DNS identity naming the desktop entry, icon, and any future Flatpak. The binary, pkgname, and module are plain `hyprtweaker` (ADR-0019). |
+| **Prefs file** | `$XDG_STATE_HOME/hyprtweaker/prefs.json` — plain-JSON store of app preferences (theme override, View choice, Advanced switch, remembered dialog choices). Never GSettings; never part of the Hyprland config model (ADR-0019). |
+| **Theme override** | The app's own System / Light / Dark preference (default System), applied via `Adw.StyleManager`; custom-drawn surfaces derive colors from the style context so both grounds stay legible (ADR-0019). |
 | **Frontier / Map** | Wayfinder terms — see `docs/agents/issue-tracker.md`. |
