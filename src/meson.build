@@ -16,6 +16,7 @@ package_sources = {
     '__init__.py',
     'dispatchers.py',
     'paths.py',
+    'triggers.py',
   ],
   'hyprtweaker/engine/apply': [
     '__init__.py',
@@ -100,6 +101,7 @@ package_sources = {
   'hyprtweaker/ui/dialogs': [
     '__init__.py',
     'bind_editor.py',
+    'capture.py',
     'errors.py',
     'migration.py',
   ],

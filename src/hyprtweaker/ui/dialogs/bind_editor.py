@@ -34,6 +34,8 @@ from hyprtweaker.engine.dispatchers import (  # noqa: E402
     namespaces,
 )
 from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall  # noqa: E402
+from hyprtweaker.engine.triggers import validate_trigger  # noqa: E402
+from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
 
 TRIGGER_HELP = "Modifiers and one key, joined by +. For example: SUPER + SHIFT + Q"
 
@@ -158,6 +160,14 @@ class BindEditor(Adw.Dialog):
         self._trigger = Adw.EntryRow(title="Keys")
         if self._original is not None:
             self._trigger.set_text(self._original.keys)
+        capture = Gtk.Button(
+            icon_name="input-keyboard-symbolic",
+            tooltip_text="Press the keys instead of typing them",
+            valign=Gtk.Align.CENTER,
+            css_classes=["flat"],
+        )
+        capture.connect("clicked", lambda _button: self._capture())
+        self._trigger.add_suffix(capture)
         trigger_group.add(self._trigger)
 
         self._description = Adw.EntryRow(title="Description (optional)")
@@ -263,9 +273,25 @@ class BindEditor(Adw.Dialog):
             return {}, (values[first],) if first in values else ()
         return values, ()
 
+    def _capture(self) -> None:
+        """Open Capture, prefilled with whatever is typed, and take back what it records."""
+        dialog = CaptureDialog(
+            on_done=self._trigger.set_text,
+            initial=self._trigger.get_text(),
+            in_submap=bool(self._original.submap) if self._original else False,
+        )
+        dialog.present(self)
+
     def _validate(self) -> str:
-        if not self._trigger.get_text().strip():
+        trigger = self._trigger.get_text().strip()
+        if not trigger:
             return "A keybind needs a trigger."
+        # Typed triggers get the same hard block Capture applies. A dead keysym reaching
+        # the writer is not a cosmetic problem: Lua fails the whole config on it, and the
+        # compositor gives no error to find it by (ADR-0007).
+        in_submap = bool(self._original.submap) if self._original else False
+        if (problem := validate_trigger(trigger, in_submap=in_submap)) and problem.blocking:
+            return problem.full_text()
         for left, right in INCOMPATIBLE:
             if (
                 self._flag_switches[left].get_active()
