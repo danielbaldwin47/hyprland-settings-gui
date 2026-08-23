@@ -43,6 +43,15 @@ package_sources = {
     'rules.py',
     'scalars.py',
   ],
+  'hyprtweaker/engine/importer/lua': [
+    '__init__.py',
+    'mapping.py',
+    # Not Python, but it is package data the importer cannot run without: installing the
+    # module and leaving this behind is an ImportError you only see from an install.
+    'runner.lua',
+    'sandbox.py',
+    'scripts.py',
+  ],
   'hyprtweaker/engine/ipc': [
     '__init__.py',
     'commands.py',

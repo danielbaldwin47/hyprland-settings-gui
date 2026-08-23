@@ -139,6 +139,10 @@ class ImportResult:
     files: list[Path] = field(default_factory=list)
     variables: dict[str, str] = field(default_factory=dict)
     source: Path | None = None
+    legacy: str = ""
+    """`legacy.lua`'s contents: constructs kept verbatim because the model cannot hold
+    them. Only the Lua importer fills this in -- hyprlang has no script constructs to
+    keep -- but it lives here so both importers answer the wizard with one shape."""
 
     @property
     def root(self) -> Path:

@@ -27,6 +27,7 @@ from hyprtweaker.engine.schema import (
 from hyprtweaker.ui.rows.state import (
     ADVANCED_PILL,
     NO_VALUE,
+    OVERRIDDEN_PILL,
     PENDING_RESTART_PILL,
     RESTART_PILL,
     UNAPPLIED_PILL,
@@ -55,11 +56,13 @@ class FakeContext:
         live: bool = True,
         pending_restart: frozenset[str] = frozenset(),
         unapplied: frozenset[str] = frozenset(),
+        overridden: frozenset[str] = frozenset(),
     ) -> None:
         self.schema: Schema = SCHEMA
         self.live = live
         self.pending_restart = pending_restart
         self.unapplied = unapplied
+        self.overridden = overridden
         self.model = ConfigModel(SCHEMA)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
@@ -200,6 +203,27 @@ def test_a_value_that_did_not_take_badges_the_row() -> None:
 
     assert _pills(SCHEMA["decoration:rounding"], context) == (UNAPPLIED_PILL,)
     assert _pills(SCHEMA["general:gaps_in"], context) == (), "only the key that failed"
+
+
+def test_a_value_user_lua_overrides_says_so_instead_of_failing_quietly() -> None:
+    """The sibling of "Didn't apply", deferred here from #57 until there was a reader.
+
+    `user.lua` is required last, so a key it sets wins over anything the GUI writes. That
+    is the escape hatch working as designed, and the Row explains it rather than showing an
+    edit that appears to have done nothing.
+    """
+    context = FakeContext(overridden=frozenset({"decoration:rounding"}))
+
+    assert _pills(SCHEMA["decoration:rounding"], context) == (OVERRIDDEN_PILL,)
+    assert _pills(SCHEMA["general:gaps_in"], context) == (), "only the key user.lua sets"
+
+
+def test_the_override_pill_names_user_lua_so_the_user_knows_where_to_look() -> None:
+    """A badge that says a value is being overridden without saying by what is a puzzle."""
+    context = FakeContext(overridden=frozenset({"decoration:rounding"}))
+
+    (pill,) = row_state(SCHEMA["decoration:rounding"], context).pills
+    assert "user.lua" in pill.tooltip
 
 
 def test_an_advanced_restart_flagged_option_wears_both_pills_in_order() -> None:

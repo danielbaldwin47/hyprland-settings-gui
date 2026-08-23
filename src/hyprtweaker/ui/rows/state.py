@@ -62,6 +62,7 @@ ADVANCED_PILL: Final = "Advanced"
 RESTART_PILL: Final = "Restart"
 PENDING_RESTART_PILL: Final = "Pending restart"
 UNAPPLIED_PILL: Final = "Didn't apply"
+OVERRIDDEN_PILL: Final = "Overridden"
 
 _UNLABELLED_NULL: Final = "Not set"
 """What a nullable Option with no curated `null_label` falls back to.
@@ -336,6 +337,9 @@ class RowContext(Protocol):
     @property
     def unapplied(self) -> frozenset[str]: ...
 
+    @property
+    def overridden(self) -> frozenset[str]: ...
+
     def value_of(self, option: ResolvedOption) -> OptionValue: ...
 
     def effective_value(self, option: ResolvedOption) -> Any: ...
@@ -439,6 +443,19 @@ def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:
             Pill(
                 UNAPPLIED_PILL,
                 "This was written to your config, but Hyprland is not using it.",
+            )
+        )
+
+    if option.name in context.overridden:
+        # The sibling of "Didn't apply", and the reason that one is only for the
+        # *unexplained* mismatch: this value did not take either, but for a reason the app
+        # can name. `user.lua` is required last, so it wins on purpose -- that is the
+        # escape hatch working, not a fault, and the Row says so rather than badging it as
+        # a failure (ADR-0005; deferred here from #57 until there was a reader for it).
+        pills.append(
+            Pill(
+                OVERRIDDEN_PILL,
+                "Your own user.lua sets this too, and it is loaded last -- so its value wins.",
             )
         )
 

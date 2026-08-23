@@ -601,6 +601,47 @@ def parse_getoption(option: ResolvedOption, payload: dict[str, Any]) -> Any:
     return parse_value(option.type, raw)
 
 
+def parse_lua(option: ResolvedOption, raw: Any) -> Any:
+    """A value as it appeared in a foreign `hyprland.lua` -> the model's Python value.
+
+    The inverse of `lua_literal_for`, and the fourth reader this module owns alongside
+    display text, `getoption` payloads and Lua literals. The Lua importer evaluates the
+    config, so what arrives here is already a decoded table -- a gradient is
+    `{"colors": [...], "angle": 45}`, a vec2 is `[0, 2]` -- and turning that back into a
+    `Gradient` or a `Vec2` needs the same knowledge `lua()` used to write it. Keeping both
+    directions in one module is what stops them drifting apart.
+
+    Falls back to the display-text parser for scalars and for anyone who wrote a complex
+    value as the string form, which the engine also accepts.
+    """
+    if option.type is OptionType.GRADIENT and isinstance(raw, dict):
+        colors = raw.get("colors")
+        entries = colors if isinstance(colors, list) else []
+        angle = raw.get("angle", 0)
+        return Gradient(
+            colors=tuple(Color.parse(color) for color in entries),
+            angle=float(angle) if isinstance(angle, (int, float)) else 0.0,
+        )
+    if option.type is OptionType.CSS_GAPS:
+        if isinstance(raw, dict):
+            sides = [raw.get(side) for side in ("top", "right", "bottom", "left")]
+            if all(isinstance(side, (int, float)) for side in sides):
+                top, right, bottom, left = (int(side) for side in sides)  # type: ignore[arg-type]
+                return CssGaps(top, right, bottom, left)
+        if isinstance(raw, list) and raw:
+            return CssGaps.parse(" ".join(str(item) for item in raw))
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            return CssGaps.parse(str(raw))
+    if option.type is OptionType.VEC2:
+        if isinstance(raw, list) and len(raw) == 2:
+            first, second = raw
+            if isinstance(first, (int, float)) and isinstance(second, (int, float)):
+                return Vec2(float(first), float(second))
+        if isinstance(raw, dict) and {"x", "y"} <= set(raw):
+            return Vec2(float(raw["x"]), float(raw["y"]))
+    return parse_value(option.type, raw)
+
+
 FLOAT_RELATIVE_TOLERANCE = 1e-6
 """Hyprland holds config floats as 32-bit, so a `0.95` written from a Python double reads
 back as the nearest float32. Comparing exactly would call every fractional Option the app

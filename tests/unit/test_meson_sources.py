@@ -37,12 +37,26 @@ def declared_sources() -> set[str]:
     return declared
 
 
+INSTALLABLE = ("*.py", "*.lua")
+"""Suffixes that have to reach an install.
+
+`.lua` is here for the Lua importer's `runner.lua`: it is not a module, but the importer
+subprocesses it by path, so an install that left it behind would fail at the first import
+rather than at start-up -- the same invisible-from-a-checkout failure this test exists to
+prevent for `.py`.
+"""
+
+
 def actual_sources() -> set[str]:
-    """Every .py file under src/hyprtweaker, as a path relative to src/."""
-    return {str(path.relative_to(SRC)) for path in (SRC / "hyprtweaker").rglob("*.py")}
+    """Every installable file under src/hyprtweaker, as a path relative to src/."""
+    return {
+        str(path.relative_to(SRC))
+        for pattern in INSTALLABLE
+        for path in (SRC / "hyprtweaker").rglob(pattern)
+    }
 
 
-def test_every_python_source_is_installed_and_no_more() -> None:
+def test_every_installable_source_is_installed_and_no_more() -> None:
     assert_lists_match(declared_sources(), actual_sources(), MESON_BUILD)
 
 

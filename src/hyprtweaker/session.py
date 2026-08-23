@@ -51,6 +51,7 @@ from hyprtweaker.engine.apply import (
     plan,
     read_state,
 )
+from hyprtweaker.engine.importer.lua import Consent, overridden_options
 from hyprtweaker.engine.ipc import (
     CommandClient,
     EventStream,
@@ -333,6 +334,18 @@ class Session:
         business. `Mismatch.unapplied` is the loud shape -- the model sets the key and the
         live config sets nothing, which means the Module never ran."""
 
+        self._overridden: frozenset[str] = frozenset()
+        """Options `user.lua` sets, so the Row can say the escape hatch is winning.
+
+        The quiet counterpart of `_unapplied`: the value did not take, but for a reason the
+        app can name. Read by evaluating `user.lua` under the Lua importer's sandbox --
+        the file is a program, so nothing short of running it knows what it sets, and the
+        app must never rewrite it to find out."""
+
+        self._user_lua_stamp: tuple[int, int] | None = None
+        """`(mtime_ns, size)` of the `user.lua` last read, so an unchanged file is not
+        re-evaluated on every reload."""
+
         self._rescued: tuple[str, ...] = ()
         """Modules the emergency restore overwrote without asking, so the Banner can say so."""
 
@@ -390,6 +403,38 @@ class Session:
         would be telling the user about a value that has since applied perfectly well.
         """
         return frozenset(self._unapplied)
+
+    @property
+    def overridden(self) -> frozenset[str]:
+        """Options `user.lua` sets, which therefore win over anything the app writes.
+
+        `user.lua` is required last (ADR-0005), so a key it sets is a key the GUI cannot
+        change -- the Row wears the "Overridden" pill rather than pretending the edit took.
+        """
+        return self._overridden
+
+    def refresh_overrides(self) -> None:
+        """Re-read `user.lua` to learn which Options it sets.
+
+        Skipped when the file has not changed since the last read: evaluation spawns a Lua
+        interpreter, and every reload would otherwise pay for it. Any failure leaves the
+        previous answer in place -- a badge the app cannot compute is a missing badge,
+        never a broken window.
+        """
+        path = self._paths.user_lua
+        try:
+            stat = path.stat()
+        except OSError:
+            self._user_lua_stamp = None
+            self._overridden = frozenset()
+            return
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        if stamp == self._user_lua_stamp:
+            return
+        self._user_lua_stamp = stamp
+        self._overridden = overridden_options(
+            path, self._schema, consent=Consent(evaluate=True)
+        )
 
     @property
     def paths(self) -> ConfigPaths:
@@ -972,6 +1017,10 @@ class Session:
         """
         self._recovery = plan(errors, written=written, binds=binds)
         self._unapplied = tuple(mismatch.name for mismatch in mismatches if mismatch.unapplied)
+        # Every reload the app hears about funnels through here, which makes this the one
+        # place the drift badge can be kept honest: a reload is exactly when `user.lua`
+        # may have started -- or stopped -- winning.
+        self.refresh_overrides()
         # Cleared with the rest: the rescue notice belongs to the reload that prompted it.
         # `_restore_transaction` re-raises it *after* observing its own result, which is what
         # lets the notice outlive the restore that earned it without outliving anything else.

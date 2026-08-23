@@ -1,0 +1,453 @@
+# options
+general:border_size = 1
+general:gaps_in = 4 4 4 4
+general:gaps_out = 5 5 5 5
+general:gaps_workspaces = 50
+general:col.inactive_border = 331a1b20 0deg
+general:col.active_border = 7744464f 0deg
+general:no_focus_fallback = true
+general:resize_on_border = true
+general:allow_tearing = true
+general:snap:enabled = true
+general:snap:window_gap = 4
+general:snap:monitor_gap = 5
+general:snap:respect_gaps = true
+decoration:rounding = 18
+decoration:rounding_power = 2
+decoration:shadow:enabled = true
+decoration:shadow:range = 20
+decoration:shadow:render_power = 10
+decoration:shadow:color = 20000000 0deg
+decoration:shadow:offset = 0 2
+decoration:dim_inactive = true
+decoration:dim_strength = 0.05
+decoration:dim_special = 0.2
+decoration:blur:enabled = true
+decoration:blur:size = 10
+decoration:blur:passes = 3
+decoration:blur:new_optimizations = true
+decoration:blur:xray = true
+decoration:blur:noise = 0.05
+decoration:blur:contrast = 0.89
+decoration:blur:brightness = 1
+decoration:blur:vibrancy = 0.5
+decoration:blur:vibrancy_darkness = 0.5
+decoration:blur:special = false
+decoration:blur:popups = false
+decoration:blur:popups_ignorealpha = 0.6
+decoration:blur:input_methods = true
+decoration:blur:input_methods_ignorealpha = 0.8
+animations:enabled = true
+input:kb_layout = us
+input:numlock_by_default = true
+input:repeat_rate = 35
+input:repeat_delay = 250
+input:follow_mouse = 1
+input:off_window_axis_events = 2
+input:touchpad:disable_while_typing = true
+input:touchpad:natural_scroll = true
+input:touchpad:scroll_factor = 0.7
+input:touchpad:clickfinger_behavior = true
+misc:disable_hyprland_logo = true
+misc:disable_splash_rendering = true
+misc:vrr = 0
+misc:mouse_move_enables_dpms = true
+misc:key_press_enables_dpms = true
+misc:animate_manual_resizes = false
+misc:animate_mouse_windowdragging = false
+misc:enable_swallow = false
+misc:swallow_regex = (foot|kitty|allacritty|Alacritty)
+misc:focus_on_activate = true
+misc:allow_session_lock_restore = true
+misc:session_lock_xray = true
+misc:background_color = ff121318
+misc:on_focus_under_fullscreen = 2
+misc:initial_workspace_tracking = 0
+binds:scroll_event_delay = 0
+binds:hide_special_on_workspace_change = true
+xwayland:force_zero_scaling = true
+cursor:hotspot_padding = 1
+cursor:zoom_factor = 1
+cursor:zoom_rigid = false
+cursor:zoom_disable_aa = true
+dwindle:preserve_split = true
+dwindle:smart_split = false
+dwindle:smart_resizing = false
+
+# entities
+submaps | name=virtual-machine
+binds | keys=SUPER + SUPER_L dispatcher=hl.dsp.global('quickshell:searchToggleRelease') options={description=Toggle search, ignore_mods=True}
+binds | keys=SUPER + SUPER_R dispatcher=hl.dsp.global('quickshell:searchToggleRelease') options={description=Toggle search, ignore_mods=True}
+binds | keys=SUPER + SUPER_L dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || pkill fuzzel || fuzzel')
+binds | keys=SUPER + SUPER_R dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || pkill fuzzel || fuzzel')
+binds | keys=CTRL + SUPER_L dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=CTRL + SUPER_R dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=SUPER + mouse:272 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=SUPER + mouse:273 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=SUPER + mouse:274 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=SUPER + mouse:275 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=SUPER + mouse:276 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=SUPER + mouse:277 dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=SUPER + mouse_up dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=SUPER + mouse_down dispatcher=hl.dsp.global('quickshell:searchToggleReleaseInterrupt')
+binds | keys=SUPER_L dispatcher=hl.dsp.global('quickshell:workspaceNumber') options={ignore_mods=True, transparent=True}
+binds | keys=SUPER_R dispatcher=hl.dsp.global('quickshell:workspaceNumber') options={ignore_mods=True, transparent=True}
+binds | keys=SUPER + Tab dispatcher=hl.dsp.global('quickshell:overviewWorkspacesToggle')
+binds | keys=SUPER + V dispatcher=hl.dsp.global('quickshell:overviewClipboardToggle') options={description=Clipboard history >> clipboard}
+binds | keys=SUPER + Period dispatcher=hl.dsp.global('quickshell:overviewEmojiToggle') options={description=Emoji >> clipboard}
+binds | keys=SUPER + A dispatcher=hl.dsp.global('quickshell:sidebarLeftToggle')
+binds | keys=SUPER + ALT + A dispatcher=hl.dsp.global('quickshell:sidebarLeftToggleDetach')
+binds | keys=SUPER + B dispatcher=hl.dsp.global('quickshell:sidebarLeftToggle')
+binds | keys=SUPER + O dispatcher=hl.dsp.global('quickshell:sidebarLeftToggle')
+binds | keys=SUPER + N dispatcher=hl.dsp.global('quickshell:sidebarRightToggle') options={description=Toggle right sidebar}
+binds | keys=SUPER + Slash dispatcher=hl.dsp.global('quickshell:cheatsheetToggle') options={description=Toggle cheatsheet}
+binds | keys=SUPER + K dispatcher=hl.dsp.global('quickshell:oskToggle') options={description=Toggle on-screen keyboard}
+binds | keys=SUPER + M dispatcher=hl.dsp.global('quickshell:mediaControlsToggle') options={description=Toggle media controls}
+binds | keys=SUPER + G dispatcher=hl.dsp.global('quickshell:overlayToggle')
+binds | keys=CTRL + ALT + Delete dispatcher=hl.dsp.global('quickshell:sessionToggle') options={description=Toggle session menu}
+binds | keys=SUPER + J dispatcher=hl.dsp.global('quickshell:barToggle') options={description=Toggle bar}
+binds | keys=CTRL + ALT + Delete dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || pkill wlogout || wlogout -p layer-shell')
+binds | keys=SHIFT + SUPER + ALT + Slash dispatcher=hl.dsp.exec_cmd('qs -p $HOME/.config/quickshell/$qsConfig/welcome.qml')
+binds | keys=XF86MonBrightnessUp dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call brightness increment || brightnessctl s 5%+') options={locked=True, repeating=True}
+binds | keys=XF86MonBrightnessDown dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call brightness decrement || brightnessctl s 5%-') options={locked=True, repeating=True}
+binds | keys=XF86AudioRaiseVolume dispatcher=hl.dsp.exec_cmd('wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%+ -l 1.5') options={locked=True, repeating=True}
+binds | keys=XF86AudioLowerVolume dispatcher=hl.dsp.exec_cmd('wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%-') options={locked=True, repeating=True}
+binds | keys=XF86AudioMute dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SINK@ toggle') options={locked=True}
+binds | keys=SUPER + SHIFT + M dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SINK@ toggle') options={description=Toggle mute, locked=True}
+binds | keys=ALT + XF86AudioMute dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SOURCE@ toggle') options={locked=True}
+binds | keys=XF86AudioMicMute dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SOURCE@ toggle') options={locked=True}
+binds | keys=SUPER + ALT + M dispatcher=hl.dsp.exec_cmd('wpctl set-mute @DEFAULT_SOURCE@ toggle') options={description=Toggle mic, locked=True}
+binds | keys=CTRL + SUPER + T dispatcher=hl.dsp.global('quickshell:wallpaperSelectorToggle') options={description=Toggle wallpaper selector}
+binds | keys=CTRL + SUPER + ALT + T dispatcher=hl.dsp.global('quickshell:wallpaperSelectorRandom') options={description=Select random wallpaper}
+binds | keys=CTRL + SUPER + T dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || $HOME/.config/quickshell/$qsConfig/scripts/colors/switchwall.sh') options={description=Change wallpaper}
+binds | keys=CTRL + SUPER + R dispatcher=hl.dsp.exec_cmd('killall ydotool qs quickshell; qs -c $qsConfig &')
+binds | keys=CTRL + SUPER + P dispatcher=hl.dsp.global('quickshell:panelFamilyCycle')
+binds | keys=SUPER + V dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || pkill fuzzel || cliphist list | fuzzel --match-mode fzf --dmenu | cliphist decode | wl-copy') options={description=Copy clipboard history entry}
+binds | keys=SUPER + Period dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || pkill fuzzel || $HOME/.config/hypr/hyprland/scripts/fuzzel-emoji.sh copy') options={description=Copy an emoji}
+binds | keys=SUPER + SHIFT + S dispatcher=hl.dsp.global('quickshell:regionScreenshot')
+binds | keys=SUPER + SHIFT + S dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || pidof slurp || hyprshot --freeze --clipboard-only --mode region --silent')
+binds | keys=SUPER + SHIFT + A dispatcher=hl.dsp.global('quickshell:regionSearch')
+binds | keys=SUPER + SHIFT + A dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || pidof slurp || $HOME/.config/hypr/hyprland/scripts/snip_to_search.sh')
+binds | keys=SUPER + SHIFT + X dispatcher=hl.dsp.global('quickshell:regionOcr')
+binds | keys=SUPER + SHIFT + T dispatcher=hl.dsp.global('quickshell:screenTranslate')
+binds | keys=SUPER + SHIFT + X dispatcher=hl.dsp.exec_cmd("qs -c $qsConfig ipc call TEST_ALIVE || pidof slurp || grim -g '$(slurp $SLURP_ARGS)' '/tmp/ocr_image.png && tesseract' '/tmp/ocr_image.png' stdout -l $(tesseract --list-langs | awk 'NR>1{print $1}' | tr '\\n' '+' | sed 's/\\+$/\\n/') | wl-copy && rm '/tmp/ocr_image.png'")
+binds | keys=SUPER + SHIFT + C dispatcher=hl.dsp.exec_cmd('hyprpicker -a') options={description=Color picker}
+binds | keys=SUPER + SHIFT + R dispatcher=hl.dsp.global('quickshell:regionRecord') options={locked=True}
+binds | keys=SUPER + SHIFT + R dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || $HOME/.config/quickshell/$qsConfig/scripts/videos/record.sh') options={locked=True}
+binds | keys=SUPER + ALT + R dispatcher=hl.dsp.global('quickshell:regionRecord') options={locked=True}
+binds | keys=SUPER + ALT + R dispatcher=hl.dsp.exec_cmd('qs -c $qsConfig ipc call TEST_ALIVE || $HOME/.config/quickshell/$qsConfig/scripts/videos/record.sh') options={locked=True}
+binds | keys=CTRL + ALT + R dispatcher=hl.dsp.exec_cmd('$HOME/.config/quickshell/$qsConfig/scripts/videos/record.sh --fullscreen') options={locked=True}
+binds | keys=SUPER + SHIFT + ALT + R dispatcher=hl.dsp.exec_cmd('$HOME/.config/quickshell/$qsConfig/scripts/videos/record.sh --fullscreen --sound') options={locked=True}
+binds | keys=Print dispatcher=hl.dsp.exec_cmd("grim -o '$(hyprctl activeworkspace -j | jq -r '.monitor')' - | wl-copy") options={locked=True}
+binds | keys=CTRL + Print dispatcher=hl.dsp.exec_cmd("mkdir -p $(xdg-user-dir PICTURES)/Screenshots && grim -o '$(hyprctl activeworkspace -j | jq -r '.monitor')' $(xdg-user-dir PICTURES)/Screenshots/Screenshot_'$(date '+%Y-%m-%d_%H.%M.%S')'.png") options={locked=True, non_consuming=True}
+binds | keys=CTRL + Print dispatcher=hl.dsp.exec_cmd("grim -o '$(hyprctl activeworkspace -j | jq -r '.monitor')' - | wl-copy") options={locked=True, non_consuming=True}
+binds | keys=SUPER + SHIFT + ALT + mouse:273 dispatcher=hl.dsp.exec_cmd('$HOME/.config/hypr/hyprland/scripts/ai/primary-buffer-query.sh') options={description=Generate AI summary for selected text}
+binds | keys=SUPER + mouse:272 dispatcher=hl.dsp.window.drag()
+binds | keys=SUPER + mouse:274 dispatcher=hl.dsp.window.drag()
+binds | keys=SUPER + mouse:273 dispatcher=hl.dsp.window.resize()
+binds | keys=SUPER + Left dispatcher=hl.dsp.focus{direction='l'}
+binds | keys=SUPER + Right dispatcher=hl.dsp.focus{direction='r'}
+binds | keys=SUPER + Up dispatcher=hl.dsp.focus{direction='u'}
+binds | keys=SUPER + Down dispatcher=hl.dsp.focus{direction='d'}
+binds | keys=SUPER + BracketLeft dispatcher=hl.dsp.focus{direction='l'}
+binds | keys=SUPER + BracketRight dispatcher=hl.dsp.focus{direction='r'}
+binds | keys=SUPER + SHIFT + Left dispatcher=hl.dsp.window.move{direction='l'}
+binds | keys=SUPER + SHIFT + Right dispatcher=hl.dsp.window.move{direction='r'}
+binds | keys=SUPER + SHIFT + Up dispatcher=hl.dsp.window.move{direction='u'}
+binds | keys=SUPER + SHIFT + Down dispatcher=hl.dsp.window.move{direction='d'}
+binds | keys=ALT + F4 dispatcher=hl.dsp.window.close()
+binds | keys=SUPER + Q dispatcher=hl.dsp.window.close()
+binds | keys=SUPER + SHIFT + ALT + Q dispatcher=hl.dsp.exec_cmd('hyprctl kill')
+binds | keys=SUPER + Semicolon dispatcher=hl.dsp.layout('splitratio -0.1') options={repeating=True}
+binds | keys=SUPER + Apostrophe dispatcher=hl.dsp.layout('splitratio +0.1') options={repeating=True}
+binds | keys=SUPER + ALT + Space dispatcher=hl.dsp.window.float{action='toggle'}
+binds | keys=SUPER + D dispatcher=hl.dsp.window.fullscreen(['maximized'])
+binds | keys=SUPER + F dispatcher=hl.dsp.window.fullscreen(['fullscreen'])
+binds | keys=SUPER + ALT + F dispatcher=hl.dsp.window.fullscreen_state{client=3, internal=0}
+binds | keys=SUPER + P dispatcher=hl.dsp.window.pin()
+binds | keys=SUPER + ALT + code:10 dispatcher=hl.dsp.window.move{follow=False, workspace=1}
+binds | keys=SUPER + ALT + code:11 dispatcher=hl.dsp.window.move{follow=False, workspace=2}
+binds | keys=SUPER + ALT + code:12 dispatcher=hl.dsp.window.move{follow=False, workspace=3}
+binds | keys=SUPER + ALT + code:13 dispatcher=hl.dsp.window.move{follow=False, workspace=4}
+binds | keys=SUPER + ALT + code:14 dispatcher=hl.dsp.window.move{follow=False, workspace=5}
+binds | keys=SUPER + ALT + code:15 dispatcher=hl.dsp.window.move{follow=False, workspace=6}
+binds | keys=SUPER + ALT + code:16 dispatcher=hl.dsp.window.move{follow=False, workspace=7}
+binds | keys=SUPER + ALT + code:17 dispatcher=hl.dsp.window.move{follow=False, workspace=8}
+binds | keys=SUPER + ALT + code:18 dispatcher=hl.dsp.window.move{follow=False, workspace=9}
+binds | keys=SUPER + ALT + code:19 dispatcher=hl.dsp.window.move{follow=False, workspace=10}
+binds | keys=SUPER + ALT + code:87 dispatcher=hl.dsp.window.move{follow=False, workspace=1}
+binds | keys=SUPER + ALT + code:88 dispatcher=hl.dsp.window.move{follow=False, workspace=2}
+binds | keys=SUPER + ALT + code:89 dispatcher=hl.dsp.window.move{follow=False, workspace=3}
+binds | keys=SUPER + ALT + code:83 dispatcher=hl.dsp.window.move{follow=False, workspace=4}
+binds | keys=SUPER + ALT + code:84 dispatcher=hl.dsp.window.move{follow=False, workspace=5}
+binds | keys=SUPER + ALT + code:85 dispatcher=hl.dsp.window.move{follow=False, workspace=6}
+binds | keys=SUPER + ALT + code:79 dispatcher=hl.dsp.window.move{follow=False, workspace=7}
+binds | keys=SUPER + ALT + code:80 dispatcher=hl.dsp.window.move{follow=False, workspace=8}
+binds | keys=SUPER + ALT + code:81 dispatcher=hl.dsp.window.move{follow=False, workspace=9}
+binds | keys=SUPER + ALT + code:90 dispatcher=hl.dsp.window.move{follow=False, workspace=10}
+binds | keys=SUPER + SHIFT + mouse_down dispatcher=hl.dsp.window.move{workspace='r-1'}
+binds | keys=SUPER + SHIFT + mouse_up dispatcher=hl.dsp.window.move{workspace='r+1'}
+binds | keys=SUPER + ALT + mouse_down dispatcher=hl.dsp.window.move{workspace='-1'}
+binds | keys=SUPER + ALT + mouse_up dispatcher=hl.dsp.window.move{workspace='+1'}
+binds | keys=SUPER + ALT + Page_down dispatcher=hl.dsp.window.move{workspace='+1'}
+binds | keys=SUPER + ALT + Page_up dispatcher=hl.dsp.window.move{workspace='-1'}
+binds | keys=SUPER + SHIFT + Page_down dispatcher=hl.dsp.window.move{workspace='r+1'}
+binds | keys=SUPER + SHIFT + Page_up dispatcher=hl.dsp.window.move{workspace='r-1'}
+binds | keys=CTRL + SUPER + SHIFT + Right dispatcher=hl.dsp.window.move{workspace='r+1'}
+binds | keys=CTRL + SUPER + SHIFT + Left dispatcher=hl.dsp.window.move{workspace='r-1'}
+binds | keys=SUPER + ALT + S dispatcher=hl.dsp.window.move{follow=False, workspace='special:special'}
+binds | keys=CTRL + SUPER + S dispatcher=hl.dsp.workspace.toggle_special('special')
+binds | keys=SUPER + code:10 dispatcher=hl.dsp.focus{workspace=1}
+binds | keys=SUPER + code:11 dispatcher=hl.dsp.focus{workspace=2}
+binds | keys=SUPER + code:12 dispatcher=hl.dsp.focus{workspace=3}
+binds | keys=SUPER + code:13 dispatcher=hl.dsp.focus{workspace=4}
+binds | keys=SUPER + code:14 dispatcher=hl.dsp.focus{workspace=5}
+binds | keys=SUPER + code:15 dispatcher=hl.dsp.focus{workspace=6}
+binds | keys=SUPER + code:16 dispatcher=hl.dsp.focus{workspace=7}
+binds | keys=SUPER + code:17 dispatcher=hl.dsp.focus{workspace=8}
+binds | keys=SUPER + code:18 dispatcher=hl.dsp.focus{workspace=9}
+binds | keys=SUPER + code:19 dispatcher=hl.dsp.focus{workspace=10}
+binds | keys=SUPER + code:87 dispatcher=hl.dsp.focus{workspace=1}
+binds | keys=SUPER + code:88 dispatcher=hl.dsp.focus{workspace=2}
+binds | keys=SUPER + code:89 dispatcher=hl.dsp.focus{workspace=3}
+binds | keys=SUPER + code:83 dispatcher=hl.dsp.focus{workspace=4}
+binds | keys=SUPER + code:84 dispatcher=hl.dsp.focus{workspace=5}
+binds | keys=SUPER + code:85 dispatcher=hl.dsp.focus{workspace=6}
+binds | keys=SUPER + code:79 dispatcher=hl.dsp.focus{workspace=7}
+binds | keys=SUPER + code:80 dispatcher=hl.dsp.focus{workspace=8}
+binds | keys=SUPER + code:81 dispatcher=hl.dsp.focus{workspace=9}
+binds | keys=SUPER + code:90 dispatcher=hl.dsp.focus{workspace=10}
+binds | keys=CTRL + SUPER + Right dispatcher=hl.dsp.focus{workspace='r+1'}
+binds | keys=CTRL + SUPER + Left dispatcher=hl.dsp.focus{workspace='r-1'}
+binds | keys=CTRL + SUPER + ALT + Right dispatcher=hl.dsp.focus{workspace='m+1'}
+binds | keys=CTRL + SUPER + ALT + Left dispatcher=hl.dsp.focus{workspace='m-1'}
+binds | keys=SUPER + Page_Down dispatcher=hl.dsp.focus{workspace='+1'}
+binds | keys=SUPER + Page_Up dispatcher=hl.dsp.focus{workspace='-1'}
+binds | keys=CTRL + SUPER + Page_Down dispatcher=hl.dsp.focus{workspace='r+1'}
+binds | keys=CTRL + SUPER + Page_Up dispatcher=hl.dsp.focus{workspace='r-1'}
+binds | keys=SUPER + mouse_up dispatcher=hl.dsp.focus{workspace='+1'}
+binds | keys=SUPER + mouse_down dispatcher=hl.dsp.focus{workspace='-1'}
+binds | keys=CTRL + SUPER + mouse_up dispatcher=hl.dsp.focus{workspace='r+1'}
+binds | keys=CTRL + SUPER + mouse_down dispatcher=hl.dsp.focus{workspace='r-1'}
+binds | keys=SUPER + S dispatcher=hl.dsp.workspace.toggle_special('special')
+binds | keys=SUPER + mouse:275 dispatcher=hl.dsp.workspace.toggle_special('special')
+binds | keys=CTRL + SUPER + BracketLeft dispatcher=hl.dsp.window.move{workspace='-1'}
+binds | keys=CTRL + SUPER + BracketRight dispatcher=hl.dsp.window.move{workspace='+1'}
+binds | keys=CTRL + SUPER + Up dispatcher=hl.dsp.window.move{workspace='r-5'}
+binds | keys=CTRL + SUPER + Down dispatcher=hl.dsp.window.move{workspace='r+5'}
+binds | keys=SUPER + ALT + F11 dispatcher=hl.dsp.exec_cmd("bash -c 'RANDOM_IMAGE=$(find $HOME/Pictures -type f | grep -v -i 'nipple' | grep -v -i 'pussy' | shuf -n 1); ACTION=$(notify-send 'Test notification with body image' 'This notification should contain your user account <b>image</b> and <a href='https://discord.com/app'>Discord</a> <b>icon</b>. Oh and here is a random image in your Pictures folder: <img src='$RANDOM_IMAGE' alt='Testing image'/>' -a 'Hyprland keybind' -p -h 'string:image-path:/var/lib/AccountsService/icons/$USER' -t 6000 -i 'discord' -A 'openImage=Profile image' -A 'action2=Open the random image' -A 'action3=Useless button'); [[ $ACTION == *openImage ]] && xdg-open '/var/lib/AccountsService/icons/$USER'; [[ $ACTION == *action2 ]] && xdg-open '$RANDOM_IMAGE'''")
+binds | keys=SUPER + ALT + F12 dispatcher=hl.dsp.exec_cmd("bash -c 'RANDOM_IMAGE=$(find $HOME/Pictures -type f | grep -v -i 'nipple' | grep -v -i 'pussy' | shuf -n 1); ACTION=$(notify-send 'Test notification' 'This notification should contain a random image in your <b>Pictures</b> folder and <a href='https://discord.com/app'>Discord</a> <b>icon</b>.\n<i>Flick right to dismiss!</i>' -a 'Discord (fake)' -p -h 'string:image-path:$RANDOM_IMAGE' -t 6000 -i 'discord' -A 'openImage=Profile image' -A 'action2=Useless button'); [[ $ACTION == *openImage ]] && xdg-open '/var/lib/AccountsService/icons/$USER''")
+binds | keys=SUPER + ALT + Equal dispatcher=hl.dsp.exec_cmd("notify-send 'Urgent notification' 'Ah hell no' -u critical -a 'Hyprland keybind'")
+binds | keys=SUPER + L dispatcher=hl.dsp.exec_cmd('loginctl lock-session') options={description=Lock}
+binds | keys=SUPER + SHIFT + L dispatcher=hl.dsp.exec_cmd('systemctl suspend || loginctl suspend') options={description=Suspend system, locked=True}
+binds | keys=CTRL + SHIFT + ALT + SUPER + Delete dispatcher=hl.dsp.exec_cmd('systemctl poweroff || loginctl poweroff') options={description=Shutdown}
+binds | keys=SUPER + SHIFT + N dispatcher=hl.dsp.exec_cmd("playerctl next || playerctl position `bc <<< '100 * $(playerctl metadata mpris:length) / 1000000 / 100'`") options={locked=True}
+binds | keys=XF86AudioNext dispatcher=hl.dsp.exec_cmd("playerctl next || playerctl position `bc <<< '100 * $(playerctl metadata mpris:length) / 1000000 / 100'`") options={locked=True}
+binds | keys=XF86AudioPrev dispatcher=hl.dsp.exec_cmd('playerctl previous') options={locked=True}
+binds | keys=SUPER + SHIFT + ALT + mouse:275 dispatcher=hl.dsp.exec_cmd('playerctl previous')
+binds | keys=SUPER + SHIFT + ALT + mouse:276 dispatcher=hl.dsp.exec_cmd("playerctl next || playerctl position `bc <<< '100 * $(playerctl metadata mpris:length) / 1000000 / 100'`")
+binds | keys=SUPER + SHIFT + B dispatcher=hl.dsp.exec_cmd('playerctl previous') options={locked=True}
+binds | keys=SUPER + SHIFT + P dispatcher=hl.dsp.exec_cmd('playerctl play-pause') options={locked=True}
+binds | keys=XF86AudioPlay dispatcher=hl.dsp.exec_cmd('playerctl play-pause') options={locked=True}
+binds | keys=XF86AudioPause dispatcher=hl.dsp.exec_cmd('playerctl play-pause') options={locked=True}
+binds | keys=SUPER + Return dispatcher=hl.dsp.exec_cmd('$terminal')
+binds | keys=SUPER + T dispatcher=hl.dsp.exec_cmd('$terminal')
+binds | keys=CTRL + ALT + T dispatcher=hl.dsp.exec_cmd('$terminal')
+binds | keys=SUPER + E dispatcher=hl.dsp.exec_cmd('$fileManager')
+binds | keys=SUPER + W dispatcher=hl.dsp.exec_cmd('$browser')
+binds | keys=SUPER + C dispatcher=hl.dsp.exec_cmd('$codeEditor')
+binds | keys=CTRL + SUPER + SHIFT + ALT + W dispatcher=hl.dsp.exec_cmd('$officeSoftware')
+binds | keys=SUPER + X dispatcher=hl.dsp.exec_cmd('$textEditor')
+binds | keys=CTRL + SUPER + V dispatcher=hl.dsp.exec_cmd('$volumeMixer')
+binds | keys=SUPER + I dispatcher=hl.dsp.exec_cmd('$settingsApp')
+binds | keys=CTRL + SHIFT + Escape dispatcher=hl.dsp.exec_cmd('$taskManager')
+binds | keys=CTRL + SUPER + Backslash dispatcher=hl.dsp.window.resize{1='exact', x=640, y=480}
+window_rules | match={class=^()$, title=^()$} effects={no_blur=True}
+window_rules | match={class=.*} effects={no_blur=True}
+window_rules | match={title=^(Open File)(.*)$} effects={center=True}
+window_rules | match={title=^(Open File)(.*)$} effects={float=True}
+window_rules | match={title=^(Select a File)(.*)$} effects={center=True}
+window_rules | match={title=^(Select a File)(.*)$} effects={float=True}
+window_rules | match={title=^(Choose wallpaper)(.*)$} effects={center=True}
+window_rules | match={title=^(Choose wallpaper)(.*)$} effects={float=True}
+window_rules | match={title=^(Choose wallpaper)(.*)$} effects={size=[(monitor_w*0.60), (monitor_h*0.65)]}
+window_rules | match={title=^(Open Folder)(.*)$} effects={center=True}
+window_rules | match={title=^(Open Folder)(.*)$} effects={float=True}
+window_rules | match={title=^(Save As)(.*)$} effects={center=True}
+window_rules | match={title=^(Save As)(.*)$} effects={float=True}
+window_rules | match={title=^(Library)(.*)$} effects={center=True}
+window_rules | match={title=^(Library)(.*)$} effects={float=True}
+window_rules | match={title=^(File Upload)(.*)$} effects={center=True}
+window_rules | match={title=^(File Upload)(.*)$} effects={float=True}
+window_rules | match={title=^(.*)(wants to save)$} effects={center=True}
+window_rules | match={title=^(.*)(wants to save)$} effects={float=True}
+window_rules | match={title=^(.*)(wants to open)$} effects={center=True}
+window_rules | match={title=^(.*)(wants to open)$} effects={float=True}
+window_rules | match={class=^(blueberry\.py)$} effects={float=True}
+window_rules | match={class=^(guifetch)$} effects={float=True}
+window_rules | match={class=^(pavucontrol)$} effects={float=True}
+window_rules | match={class=^(pavucontrol)$} effects={size=[(monitor_w*0.45), (monitor_h*0.45)]}
+window_rules | match={class=^(pavucontrol)$} effects={center=True}
+window_rules | match={class=^(org.pulseaudio.pavucontrol)$} effects={float=True}
+window_rules | match={class=^(org.pulseaudio.pavucontrol)$} effects={size=[(monitor_w*0.45), (monitor_h*0.45)]}
+window_rules | match={class=^(org.pulseaudio.pavucontrol)$} effects={center=True}
+window_rules | match={class=^(nm-connection-editor)$} effects={float=True}
+window_rules | match={class=^(nm-connection-editor)$} effects={size=[(monitor_w*0.45), (monitor_h*0.45)]}
+window_rules | match={class=^(nm-connection-editor)$} effects={center=True}
+window_rules | match={class=.*plasmawindowed.*} effects={float=True}
+window_rules | match={class=cm_.*} effects={float=True}
+window_rules | match={class=.*bluedevilwizard} effects={float=True}
+window_rules | match={title=.*Welcome} effects={float=True}
+window_rules | match={title=^(illogical-impulse Settings)$} effects={float=True}
+window_rules | match={title=.*Shell conflicts.*} effects={float=True}
+window_rules | match={class=rg.freedesktop.impl.portal.desktop.kde} effects={float=True}
+window_rules | match={class=rg.freedesktop.impl.portal.desktop.kde} effects={size=[(monitor_w*0.60), (monitor_h*0.65)]}
+window_rules | match={class=^(Zotero)$} effects={float=True}
+window_rules | match={class=^(Zotero)$} effects={size=[(monitor_w*0.45), (monitor_h*0.45)]}
+window_rules | match={class=^(plasma-changeicons)$} effects={float=True}
+window_rules | match={class=^(plasma-changeicons)$} effects={no_initial_focus=True}
+window_rules | match={class=^(plasma-changeicons)$} effects={move=[999999, 999999]}
+window_rules | match={title=^(Copying — Dolphin)$} effects={move=[40, 80]}
+window_rules | match={class=^dev\.warp\.Warp$} effects={tile=True}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={float=True}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={keep_aspect_ratio=True}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={move=[(monitor_w*0.73), (monitor_h*0.72)]}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={size=[(monitor_w*0.25), (monitor_h*0.25)]}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={float=True}
+window_rules | match={title=^([Pp]icture[-\s]?[Ii]n[-\s]?[Pp]icture)(.*)$} effects={pin=True}
+window_rules | match={title=.*is sharing (a window|your screen).*} effects={float=True}
+window_rules | match={title=.*is sharing (a window|your screen).*} effects={pin=True}
+window_rules | match={title=.*is sharing (a window|your screen).*} effects={move=[(monitor_w*.5-window_w*.5), (monitor_h-window_h-12)]}
+window_rules | match={title=.*\.exe} effects={immediate=True}
+window_rules | match={title=.*minecraft.*} effects={immediate=True}
+window_rules | match={class=^(steam_app).*} effects={immediate=True}
+window_rules | match={class=^jetbrains-.*$, float=1, title=^$|^\s$|^win\d+$} effects={no_initial_focus=True}
+window_rules | match={float=0} effects={no_shadow=True}
+window_rules | match={pin=1} effects={border_color=rgba(afc6ffAA) rgba(afc6ff77)}
+layer_rules | match={namespace=.*} effects={xray=True}
+layer_rules | match={namespace=walker} effects={no_anim=True}
+layer_rules | match={namespace=selection} effects={no_anim=True}
+layer_rules | match={namespace=overview} effects={no_anim=True}
+layer_rules | match={namespace=anyrun} effects={no_anim=True}
+layer_rules | match={namespace=indicator.*} effects={no_anim=True}
+layer_rules | match={namespace=osk} effects={no_anim=True}
+layer_rules | match={namespace=hyprpicker} effects={no_anim=True}
+layer_rules | match={namespace=noanim} effects={no_anim=True}
+layer_rules | match={namespace=gtk-layer-shell} effects={blur=True}
+layer_rules | match={namespace=gtk-layer-shell} effects={ignore_alpha=0}
+layer_rules | match={namespace=launcher} effects={blur=True}
+layer_rules | match={namespace=launcher} effects={ignore_alpha=0.5}
+layer_rules | match={namespace=notifications} effects={blur=True}
+layer_rules | match={namespace=notifications} effects={ignore_alpha=0.69}
+layer_rules | match={namespace=sideleft.*} effects={animation=slide left}
+layer_rules | match={namespace=sideright.*} effects={animation=slide right}
+layer_rules | match={namespace=session[0-9]*} effects={blur=True}
+layer_rules | match={namespace=bar[0-9]*} effects={blur=True}
+layer_rules | match={namespace=bar[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=barcorner.*} effects={blur=True}
+layer_rules | match={namespace=barcorner.*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=dock[0-9]*} effects={blur=True}
+layer_rules | match={namespace=dock[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=indicator.*} effects={blur=True}
+layer_rules | match={namespace=indicator.*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=overview[0-9]*} effects={blur=True}
+layer_rules | match={namespace=overview[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=cheatsheet[0-9]*} effects={blur=True}
+layer_rules | match={namespace=cheatsheet[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=sideright[0-9]*} effects={blur=True}
+layer_rules | match={namespace=sideright[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=sideleft[0-9]*} effects={blur=True}
+layer_rules | match={namespace=sideleft[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=indicator.*} effects={blur=True}
+layer_rules | match={namespace=indicator.*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=osk[0-9]*} effects={blur=True}
+layer_rules | match={namespace=osk[0-9]*} effects={ignore_alpha=0.6}
+layer_rules | match={namespace=quickshell:.*} effects={blur_popups=True}
+layer_rules | match={namespace=quickshell:.*} effects={blur=True}
+layer_rules | match={namespace=quickshell:.*} effects={ignore_alpha=0.79}
+layer_rules | match={namespace=quickshell:bar} effects={animation=slide}
+layer_rules | match={namespace=quickshell:actionCenter} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:cheatsheet} effects={animation=slide bottom}
+layer_rules | match={namespace=quickshell:dock} effects={animation=slide bottom}
+layer_rules | match={namespace=quickshell:screenCorners} effects={animation=popin 120%}
+layer_rules | match={namespace=quickshell:lockWindowPusher} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:notificationPopup} effects={animation=fade}
+layer_rules | match={namespace=quickshell:overlay} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:overlay} effects={ignore_alpha=1}
+layer_rules | match={namespace=quickshell:overview} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:osk} effects={animation=slide bottom}
+layer_rules | match={namespace=quickshell:polkit} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:popup} effects={xray=False}
+layer_rules | match={namespace=quickshell:popup} effects={ignore_alpha=1}
+layer_rules | match={namespace=quickshell:mediaControls} effects={ignore_alpha=1}
+layer_rules | match={namespace=quickshell:reloadPopup} effects={animation=slide}
+layer_rules | match={namespace=quickshell:regionSelector} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:screenshot} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:session} effects={blur=True}
+layer_rules | match={namespace=quickshell:session} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:session} effects={ignore_alpha=0}
+layer_rules | match={namespace=quickshell:sidebarRight} effects={animation=slide right}
+layer_rules | match={namespace=quickshell:sidebarLeft} effects={animation=slide left}
+layer_rules | match={namespace=quickshell:verticalBar} effects={animation=slide}
+layer_rules | match={namespace=quickshell:osk} effects={order=-1}
+layer_rules | match={namespace=quickshell:wallpaperSelector} effects={animation=slide top}
+layer_rules | match={namespace=quickshell:wNotificationCenter} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:wOnScreenDisplay} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:wStartMenu} effects={no_anim=True}
+layer_rules | match={namespace=quickshell:wTaskView} effects={ignore_alpha=0}
+layer_rules | match={namespace=quickshell:wTaskView} effects={no_anim=True}
+layer_rules | match={namespace=gtk4-layer-shell} effects={no_anim=True}
+workspace_rules | workspace=special:special fields={gaps_out=30}
+monitors | fields={mode=preferred, position=auto, scale=1}
+curves | name=expressiveFastSpatial spec={points=[[0.42, 1.67], [0.21, 0.9]], type=bezier}
+curves | name=expressiveSlowSpatial spec={points=[[0.39, 1.29], [0.35, 0.98]], type=bezier}
+curves | name=expressiveDefaultSpatial spec={points=[[0.38, 1.21], [0.22, 1]], type=bezier}
+curves | name=emphasizedDecel spec={points=[[0.05, 0.7], [0.1, 1]], type=bezier}
+curves | name=emphasizedAccel spec={points=[[0.3, 0], [0.8, 0.15]], type=bezier}
+curves | name=standardDecel spec={points=[[0, 0], [0, 1]], type=bezier}
+curves | name=menu_decel spec={points=[[0.1, 1], [0, 1]], type=bezier}
+curves | name=menu_accel spec={points=[[0.52, 0.03], [0.72, 0.08]], type=bezier}
+curves | name=stall spec={points=[[1, -0.1], [0.7, 0.85]], type=bezier}
+animations | leaf=windowsIn fields={bezier=emphasizedDecel, enabled=True, speed=3, style=popin 80%}
+animations | leaf=fadeIn fields={bezier=emphasizedDecel, enabled=True, speed=3}
+animations | leaf=windowsOut fields={bezier=emphasizedDecel, enabled=True, speed=2, style=popin 90%}
+animations | leaf=fadeOut fields={bezier=emphasizedDecel, enabled=True, speed=2}
+animations | leaf=windowsMove fields={bezier=emphasizedDecel, enabled=True, speed=3, style=slide}
+animations | leaf=border fields={bezier=emphasizedDecel, enabled=True, speed=10}
+animations | leaf=layersIn fields={bezier=emphasizedDecel, enabled=True, speed=2.7, style=popin 93%}
+animations | leaf=layersOut fields={bezier=menu_accel, enabled=True, speed=2.4, style=popin 94%}
+animations | leaf=fadeLayersIn fields={bezier=menu_decel, enabled=True, speed=0.5}
+animations | leaf=fadeLayersOut fields={bezier=stall, enabled=True, speed=2.7}
+animations | leaf=workspaces fields={bezier=menu_decel, enabled=True, speed=7, style=slide}
+animations | leaf=specialWorkspaceIn fields={bezier=emphasizedDecel, enabled=True, speed=2.8, style=slidevert}
+animations | leaf=specialWorkspaceOut fields={bezier=emphasizedAccel, enabled=True, speed=1.2, style=slidevert}
+animations | leaf=zoomFactor fields={bezier=standardDecel, enabled=True, speed=3}
+gestures | fields={action=move, direction=swipe, fingers=3}
+gestures | fields={action=float, direction=pinch, fingers=3}
+gestures | fields={action=workspace, direction=horizontal, fingers=4}
+env | name=ELECTRON_OZONE_PLATFORM_HINT value=auto
+env | name=XDG_DATA_DIRS value=$HOME/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share:/usr/share
+env | name=QT_QPA_PLATFORM value=wayland;xcb
+env | name=QT_QPA_PLATFORMTHEME value=kde
+env | name=XDG_MENU_PREFIX value=plasma-
+env | name=ILLOGICAL_IMPULSE_VIRTUAL_ENV value=$HOME/.local/state/quickshell/.venv
+env | name=qsConfig value=ii
+env | name=terminal value=$HOME/.config/hypr/hyprland/scripts/launch_first_available.sh 'kitty -1' 'foot' 'alacritty' 'wezterm' 'konsole' 'kgx' 'uxterm' 'xterm'
+env | name=fileManager value=$HOME/.config/hypr/hyprland/scripts/launch_first_available.sh 'dolphin' 'nautilus' 'nemo' 'thunar' 'kitty -1 fish -c yazi'
+env | name=browser value=$HOME/.config/hypr/hyprland/scripts/launch_first_available.sh 'google-chrome-stable' 'zen-browser' 'firefox' 'brave' 'chromium' 'microsoft-edge-stable' 'opera' 'librewolf'
+env | name=codeEditor value=$HOME/.config/hypr/hyprland/scripts/launch_first_available.sh 'antigravity' 'code' 'codium' 'cursor' 'zed' 'zedit' 'zeditor' 'kate' 'gnome-text-editor' 'emacs' 'command -v nvim && kitty -1 nvim' 'command -v micro && kitty -1 micro'
+env | name=officeSoftware value=$HOME/.config/hypr/hyprland/scripts/launch_first_available.sh 'wps' 'onlyoffice-desktopeditors' 'libreoffice'
+env | name=textEditor value=$HOME/.config/hypr/hyprland/scripts/launch_first_available.sh 'kate' 'gnome-text-editor' 'emacs'
+env | name=volumeMixer value=$HOME/.config/hypr/hyprland/scripts/launch_first_available.sh 'pavucontrol-qt' 'pavucontrol'
+env | name=settingsApp value=XDG_CURRENT_DESKTOP=gnome $HOME/.config/hypr/hyprland/scripts/launch_first_available.sh 'qs -p $HOME/.config/quickshell/$qsConfig/settings.qml' 'systemsettings' 'gnome-control-center' 'better-control'
+env | name=taskManager value=$HOME/.config/hypr/hyprland/scripts/launch_first_available.sh 'gnome-system-monitor' 'plasma-systemmonitor --page-name Processes' 'command -v btop && kitty -1 fish -c btop'
+
+# loss
+L32 info | hl.on('hyprland.start') handler kept verbatim in legacy.lua and shown read-only
+L32 info | hl.gesture takes a function here, which the settings app cannot show; the whole call was kept verbatim in legacy.lua
+L32 info | hl.gesture takes a function here, which the settings app cannot show; the whole call was kept verbatim in legacy.lua
+L32 info | hl.bind takes a function here, which the settings app cannot show; the whole call was kept verbatim in legacy.lua
+L32 info | hl.bind takes a function here, which the settings app cannot show; the whole call was kept verbatim in legacy.lua
+L32 info | hl.bind takes a function here, which the settings app cannot show; the whole call was kept verbatim in legacy.lua
+L32 info | hl.bind takes a function here, which the settings app cannot show; the whole call was kept verbatim in legacy.lua
+L32 info | hl.bind takes a function here, which the settings app cannot show; the whole call was kept verbatim in legacy.lua
