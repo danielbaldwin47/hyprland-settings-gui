@@ -27,7 +27,7 @@ broken before conversion; the stream stays complete either way.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
@@ -99,9 +99,6 @@ class Handler:
     """Trailing flag letters for the three `allowFlags` handlers -- `bindle` -> `"le"`.
     Which letters are legal is a keybind question, not a grammar one, so they are carried
     verbatim rather than validated here (research #4 §1.7)."""
-
-    lhs: str = ""
-    """The left-hand side exactly as written, for diagnostics and round-tripping."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,8 +197,6 @@ class Severity(enum.StrEnum):
     WARNING = "warning"
     """Parsed, but something was lost or decided in a way the user must see."""
 
-    INFO = "info"
-
 
 class DiagnosticCode(enum.StrEnum):
     """Closed set of grammar-level findings.
@@ -246,7 +241,7 @@ class Diagnostic:
     message: str
     origin: Origin
     text: str = ""
-    suppressed: bool = field(default=False)
+    suppressed: bool = False
     """True when `# hyprlang noerror` was in force. hyprlang suppresses *recording* the
     error but still parses the line (`config.cpp:1034`), so the finding is kept and flagged
     rather than discarded -- the user asked their config not to complain, not for the

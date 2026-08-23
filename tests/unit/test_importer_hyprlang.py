@@ -11,11 +11,11 @@ what catches an interaction two isolated rules were each happy with.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
-from _support import FIXTURE_DIR, GOLDEN_DIR, render_keyword_stream
+from _golden import assert_matches_golden, render_keyword_stream
+from _support import FIXTURE_DIR, GOLDEN_DIR
 
 from hyprtweaker.engine.importer import (
     Assignment,
@@ -148,6 +148,25 @@ class TestVariables:
             "$mod = SUPER\n$modAlt = $mod ALT\ngeneral {\n  a = $modAlt\n}\n",
         )
         assert assignments(result)["general:a"] == "SUPER ALT"
+
+    def test_a_definition_captures_its_value_eagerly(self, tmp_path: Path) -> None:
+        """A later redefinition of `$a` does not reach through a `$b` that referenced it.
+
+        Verified against libhyprlang 0.6.8 directly: this config leaves the option at 1,
+        so definitions are expanded at the point of definition, not at the point of use.
+        """
+        result = parse_text(
+            tmp_path,
+            "$a = 1\n$b = $a\n$a = 2\ngeneral {\n  border_size = $b\n}\n",
+        )
+        assert assignments(result) == {"general:border_size": "1"}
+
+    def test_arithmetic_runs_on_a_definition_line(self, tmp_path: Path) -> None:
+        """`$d = {{ g * 2 }}` stores `10` -- only unescaping is skipped for `$VAR =`."""
+        result = parse_text(
+            tmp_path, "$g = 5\n$d = {{ g * 2 }}\ngeneral {\n  border_size = $d\n}\n"
+        )
+        assert assignments(result) == {"general:border_size": "10"}
 
     def test_an_undefined_variable_stays_literal(self, tmp_path: Path) -> None:
         result = parse_text(tmp_path, "general {\n  a = $NOPE\n}\n")
@@ -297,11 +316,47 @@ class TestSpecialCategories:
         block = only_special(result)
         assert (block.key_field, block.key_value) == ("output", "DP-1")
 
-    def test_plugin_is_static_and_nests_one_level(self, tmp_path: Path) -> None:
+    def test_plugin_is_static_and_nests(self, tmp_path: Path) -> None:
         result = parse_text(tmp_path, "plugin {\n  hyprbars {\n    bar_height = 20\n  }\n}\n")
         block = only_special(result)
         assert block.key_field is None
         assert [(f.key, f.value) for f in block.fields] == [("hyprbars:bar_height", "20")]
+
+    def test_a_block_nested_in_any_special_category_folds_into_the_field_path(
+        self, tmp_path: Path
+    ) -> None:
+        """Not just `plugin`: hyprlang folds a nested block into the field path, and the
+        special block survives the inner `}`.
+
+        Verified against libhyprlang 0.6.8, which reports the field as
+        `device:nested:k` and still applies `sensitivity` to `device[m]` afterwards.
+        """
+        result = parse_text(
+            tmp_path,
+            "device {\n"
+            "  name = m\n"
+            "  nested {\n    k = 1\n  }\n"
+            "  sensitivity = 0.5\n"
+            "}\n"
+            "misc:after = 3\n",
+        )
+        block = only_special(result)
+        assert [(f.key, f.value) for f in block.fields] == [
+            ("name", "m"),
+            ("nested:k", "1"),
+            ("sensitivity", "0.5"),
+        ]
+        assert assignments(result) == {"misc:after": "3"}
+
+    def test_a_special_category_name_matches_verbatim(self, tmp_path: Path) -> None:
+        """`Device { }` is a plain category, not the `device` special category.
+
+        Verified against libhyprlang 0.6.8, which rejects it with
+        "config option <Device:name> does not exist".
+        """
+        result = parse_text(tmp_path, "Device {\n  name = m\n  sensitivity = 0.5\n}\n")
+        assert not [k for k in result.keywords if isinstance(k, SpecialCategory)]
+        assert assignments(result) == {"Device:name": "m", "Device:sensitivity": "0.5"}
 
     def test_windowrule_is_both_a_handler_and_a_keyed_category(self, tmp_path: Path) -> None:
         result = parse_text(
@@ -419,6 +474,19 @@ class TestDirectives:
     def test_an_unknown_directive_is_an_ordinary_comment(self, tmp_path: Path) -> None:
         result = parse_text(tmp_path, "# hyprlang frobnicate\n# just a comment\n")
         assert not result.diagnostics
+
+    def test_a_double_hash_is_a_comment_not_a_directive(self, tmp_path: Path) -> None:
+        """Exactly one `#` is stripped before the `hyprlang` test.
+
+        Verified against libhyprlang 0.6.8: with `##`, the `if` block is never closed, so
+        everything after it stays skipped.
+        """
+        result = parse_text(
+            tmp_path,
+            "# hyprlang if NOPE\ngeneral {\n  a = 1\n}\n"
+            "## hyprlang endif\ngeneral {\n  b = 2\n}\n",
+        )
+        assert not assignments(result)
 
     def test_noerror_suppresses_the_record_but_not_the_parse(self, tmp_path: Path) -> None:
         result = parse_text(tmp_path, "# hyprlang noerror true\nnonsense line\n")
@@ -558,20 +626,10 @@ class TestGrammarGolden:
 
     def test_the_grammar_tree_matches_its_golden(self) -> None:
         result = parse(GRAMMAR_TREE / "hyprland.conf", env=FIXTURE_ENV)
-        actual = render_keyword_stream(result, GRAMMAR_TREE)
-        golden = GOLDEN_DIR / "importer" / "grammar.stream.txt"
-
-        if os.environ.get("UPDATE_GOLDEN"):
-            golden.parent.mkdir(parents=True, exist_ok=True)
-            golden.write_text(actual, encoding="utf-8")
-            pytest.skip(f"regenerated {golden.name}")
-
-        assert golden.is_file(), (
-            f"missing golden file {golden}; create it with UPDATE_GOLDEN=1 and read the diff"
-        )
-        assert actual == golden.read_text(encoding="utf-8"), (
-            "the hyprlang keyword stream changed. If that is intended, regenerate with "
-            "UPDATE_GOLDEN=1 and review the diff in the PR."
+        assert_matches_golden(
+            render_keyword_stream(result, GRAMMAR_TREE),
+            GOLDEN_DIR / "importer" / "grammar.stream.txt",
+            "the hyprlang keyword stream",
         )
 
     def test_the_golden_tree_exercises_every_diagnostic_the_grammar_can_raise(self) -> None:

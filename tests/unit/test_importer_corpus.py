@@ -19,10 +19,9 @@ differently for every user running it.
 
 from __future__ import annotations
 
-import os
-
 import pytest
-from _support import CORPUS_DIR, GOLDEN_DIR, render_keyword_stream
+from _golden import assert_matches_golden, render_keyword_stream
+from _support import CORPUS_DIR, GOLDEN_DIR
 
 from hyprtweaker.engine.importer import (
     Assignment,
@@ -61,20 +60,10 @@ def result() -> ParseResult:
 
 
 def test_the_rice_matches_its_snapshot(result: ParseResult) -> None:
-    actual = render_keyword_stream(result, CORPUS_DIR / RICE)
-    golden = GOLDEN_DIR / "importer" / f"{RICE}.stream.txt"
-
-    if os.environ.get("UPDATE_GOLDEN"):
-        golden.parent.mkdir(parents=True, exist_ok=True)
-        golden.write_text(actual, encoding="utf-8")
-        pytest.skip(f"regenerated {golden.name}")
-
-    assert golden.is_file(), (
-        f"missing golden file {golden}; create it with UPDATE_GOLDEN=1 and read the diff"
-    )
-    assert actual == golden.read_text(encoding="utf-8"), (
-        f"the keyword stream for {RICE} changed. If that is intended, regenerate with "
-        "UPDATE_GOLDEN=1 and review the diff in the PR."
+    assert_matches_golden(
+        render_keyword_stream(result, CORPUS_DIR / RICE),
+        GOLDEN_DIR / "importer" / f"{RICE}.stream.txt",
+        f"the keyword stream for {RICE}",
     )
 
 

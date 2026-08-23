@@ -15,7 +15,7 @@ that per-keyword value grammar is the mapping half's job. Keeping the seam here 
 lets the grammar be tested exhaustively against synthetic fixtures while the messy mapping
 rules are tested against real rices.
 
-Three deliberate deviations from hyprlang, each because faithfulness would be useless:
+Four deliberate deviations from hyprlang, each because faithfulness would be useless:
 
 - **`source =` cycles are guarded.** hyprlang has no cycle guard and recurses until it
   crashes. A file already open in the current chain is refused with a diagnostic.
@@ -25,6 +25,13 @@ Three deliberate deviations from hyprlang, each because faithfulness would be us
 - **Division by zero in `{{ }}` is diagnosed**, not evaluated to infinity. The C++ float
   division would emit `inf`, which every downstream value parser rejects anyway; a
   diagnostic names the real problem.
+- **Variable expansion is bounded by length**, not only by round count -- see
+  `MAX_EXPANSION_LENGTH`.
+
+Where research #4 §1 was ambiguous or wrong, the behaviour was settled by probing the
+installed `libhyprlang.so.0.6.8` directly rather than by reading the prose twice; the four
+rules that needed it say so at their definition (eager variable capture, verbatim category
+names, `##` not being a directive, and nested blocks inside a special category).
 
 Usage::
 
@@ -36,10 +43,11 @@ Usage::
 from __future__ import annotations
 
 import glob
+import operator
 import os
 import re
 import struct
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -122,7 +130,14 @@ line is 64 KiB, so this bounds the damage without bounding anything legitimate."
 _EXPRESSION = re.compile(r"\{\{([^{}]*)\}\}")
 _INLINE_KEYED = re.compile(r"^([A-Za-z0-9_]+)\[([^\]]*)\]:(.+)$")
 
-_OPERATORS: dict[str, str] = {"+": "+", "-": "-", "*": "*", "/": "/"}
+_OPERATORS: dict[str, Callable[[float, float], float]] = {
+    "+": operator.add,
+    "-": operator.sub,
+    "*": operator.mul,
+    "/": operator.truediv,
+}
+"""The four operators `{{ A op B }}` accepts -- no precedence, no nesting, no chaining
+(`config.cpp:627-662`). Membership here is also what rejects a bad operator."""
 
 
 def _to_float32(value: float) -> float:
@@ -235,7 +250,10 @@ class _SpecialBlock:
     category: str
     origin: Origin
     fields: list[SpecialField] = field(default_factory=list)
-    subcategory: str | None = None
+    subcategories: list[str] = field(default_factory=list)
+    """Categories opened *inside* the block. hyprlang folds these into the field path --
+    `device { nested { k = 1 } }` addresses `device:nested:k` -- and the block itself
+    survives the inner `}`. Verified against libhyprlang 0.6.8 directly."""
 
 
 class Parser:
@@ -254,9 +272,9 @@ class Parser:
         follow_source: bool = True,
     ) -> None:
         self.environment: dict[str, str] = dict(os.environ if env is None else env)
+        # Hyprland exports this around `parse()` (`ConfigManager.cpp:710-745`); rices test
+        # it with `# hyprlang if` to branch on the config generation.
         self.environment.setdefault("HYPRLAND_V_0_53", "1")
-        """Hyprland exports this around `parse()` (`ConfigManager.cpp:710-745`); rices test
-        it with `# hyprlang if` to branch on the config generation."""
 
         self.result = ParseResult()
         self.variables: dict[str, str] = dict(self.environment)
@@ -367,7 +385,7 @@ class Parser:
             )
             return None
 
-        left, operator, right = parts
+        left, symbol, right = parts
         try:
             first = _to_float32(float(self.variables.get(left, left)))
             second = _to_float32(float(self.variables.get(right, right)))
@@ -381,7 +399,7 @@ class Parser:
             )
             return None
 
-        if operator == "/" and second == 0:
+        if symbol == "/" and second == 0:
             self._report(
                 Severity.ERROR,
                 DiagnosticCode.BAD_EXPRESSION,
@@ -391,15 +409,7 @@ class Parser:
             )
             return None
 
-        if operator == "+":
-            value = first + second
-        elif operator == "-":
-            value = first - second
-        elif operator == "*":
-            value = first * second
-        else:
-            value = first / second
-        return _format_number(_to_float32(value))
+        return _format_number(_to_float32(_OPERATORS[symbol](first, second)))
 
     @staticmethod
     def _unescape(text: str) -> str:
@@ -499,7 +509,14 @@ class Parser:
         self._unparsed(line, origin, DiagnosticCode.INVALID_LINE, "invalid config line")
 
     def _assignment(self, body: str, origin: Origin, raw: str) -> None:
-        """`key = value`, split at the first `=`; later `=` stay in the value."""
+        """`key = value`, split at the first `=`; later `=` stay in the value.
+
+        A variable's value is expanded and evaluated **eagerly**, at the point of
+        definition, so a later redefinition of what it referenced does not change it.
+        Verified against libhyprlang 0.6.8 directly: `$a = 1 / $b = $a / $a = 2` leaves
+        `$b` as `1`, not `2`. Arithmetic runs on these lines too (`$d = {{ g * 2 }}`
+        stores `10`); only unescaping is skipped (`config.cpp:730,805`).
+        """
         lhs, rhs = body.split("=", 1)
         lhs, rhs = lhs.strip(), rhs.strip()
         defines_variable = lhs.startswith("$")
@@ -525,9 +542,7 @@ class Parser:
 
     def _dispatch(self, lhs: str, rhs: str, origin: Origin, raw: str) -> None:
         if self._special is not None:
-            key = lhs
-            if self._special.subcategory is not None:
-                key = f"{self._special.subcategory}:{lhs}"
+            key = ":".join([*self._special.subcategories, lhs])
             self._special.fields.append(SpecialField(key=key, value=rhs, origin=origin))
             return
 
@@ -546,12 +561,12 @@ class Parser:
                     raw,
                 )
             self.result.keywords.append(
-                Handler(name=name, value=rhs, origin=origin, flags=flags, lhs=lhs)
+                Handler(name=name, value=rhs, origin=origin, flags=flags)
             )
             return
 
         inline = _INLINE_KEYED.match(lhs)
-        if inline is not None and inline.group(1).lower() in SPECIAL_CATEGORIES:
+        if inline is not None and inline.group(1) in SPECIAL_CATEGORIES:
             self._inline_special(inline, rhs, origin)
             return
 
@@ -575,6 +590,12 @@ class Parser:
         A `:` anywhere in the LHS disqualifies both forms, which is what keeps
         `binds:workspace_back_and_forth` a config value rather than a `bind` invocation
         (`config.cpp:844-873`).
+
+        hyprlang calls *every* matching handler rather than stopping at the first. No two
+        entries in `EXACT_HANDLERS` and `FLAG_HANDLERS` can match one LHS today -- the flag
+        prefixes are mutually exclusive and none is a prefix of an exact name -- so first
+        match and all matches are the same set. Adding a handler that overlaps another
+        would break that, and is what would make the loop below need to return a list.
         """
         if ":" in lhs:
             return None
@@ -589,7 +610,7 @@ class Parser:
 
     def _inline_special(self, match: re.Match[str], rhs: str, origin: Origin) -> None:
         """`device[NAME]:sensitivity = 1` -- the spelling `hyprctl keyword` uses."""
-        category = match.group(1).lower()
+        category = match.group(1)
         key_value = match.group(2)
         field_name = match.group(3)
         key_field = SPECIAL_CATEGORIES[category] or "name"
@@ -607,20 +628,26 @@ class Parser:
     # -- categories ---------------------------------------------------------------------
 
     def _open_category(self, name: str, origin: Origin) -> None:
-        lowered = name.lower()
-        if not self._categories and self._special is None and lowered in SPECIAL_CATEGORIES:
-            self._special = _SpecialBlock(category=lowered, origin=origin)
+        """Open a category, a special-category block, or a block nested inside one.
+
+        Category names match verbatim: `Device { }` is a plain category, not the `device`
+        special category. Confirmed against libhyprlang 0.6.8, which rejects it with
+        "config option <Device:name> does not exist".
+        """
+        if not self._categories and self._special is None and name in SPECIAL_CATEGORIES:
+            self._special = _SpecialBlock(category=name, origin=origin)
             return
-        if self._special is not None and self._special.category == "plugin":
-            # `plugin { hyprbars { ... } }` -- one nesting level, folded into the field key.
-            self._special.subcategory = name
+        if self._special is not None:
+            # `plugin { hyprbars { ... } }`, `device { nested { ... } }` -- any depth,
+            # folded into the field path rather than closing the block.
+            self._special.subcategories.append(name)
             return
         self._categories.append(name)
 
     def _close_category(self, origin: Origin, raw: str) -> None:
         if self._special is not None:
-            if self._special.category == "plugin" and self._special.subcategory is not None:
-                self._special.subcategory = None
+            if self._special.subcategories:
+                self._special.subcategories.pop()
                 return
             self._emit_special(self._special)
             self._special = None
@@ -665,8 +692,13 @@ class Parser:
     # -- directives ----------------------------------------------------------------------
 
     def _directive(self, line: str, origin: Origin) -> None:
-        """`# hyprlang noerror|if|endif`; anything else is an ordinary comment."""
-        text = line.lstrip("#").strip()
+        """`# hyprlang noerror|if|endif`; anything else is an ordinary comment.
+
+        Exactly one `#` is stripped, so `## hyprlang endif` is a comment and not a
+        directive -- confirmed against libhyprlang 0.6.8, where the `##` form leaves the
+        open `if` block unclosed.
+        """
+        text = line[1:].strip()
         parts = text.split()
         if len(parts) < 2 or parts[0] != "hyprlang":
             return
@@ -714,9 +746,7 @@ class Parser:
         `source =` resolves relative to *its own* file (`ConfigManager.cpp:1802-1855`).
         """
         if not self._follow_source:
-            self.result.keywords.append(
-                Handler(name="source", value=rhs, origin=origin, lhs="source")
-            )
+            self.result.keywords.append(Handler(name="source", value=rhs, origin=origin))
             return
 
         raw = rhs.strip()
