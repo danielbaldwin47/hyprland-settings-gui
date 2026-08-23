@@ -19,7 +19,7 @@ git fetch origin
 git merge-base --is-ancestor "$(gh pr view <n> --json mergeCommit -q .mergeCommit.oid)" origin/main
 ```
 
-Merge without `--delete-branch`: the repo deletes the remote branch on merge already, and the flag's local deletion fails from a worktree (`fatal: 'main' is already used by worktree`). The last line verifies the squash commit reached `main` (the PR head SHA never will — squash rewrites it). On failure the merge landed on a stale base — reland the head branch as a fresh PR against `main` and say so in your report. On success the landing is fully confirmed — close the ticket now; a vigil on post-merge CI only delays the baton.
+Merge without `--delete-branch`: the repo deletes the remote branch on merge already, and the flag's local deletion fails from a worktree (`fatal: 'main' is already used by worktree`). Run the fetch and verify against your own worktree (`git -C <your-worktree> fetch origin` then the merge-base check) — commands redirected at the shared checkout are refused under worktree isolation. The last line verifies the squash commit reached `main` (the PR head SHA never will — squash rewrites it). On failure the merge landed on a stale base — reland the head branch as a fresh PR against `main` and say so in your report. On success the landing is fully confirmed — close the ticket now; a vigil on post-merge CI only delays the baton.
 
 ## Cleanup
 
@@ -30,7 +30,7 @@ git -C <repo-root> worktree remove --force <your-worktree-path>
 git -C <repo-root> branch -D issue-<n>
 ```
 
-Last act because removing the worktree you stand in leaves the shell in a deleted directory — nothing runs after it. A held PR keeps its worktree and branches: they are still the work.
+Last act because removing the worktree you stand in leaves the shell in a deleted directory — nothing runs after it. This works only for a worktree you created yourself (`git worktree add`); a harness-created isolation worktree refuses to remove itself — skip cleanup there, say so in your report, and the dispatcher reclaims it. A held PR keeps its worktree and branches: they are still the work.
 
 ## Held PRs
 

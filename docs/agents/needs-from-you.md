@@ -5,7 +5,7 @@ Leftovers for the human accumulate in one **inbox**: the open issue labeled `nee
 ## When closing a ticket with leftovers
 
 1. Sort each leftover: a **task** (a step the human performs) or a **decision** (a choice that shapes future work).
-2. Decision → spawn a fable-model subagent (Agent tool, `model: fable`) with the decision, its options, and repo context, asked for a bird's-eye verdict:
+2. Decision → a fable-model subagent (Agent tool, `model: fable`) gets the decision, its options, and repo context, and returns a bird's-eye verdict. Batch every pending decision into that one spawn at close-out — one verdict each, one subagent total. Exception: a decision settled empirically against the reference implementation (probe output in hand) is a fact, not a judgement call — log it as FYI directly. For each judgement call the verdict says:
    - needs the human → the subagent writes a `grilling` ticket (shape below); the leftover becomes the checklist item `- [ ] Grill: <topic> → #<n>`.
    - does not → apply its call; the leftover becomes the FYI line `decided: <call> — <rationale>`.
 3. Append one comment to the inbox with the new items. Word every item as a standalone actionable step — the reader acts on it without opening the source ticket. End the comment with ticket + PR links.
