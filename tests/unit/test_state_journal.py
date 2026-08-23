@@ -158,7 +158,7 @@ def test_last_known_good_is_the_newest_confirmed_write(tmp_path: Path) -> None:
     transaction(journal, paths, GENERAL, "-- first\n", confirmed=True)
     transaction(journal, paths, GENERAL, "-- second\n", confirmed=True)
 
-    assert journal.last_known_good(GENERAL) == b"-- second\n"
+    assert journal.last_known_good(GENERAL).data == b"-- second\n"
 
 
 def test_an_unconfirmed_write_never_becomes_last_known_good(tmp_path: Path) -> None:
@@ -169,7 +169,7 @@ def test_an_unconfirmed_write_never_becomes_last_known_good(tmp_path: Path) -> N
     transaction(journal, paths, GENERAL, "-- good\n", confirmed=True)
     transaction(journal, paths, GENERAL, "-- unverified\n", confirmed=False)
 
-    assert journal.last_known_good(GENERAL) == b"-- good\n"
+    assert journal.last_known_good(GENERAL).data == b"-- good\n"
 
 
 def test_last_known_good_is_per_module(tmp_path: Path) -> None:
@@ -178,7 +178,7 @@ def test_last_known_good_is_per_module(tmp_path: Path) -> None:
     transaction(journal, paths, GENERAL, "-- general\n", confirmed=True)
     transaction(journal, paths, DECORATION, "-- decoration\n", confirmed=False)
 
-    assert journal.last_known_good(GENERAL) == b"-- general\n"
+    assert journal.last_known_good(GENERAL).data == b"-- general\n"
     assert journal.last_known_good(DECORATION) is None
 
 
@@ -191,13 +191,13 @@ def test_the_previous_digest_is_the_newest_write_confirmed_or_not(tmp_path: Path
     transaction(journal, paths, GENERAL, "-- never verified\n", confirmed=False)
 
     assert journal.snapshot(journal.previous_digest(GENERAL)) == b"-- confirmed\n"
-    assert journal.last_known_good(GENERAL) == b"-- confirmed\n"
+    assert journal.last_known_good(GENERAL).data == b"-- confirmed\n"
 
     transaction(journal, paths, GENERAL, "-- rejected\n", confirmed=False)
 
     # The revert target moves with every write; Last known good does not.
     assert journal.snapshot(journal.previous_digest(GENERAL)) == b"-- never verified\n"
-    assert journal.last_known_good(GENERAL) == b"-- confirmed\n"
+    assert journal.last_known_good(GENERAL).data == b"-- confirmed\n"
 
 
 def test_a_module_with_no_confirmed_write_has_no_last_known_good(tmp_path: Path) -> None:
@@ -241,7 +241,7 @@ def test_pruning_pins_each_modules_newest_confirmed_entry(tmp_path: Path) -> Non
     for index in range(5):
         transaction(journal, paths, GENERAL, f"-- {index}\n", confirmed=True)
 
-    assert journal.last_known_good(DECORATION) == b"-- the good one\n"
+    assert journal.last_known_good(DECORATION).data == b"-- the good one\n"
     # The pin is *in addition to* the window, not instead of it.
     assert len(journal.entries()) == 3
 
@@ -284,7 +284,7 @@ def test_a_truncated_last_line_costs_that_entry_and_nothing_else(tmp_path: Path)
         handle.write('{"format_version": 1, "at": "2026-')
 
     assert len(journal.entries()) == 1
-    assert journal.last_known_good(GENERAL) == b"-- good\n"
+    assert journal.last_known_good(GENERAL).data == b"-- good\n"
 
 
 def test_an_entry_from_an_unknown_format_is_skipped(tmp_path: Path) -> None:

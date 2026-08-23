@@ -22,11 +22,12 @@ from types import TracebackType
 
 from ..ipc import CommandClient, EventStream
 from ..model import ConfigModel
-from ..state import Journal
+from ..state import Journal, LastKnownGood
 from ..writer import Writer
 from .foreign import ForeignReloadWatch
 from .preview import EvalPreview
-from .queue import DEBOUNCE_SECONDS, ApplyQueue
+from .queue import DEBOUNCE_SECONDS, ApplyQueue, Transaction
+from .restore import ReloadTransaction, RestoreTransaction
 from .result import ApplyResult
 from .transaction import RELOAD_TIMEOUT_SECONDS, ApplyTransaction
 
@@ -47,9 +48,13 @@ class _Quieted:
 
     A wrapper rather than a step inside `ApplyTransaction`, because the transaction has no
     business knowing a preview tier exists -- composing the two is what `Applier` is for.
+
+    Wraps any `Transaction`, not just the apply one: a Restore last good ends in a reload and
+    reads `configerrors` to find out whether it worked, so an eval landing across it would
+    erase the evidence in exactly the same way.
     """
 
-    def __init__(self, transaction: ApplyTransaction, preview: EvalPreview) -> None:
+    def __init__(self, transaction: Transaction, preview: EvalPreview) -> None:
         self._transaction = transaction
         self._preview = preview
 
@@ -96,6 +101,10 @@ class Applier:
         and silently show a config that stopped being true, which is the failure the clause
         exists to prevent. Pass a re-read; there is no sensible default.
         """
+        self._model = model
+        self._writer = writer
+        self._client = client
+        self._journal = journal
         self._transaction = ApplyTransaction(
             model=model,
             writer=writer,
@@ -163,6 +172,42 @@ class Applier:
         that jumped the queue would reorder the user's own changes behind their back.
         """
         return await self._queue.apply_now(*names)
+
+    def restore(self, restores: Sequence[LastKnownGood]) -> RestoreTransaction:
+        """Build a Restore last good over `restores`, wired to this session's collaborators.
+
+        A factory rather than a method that also runs it, because the caller needs the
+        object first: `options` is what the restore will re-read, and ADR-0016's Banner names
+        those before the user agrees to anything.
+        """
+        return RestoreTransaction(
+            model=self._model,
+            writer=self._writer,
+            client=self._client,
+            # The *shared* reloader, so the restore's own reload is not mistaken for a
+            # foreign one and answered with a re-read of the config it is replacing.
+            reloader=self._transaction.reloader,
+            restores=restores,
+            journal=self._journal,
+        )
+
+    def reload_only(self, options: Sequence[str] = ()) -> ReloadTransaction:
+        """Build a write-free reload, for a recovery that has already changed a file."""
+        return ReloadTransaction(
+            model=self._model,
+            client=self._client,
+            reloader=self._transaction.reloader,
+            options=options,
+        )
+
+    async def restore_now(self, restore: RestoreTransaction | ReloadTransaction) -> ApplyResult:
+        """Run a recovery operation ahead of anything waiting.
+
+        Quieted like an Apply transaction: `eval` clears `configerrors`, and a preview tick
+        still in flight would erase the very errors this recovery is about to read to find
+        out whether it worked.
+        """
+        return await self._queue.run_now(_Quieted(restore, self._preview), restore.options)
 
     # --- lifecycle --------------------------------------------------------------------------
 

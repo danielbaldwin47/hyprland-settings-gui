@@ -152,10 +152,21 @@ def test_last_known_good_is_what_a_confirmed_write_left(tmp_path: Path) -> None:
 
     journal, _ = one_apply(tmp_path, model, GAPS_IN)
 
-    assert (
-        journal.last_known_good(GENERAL_MODULE)
-        == (tmp_path / "hypr" / "hyprtweaker" / GENERAL_MODULE).read_bytes()
-    )
+    good = journal.last_known_good(GENERAL_MODULE)
+    assert good is not None
+    assert good.data == (tmp_path / "hypr" / "hyprtweaker" / GENERAL_MODULE).read_bytes()
+
+
+def test_last_known_good_records_the_options_those_bytes_set(tmp_path: Path) -> None:
+    """Restoring puts the model back too, and the app cannot learn that from the Lua (#62)."""
+    model = fresh_model()
+    model.set(GAPS_IN, 6)
+
+    journal, _ = one_apply(tmp_path, model, GAPS_IN)
+
+    good = journal.last_known_good(GENERAL_MODULE)
+    assert good is not None
+    assert GAPS_IN in good.options
 
 
 # --- confirmed is stricter than ok ------------------------------------------------------------

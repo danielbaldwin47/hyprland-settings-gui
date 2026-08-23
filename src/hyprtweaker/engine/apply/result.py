@@ -172,8 +172,28 @@ class ApplyResult:
     pending_restart: tuple[str, ...] = ()
     """Restart-flagged keys this transaction wrote: on file, effective after a restart."""
 
+    binds: int | None = None
+    """How many keybinds the live config declared after this reload, if it was asked.
+
+    Only probed when the reload reported errors, so `None` means "not asked" on every clean
+    apply rather than "none". The two must not be conflated: ADR-0016's emergency restore
+    fires on *zero*, and treating an unasked probe as zero would have a clean transaction
+    trigger an emergency restore past the user's consent gate.
+    """
+
     detail: str = ""
     """Human-readable "why", for the outcomes whose cause is an exception message."""
+
+    @property
+    def stranded(self) -> bool:
+        """Config errors *and* no keybinds: Hyprland's emergency mode (ADR-0016).
+
+        The one condition that lets the app overwrite a hand edit without asking. Both
+        halves are required -- errors alone is an ordinary unhealthy state, and a config
+        that genuinely declares no binds is a legitimate (if unusual) choice that nothing
+        went wrong in.
+        """
+        return self.outcome is ApplyOutcome.CONFIG_ERRORS and self.binds == 0
 
     @property
     def ok(self) -> bool:

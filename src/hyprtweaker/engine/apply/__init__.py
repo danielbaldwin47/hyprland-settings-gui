@@ -50,12 +50,16 @@ from .foreign import ForeignReloadWatch
 from .ownership import ConfigError, Ownership, attribute, own_write_modules
 from .preview import EvalPreview, preview_code
 from .queue import DEBOUNCE_SECONDS, ApplyQueue, Transaction
+from .recovery import Action, Problem, Recovery, plan
 from .reread import ReRead, app_owned_options, read_state
+from .restore import RestoreTransaction
 from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch
 from .transaction import (
     RELOAD_TIMEOUT_SECONDS,
     SETTLE_SECONDS,
     ApplyTransaction,
+    Reloader,
+    ReloadReport,
 )
 from .undo import UNDO_MAX_DEPTH, Edit, UndoStack, UndoStep
 
@@ -65,6 +69,7 @@ __all__ = [
     "SETTLE_SECONDS",
     "UNDO_MAX_DEPTH",
     "UNREADABLE",
+    "Action",
     "Applier",
     "ApplyOutcome",
     "ApplyQueue",
@@ -76,13 +81,19 @@ __all__ = [
     "ForeignReloadWatch",
     "Mismatch",
     "Ownership",
+    "Problem",
     "ReRead",
+    "Recovery",
+    "ReloadReport",
+    "Reloader",
+    "RestoreTransaction",
     "Transaction",
     "UndoStack",
     "UndoStep",
     "app_owned_options",
     "attribute",
     "own_write_modules",
+    "plan",
     "preview_code",
     "read_state",
 ]

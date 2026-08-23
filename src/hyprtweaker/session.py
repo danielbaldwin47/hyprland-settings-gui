@@ -30,19 +30,23 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Coroutine, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from hyprtweaker.engine.apply import (
+    Action,
     Applier,
     ApplyOutcome,
     ApplyResult,
     Edit,
+    Problem,
+    Recovery,
     ReRead,
     UndoStack,
     UndoStep,
     app_owned_options,
     own_write_modules,
+    plan,
     read_state,
 )
 from hyprtweaker.engine.ipc import (
@@ -55,8 +59,8 @@ from hyprtweaker.engine.ipc import (
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
-from hyprtweaker.engine.state import Journal, Manifest, content_hash
-from hyprtweaker.engine.writer import Writer
+from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
+from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
 
 _log = logging.getLogger(__name__)
 
@@ -87,6 +91,102 @@ class AutoRevert:
     False is the escalation ADR-0016 names -- "if the restore transaction itself errors ...
     escalate to the Banner and stop auto-writing until the user acts". The toast still says
     what was attempted; what it must not do is claim a recovery that did not happen."""
+
+
+@dataclass(frozen=True, slots=True)
+class Health:
+    """Everything the one Banner shows, decided once (ADR-0016 §Surfacing).
+
+    ADR-0016 allows the app **one** persistent Banner for every unhealthy state there is --
+    config errors, an Entrypoint refusal, an active Quarantine -- and this session has a
+    fourth that predates it: no compositor, so nothing can be applied at all. One widget
+    cannot show four sentences, so something has to rank them, and doing that in the window
+    would put the ranking somewhere no test without a display can reach.
+
+    So the judgement is made here and the window renders the answer. That is the same split
+    `offline_reason` already drew ("why this session is read-only, in one line fit for the
+    Banner"); this is that idea grown to cover the rest of the states.
+    """
+
+    offline_reason: str | None = None
+    recovery: Recovery = field(default_factory=Recovery)
+    quarantined: tuple[str, ...] = ()
+    """Requires the Entrypoint is currently leaving out. Unhealthy on its own: a disabled
+    `user.lua` is a config that is not doing what its owner wrote, and the Banner is the only
+    thing standing between that and a very confusing afternoon."""
+
+    halted: bool = False
+    """Automatic recovery has failed and stopped (`Session.recovery_halted`)."""
+
+    @property
+    def unhealthy(self) -> bool:
+        """Whether the Banner shows at all."""
+        return bool(
+            self.offline_reason or self.recovery.unhealthy or self.quarantined or self.halted
+        )
+
+    @property
+    def severe(self) -> bool:
+        """Whether the Banner should read as an error rather than as a warning.
+
+        Reserved for the three states where the config is not doing what the user believes
+        it is doing: the compositor refused the Entrypoint and is running the *previous*
+        config, the user has no keybinds, or the app has given up repairing things itself.
+        An ordinary rejected value is loud enough as a plain Banner.
+        """
+        return self.recovery.entrypoint_refused or self.recovery.stranded or self.halted
+
+    @property
+    def title(self) -> str:
+        """The Banner's one line. Empty when there is nothing wrong.
+
+        Ordered by what the user most needs to know, not by which check ran first. Being
+        stranded outranks everything because it is the state they cannot get themselves out
+        of; read-only outranks the rest because nothing else can be acted on while it holds.
+        """
+        if self.recovery.stranded:
+            return f"Your keybinds are not loaded — {self._first_error}"
+        if self.offline_reason is not None:
+            return f"{self.offline_reason} — settings are read-only."
+        if self.recovery.entrypoint_refused:
+            return "Hyprland rejected the last write and is running the previous config."
+        if self.halted:
+            return "Hyprland rejected a change, and the app could not put it back."
+        if self.recovery.unhealthy:
+            return "Hyprland reported a problem with your config."
+        if self.quarantined:
+            disabled = ", ".join(f"{name}.lua" for name in self.quarantined)
+            return f"{disabled} is disabled until you fix it."
+        return ""
+
+    @property
+    def button(self) -> str | None:
+        """What the Banner's button says, or `None` when it has nothing to open.
+
+        A Banner with no errors behind it -- a Quarantine the user has already dealt with,
+        or a session with no compositor -- gets no button rather than one opening an empty
+        dialog.
+        """
+        if self.recovery.unhealthy:
+            return "Details"
+        if self.quarantined:
+            return "Re-enable"
+        return None
+
+    @property
+    def _first_error(self) -> str:
+        """The line to name in a stranded Banner: `user.lua:12`, not the whole message.
+
+        ADR-0016 spells this one out ("error in user.lua:12"), and the reason is that a
+        stranded user is reading the Banner off a screen they cannot navigate away from.
+        """
+        for problem in self.recovery.problems:
+            if not problem.path:
+                continue
+            name = problem.path.rsplit("/", 1)[-1]
+            line = problem.line
+            return f"error in {name}:{line}" if line is not None else f"error in {name}"
+        return "the config could not be loaded."
 
 
 Spawn = Callable[[Coroutine[Any, Any, None]], None]
@@ -172,6 +272,16 @@ class Session:
 
         self._reverting = False
         self._recovery_halted = False
+        self._recovery = Recovery()
+        """What the last reload said was wrong, attributed. The Banner is a view of this.
+
+        Replaced wholesale by every reload the app hears about -- its own transactions, and
+        the startup and foreign-reload re-reads -- because `configerrors` is itself replaced
+        wholesale: it describes the *last* parse and nothing older. Accumulating would leave
+        the Banner naming a file the user fixed two reloads ago."""
+
+        self._restoring = False
+        """Whether a Restore last good is in flight, so a second cannot start on top of it."""
 
     # --- what the UI reads ------------------------------------------------------------------
 
@@ -202,6 +312,40 @@ class Session:
     def offline_reason(self) -> str | None:
         """Why this session is read-only, in one line fit for the Banner."""
         return self._offline_reason
+
+    @property
+    def paths(self) -> ConfigPaths:
+        """Where the config lives. What the Banner's Open file action needs."""
+        return self._paths
+
+    @property
+    def recovery(self) -> Recovery:
+        """The last reload's problems and what may be done about each (ADR-0016)."""
+        return self._recovery
+
+    @property
+    def health(self) -> Health:
+        """The whole of what the one Banner shows, right now.
+
+        Assembled per call rather than cached: it is four cheap reads, and a cached copy
+        would be a fifth piece of state to keep in step with the four it summarises.
+        """
+        return Health(
+            offline_reason=self._offline_reason,
+            recovery=self._recovery,
+            quarantined=self.quarantined,
+            halted=self._recovery_halted,
+        )
+
+    @property
+    def quarantined(self) -> tuple[str, ...]:
+        """Requires the Entrypoint is currently leaving out (ADR-0016 §Quarantine).
+
+        Read off the Manifest rather than held, because the Manifest is where the decision
+        lives -- and because the file is the thing the next write will consult, so a cached
+        copy could disagree with what the Entrypoint actually says.
+        """
+        return self._manifest().quarantined
 
     @property
     def pending_restart(self) -> frozenset[str]:
@@ -427,14 +571,16 @@ class Session:
         self._offline_reason = None
         self._changed()
 
-    def _owned(self) -> tuple[ResolvedOption, ...]:
-        """Exactly the Options the Manifest records this app as having written."""
-        manifest = Manifest.load(
+    def _manifest(self) -> Manifest:
+        return Manifest.load(
             self._paths.manifest,
             app_version=self._app_version,
             schema_version=self._schema.hyprland_version,
         )
-        return app_owned_options(self._schema, manifest)
+
+    def _owned(self) -> tuple[ResolvedOption, ...]:
+        """Exactly the Options the Manifest records this app as having written."""
+        return app_owned_options(self._schema, self._manifest())
 
     async def _recover(self, client: CommandClient) -> ReRead:
         """Re-read the Options this app already wrote (ADR-0010, `reread.py`).
@@ -452,7 +598,27 @@ class Session:
             len(result.unreadable),
             len(result.unknown),
         )
+        # "On launch ... the full re-read + drift scan attributes any errors and raises the
+        # same Banner" (ADR-0016 §Surfacing). Breakage that happened while the app was closed
+        # is not a lesser kind of breakage, and the app has to open saying so.
+        await self._scan(client)
         return result
+
+    async def _scan(self, client: CommandClient) -> None:
+        """Read what the live config is complaining about, and raise the Banner for it.
+
+        For the two reloads the app did not perform: the one before it started, and any
+        foreign one since. Failures are swallowed -- a session that could not read
+        `configerrors` has learned nothing, and refusing to start over it would turn a
+        transient socket hiccup into an app that will not open.
+        """
+        try:
+            errors = await client.configerrors()
+            binds = await client.bind_count() if errors else None
+        except IpcError as error:
+            _log.warning("could not read the config's health: %s", error)
+            return
+        self._observe_foreign(errors, binds)
 
     async def drain(self) -> None:
         """Wait until every pending edit has been applied and confirmed.
@@ -520,8 +686,8 @@ class Session:
         cannot revise is an Option the app deliberately set to null -- no reply spells "no
         value" -- so those keep their state and surface an override as a drift badge (#57).
 
-        Attributing any `configerrors` the foreign reload produced, and raising the Banner
-        for them (ADR-0016 §Surfacing), is #60's -- this re-read is the state half only.
+        The errors that reload produced are attributed and raised on the same Banner by the
+        scan at the end of the re-read (ADR-0016 §Surfacing).
         """
         if self._closing:
             return
@@ -561,6 +727,9 @@ class Session:
             len(result.adopted),
             len(result.cleared),
         )
+        # The other half ADR-0016 asks for: somebody else's reload can break the config just
+        # as thoroughly as the app's own, and it surfaces identically.
+        await self._scan(client)
         self._changed()
 
     def _on_stream_lost(self) -> None:
@@ -585,24 +754,29 @@ class Session:
             # `_open_gestures`, and the next transaction records it from the value it really
             # started at rather than from the one the revert put back.
             self._recovery_result(result)
+            self._observe(result)
             self._report(result)
             return
 
         delta = self._close(result.keys)
         blamed = self._own_write_errors(result)
         if blamed and self._may_auto_revert(delta):
+            # No Banner for this one. The auto-revert is about to reload, and the errors it
+            # is answering will be gone by the time the user could read about them -- the
+            # toast is what tells that story (ADR-0016 reserves one for exactly this).
             self._auto_revert(result, delta, blamed)
             return
         if blamed and not self._recovery_halted:
             # Our own write, rejected, with nothing recorded to put back -- which the app
             # cannot reach by editing, only by writing without an edit. Reverting blind would
             # mean re-rendering the same model into the same bad bytes, so this reports and
-            # stops. Raising the Banner for it is #60's.
+            # stops, and the Banner says so.
             _log.error("own write rejected with no model delta to revert: %s", result.errors)
             self._recovery_halted = True
 
         step = self._step(delta)
         self._undo.record(step)
+        self._observe(result)
         self._report(result)
         if step is not None and result.ok and self.on_recorded is not None:
             # After `on_applied`, and only for a transaction that stands: the window shows one
@@ -652,6 +826,192 @@ class Session:
         if result.outcome is not ApplyOutcome.CONFIG_ERRORS:
             return ()
         return own_write_modules(result.errors, written=result.written)
+
+    # --- what is wrong, and what may be done about it (ADR-0016) ------------------------------
+
+    def _observe(self, result: ApplyResult) -> None:
+        """Take this reload's errors as the app's current unhealthy state, and act if stranded.
+
+        Every finished reload lands here, clean ones included -- a clean reload is how a
+        Banner *clears*, and a recovery that only ever raised one would leave the user
+        looking at a problem they had already fixed.
+        """
+        self._recovery = plan(result.errors, written=result.written, binds=result.binds)
+        if self._recovery.auto_restorable and not self._restoring:
+            self._emergency_restore(self._recovery.auto_restorable)
+
+    def _observe_foreign(self, errors: Sequence[str], binds: int | None) -> None:
+        """The same, for a reload this app did not perform.
+
+        `written` is empty on purpose: nothing the app wrote is in flight, so no error here
+        can be an `OWN_WRITE` -- and claiming one would authorise an automatic rewrite of a
+        file somebody else has just changed (ADR-0016 §Attribution).
+        """
+        self._recovery = plan(errors, binds=binds)
+        if self._recovery.auto_restorable and not self._restoring:
+            self._emergency_restore(self._recovery.auto_restorable)
+
+    def _emergency_restore(self, modules: Sequence[str]) -> None:
+        """Put app-owned Modules back without asking, because the user has no keybinds.
+
+        ADR-0016 §Zero-binds: "stranded-user beats hand-edit sanctity". The one path in this
+        app that overwrites a hand edit with no consent, and it is deliberately narrow --
+        `Recovery.auto_restorable` is empty unless the bind count came back as exactly zero,
+        and never names a file the app does not own. What the user loses is preserved: the
+        restore snapshots the bytes it replaces into the Journal before touching them.
+        """
+        _log.error("no keybinds after a failed reload; restoring %s", ", ".join(modules))
+        self.restore_last_good(*modules)
+
+    # --- the recovery actions -----------------------------------------------------------------
+
+    def last_good_for(self, module: str) -> LastKnownGood | None:
+        """What Restore last good would put back for one Module, without putting it back.
+
+        What the Banner asks before offering the button: a Module the app has never confirmed
+        a write to has nothing to restore *to*, and an action that did nothing would be worse
+        than one that was never offered.
+        """
+        return self._journal.last_known_good(module)
+
+    def restore_last_good(self, *modules: str) -> bool:
+        """Put `modules` back to their newest confirmed bytes. `False` if nothing can be.
+
+        ADR-0016's Restore last good, for both the classes that offer it: the hand-edited app
+        Module the user chose it for, and the emergency that takes it without asking. The
+        difference between those two is entirely in *who calls this* -- by the time it runs,
+        the decision is made.
+        """
+        if not self.live or self._applier is None or self._restoring:
+            return False
+
+        restores = [
+            good
+            for good in (self._journal.last_known_good(module) for module in modules)
+            if good is not None
+        ]
+        if not restores:
+            _log.warning("nothing to restore: no confirmed write to %s", ", ".join(modules))
+            return False
+
+        self._spawn(self._restore_transaction(restores))
+        return True
+
+    async def _restore_transaction(self, restores: Sequence[LastKnownGood]) -> None:
+        applier = self._applier
+        if applier is None:
+            return
+
+        self._restoring = True
+        try:
+            result = await applier.restore_now(applier.restore(restores))
+        except (IpcError, RuntimeError) as error:
+            _log.error("the restore transaction failed: %s", error)
+            self._recovery_halted = True
+            self._changed()
+            return
+        finally:
+            self._restoring = False
+
+        if not result.ok:
+            # A restore that did not land is exactly the escalation ADR-0016 names: stop
+            # recovering automatically and leave the Banner up for the user.
+            _log.error("restore last good did not land: %s", result.outcome)
+            self._recovery_halted = True
+
+        # The restore re-read the model itself, so the Rows have moved; and its own reload's
+        # errors are the current truth about the config, replacing the ones it was answering.
+        self._observe(result)
+        self._report(result)
+        self._changed()
+
+    def quarantine(self, require: str) -> bool:
+        """Regenerate the Entrypoint without `require`, and reload (ADR-0016 §Quarantine).
+
+        The only recovery the app can offer for a file it must never write. Consent is the
+        caller's to have obtained -- the ADR gates this behind an explicit dialog -- and
+        reversal is `release_quarantine`, which is the same act with the name taken out
+        again. That symmetry is what makes the ADR's "one-click re-enable" true.
+        """
+        return self._set_quarantine({*self.quarantined, require})
+
+    def release_quarantine(self, require: str) -> bool:
+        """Put `require` back in the Entrypoint and reload. The one-click reversal."""
+        return self._set_quarantine(set(self.quarantined) - {require})
+
+    def quarantine_target(self, problem: Problem) -> str | None:
+        """The `require` path a foreign Problem names, or `None` when it names none.
+
+        Matched against the require list the app would actually generate rather than derived
+        from the path Hyprland printed. The two can differ -- a symlinked dotfile directory,
+        a bind mount, a `$HOME` resolved differently -- and a quarantine recorded under a
+        name the Entrypoint never emits would be a Banner that says a file is disabled while
+        the config goes on loading it.
+        """
+        if not problem.offers(Action.QUARANTINE) or not problem.path:
+            return None
+        discovered = ModuleSet.discover(self._paths, [])
+        candidates = [
+            name
+            for name in (discovered.legacy, discovered.user, *discovered.bridges)
+            if name is not None
+        ]
+        for require in candidates:
+            if problem.path == f"{require}.lua" or problem.path.endswith(f"/{require}.lua"):
+                return require
+        return None
+
+    def regenerate_entrypoint(self) -> bool:
+        """Rewrite `hyprland.lua` and reload -- ADR-0016's Entrypoint Fix.
+
+        Offered as a one-click fix, unlike every other app-owned file, because the Entrypoint
+        holds no decisions of the user's: it is derived entirely from which Modules exist and
+        which requires are quarantined, so there is nothing in it a regeneration could lose.
+        """
+        if not self.live or self._applier is None:
+            return False
+        try:
+            self._writer.regenerate_entrypoint(self._model)
+        except (LuaSyntaxError, ProtectedFile, OSError, ValueError) as error:
+            _log.error("could not regenerate the Entrypoint: %s", error)
+            return False
+        self._spawn(self._reload_after_recovery())
+        return True
+
+    def _set_quarantine(self, requires: set[str]) -> bool:
+        if not self.live or self._applier is None:
+            return False
+        try:
+            self._writer.set_quarantine(self._model, sorted(requires))
+        except (LuaSyntaxError, ProtectedFile, OSError, ValueError) as error:
+            _log.error("could not change the Quarantine: %s", error)
+            return False
+        self._spawn(self._reload_after_recovery())
+        return True
+
+    async def _reload_after_recovery(self) -> None:
+        """Make an Entrypoint rewrite take effect, and re-read what the config now says.
+
+        A plain apply would do the wrong thing here: it renders the model over the App dir,
+        and the file that just changed is the one file the model does not describe. So this
+        restores nothing and writes nothing -- it reloads, and finds out what happened.
+        """
+        applier = self._applier
+        if applier is None:
+            return
+        # Every owned Option, not a narrow set: quarantining `user.lua` changes the value of
+        # everything that file was overriding, and the app cannot know which those were
+        # without asking about all of them.
+        wanted = tuple(option.name for option in self._owned())
+        try:
+            result = await applier.restore_now(applier.reload_only(wanted))
+        except (IpcError, RuntimeError) as error:
+            _log.error("could not reload after a recovery: %s", error)
+            self._changed()
+            return
+        self._observe(result)
+        self._report(result)
+        self._changed()
 
     # --- auto-revert (ADR-0016) ---------------------------------------------------------------
 
