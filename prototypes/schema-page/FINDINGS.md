@@ -3,7 +3,9 @@
 Resolves issue [#8](https://github.com/danielbaldwin47/hyprland-settings-gui/issues/8) (part of #1).
 Hyprland `0.56.2` (`efb5099`), libadwaita 1.9, PyGObject/GTK 4, 2026-08-19.
 
-Throwaway code lives beside this file. `./run.sh --sections input` opens the page;
+Throwaway code lives on the
+[`prototype/schema-driven-page`](https://github.com/danielbaldwin47/hyprland-settings-gui/tree/prototype/schema-driven-page/prototypes/schema-page)
+branch (main keeps only this findings doc). There, `./run.sh --sections input` opens the page;
 the **Curated** switch in the header rebuilds the same generator with `overlay.json`
 turned off, which is the whole experiment.
 

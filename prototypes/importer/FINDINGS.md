@@ -1,7 +1,9 @@
 # Prototype: hyprlang → Lua importer, verified on the real config and a rice corpus
 
 **Issue:** #9 (part of #1). **Date:** 2026-08-19. **Hyprland:** 0.56.2 (`efb5099`).
-**Status:** prototype complete; throwaway code under `prototypes/importer/`.
+**Status:** prototype complete; throwaway code on the
+[`prototype/hyprlang-importer`](https://github.com/danielbaldwin47/hyprland-settings-gui/tree/prototype/hyprlang-importer/prototypes/importer)
+branch (main keeps only this findings doc).
 
 **Question.** Is faithful conversion of hyprlang config trees to Lua feasible, and how is
 fidelity verified — on this box's real config and across popular rices?
@@ -306,6 +308,6 @@ python3 prototypes/importer/visual.py      /tmp/imp-visual  # screenshot diff
 python3 prototypes/importer/groundtruth.py /tmp/imp-gt      # vs upstream's Lua ports
 ```
 
-Results as run are checked in under `prototypes/importer/results/`: the generated `.lua` and
+Results as run are checked in under `prototypes/importer/results/` on the prototype branch: the generated `.lua` and
 warning report per rice, the three summary JSONs, the ground-truth comparison, and the two
 byte-identical `local` screenshots.
