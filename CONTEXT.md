@@ -46,6 +46,7 @@ Domain glossary. Terms here are the ones to use in tickets, code, and docs. Shar
 | **user.lua** | The escape hatch file the app never rewrites; arbitrary user Lua. Required last, so it overrides the GUI; diverging Options are badged "overridden in user.lua". |
 | **legacy.lua** | Imported constructs the GUI can't represent; written once by the Importer, never rewritten, listed read-only in the GUI. |
 | **Unset** | An Option the model does not emit — Hyprland's default applies (reload resets all values). Opposite: explicitly set, always emitted even when equal to the default. |
+| **Explicit null** | The third model state: a nullable Option deliberately set to "no value", emitted as the Overlay's curated `null_value` (`""`, `-1`). For the five colour/gradient fallbacks whose `null_value` the Lua engine rejects (`invalid color "-1"`), the null state *is* Unset — absence is Lua's only spelling for it (#51). |
 | **Value representations** | The up-to-three forms of one Option value: display text, Lua literal, and the parse of `getoption` output. 19/353 options differ in all three; gradients and css-gaps must be emitted as Lua tables, never `toString()` text. |
 | **Snapshot / Journal** | Per-write Module copies + change log in `$XDG_STATE_HOME/hyprtweaker/`, pruned; migration takes a full-tree backup there. |
 | **Importer** | The hyprlang → Lua converter that reads a `hyprland.conf` tree (following `source=`) into the model. |

@@ -38,10 +38,17 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pytest
+      # `luac` is the Writer's syntax gate (ADR-0010). It is not a runtime
+      # dependency -- the gate degrades to a no-op without it -- so this job
+      # installs it deliberately: a skipped gate would let a Module that does
+      # not parse go green, which is the one thing the gate exists to stop.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends lua5.4
       # No GTK installed on this runner at all, so the gi-mask seam test is
       # checked against a machine where gi genuinely does not exist as well as
       # against the masked one in the ui-smoke job below.
-      - run: pytest tests/unit -v
+      - env:
+          HYPRTWEAKER_REQUIRE_LUAC: '1'
+        run: pytest tests/unit -v
 
   ui-smoke:
     name: UI smoke tier (GTK4 + libadwaita)

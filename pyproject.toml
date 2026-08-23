@@ -30,7 +30,14 @@ python_version = "3.11"
 strict = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit", "tests/ui"]
+# The three per-commit tiers (ADR-0011). `tests/integration` is deliberately absent: it is
+# the nightly/on-demand tier and reaches for the network and a nested compositor.
+#
+# `tests/static` is `Hyprland --verify-config` over the writer's output -- no compositor,
+# well under a second, and it skips itself where no Hyprland binary exists. It belongs here
+# rather than behind `-m hyprland` because the developer machine that *can* run it is
+# exactly the one that should.
+testpaths = ["tests/unit", "tests/static", "tests/ui"]
 pythonpath = ["src"]
 markers = [
     "hyprland: integration tier; needs a real Hyprland binary (auto-skipped without one)",
