@@ -199,6 +199,17 @@ class FakeHyprland:
         self.never_answer = never_answer
         self.reload_emits_event = reload_emits_event
         self.reply_delay = reply_delay
+
+        self.on_request: Callable[[str, int], None] | None = None
+        """Called before each reply is looked up, with the request and how many times it had
+        already been received.
+
+        The way to script a compositor that changes its mind: a key absent on the first
+        Read-back round and present on the next is what the settle window exists for, and it
+        cannot be expressed as a fixed request-to-reply map. The hook mutates `conversation`
+        and the normal lookup then sees the new answer.
+        """
+
         self.requests: list[str] = []
         """Every request received on the command socket, in order -- the wire-level record a
         test asserts against (that `getoption` really did send the colon form, and so on)."""
@@ -304,6 +315,8 @@ class FakeHyprland:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         request = (await reader.read(4096)).decode("utf-8")
+        if self.on_request is not None:
+            self.on_request(request, self.requests.count(request))
         self.requests.append(request)
 
         if self.never_answer:

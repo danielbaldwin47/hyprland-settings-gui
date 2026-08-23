@@ -140,9 +140,13 @@ class ApplyResult:
     not know at all answers `no such option` -- neither says anything about what the config
     now holds.
 
-    Kept apart from `mismatches` because the two have opposite recoveries: ADR-0016 wires a
-    mismatch to auto-revert, so filing "could not read" under it would undo correct writes.
-    An unconfirmed key leaves the outcome `OK` and gives #60 something honest to badge.
+    Kept apart from `mismatches` because filing "could not read" as "did not apply" tells
+    the user a falsehood: ADR-0016 badges an unexplained mismatch on the Row as "didn't
+    apply", which for a font-weight write would be wrong every single time. It also keeps
+    `confirmed` honest -- see there.
+
+    The same word ADR-0016 uses for a timed-out transaction ("re-poll once; if still
+    unconfirmed"), in the same spirit but per key rather than per transaction.
     """
 
     pending_restart: tuple[str, ...] = ()
@@ -153,8 +157,32 @@ class ApplyResult:
 
     @property
     def ok(self) -> bool:
-        """The model and the live compositor agree, or there was nothing to make agree."""
+        """Nothing is known to have gone wrong -- so there is nothing to tell the user.
+
+        Not the same as "verified": a transaction with `unconfirmed` keys is `ok`, because
+        no error was reported and no value was found to disagree. `confirmed` is the
+        stricter question, and the one to ask before treating a write as good.
+        """
         return self.outcome in (ApplyOutcome.OK, ApplyOutcome.NOTHING_TO_DO)
+
+    @property
+    def confirmed(self) -> bool:
+        """Every key this transaction wrote was actually checked against the compositor.
+
+        ADR-0016's Last-known-good gate: "the newest Journal Snapshot whose transaction
+        confirmed clean (empty `configerrors` + read-back ok). Journal entries gain a
+        `confirmed` flag written after Read-back." This is that flag (#59 writes it).
+
+        Stricter than `ok` on purpose. A transaction that could not read half its keys back
+        has verified nothing about them, and promoting its Snapshot to last-known-good would
+        make the app's idea of "good" a state nobody ever checked -- which is exactly what
+        restore-last-good would then restore the user to.
+
+        Restart-flagged keys do not count against it: they are skipped by design, not by
+        failure, and a config made entirely of them would otherwise never establish a
+        last-known-good at all.
+        """
+        return self.outcome is ApplyOutcome.OK and not self.unconfirmed
 
     @property
     def reached_disk(self) -> bool:
