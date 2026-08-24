@@ -18,6 +18,7 @@ package_sources = {
     'dispatchers.py',
     'monitors_catalog.py',
     'paths.py',
+    'profiles.py',
     'rules_catalog.py',
     'triggers.py',
   ],

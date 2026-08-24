@@ -45,6 +45,7 @@ from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     rule_for,
     snap_position,
 )
+from hyprtweaker.engine.profiles import MonitorProfile  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -73,6 +74,59 @@ class MonitorActions:
     rename: Callable[[str, str], None]
     """Change a rule's identity string -- the "Match by" toggle (ADR-0008)."""
     remove: Callable[[str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileActions:
+    """The Monitor-profile verbs the window wires into the Page (ADR-0015).
+
+    Slugs address profiles the way output strings address rules. `activate` is a
+    breaking lane -- the window wraps it in Confirm-or-revert; the rest are benign,
+    file-level operations that never touch the compositor.
+    """
+
+    save: Callable[[str], None]
+    """Capture the current setup under a name from the save dialog."""
+    activate: Callable[[str], None]
+    """Render the named profile into the config -- wrapped in Confirm-or-revert."""
+    update: Callable[[str], None]
+    """Recapture over the named profile -- the drift badge's "Update profile"."""
+    detach: Callable[[], None]
+    """Forget the active pointer; the config stays exactly as it is."""
+    delete: Callable[[str], None]
+    """Remove the named profile's file; never touches the config."""
+
+
+class SaveProfileDialog(Adw.AlertDialog):
+    """ "Save as profile": one name entry, save disabled until it has one."""
+
+    def __init__(self, *, on_save: Callable[[str], None]) -> None:
+        super().__init__(
+            heading="Save as profile",
+            body=(
+                "Captures every display rule and each workspace's display, "
+                "to bring back in one click."
+            ),
+        )
+        self._on_save = on_save
+        self.entry = Gtk.Entry(placeholder_text="Docked", activates_default=True)
+        self.set_extra_child(self.entry)
+        self.add_response("cancel", "Cancel")
+        self.add_response("save", "Save")
+        self.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+        self.set_response_enabled("save", False)
+        self.set_default_response("save")
+        self.set_close_response("cancel")
+        self.entry.connect(
+            "changed",
+            lambda entry: self.set_response_enabled("save", bool(entry.get_text().strip())),
+        )
+        self.connect("response", self._on_response)
+
+    def _on_response(self, _dialog: Adw.AlertDialog, response: str) -> None:
+        name = self.entry.get_text().strip()
+        if response == "save" and name:
+            self._on_save(name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,9 +305,12 @@ class MonitorsPage:
     section = "monitors"
     title = "Displays"
 
-    def __init__(self, session: Session, *, actions: MonitorActions) -> None:
+    def __init__(
+        self, session: Session, *, actions: MonitorActions, profiles: ProfileActions
+    ) -> None:
         self._session = session
         self._actions = actions
+        self._profiles = profiles
         self._connected: tuple[Mapping[str, Any], ...] | None = None
         self._building = False
 
@@ -288,8 +345,22 @@ class MonitorsPage:
         )
         self._page.add(self._catch_all_group)
 
+        self._profiles_group = Adw.PreferencesGroup(
+            title="Profiles",
+            description=(
+                "Named captures of everything above, plus each workspace's display. "
+                "Activating one brings the whole setup back."
+            ),
+        )
+        save = Gtk.Button(label="Save current…", valign=Gtk.Align.CENTER)
+        save.set_tooltip_text("Capture the current setup as a new profile")
+        save.connect("clicked", self._on_save_profile_clicked)
+        self._profiles_group.set_header_suffix(save)
+        self._page.add(self._profiles_group)
+
         self._connected_rows: list[Adw.ExpanderRow] = []
         self._disconnected_rows: list[Adw.ExpanderRow] = []
+        self._profile_rows: list[Adw.ActionRow] = []
         self._catch_all_row: Adw.ExpanderRow | None = None
         self._listed: dict[Adw.PreferencesGroup, list[Gtk.Widget]] = {}
 
@@ -316,6 +387,15 @@ class MonitorsPage:
     @property
     def catch_all_row(self) -> Adw.ExpanderRow | None:
         return self._catch_all_row
+
+    @property
+    def profile_rows(self) -> tuple[Adw.ActionRow, ...]:
+        return tuple(self._profile_rows)
+
+    @property
+    def connected(self) -> tuple[Mapping[str, Any], ...]:
+        """The last helper answer as capture material: the fingerprint's raw form."""
+        return self._connected or ()
 
     @property
     def rules(self) -> list[MonitorRule]:
@@ -388,6 +468,7 @@ class MonitorsPage:
         self._listed = {}
         self._connected_rows = []
         self._disconnected_rows = []
+        self._profile_rows = []
         self._catch_all_row = None
 
         # The canvas: live outputs at logical size, IPC geometry (ADR-0008).
@@ -449,6 +530,89 @@ class MonitorsPage:
         )
         self._catch_all_group.add(self._catch_all_row)
         self._listed.setdefault(self._catch_all_group, []).append(self._catch_all_row)
+
+        active = self._session.active_monitor_profile()
+        active_slug = active[0] if active is not None else None
+        drifted = self._session.monitor_profile_drift()
+        profiles = self._session.monitor_profiles()
+        for slug, profile in profiles:
+            row = self._profile_row(
+                slug,
+                profile,
+                active=slug == active_slug,
+                drifted=drifted and slug == active_slug,
+                editable=editable,
+            )
+            self._profiles_group.add(row)
+            self._profile_rows.append(row)
+            self._listed.setdefault(self._profiles_group, []).append(row)
+        if not profiles:
+            hint = Adw.ActionRow(
+                title="No profiles yet",
+                subtitle="Save the current setup to switch between arrangements later.",
+            )
+            self._profiles_group.add(hint)
+            self._listed.setdefault(self._profiles_group, []).append(hint)
+
+    # -- profiles --
+
+    def _profile_row(
+        self,
+        slug: str,
+        profile: MonitorProfile,
+        *,
+        active: bool,
+        drifted: bool,
+        editable: bool,
+    ) -> Adw.ActionRow:
+        rules = len(profile.monitors)
+        pins = sum(1 for pin in profile.pins.values() if pin is not None)
+        summary = f"{rules} display {'rule' if rules == 1 else 'rules'}"
+        if pins:
+            summary += f" · {pins} workspace {'pin' if pins == 1 else 'pins'}"
+        row = Adw.ActionRow(title=profile.name, subtitle=summary)
+
+        if active and drifted:
+            # The drift badge (ADR-0015): reality and the capture disagree.
+            badge = Gtk.Label(
+                label="Changed since capture", css_classes=["dim-label", "caption"]
+            )
+            badge.set_tooltip_text(
+                "The display setup no longer matches this profile. Update the profile "
+                "to keep what you have, or detach to let them differ."
+            )
+            row.add_suffix(badge)
+            update = Gtk.Button(label="Update", valign=Gtk.Align.CENTER, css_classes=["flat"])
+            update.set_tooltip_text("Recapture the current setup into this profile")
+            update.connect("clicked", lambda _b: self._profiles.update(slug))
+            row.add_suffix(update)
+            detach = Gtk.Button(label="Detach", valign=Gtk.Align.CENTER, css_classes=["flat"])
+            detach.set_tooltip_text("Keep the current setup and stop tracking this profile")
+            detach.connect("clicked", lambda _b: self._profiles.detach())
+            row.add_suffix(detach)
+        elif active:
+            pill = Gtk.Label(label="Active", css_classes=["accent", "caption"])
+            pill.set_tooltip_text("The current setup is this profile")
+            row.add_suffix(pill)
+        else:
+            activate = Gtk.Button(label="Activate", valign=Gtk.Align.CENTER)
+            activate.set_tooltip_text(
+                "Apply this profile's rules and workspace pins, behind a revert countdown"
+            )
+            activate.set_sensitive(editable)
+            activate.connect("clicked", lambda _b: self._profiles.activate(slug))
+            row.add_suffix(activate)
+
+        remove = Gtk.Button(
+            icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"]
+        )
+        remove.set_tooltip_text("Delete this profile")
+        remove.connect("clicked", lambda _b: self._profiles.delete(slug))
+        row.add_suffix(remove)
+        return row
+
+    def _on_save_profile_clicked(self, _button: Gtk.Button) -> None:
+        SaveProfileDialog(on_save=self._profiles.save).present(self._page)
 
     # -- connected rows --
 

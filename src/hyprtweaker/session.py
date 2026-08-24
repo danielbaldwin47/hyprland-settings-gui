@@ -78,6 +78,16 @@ from hyprtweaker.engine.paths import (
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
 )
+from hyprtweaker.engine.profiles import (
+    MonitorProfile,
+    MonitorStateSnapshot,
+    ProfileStore,
+    activated,
+    capture,
+    connected_outputs,
+    drift,
+    matches,
+)
 from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
@@ -329,6 +339,9 @@ class Session:
         A list of the session's own rather than a raw `EventStream.subscribe`, because
         watchers register before the stream exists (the window builds against a session
         that has not connected yet) and must survive it never existing at all."""
+
+        self._profiles: ProfileStore | None = None
+        """The Monitor-profile store, built lazily over `monitor-profiles/` (#69)."""
 
         self._undo = UndoStack()
         self._open_gestures: dict[str, OptionValue] = {}
@@ -921,6 +934,171 @@ class Session:
 
         return self._commit_entity_edit("workspace rules", drop)
 
+    # --- monitor profiles -------------------------------------------------------------------
+
+    @property
+    def _profile_store(self) -> ProfileStore:
+        store = self._profiles
+        if store is None:
+            store = self._profiles = ProfileStore(self._paths.monitor_profiles_dir)
+        return store
+
+    def monitor_profiles(self) -> tuple[tuple[str, MonitorProfile], ...]:
+        """Every saved profile as `(slug, profile)`, sorted by name (ADR-0015)."""
+        return self._profile_store.list()
+
+    def save_monitor_profile(
+        self, name: str, connected: Sequence[Mapping[str, Any]] = ()
+    ) -> str:
+        """Capture the current display setup as a new profile, returning its slug.
+
+        Allowed on a read-only session -- a capture is a JSON file in the App dir, not a
+        config write, and "save what I have before experimenting" is most valuable
+        exactly when things are fragile. `connected` is the live `hyprctl -j monitors`
+        answer, helper data used as ADR-0008 allows: to fingerprint, never to
+        reconstruct rule state.
+        """
+        return self._profile_store.save(
+            capture(
+                name,
+                monitors=self._model.entities.monitors,
+                workspace_rules=self._model.entities.workspace_rules,
+                connected=connected_outputs(connected),
+            )
+        )
+
+    def activate_monitor_profile(self, slug: str) -> bool:
+        """Render a profile into the canonical Modules, in one Apply transaction.
+
+        The monitor list is replaced wholesale and every pinned workspace rule patched,
+        through the same `_commit_entity_edit` envelope as any other entity edit -- one
+        mutation, one `commit_entities`, so `monitors.lua` and `workspace_rules.lua`
+        change together or not at all (ADR-0015: "one normal Apply transaction").
+        Confirm-or-revert is the caller's wrapper, exactly as for a breaking field edit.
+        """
+        profile = self._profile_store.load(slug)
+        if profile is None:
+            return False
+        monitors, workspaces = activated(
+            profile, workspace_rules=self._model.entities.workspace_rules
+        )
+        return self._put_monitor_state(monitors, workspaces, slug)
+
+    def _put_monitor_state(
+        self,
+        monitors: Sequence[MonitorRule],
+        workspaces: Sequence[WorkspaceRule],
+        active: str | None,
+    ) -> bool:
+        """One transaction over both lists, then the pointer -- activation and its revert.
+
+        The pointer moves only after the commit is accepted, so a refused write never
+        claims a profile the files do not show.
+        """
+
+        def put() -> None:
+            self._model.entities.monitors[:] = list(monitors)
+            self._model.entities.workspace_rules[:] = list(workspaces)
+
+        if not self._commit_entity_edit("monitor profile", put):
+            return False
+        self._profile_store.set_active(active)
+        return True
+
+    def active_monitor_profile(self) -> tuple[str, MonitorProfile] | None:
+        """The profile the config on disk is, per the pointer -- or `None`."""
+        slug = self._profile_store.active_slug()
+        if slug is None:
+            return None
+        profile = self._profile_store.load(slug)
+        return None if profile is None else (slug, profile)
+
+    def monitor_profile_drift(self) -> bool:
+        """Whether the active profile and reality disagree -- the drift badge's condition.
+
+        True exactly when activating the profile again would change something, so the
+        badge clears on re-activation and on "Update profile", and a hand edit to
+        `monitors.lua` shows up the moment the file is re-read (ADR-0015).
+        """
+        active = self.active_monitor_profile()
+        if active is None:
+            return False
+        _, profile = active
+        return drift(
+            profile,
+            monitors=self._model.entities.monitors,
+            workspace_rules=self._model.entities.workspace_rules,
+        )
+
+    def update_monitor_profile(
+        self, slug: str, connected: Sequence[Mapping[str, Any]] = ()
+    ) -> bool:
+        """Recapture the current setup over an existing slug -- the drift badge's "Update"."""
+        existing = self._profile_store.load(slug)
+        if existing is None:
+            return False
+        self._profile_store.replace(
+            slug,
+            capture(
+                existing.name,
+                monitors=self._model.entities.monitors,
+                workspace_rules=self._model.entities.workspace_rules,
+                connected=connected_outputs(connected) or existing.connected,
+            ),
+        )
+        return True
+
+    def detach_monitor_profile(self) -> None:
+        """Forget which profile is active; the config stays exactly as it is."""
+        self._profile_store.set_active(None)
+
+    def delete_monitor_profile(self, slug: str) -> None:
+        self._profile_store.delete(slug)
+
+    def matching_monitor_profile(
+        self, connected: Sequence[Mapping[str, Any]]
+    ) -> tuple[str, MonitorProfile] | None:
+        """The profile the connected-output set matches, when activating it would change
+        anything -- the app-open toast's condition (ADR-0018).
+
+        A profile already in effect is excluded: offering to activate what the user is
+        looking at would be noise, and the exclusion is what keeps the toast quiet on
+        every ordinary launch of a stable setup.
+        """
+        live = connected_outputs(connected)
+        for slug, profile in self._profile_store.list():
+            if matches(profile, live) and drift(
+                profile,
+                monitors=self._model.entities.monitors,
+                workspace_rules=self._model.entities.workspace_rules,
+            ):
+                return slug, profile
+        return None
+
+    def monitor_state_snapshot(self) -> MonitorStateSnapshot:
+        """Both rule lists plus the active pointer -- what a profile revert restores.
+
+        Wider than `monitor_snapshot` because activation touches workspace pins and the
+        pointer too: reverting an activation that only put the monitor list back would
+        leave the pins of the profile the user just refused.
+        """
+        return MonitorStateSnapshot(
+            monitors=tuple(self._model.entities.monitors),
+            workspace_rules=tuple(self._model.entities.workspace_rules),
+            active=self._profile_store.active_slug(),
+        )
+
+    def restore_monitor_state(self, snapshot: MonitorStateSnapshot) -> bool:
+        """Put both lists and the pointer back, through one normal transaction.
+
+        The revert half of Confirm-or-revert for activation, shaped exactly like
+        `restore_monitor_rules` and for the same reason: rendering the previous model
+        produces the previous files byte for byte (ADR-0010).
+        """
+        return self._put_monitor_state(
+            snapshot.monitors, snapshot.workspace_rules, snapshot.active
+        )
+
     # --- helper data ------------------------------------------------------------------------
 
     def fetch_clients(
@@ -1258,6 +1436,7 @@ class Session:
         )
         self._reread_binds()
         self._reread_rules()
+        self._reread_monitors()
         # The other half ADR-0016 asks for: somebody else's reload can break the config just
         # as thoroughly as the app's own, and it surfaces identically.
         await self._scan(client)
@@ -1317,6 +1496,30 @@ class Session:
                 changed = True
         if changed:
             self._load_rules()
+
+    def _reread_monitors(self) -> None:
+        """Adopt hand-edited monitor and workspace-rule Modules, gated like the others.
+
+        The gap ADR-0015 turns from cosmetic to load-bearing: "hand edits to
+        `monitors.lua` while a profile is active are drift", and drift is judged against
+        the model -- so a hand edit the model never hears about is a drift badge that
+        never lights. One gate over both files, one load for both, for `_reread_rules`'s
+        reason: `_load_monitors` splices misfiled entities to the kind they are.
+        """
+        changed = False
+        for module in (MONITORS_MODULE, WORKSPACE_RULES_MODULE):
+            path = self._paths.app_dir / module
+            if not path.is_file():
+                continue
+            try:
+                current = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            record = self._manifest().modules.get(module)
+            if record is None or record.sha256 != content_hash(current):
+                changed = True
+        if changed:
+            self._load_monitors()
 
     def _load_entities(self) -> None:
         """The startup read of every Entity Module, and the keeper of `entities_loaded`.

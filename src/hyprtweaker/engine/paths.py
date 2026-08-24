@@ -51,6 +51,14 @@ Separate files for the same blast-radius reason: a hand edit that breaks the wor
 rules must not black out the monitor layout with it.
 """
 BRIDGE_DIR = "bridge"
+MONITOR_PROFILES_DIR = "monitor-profiles"
+"""Monitor profiles, one `<slug>.json` each, in the App dir (ADR-0015).
+
+Deliberately not `profiles/`: that reads as a sibling of `presets/` and invites
+confusion with ADR-0014 Presets, which are look-and-feel bundles and never monitors.
+App-side data rather than a Module -- nothing requires it, and the writer's prune never
+touches files the Manifest does not claim.
+"""
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"
 REPORTS_DIR = "reports"
@@ -95,6 +103,10 @@ class ConfigPaths:
     @property
     def bridge_dir(self) -> Path:
         return self.app_dir / BRIDGE_DIR
+
+    @property
+    def monitor_profiles_dir(self) -> Path:
+        return self.app_dir / MONITOR_PROFILES_DIR
 
     @property
     def entrypoint(self) -> Path:

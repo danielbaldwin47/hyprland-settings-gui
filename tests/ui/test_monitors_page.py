@@ -70,11 +70,31 @@ def monitor_rule(output: str, **fields: Any) -> Any:
 
 
 class FakeSession:
-    """Just enough session for a standalone Page: rules, liveness, nothing else."""
+    """Just enough session for a standalone Page: rules, liveness, profiles."""
 
-    def __init__(self, rules: list[Any], *, live: bool = True) -> None:
+    def __init__(
+        self,
+        rules: list[Any],
+        *,
+        live: bool = True,
+        profiles: tuple[tuple[str, Any], ...] = (),
+        active: tuple[str, Any] | None = None,
+        drifted: bool = False,
+    ) -> None:
         self.monitor_rules = rules
         self.live = live
+        self._profiles = profiles
+        self._active = active
+        self._drifted = drifted
+
+    def monitor_profiles(self) -> tuple[tuple[str, Any], ...]:
+        return self._profiles
+
+    def active_monitor_profile(self) -> tuple[str, Any] | None:
+        return self._active
+
+    def monitor_profile_drift(self) -> bool:
+        return self._drifted
 
 
 class Recorder:
@@ -83,22 +103,38 @@ class Recorder:
         self.benign: list[tuple[str, dict[str, Any]]] = []
         self.renamed: list[tuple[str, str]] = []
         self.removed: list[str] = []
+        self.saved: list[str] = []
+        self.activated: list[str] = []
+        self.updated: list[str] = []
+        self.detached = 0
+        self.deleted: list[str] = []
 
 
-def build_page(rules: list[Any]) -> tuple[Any, Recorder]:
+def build_page(rules: list[Any], session: FakeSession | None = None) -> tuple[Any, Recorder]:
     from gi.repository import Adw
 
-    from hyprtweaker.ui.pages.monitors import MonitorActions, MonitorsPage
+    from hyprtweaker.ui.pages.monitors import MonitorActions, MonitorsPage, ProfileActions
 
     Adw.init()
     recorder = Recorder()
+
+    def detach() -> None:
+        recorder.detached += 1
+
     page = MonitorsPage(
-        FakeSession(rules),  # type: ignore[arg-type]
+        session if session is not None else FakeSession(rules),  # type: ignore[arg-type]
         actions=MonitorActions(
             apply_breaking=lambda o, f: recorder.breaking.append((o, dict(f))),
             apply_benign=lambda o, f: recorder.benign.append((o, dict(f))),
             rename=lambda o, t: recorder.renamed.append((o, t)),
             remove=recorder.removed.append,
+        ),
+        profiles=ProfileActions(
+            save=recorder.saved.append,
+            activate=recorder.activated.append,
+            update=recorder.updated.append,
+            detach=detach,
+            delete=recorder.deleted.append,
         ),
     )
     return page, recorder
@@ -313,3 +349,210 @@ def test_confirm_revert_dialog_keep_wins_once() -> None:
     dialog._on_response(dialog, "keep")
     assert kept == [True]
     assert reverted == []
+
+
+# -- monitor profiles (#69, ADR-0015) --
+
+
+def _buttons(widget: Any) -> list[Any]:
+    """Every Gtk.Button under `widget`, document order -- the probe's way to a suffix."""
+    from gi.repository import Gtk
+
+    found: list[Any] = []
+    child = widget.get_first_child()
+    while child is not None:
+        if isinstance(child, Gtk.Button):
+            found.append(child)
+        found.extend(_buttons(child))
+        child = child.get_next_sibling()
+    return found
+
+
+def _profile(name: str, **overrides: Any) -> Any:
+    from hyprtweaker.engine.profiles import MonitorProfile
+
+    base = dict(
+        name=name,
+        monitors=(monitor_rule("eDP-1", mode="1920x1080@60"),),
+        pins={"1": "eDP-1"},
+    )
+    base.update(overrides)
+    return MonitorProfile(**base)
+
+
+def test_profiles_group_lists_saved_profiles() -> None:
+    session = FakeSession(
+        [], profiles=(("docked", _profile("Docked")), ("travel", _profile("Travel")))
+    )
+    page, _recorder = build_page([], session)
+
+    assert [row.get_title() for row in page.profile_rows] == ["Docked", "Travel"]
+    assert "1 display rule" in page.profile_rows[0].get_subtitle()
+    assert "1 workspace pin" in page.profile_rows[0].get_subtitle()
+
+
+def test_activate_button_routes_the_slug() -> None:
+    session = FakeSession([], profiles=(("docked", _profile("Docked")),))
+    page, recorder = build_page([], session)
+
+    activate, _trash = _buttons(page.profile_rows[0])
+    assert activate.get_label() == "Activate"
+    activate.emit("clicked")
+    assert recorder.activated == ["docked"]
+
+
+def test_the_active_profile_shows_no_activate_button() -> None:
+    docked = _profile("Docked")
+    session = FakeSession([], profiles=(("docked", docked),), active=("docked", docked))
+    page, _recorder = build_page([], session)
+
+    buttons = _buttons(page.profile_rows[0])
+    assert [button.get_label() for button in buttons] == [None]  # just the trash icon
+
+
+def test_a_drifted_profile_offers_update_or_detach() -> None:
+    docked = _profile("Docked")
+    session = FakeSession(
+        [], profiles=(("docked", docked),), active=("docked", docked), drifted=True
+    )
+    page, recorder = build_page([], session)
+
+    update, detach, _trash = _buttons(page.profile_rows[0])
+    assert (update.get_label(), detach.get_label()) == ("Update", "Detach")
+    update.emit("clicked")
+    detach.emit("clicked")
+    assert recorder.updated == ["docked"]
+    assert recorder.detached == 1
+
+
+def test_delete_routes_the_slug() -> None:
+    session = FakeSession([], profiles=(("docked", _profile("Docked")),))
+    page, recorder = build_page([], session)
+
+    *_rest, trash = _buttons(page.profile_rows[0])
+    trash.emit("clicked")
+    assert recorder.deleted == ["docked"]
+
+
+def test_activation_needs_a_live_session() -> None:
+    session = FakeSession([], live=False, profiles=(("docked", _profile("Docked")),))
+    page, _recorder = build_page([], session)
+
+    activate, _trash = _buttons(page.profile_rows[0])
+    assert not activate.get_sensitive()
+
+
+def test_save_dialog_hands_over_the_name() -> None:
+    from gi.repository import Adw
+
+    from hyprtweaker.ui.pages.monitors import SaveProfileDialog
+
+    Adw.init()
+    saved: list[str] = []
+    dialog = SaveProfileDialog(on_save=saved.append)
+    assert not dialog.get_response_enabled("save")
+
+    dialog.entry.set_text("  Docked  ")
+    assert dialog.get_response_enabled("save")
+    dialog.emit("response", "save")
+    assert saved == ["Docked"]
+
+
+def test_save_dialog_cancel_saves_nothing() -> None:
+    from gi.repository import Adw
+
+    from hyprtweaker.ui.pages.monitors import SaveProfileDialog
+
+    Adw.init()
+    saved: list[str] = []
+    dialog = SaveProfileDialog(on_save=saved.append)
+    dialog.entry.set_text("Docked")
+    dialog.emit("response", "cancel")
+    assert saved == []
+
+
+def _window_with_docked_profile(tmp_path: Path) -> tuple[Any, Any]:
+    session, window = build_window(tmp_path)
+    session.save_monitor_profile("Docked", MONITORS)
+    # Diverge from the capture, so activating the profile would change something.
+    session.monitor_rules.append(monitor_rule("eDP-1", mode="1920x1080@60"))
+    return session, window
+
+
+def test_profile_toast_offers_a_match_at_open(tmp_path: Path) -> None:
+    _session, window = _window_with_docked_profile(tmp_path)
+
+    window._on_monitors_event(MONITORS)
+    toast = window.profile_toast
+    assert toast is not None
+    assert "Docked" in toast.get_title()
+    assert toast.get_button_label() == "Activate"
+
+
+def test_profile_toast_one_click_activates(tmp_path: Path) -> None:
+    _session, window = _window_with_docked_profile(tmp_path)
+    window._on_monitors_event(MONITORS)
+
+    activated: list[str] = []
+    window._activate_monitor_profile = activated.append  # the handler looks this up late
+    assert window.profile_toast is not None
+    window.profile_toast.emit("button-clicked")
+    assert activated == ["docked"]
+
+
+def test_profile_toast_dedupes_one_connected_set(tmp_path: Path) -> None:
+    _session, window = _window_with_docked_profile(tmp_path)
+
+    window._on_monitors_event(MONITORS)
+    first = window.profile_toast
+    # The second socket2 event of the same docking must not stack a second toast.
+    window._on_monitors_event(MONITORS)
+    assert first is not None and window.profile_toast is first
+
+
+def test_profile_toast_offers_again_after_redock(tmp_path: Path) -> None:
+    _session, window = _window_with_docked_profile(tmp_path)
+
+    window._on_monitors_event(MONITORS)
+    first = window.profile_toast
+    window._on_monitors_event(MONITORS[:1])  # undocked: the set no longer matches
+    window._on_monitors_event(MONITORS)  # redocked mid-session (ADR-0018's case)
+    assert first is not None and window.profile_toast is not first
+
+
+def test_no_toast_when_nothing_would_change(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path)
+    # The profile equals the current (empty) setup: activating it is a no-op, so the
+    # toast must stay quiet however well the connected set matches.
+    session.save_monitor_profile("Empty", MONITORS)
+    for rule in list(session.monitor_rules):
+        session.monitor_rules.remove(rule)
+
+    window._on_monitors_event(MONITORS)
+    assert window.profile_toast is None
+
+
+def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None:
+    """The window half of AC 2: activation stands behind the countdown, revert undoes it."""
+    session, window = build_window(tmp_path)
+
+    class StubApplier:
+        def commit_entities(self) -> None:
+            pass
+
+    session._applier = StubApplier()
+    session._offline_reason = None
+    session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@60"})
+    slug = session.save_monitor_profile("Docked", MONITORS)
+    session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@48"})
+
+    window._activate_monitor_profile(slug)
+    dialog = window.profile_confirm
+    assert dialog is not None
+    assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@60"]
+    active = session.active_monitor_profile()
+    assert active is not None and active[0] == slug
+
+    dialog._on_response(dialog, "revert")
+    assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@48"]
+    assert session.active_monitor_profile() is None

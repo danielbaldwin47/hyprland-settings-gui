@@ -179,3 +179,173 @@ class TestHotplugWatch:
         unwatch = session.watch_monitors(lambda: None)
         unwatch()
         unwatch()
+
+
+CONNECTED = (
+    {"name": "eDP-1", "description": "BOE 0x0791"},
+    {"name": "DP-3", "description": "Dell U2720Q"},
+)
+
+
+def docked_session(tmp_path: Path) -> tuple[Session, StubApplier, str]:
+    """A live session holding a docked setup, with that setup saved as a profile."""
+    session, applier = live_session(tmp_path)
+    session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@60", "position": "0x0"})
+    session.patch_monitor_rule("desc:Dell U2720Q", {"position": "1920x0"})
+    session.save_workspace_rule(
+        WorkspaceRule(workspace="1", fields={"monitor": "desc:Dell U2720Q", "default": True})
+    )
+    session.save_workspace_rule(WorkspaceRule(workspace="2", fields={"gapsout": 8}))
+    slug = session.save_monitor_profile("Docked", CONNECTED)
+    return session, applier, slug
+
+
+class TestMonitorProfiles:
+    def test_capture_then_activate_round_trips_exactly(self, tmp_path: Path) -> None:
+        """The #69 acceptance golden: the rendered Modules come back byte for byte."""
+        from hyprtweaker.engine.writer.monitors import (
+            render_monitors_module,
+            render_workspace_rules_module,
+        )
+
+        session, _applier, slug = docked_session(tmp_path)
+        before = (
+            render_monitors_module(session.monitor_rules, app_version=APP_VERSION),
+            render_workspace_rules_module(session.workspace_rules, app_version=APP_VERSION),
+        )
+
+        # Undock by hand: rules change, a pin is dropped, a foreign pin appears.
+        session.remove_monitor_rule("desc:Dell U2720Q")
+        session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@48"})
+        session.save_workspace_rule(
+            WorkspaceRule(workspace="1", fields={"monitor": "eDP-1", "default": True}),
+            original="1",
+        )
+        session.save_workspace_rule(
+            WorkspaceRule(workspace="2", fields={"gapsout": 8, "monitor": "eDP-1"}),
+            original="2",
+        )
+
+        assert session.activate_monitor_profile(slug)
+        after = (
+            render_monitors_module(session.monitor_rules, app_version=APP_VERSION),
+            render_workspace_rules_module(session.workspace_rules, app_version=APP_VERSION),
+        )
+        assert after == before
+
+    def test_activation_is_one_transaction(self, tmp_path: Path) -> None:
+        session, applier, slug = docked_session(tmp_path)
+        session.remove_monitor_rule("desc:Dell U2720Q")
+        commits = applier.commits
+
+        assert session.activate_monitor_profile(slug)
+        assert applier.commits == commits + 1
+
+    def test_activation_sets_the_pointer_and_clears_drift(self, tmp_path: Path) -> None:
+        session, _applier, slug = docked_session(tmp_path)
+        assert session.active_monitor_profile() is None
+
+        assert session.activate_monitor_profile(slug)
+        active = session.active_monitor_profile()
+        assert active is not None and active[0] == slug
+        assert not session.monitor_profile_drift()
+
+    def test_an_edit_after_activation_drifts(self, tmp_path: Path) -> None:
+        session, _applier, slug = docked_session(tmp_path)
+        session.activate_monitor_profile(slug)
+
+        session.patch_monitor_rule("eDP-1", {"transform": 1})
+        assert session.monitor_profile_drift()
+
+    def test_update_recaptures_and_clears_drift(self, tmp_path: Path) -> None:
+        session, _applier, slug = docked_session(tmp_path)
+        session.activate_monitor_profile(slug)
+        session.patch_monitor_rule("eDP-1", {"transform": 1})
+
+        assert session.update_monitor_profile(slug, CONNECTED)
+        assert not session.monitor_profile_drift()
+        assert not session.update_monitor_profile("ghost", CONNECTED)
+
+    def test_detach_forgets_the_pointer_and_keeps_the_config(self, tmp_path: Path) -> None:
+        session, applier, slug = docked_session(tmp_path)
+        session.activate_monitor_profile(slug)
+        commits = applier.commits
+
+        session.detach_monitor_profile()
+        assert session.active_monitor_profile() is None
+        assert not session.monitor_profile_drift()
+        assert applier.commits == commits
+
+    def test_delete_of_the_active_profile_clears_the_pointer(self, tmp_path: Path) -> None:
+        session, _applier, slug = docked_session(tmp_path)
+        session.activate_monitor_profile(slug)
+
+        session.delete_monitor_profile(slug)
+        assert session.monitor_profiles() == ()
+        assert session.active_monitor_profile() is None
+
+    def test_read_only_refuses_activation_but_allows_capture(self, tmp_path: Path) -> None:
+        _live, _applier, _slug = docked_session(tmp_path)
+        readonly = read_only_session(tmp_path)
+        slug = readonly.save_monitor_profile("Before experimenting", CONNECTED)
+        assert readonly._profile_store.load(slug) is not None
+
+        assert not readonly.activate_monitor_profile(slug)
+        assert readonly.active_monitor_profile() is None
+
+    def test_activating_a_ghost_is_refused(self, tmp_path: Path) -> None:
+        session, applier, _slug = docked_session(tmp_path)
+        commits = applier.commits
+        assert not session.activate_monitor_profile("ghost")
+        assert applier.commits == commits
+
+    def test_matching_offers_only_a_profile_that_would_change_something(
+        self, tmp_path: Path
+    ) -> None:
+        session, _applier, slug = docked_session(tmp_path)
+        # The setup already equals the capture, so there is nothing to offer.
+        assert session.matching_monitor_profile(CONNECTED) is None
+
+        session.patch_monitor_rule("eDP-1", {"transform": 1})
+        match = session.matching_monitor_profile(CONNECTED)
+        assert match is not None and match[0] == slug
+
+        # A different connected set never matches, however far the config drifts.
+        assert session.matching_monitor_profile(CONNECTED[:1]) is None
+
+    def test_restore_puts_lists_and_pointer_back_in_one_transaction(
+        self, tmp_path: Path
+    ) -> None:
+        session, applier, slug = docked_session(tmp_path)
+        snapshot = session.monitor_state_snapshot()
+
+        session.activate_monitor_profile(slug)
+        session.remove_monitor_rule("eDP-1")
+        commits = applier.commits
+
+        assert session.restore_monitor_state(snapshot)
+        assert applier.commits == commits + 1
+        assert session.monitor_rules == list(snapshot.monitors)
+        assert session.workspace_rules == list(snapshot.workspace_rules)
+        assert session.active_monitor_profile() is None
+
+    def test_a_hand_edited_monitors_module_is_adopted_and_drifts(self, tmp_path: Path) -> None:
+        """The ADR-0015 drift trigger: a hand edit reaches the model, then the badge.
+
+        `_reread_monitors` is the foreign-reload hook; driven directly here because the
+        reload plumbing has its own tiers -- what this asserts is that the file's truth
+        replaces the model's and the active profile drifts on it.
+        """
+        session, _applier, slug = docked_session(tmp_path)
+        session.activate_monitor_profile(slug)
+        assert not session.monitor_profile_drift()
+
+        path = session.paths.app_dir / "monitors.lua"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            'hl.monitor({ output = "eDP-1", mode = "1920x1080@48" })\n', encoding="utf-8"
+        )
+        session._reread_monitors()
+
+        assert [rule.fields.get("mode") for rule in session.monitor_rules] == ["1920x1080@48"]
+        assert session.monitor_profile_drift()
