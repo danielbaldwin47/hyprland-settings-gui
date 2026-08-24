@@ -256,9 +256,7 @@ def disconnected_rules(
         if rule is not None:
             claimed.add(rule.output)
     return tuple(
-        rule
-        for rule in rules
-        if rule.output != CATCH_ALL_OUTPUT and rule.output not in claimed
+        rule for rule in rules if rule.output != CATCH_ALL_OUTPUT and rule.output not in claimed
     )
 
 

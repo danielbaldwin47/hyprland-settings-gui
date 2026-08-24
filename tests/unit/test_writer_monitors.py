@@ -56,8 +56,7 @@ class TestRenderMonitorRule:
     def test_disabled_is_a_field(self) -> None:
         rule = MonitorRule(output="HDMI-A-1", fields={"disabled": True})
         assert (
-            render_monitor_rule(rule)
-            == 'hl.monitor({ output = "HDMI-A-1", disabled = true })'
+            render_monitor_rule(rule) == 'hl.monitor({ output = "HDMI-A-1", disabled = true })'
         )
 
 
@@ -113,9 +112,7 @@ class TestRenderModules:
         )
         # The same selector again: Hyprland's replaceOrAdd merges field-wise, so the
         # golden must hold two rules, the first with both its fields.
-        entities.add_workspace_rule(
-            WorkspaceRule(workspace="1", fields={"persistent": True})
-        )
+        entities.add_workspace_rule(WorkspaceRule(workspace="1", fields={"persistent": True}))
         text = render_workspace_rules_module(entities.workspace_rules, app_version=VERSION)
         assert text is not None
         assert text.count("hl.workspace_rule(") == 2

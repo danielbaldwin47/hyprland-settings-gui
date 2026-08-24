@@ -71,7 +71,7 @@ def render_monitors_module(rules: list[MonitorRule], *, app_version: str) -> str
     """
     return _render(
         [render_monitor_rule(rule) for rule in rules],
-        comment="Monitor rules. One rule per output; \"\" is any other display.",
+        comment='Monitor rules. One rule per output; "" is any other display.',
         app_version=app_version,
     )
 

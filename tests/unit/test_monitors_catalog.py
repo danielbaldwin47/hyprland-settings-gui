@@ -106,12 +106,8 @@ class TestMatching:
         assert not rule_matches_output("DP-1", connector="DP-10", description="X")
 
     def test_desc_matches_by_prefix(self) -> None:
-        assert rule_matches_output(
-            "desc:BOE", connector="eDP-1", description="BOE 0x0791"
-        )
-        assert not rule_matches_output(
-            "desc:Dell", connector="eDP-1", description="BOE 0x0791"
-        )
+        assert rule_matches_output("desc:BOE", connector="eDP-1", description="BOE 0x0791")
+        assert not rule_matches_output("desc:Dell", connector="eDP-1", description="BOE 0x0791")
 
     def test_catch_all_matches_nothing(self) -> None:
         assert not rule_matches_output("", connector="DP-1", description="X")
