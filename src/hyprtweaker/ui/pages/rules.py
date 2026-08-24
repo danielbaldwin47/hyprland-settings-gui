@@ -29,30 +29,16 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import LayerRule, WindowRule  # noqa: E402
+from hyprtweaker.engine.rules_catalog import is_negated, strip_negation  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
 
 Rule = WindowRule | LayerRule
 
-NEGATIVE_PREFIX = "negative:"
-
-
-def is_negated(value: object) -> bool:
-    """Whether a match value carries the `negative:` prefix (string kinds only)."""
-    return isinstance(value, str) and value.startswith(NEGATIVE_PREFIX)
-
-
-def strip_negation(value: str) -> str:
-    return value[len(NEGATIVE_PREFIX) :] if value.startswith(NEGATIVE_PREFIX) else value
-
-
-def prop_title(name: str) -> str:
-    """A match prop or effect name as a row title: `initial_class` -> `Initial class`."""
-    return name.replace("_", " ").capitalize()
-
 
 def _value_text(value: object) -> str:
+    """A match or effect value as summary text -- readable, never round-tripped."""
     if isinstance(value, bool):
         return "yes" if value else "no"
     if isinstance(value, (list, tuple)):
@@ -150,7 +136,6 @@ class RuleRow:
     ) -> None:
         self.rule = rule
         self.index = index
-        self.enabled_switch: Gtk.Switch | None = None
 
         subtitle = rule_subtitle(rule)
         self.widget = Adw.ActionRow(title=rule_title(rule), subtitle=subtitle)
@@ -169,7 +154,7 @@ class RuleRow:
         switch.set_tooltip_text("Apply this rule")
         switch.set_sensitive(editable)
         switch.connect("state-set", self._on_switch, actions, index)
-        self.enabled_switch = switch
+        self.enabled_switch: Gtk.Switch = switch
         self.widget.add_suffix(switch)
 
         if editable:
@@ -344,12 +329,17 @@ class RulesPage:
 
 
 class WindowRulesPage(RulesPage):
+    """The window-rule instantiation. Class attributes only: the shell reads `section`
+    and `title` off the class, so a parameterised constructor would not do."""
+
     kind = "window"
     section = "window_rules"
     title = "Window rules"
 
 
 class LayerRulesPage(RulesPage):
+    """The layer-rule instantiation -- ADR-0008's "same list model and editor shell"."""
+
     kind = "layer"
     section = "layer_rules"
     title = "Layer rules"

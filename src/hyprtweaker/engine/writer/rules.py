@@ -29,9 +29,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..model.entities import LayerRule, WindowRule
+from ..model.entities import EntitySet, LayerRule, WindowRule
 from ..model.values import lua_string
-from ..paths import LAYER_RULES_MODULE, WINDOW_RULES_MODULE
+from ..paths import WINDOW_RULES_MODULE
 from .binds import lua_value
 from .lua import GENERATED_BANNER, table_key
 
@@ -86,6 +86,11 @@ def render_layer_rule(rule: LayerRule) -> str:
 
 
 def _render(rules: list[str], *, comment: str, app_version: str) -> str | None:
+    """The shared module shell: banner, one comment line, one call per line.
+
+    `None` for an empty list so the writer prunes the Module -- absence is how this
+    config model spells "no rules", the same as for binds.
+    """
     if not rules:
         return None
     header = (
@@ -139,7 +144,7 @@ def parse_rules_module(
     # Evaluated from a scratch copy keeping the module's basename, so origins read as
     # `window_rules.lua:N` with `N` the line in the real file.
     with tempfile.TemporaryDirectory(prefix="hyprtweaker-rules-") as scratch:
-        path = Path(scratch) / (module or WINDOW_RULES_MODULE)
+        path = Path(scratch) / module
         path.write_text(text, encoding="utf-8")
         return _parse_path(path, timeout=timeout)
 
@@ -155,8 +160,11 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedRules:
         # like "the file has no rules".
         return ParsedRules(errors=(str(error),))
 
-    window_rules: list[WindowRule] = []
-    layer_rules: list[LayerRule] = []
+    # Collected through EntitySet's adders rather than appended, because Hyprland merges:
+    # re-declaring a `name` updates the existing rule in place (`registerRule`). A hand
+    # edit that names one rule twice must come back as the one rule the compositor sees,
+    # or the adoption path would hold two rows for it and the next write would emit both.
+    entities = EntitySet()
 
     for call in recording.calls:
         if call.name not in ("window_rule", "layer_rule"):
@@ -167,7 +175,7 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedRules:
         name = fields.pop("name", "")
         enabled = fields.pop("enabled", True)
         if call.name == "window_rule":
-            window_rules.append(
+            entities.add_window_rule(
                 WindowRule(
                     match=match,
                     effects=fields,
@@ -177,7 +185,7 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedRules:
                 )
             )
         else:
-            layer_rules.append(
+            entities.add_layer_rule(
                 LayerRule(
                     match=match,
                     effects=fields,
@@ -188,15 +196,15 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedRules:
             )
 
     return ParsedRules(
-        window_rules=tuple(window_rules),
-        layer_rules=tuple(layer_rules),
+        window_rules=tuple(entities.window_rules),
+        layer_rules=tuple(entities.layer_rules),
         errors=tuple(recording.errors),
     )
 
 
+# The module-name constants are deliberately not in `__all__`: they live in `paths`, and
+# `binds.py` set the precedent of one import path per constant.
 __all__ = [
-    "LAYER_RULES_MODULE",
-    "WINDOW_RULES_MODULE",
     "ParsedRules",
     "parse_rules_module",
     "render_layer_rule",

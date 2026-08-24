@@ -11,15 +11,13 @@ import pytest
 pytest.importorskip("gi", reason="the Rules Page imports gi at module scope")
 
 from hyprtweaker.engine.model.entities import LayerRule, WindowRule
+from hyprtweaker.engine.rules_catalog import is_negated, prop_title, strip_negation
 from hyprtweaker.ui.pages.rules import (
     effects_text,
     filter_haystack,
-    is_negated,
     match_text,
-    prop_title,
     rule_subtitle,
     rule_title,
-    strip_negation,
 )
 
 

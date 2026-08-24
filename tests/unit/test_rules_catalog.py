@@ -102,3 +102,13 @@ class TestShape:
     def test_negatable_kinds_are_the_string_valued_ones(self) -> None:
         assert catalog.MatchKind.REGEX in catalog.NEGATABLE_KINDS
         assert catalog.MatchKind.BOOL not in catalog.NEGATABLE_KINDS
+
+    def test_an_unknown_kind_raises_everywhere_the_same(self) -> None:
+        """A typo answering with the window surface would be a picker quietly offering
+        props the other kind rejects -- so both raise, matching `Session.rules`."""
+        import pytest
+
+        with pytest.raises(ValueError, match="unknown rule kind"):
+            catalog.match_props("monitor")
+        with pytest.raises(ValueError, match="unknown rule kind"):
+            catalog.effects("monitor")

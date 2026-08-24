@@ -747,26 +747,21 @@ class Session:
         windows are open" and "nobody is there to ask" degrade differently -- the picker
         offers manual entry on the latter.
         """
-        client = self._client
-        if client is None:
-            done(None)
-            return
-
-        async def run() -> None:
-            try:
-                payload = await client.clients()
-            except IpcError as error:
-                _log.debug("clients query failed: %s", error)
-                done(None)
-                return
-            done(payload)
-
-        self._spawn(run())
+        self._fetch_helper_data("clients", lambda client: client.clients(), done)
 
     def fetch_layers(
         self, done: Callable[[tuple[Mapping[str, Any], ...] | None], None]
     ) -> None:
         """Live layer surfaces for the Pick-a-layer helper, or `None` when unanswerable."""
+        self._fetch_helper_data("layers", lambda client: client.layers(), done)
+
+    def _fetch_helper_data(
+        self,
+        what: str,
+        query: Callable[[CommandClient], Coroutine[Any, Any, tuple[Mapping[str, Any], ...]]],
+        done: Callable[[tuple[Mapping[str, Any], ...] | None], None],
+    ) -> None:
+        """The shared shape of a fire-and-callback helper query, failure spelled `None`."""
         client = self._client
         if client is None:
             done(None)
@@ -774,9 +769,9 @@ class Session:
 
         async def run() -> None:
             try:
-                payload = await client.layers()
+                payload = await query(client)
             except IpcError as error:
-                _log.debug("layers query failed: %s", error)
+                _log.debug("%s query failed: %s", what, error)
                 done(None)
                 return
             done(payload)

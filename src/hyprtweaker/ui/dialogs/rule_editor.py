@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 import gi
@@ -39,17 +40,16 @@ from hyprtweaker.engine.model.entities import LayerRule, WindowRule  # noqa: E40
 from hyprtweaker.engine.rules_catalog import (  # noqa: E402
     CATEGORIES,
     NEGATABLE_KINDS,
+    NEGATIVE_PREFIX,
     Effect,
     EffectType,
     MatchKind,
     MatchProp,
     effects,
+    find_effect,
     find_match_prop,
-    match_props,
-)
-from hyprtweaker.ui.pages.rules import (  # noqa: E402
-    NEGATIVE_PREFIX,
     is_negated,
+    match_props,
     prop_title,
     strip_negation,
 )
@@ -76,6 +76,18 @@ _SPIN_BOUNDS: dict[str, tuple[float, float]] = {
 """Bounds the API documents (`lua-api-surface.md` §5); everything else gets a wide spin."""
 
 _DEFAULT_INT_BOUNDS = (0.0, 100000.0)
+
+
+@dataclass(frozen=True, slots=True)
+class _EffectRow:
+    """One effect row's bookkeeping: the key, its typed spec (or `None` for raw), the
+    editing widget, and the value it opened with -- the identity half of the unknown-
+    effect pass-through."""
+
+    name: str
+    spec: Effect | None
+    widget: Gtk.Widget
+    original: Any
 
 
 class RuleEditor(Adw.Dialog):
@@ -108,7 +120,15 @@ class RuleEditor(Adw.Dialog):
 
         # One ordered list per group, so the collected dict keeps the rule's own order.
         self._match_rows: dict[str, tuple[MatchProp, Gtk.Widget, Gtk.ToggleButton | None]] = {}
-        self._effect_entries: list[tuple[str, Effect | None, Gtk.Widget, Any]] = []
+        self._effect_entries: list[_EffectRow] = []
+
+        # The pick-page opt-ins, built up front so `prefill_from_window` never has to ask
+        # whether the picker page has been opened yet (window kind only; layer picking
+        # sets nothing but the namespace).
+        self._pick_title = Adw.SwitchRow(title="Title")
+        self._pick_initial_class = Adw.SwitchRow(title="Initial class")
+        self._pick_initial_title = Adw.SwitchRow(title="Initial title")
+        self._pick_xwayland = Adw.SwitchRow(title="XWayland")
 
         self._view = Adw.NavigationView()
         self.set_child(self._view)
@@ -236,7 +256,7 @@ class RuleEditor(Adw.Dialog):
 
     def _on_add_effect(self, _row: Adw.ActionRow, effect: Effect, popover: Gtk.Popover) -> None:
         popover.popdown()
-        if not any(name == effect.name for name, _, _, _ in self._effect_entries):
+        if not any(row.name == effect.name for row in self._effect_entries):
             default: Any = True if effect.type is EffectType.BOOL else None
             self._add_effect_row(effect.name, default)
 
@@ -244,7 +264,7 @@ class RuleEditor(Adw.Dialog):
         name = entry.get_text().strip()
         entry.set_text("")
         popover.popdown()
-        if name and not any(n == name for n, _, _, _ in self._effect_entries):
+        if name and not any(row.name == name for row in self._effect_entries):
             self._add_effect_row(name, None)
 
     # --- rows -----------------------------------------------------------------------------
@@ -292,7 +312,7 @@ class RuleEditor(Adw.Dialog):
         self._match_group.remove(widget)
 
     def _add_effect_row(self, name: str, value: Any) -> None:
-        spec = next((e for e in effects(self._kind) if e.name == name), None)
+        spec = find_effect(self._kind, name)
         widget: Gtk.Widget
 
         if spec is not None and spec.type is EffectType.BOOL:
@@ -325,13 +345,13 @@ class RuleEditor(Adw.Dialog):
         remove.connect("clicked", self._on_remove_effect, name, widget)
         _row_add_suffix(widget, remove)
 
-        self._effect_entries.append((name, spec, widget, value))
+        self._effect_entries.append(
+            _EffectRow(name=name, spec=spec, widget=widget, original=value)
+        )
         self._effects_group.add(widget)
 
     def _on_remove_effect(self, _button: Gtk.Button, name: str, widget: Gtk.Widget) -> None:
-        self._effect_entries = [
-            entry for entry in self._effect_entries if entry[2] is not widget
-        ]
+        self._effect_entries = [row for row in self._effect_entries if row.widget is not widget]
         self._effects_group.remove(widget)
 
     # --- pick a window / pick a layer -----------------------------------------------------
@@ -348,10 +368,6 @@ class RuleEditor(Adw.Dialog):
                 title="Also match",
                 description="The class is always used. Add more to narrow the match.",
             )
-            self._pick_title = Adw.SwitchRow(title="Title")
-            self._pick_initial_class = Adw.SwitchRow(title="Initial class")
-            self._pick_initial_title = Adw.SwitchRow(title="Initial title")
-            self._pick_xwayland = Adw.SwitchRow(title="XWayland")
             for row in (
                 self._pick_title,
                 self._pick_initial_class,
@@ -423,23 +439,16 @@ class RuleEditor(Adw.Dialog):
         Public so the smoke tier can drive it without a popover: the same method the
         picker row activates.
         """
+        if self._kind != "window":
+            return
         self._set_match_text("class", _exact(str(info.get("class", ""))))
-        if getattr(self, "_pick_title", None) is not None and self._pick_title.get_active():
+        if self._pick_title.get_active():
             self._set_match_text("title", _exact(str(info.get("title", ""))))
-        if (
-            getattr(self, "_pick_initial_class", None) is not None
-            and self._pick_initial_class.get_active()
-        ):
+        if self._pick_initial_class.get_active():
             self._set_match_text("initial_class", _exact(str(info.get("initialClass", ""))))
-        if (
-            getattr(self, "_pick_initial_title", None) is not None
-            and self._pick_initial_title.get_active()
-        ):
+        if self._pick_initial_title.get_active():
             self._set_match_text("initial_title", _exact(str(info.get("initialTitle", ""))))
-        if (
-            getattr(self, "_pick_xwayland", None) is not None
-            and self._pick_xwayland.get_active()
-        ):
+        if self._pick_xwayland.get_active():
             self._set_match_bool("xwayland", bool(info.get("xwayland", False)))
 
     def prefill_from_layer(self, namespace: str) -> None:
@@ -493,22 +502,24 @@ class RuleEditor(Adw.Dialog):
 
     def _collect_effects(self) -> dict[str, Any]:
         collected: dict[str, Any] = {}
-        for name, spec, widget, original in self._effect_entries:
-            if isinstance(widget, Adw.SwitchRow):
-                collected[name] = widget.get_active()
-            elif isinstance(widget, Adw.SpinRow):
-                value = widget.get_value()
-                collected[name] = (
-                    int(value) if spec is not None and spec.type is EffectType.INT else value
+        for row in self._effect_entries:
+            if isinstance(row.widget, Adw.SwitchRow):
+                collected[row.name] = row.widget.get_active()
+            elif isinstance(row.widget, Adw.SpinRow):
+                value = row.widget.get_value()
+                collected[row.name] = (
+                    int(value)
+                    if row.spec is not None and row.spec.type is EffectType.INT
+                    else value
                 )
-            elif isinstance(widget, Adw.EntryRow):
-                text = widget.get_text().strip()
-                if original is not None and text == _effect_text(original):
-                    # Untouched: keep the original object, so a table-valued unknown
-                    # effect round-trips by identity rather than through its string.
-                    collected[name] = original
+            elif isinstance(row.widget, Adw.EntryRow):
+                text = row.widget.get_text().strip()
+                if row.original is not None and text == _effect_text(row.original):
+                    # Untouched: keep the original object, so a table-valued effect
+                    # round-trips by identity rather than through its string.
+                    collected[row.name] = row.original
                 elif text:
-                    collected[name] = text
+                    collected[row.name] = text
         return collected
 
     def _validate(self, match: dict[str, Any], name: str) -> str:
@@ -524,6 +535,15 @@ class RuleEditor(Adw.Dialog):
                     re.compile(strip_negation(value))
                 except re.error as error:
                     return f"The {prop_title(prop_name)} pattern is not a valid regex: {error}."
+        # A blank text effect must be said no to, not silently dropped: the row is on
+        # screen, so "Save" quietly meaning "and also delete that one" would be a second
+        # meaning nobody asked for. Deleting is what the row's remove button is for.
+        for row in self._effect_entries:
+            if isinstance(row.widget, Adw.EntryRow) and not row.widget.get_text().strip():
+                return (
+                    f"The {prop_title(row.name)} effect needs a value — "
+                    "remove the row to drop the effect."
+                )
         return ""
 
     def _save(self) -> None:
@@ -555,9 +575,17 @@ def _exact(text: str) -> str:
 
 
 def _effect_text(value: Any) -> str:
-    """A raw effect value as entry text, and the identity check for "untouched"."""
+    """A raw effect value as entry text, and the identity check for "untouched".
+
+    A list renders as its space-joined items because that *is* the string grammar the
+    vec2 effects accept (`move`/`size` take `"x y"` or `{x, y}`) -- so a user who edits
+    the shown text saves a value the compositor still understands, instead of a Python
+    repr. Untouched rows never reach this conversion; they keep the original object.
+    """
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(item) for item in value)
     return str(value)
 
 

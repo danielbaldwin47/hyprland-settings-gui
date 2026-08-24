@@ -48,14 +48,47 @@ class EffectType(enum.Enum):
     STRING = "string"
 
 
+NEGATIVE_PREFIX = "negative:"
+"""How negation is spelled on the wire: inside the match value, never beside it."""
+
+
+def is_negated(value: object) -> bool:
+    """Whether a match value carries the `negative:` prefix.
+
+    Only strings can: the prefix lives inside the value, which is why `NEGATABLE_KINDS`
+    is exactly the string-valued kinds.
+    """
+    return isinstance(value, str) and value.startswith(NEGATIVE_PREFIX)
+
+
+def strip_negation(value: str) -> str:
+    """The value without its `negative:` prefix -- what the editor's entry shows, so the
+    user edits the pattern and the toggle owns the negation."""
+    return value[len(NEGATIVE_PREFIX) :] if value.startswith(NEGATIVE_PREFIX) else value
+
+
+def prop_title(name: str) -> str:
+    """A match prop or effect name as UI title text: `initial_class` -> `Initial class`.
+
+    Derived rather than curated: the names are the `hl.*` field names (CONTEXT.md's
+    Entity rule), so a mechanical spelling keeps the title and the emitted key visibly
+    the same thing.
+    """
+    return name.replace("_", " ").capitalize()
+
+
 @dataclass(frozen=True, slots=True)
 class MatchProp:
+    """One typed match prop: the `match = {...}` key and the kind that picks its widget."""
+
     name: str
     kind: MatchKind
 
 
 @dataclass(frozen=True, slots=True)
 class Effect:
+    """One typed effect: the spec-table key, its Lua value type, and its picker shelf."""
+
     name: str
     type: EffectType
     category: str
@@ -174,17 +207,34 @@ LAYER_EFFECTS: tuple[Effect, ...] = (
 
 
 def match_props(kind: str) -> tuple[MatchProp, ...]:
-    """The match surface for a rule kind -- `"window"` or `"layer"`."""
-    return WINDOW_MATCH_PROPS if kind == "window" else LAYER_MATCH_PROPS
+    """The match surface for a rule kind -- `"window"` or `"layer"`.
+
+    An unknown kind raises, matching `Session.rules`: every caller is dispatching on the
+    same two-valued concept, and a typo answering with the window surface would be a
+    picker quietly offering props the other kind rejects.
+    """
+    if kind == "window":
+        return WINDOW_MATCH_PROPS
+    if kind == "layer":
+        return LAYER_MATCH_PROPS
+    raise ValueError(f"unknown rule kind {kind!r}")
 
 
 def effects(kind: str) -> tuple[Effect, ...]:
-    """The typed effect surface for a rule kind."""
-    return WINDOW_EFFECTS if kind == "window" else LAYER_EFFECTS
+    """The typed effect surface for a rule kind. Unknown kinds raise, as above."""
+    if kind == "window":
+        return WINDOW_EFFECTS
+    if kind == "layer":
+        return LAYER_EFFECTS
+    raise ValueError(f"unknown rule kind {kind!r}")
 
 
 def find_effect(kind: str, name: str) -> Effect | None:
-    """The typed spec for an effect name, or `None` for an unknown/plugin effect."""
+    """The typed spec for an effect name, or `None` for an unknown/plugin effect.
+
+    `None` is an answer, not a failure: an unknown effect is legal everywhere (the
+    dynamic/plugin registry), and this is how callers tell "typed widget" from "raw row".
+    """
     for effect in effects(kind):
         if effect.name == name:
             return effect
@@ -192,6 +242,7 @@ def find_effect(kind: str, name: str) -> Effect | None:
 
 
 def find_match_prop(kind: str, name: str) -> MatchProp | None:
+    """The typed spec for a match prop name, or `None` for one the catalog predates."""
     for prop in match_props(kind):
         if prop.name == name:
             return prop
@@ -203,6 +254,7 @@ __all__ = [
     "LAYER_EFFECTS",
     "LAYER_MATCH_PROPS",
     "NEGATABLE_KINDS",
+    "NEGATIVE_PREFIX",
     "WINDOW_EFFECTS",
     "WINDOW_MATCH_PROPS",
     "Effect",
@@ -212,5 +264,8 @@ __all__ = [
     "effects",
     "find_effect",
     "find_match_prop",
+    "is_negated",
     "match_props",
+    "prop_title",
+    "strip_negation",
 ]

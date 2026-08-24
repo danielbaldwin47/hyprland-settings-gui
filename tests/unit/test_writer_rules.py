@@ -199,6 +199,21 @@ class TestRoundTrip:
         assert parsed.ok, parsed.errors
         assert [r.match["class"] for r in parsed.window_rules] == ["a", "b"]
 
+    def test_read_back_merges_same_named_rules_like_the_compositor(self) -> None:
+        """Re-declaring a `name` updates in place (`registerRule`); a hand edit that
+        names one rule twice must come back as the one rule Hyprland sees, or the next
+        write would emit both."""
+        text = (
+            'hl.window_rule({ name = "pip", match = { class = "a" }, float = true })\n'
+            'hl.window_rule({ name = "pip", match = { title = "b" }, pin = true })\n'
+        )
+        parsed = parse_rules_module(text)
+        assert parsed.ok, parsed.errors
+        assert len(parsed.window_rules) == 1
+        merged = parsed.window_rules[0]
+        assert dict(merged.match) == {"class": "a", "title": "b"}
+        assert dict(merged.effects) == {"float": True, "pin": True}
+
     def test_misfiled_layer_rule_still_comes_back(self) -> None:
         """A layer rule hand-added to `window_rules.lua` is adopted as what it is."""
         text = 'hl.layer_rule({ match = { namespace = "rofi" }, blur = true })\n'

@@ -198,6 +198,53 @@ def test_unknown_effects_pass_through_untouched(tmp_path: Path) -> None:
     assert effects["border_color"] is table_value
 
 
+def test_a_table_valued_effect_edits_into_the_string_grammar(tmp_path: Path) -> None:
+    """A vec2 table shows as its `"x y"` string form, so an edit saves a value the
+    compositor still understands -- never a Python repr (review finding)."""
+    from gi.repository import Adw
+
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    build_window(tmp_path)
+    collected: list[Any] = []
+
+    original = window_rule(match={"class": "x"}, effects={"size": ["50%", "50%"]})
+    editor = RuleEditor(kind="window", on_done=collected.append, rule=original)
+
+    row = next(entry for entry in editor._effect_entries if entry.name == "size")
+    assert isinstance(row.widget, Adw.EntryRow)
+    assert row.widget.get_text() == "50% 50%"
+
+    # Untouched: the table survives by identity.
+    editor._save()
+    assert collected[0].effects["size"] is original.effects["size"]
+
+    # Edited: the saved value is the string grammar, not a repr.
+    editor2_collected: list[Any] = []
+    editor2 = RuleEditor(kind="window", on_done=editor2_collected.append, rule=original)
+    row2 = next(entry for entry in editor2._effect_entries if entry.name == "size")
+    row2.widget.set_text("40% 60%")
+    editor2._save()
+    assert editor2_collected[0].effects["size"] == "40% 60%"
+
+
+def test_a_blank_effect_refuses_to_save(tmp_path: Path) -> None:
+    """A blank text effect is an error, not a silent drop (review finding)."""
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    build_window(tmp_path)
+    collected: list[Any] = []
+
+    original = window_rule(match={"class": "x"}, effects={"opacity": "0.9"})
+    editor = RuleEditor(kind="window", on_done=collected.append, rule=original)
+    row = next(entry for entry in editor._effect_entries if entry.name == "opacity")
+    row.widget.set_text("")
+    editor._save()
+
+    assert collected == []
+    assert "needs a value" in editor._error.get_label()
+
+
 def test_the_editor_edits_in_place_keeping_enabled(tmp_path: Path) -> None:
     from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
 

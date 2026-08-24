@@ -462,6 +462,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     @property
     def layer_rules_page(self) -> LayerRulesPage | None:
+        """The Layer rules Page, once built. The UI tier asserts against it."""
         return self._layer_rules_page
 
     @property
