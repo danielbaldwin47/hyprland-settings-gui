@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from hyprtweaker.engine.importer.keysyms import validator_available
+from hyprtweaker.engine.importer.keysyms import known_keysym, validator_available
 from hyprtweaker.engine.triggers import (
     CATCHALL,
     CaptureRecorder,
@@ -163,9 +163,21 @@ def test_catchall_outside_a_submap_warns_but_does_not_block() -> None:
     assert problem.severity is Severity.WARN
 
 
-def test_special_sym_combined_with_another_key_is_blocked() -> None:
-    problem = validate_trigger("SUPER + mouse_down + Q")
+@pytest.mark.parametrize(
+    "text", ["SUPER + mouse_down + Q", "SUPER + mouse:272 + Q", "switch:on:Lid + Q"]
+)
+def test_exclusive_sym_combined_with_another_key_is_blocked(text: str) -> None:
+    problem = validate_trigger(text)
     assert problem is not None and problem.blocking
+
+
+def test_keycodes_are_not_exclusive_syms() -> None:
+    """`code:N` sits in parseKeyString's "one or more keysyms" branch, not the exclusive
+    one -- so a multi-key bind of two key codes is legal and must not be blocked."""
+    problem = validate_trigger("SUPER + code:36 + code:37")
+    assert problem is not None
+    assert problem.severity is Severity.WARN  # multi-key: read-only, not invalid
+    assert not problem.blocking
 
 
 def test_multi_key_warns_rather_than_blocks() -> None:
@@ -213,6 +225,45 @@ def test_validation_is_silent_when_xkb_cannot_be_asked(monkeypatch: pytest.Monke
 )
 def test_normalise_keysym(raw: str, expected: str) -> None:
     assert normalise_keysym(raw) == expected
+
+
+# --- the tables cannot drift ----------------------------------------------------------
+
+
+@needs_xkb
+def test_every_suggestion_is_checked_both_ways() -> None:
+    """The invariant `importer.binds._KEY_RENAMES` documents, applied here too.
+
+    The key must be a name xkb rejects (or the suggestion would never be offered) and the
+    value one it accepts (or the suggestion names a keysym as dead as the one it
+    replaces). Without this the table quietly becomes a table of guesses.
+    """
+    from hyprtweaker.engine.triggers import _SUGGESTIONS
+
+    for dead, suggested in _SUGGESTIONS.items():
+        assert known_keysym(dead) is False, f"{dead!r} is a real keysym; drop the entry"
+        assert known_keysym(suggested) is True, f"{suggested!r} is not a keysym xkb knows"
+
+
+def test_grammar_tables_agree_with_the_importer() -> None:
+    """Two modules describe the same Hyprland grammar; drift means they disagree
+    about what binds.
+
+    They stay separate rather than shared because `engine.importer.__init__` imports
+    `binds`, and `triggers` imports `importer.keysyms` -- importing the other way round
+    would close an import cycle. So the agreement is asserted instead of structural.
+    """
+    from hyprtweaker.engine.importer import binds as importer_binds
+    from hyprtweaker.engine.triggers import MOD_ALIASES, MODIFIERS, WHEEL
+
+    assert CATCHALL == importer_binds.CATCHALL
+    assert WHEEL | {CATCHALL} == set(importer_binds._SPECIAL_EXACT)
+    assert set(MODIFIERS) == {name for name, _aliases in importer_binds._MOD_ALIASES}
+    # Every alias the importer honours must also be one the editor can parse, or a bind
+    # imported as SUPER cannot be re-typed as WIN.
+    for canonical, aliases in importer_binds._MOD_ALIASES:
+        for alias in aliases:
+            assert MOD_ALIASES.get(alias) == canonical, alias
 
 
 # --- tokens ---------------------------------------------------------------------------

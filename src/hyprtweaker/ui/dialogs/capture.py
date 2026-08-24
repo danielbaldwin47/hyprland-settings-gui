@@ -105,17 +105,30 @@ class CaptureDialog(Adw.Dialog):
             margin_end=18,
         )
 
+        # The capture surface. Mouse and wheel capture are bound to *this*, not to the
+        # dialog: a click gesture on the whole dialog also fires for the Cancel and Set
+        # buttons, so clicking Set would overwrite the chord the user just pressed with
+        # `mouse:272` and then commit that instead.
+        self._surface = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            vexpand=True,
+            valign=Gtk.Align.CENTER,
+        )
+
         self._prompt = Gtk.Label(label=PROMPT, css_classes=["title-2"], wrap=True)
-        content.append(self._prompt)
+        self._surface.append(self._prompt)
 
         self._shortcut = Gtk.Label(css_classes=["title-1"], selectable=False, wrap=True)
-        content.append(self._shortcut)
+        self._surface.append(self._shortcut)
 
         self._hint = Gtk.Label(label=SUBPROMPT, css_classes=["dim-label"], wrap=True)
-        content.append(self._hint)
+        self._surface.append(self._hint)
 
         self._problem = Gtk.Label(css_classes=["error"], visible=False, wrap=True)
-        content.append(self._problem)
+        self._surface.append(self._problem)
+
+        content.append(self._surface)
 
         # Manual entry stays reachable: capture cannot produce a `switch:` trigger, and a
         # key this keyboard does not have still needs a way in (ADR-0007 keeps text entry
@@ -141,12 +154,12 @@ class CaptureDialog(Adw.Dialog):
         click = Gtk.GestureClick(button=0)
         click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         click.connect("pressed", self._on_click)
-        self.add_controller(click)
+        self._surface.add_controller(click)
 
         scroll = Gtk.EventControllerScroll(flags=Gtk.EventControllerScrollFlags.BOTH_AXES)
         scroll.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         scroll.connect("scroll", self._on_scroll)
-        self.add_controller(scroll)
+        self._surface.add_controller(scroll)
 
         # Inhibition needs a realized surface, which a dialog only has once mapped.
         self.connect("map", lambda _dialog: self._inhibit_shortcuts())
@@ -181,16 +194,25 @@ class CaptureDialog(Adw.Dialog):
     def _on_key_pressed(
         self, _controller: Gtk.EventControllerKey, keyval: int, keycode: int, _state: int
     ) -> bool:
+        # Capture is gated on focus: while the user is in the manual entry, every key has
+        # to reach the text field or the fallback cannot be typed into at all -- pressing
+        # S would record the trigger "S" instead of writing a letter. GNOME gates the same
+        # way, on which page of its dialog is visible (libadwaita-patterns.md §3.2).
+        if self._typing_manually():
+            return False
+
         name = Gdk.keyval_name(keyval) or ""
 
         # Bare Escape cancels and bare Backspace clears, the GNOME convention. With a
         # modifier held they are ordinary keys -- SUPER + Escape is a bind people really
-        # do set, and swallowing it would make it uncapturable.
+        # do set, and swallowing it would make it uncapturable. `Delete` is deliberately
+        # not a clear key: it is an ordinary bindable key, and treating it as clear would
+        # make a bare Delete bind impossible to capture.
         if not self._recorder.mods:
             if name == "Escape":
                 self._cancel()
                 return True
-            if name in {"BackSpace", "Delete"}:
+            if name == "BackSpace":
                 self._clear()
                 return True
 
@@ -202,9 +224,19 @@ class CaptureDialog(Adw.Dialog):
         self._settle(captured)
         return True
 
+    def _typing_manually(self) -> bool:
+        """Whether focus is inside the manual entry, so keys belong to it and not to us."""
+        root = self.get_root()
+        focus = root.get_focus() if root is not None else None
+        if focus is None:
+            return False
+        return focus is self._manual or focus.is_ancestor(self._manual)
+
     def _on_key_released(
         self, _controller: Gtk.EventControllerKey, keyval: int, _keycode: int, _state: int
     ) -> None:
+        if self._typing_manually():
+            return
         self._recorder.release(Gdk.keyval_name(keyval) or "")
         if self._captured is None:
             self._refresh()
@@ -252,8 +284,31 @@ class CaptureDialog(Adw.Dialog):
         self._manual.set_text("")
         self._refresh()
 
+    def _keycode_hint(self, trigger: Trigger) -> str:
+        """What a `code:N` trigger means on the layout in front of the user right now.
+
+        ADR-0007 asks for the keysym alongside the number, because a bare "key code 36"
+        is unreadable -- and the answer is layout-dependent, so it is a hint rather than
+        part of the trigger.
+        """
+        if not trigger.is_keycode:
+            return SUBPROMPT
+        try:
+            code = int(trigger.key.removeprefix("code:"))
+        except ValueError:  # pragma: no cover -- validation blocks this first
+            return SUBPROMPT
+        display = Gdk.Display.get_default()
+        if display is None:  # pragma: no cover -- no display in the headless tier
+            return SUBPROMPT
+        ok, _keys, keyvals = display.map_keycode(code)
+        names = [n for n in (Gdk.keyval_name(k) for k in keyvals or ()) if n]
+        if not ok or not names:
+            return f"Key code {code} has no key on your current layout."
+        return f"Key code {code} is {names[0]} on your current layout."
+
     def _refresh(self) -> None:
         trigger = self._captured
+        self._hint.set_text(SUBPROMPT if trigger is None else self._keycode_hint(trigger))
         if trigger is None:
             pending = self._recorder.modifier_only()
             self._shortcut.set_text(f"{pending} + …" if pending else "")

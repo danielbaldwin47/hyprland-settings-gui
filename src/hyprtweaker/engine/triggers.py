@@ -74,18 +74,25 @@ WHEEL: frozenset[str] = frozenset({"mouse_up", "mouse_down", "mouse_left", "mous
 
 CATCHALL = "catchall"
 
-#: Special syms that are not xkb names at all, so the keysym validator must not see them.
-#: Each is exclusive: `parseKeyString` refuses to combine one with any other key.
+#: Prefixed forms that are not xkb names, so the keysym validator must not see them.
+#: `code:` is here but *not* in `_EXCLUSIVE_PREFIXES`: `parseKeyString` puts it in the
+#: "one or more keysyms" branch alongside real keysym names, so `code:36 + code:37` is a
+#: legal multi-key bind while `mouse:272 + Q` is not.
 _SPECIAL_PREFIXES: tuple[str, ...] = ("mouse:", "switch:", "code:")
 
-#: Names people reach for that xkb does not know, and what they meant. Mirrors
-#: `importer.binds._KEY_RENAMES`; kept tiny for the same reason -- a rename table that
-#: grows by guesswork invents targets rather than naming a problem.
+#: The syms `parseKeyString` refuses to combine with any other key. Wheel directions are
+#: exclusive too, and are matched by exact name rather than prefix.
+_EXCLUSIVE_PREFIXES: tuple[str, ...] = ("mouse:", "switch:")
+
+#: Names people reach for that xkb does not know, and what they meant.
+#:
+#: Every entry is checked both ways by `test_triggers.py`: the key must be a name xkb
+#: rejects and the value one it accepts, so this cannot drift into a table of guesses --
+#: the same invariant, and the same reason, as `importer.binds._KEY_RENAMES`. A suggestion
+#: that named a keysym as dead as the one it replaced would be worse than staying silent.
 _SUGGESTIONS: dict[str, str] = {
     "enter": "Return",
     "esc": "Escape",
-    "return_": "Return",
-    "escape_": "Escape",
     "pgup": "Prior",
     "pgdn": "Next",
     "pageup": "Prior",
@@ -140,7 +147,6 @@ _KEYSYM_NORMALISATIONS: dict[str, str] = {
     "ISO_Left_Tab": "Tab",
     "Sys_Req": "Print",
     "ISO_Enter": "Return",
-    "KP_Enter": "KP_Enter",
 }
 
 
@@ -200,10 +206,6 @@ class Trigger:
         return format_trigger(self.mods, self.key)
 
     @property
-    def is_catchall(self) -> bool:
-        return self.key == CATCHALL
-
-    @property
     def is_keycode(self) -> bool:
         return self.key.startswith("code:")
 
@@ -220,7 +222,13 @@ def format_trigger(mods: tuple[str, ...] | list[str], key: str) -> str:
 
 
 def button_token(gdk_button: int) -> str:
-    """GDK button number -> `mouse:N`."""
+    """GDK button number -> `mouse:N`.
+
+    Buttons past the mapped five extrapolate from `BTN_LEFT` (272 = GDK 1), which is how
+    evdev numbers the extra buttons on a gaming mouse. A guess, but a checkable one: the
+    user sees the code in the trigger and the bind either fires or it does not -- better
+    than refusing to capture a button the kernel is perfectly happy to report.
+    """
     return f"mouse:{_BUTTON_CODES.get(gdk_button, 271 + gdk_button)}"
 
 
@@ -229,9 +237,10 @@ def wheel_token(direction: str) -> str:
     return f"mouse_{direction.lower()}"
 
 
-def _is_special(token: str) -> bool:
+def _is_exclusive(token: str) -> bool:
+    """Whether this key token refuses to share a trigger with any other key."""
     lowered = token.lower()
-    return lowered in WHEEL or lowered == CATCHALL or lowered.startswith(_SPECIAL_PREFIXES)
+    return lowered in WHEEL or lowered == CATCHALL or lowered.startswith(_EXCLUSIVE_PREFIXES)
 
 
 def parse_trigger(text: str) -> Trigger:
@@ -297,11 +306,11 @@ def validate_trigger(text: str, *, in_submap: bool = False) -> TriggerProblem | 
     # Special syms are exclusive: `parseKeyString` will not combine one with another key.
     if " + " in key:
         parts = [p.strip() for p in key.split("+") if p.strip()]
-        if any(_is_special(p) for p in parts):
+        if any(_is_exclusive(p) for p in parts):
             return TriggerProblem(
                 Severity.BLOCK,
                 "Mouse, wheel and switch triggers cannot be combined with other keys.",
-                f"Use just one of: {', '.join(p for p in parts if _is_special(p))}.",
+                f"Use just one of: {', '.join(p for p in parts if _is_exclusive(p))}.",
             )
         return TriggerProblem(
             Severity.WARN,
