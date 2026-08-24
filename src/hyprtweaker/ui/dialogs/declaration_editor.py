@@ -213,7 +213,12 @@ class DeclarationEditor(Adw.Dialog):
         value = self._values.get(spec.name)
 
         if spec.type is FieldType.BOOL:
-            row = Adw.SwitchRow(title=spec.label, active=bool(value))
+            # A required switch with nothing held opens *on*, agreeing with `_neutral`.
+            # `enabled` is the only one, and off would answer "no, don't animate" for the
+            # user -- plainly wrong for an imported animation that carries a speed and a
+            # curve, and it made Add produce a disabled animation.
+            opening = bool(value) if value is not None else bool(spec.required)
+            row = Adw.SwitchRow(title=spec.label, active=opening)
             row.connect("notify::active", self._on_switch, spec)
             # Seeded, not left to the first toggle. A switch shows a state either way, so
             # an untouched one that wrote nothing produced a table with the key *absent* --
@@ -227,6 +232,14 @@ class DeclarationEditor(Adw.Dialog):
             choices = (
                 self._curve_names if spec.type is FieldType.CURVE_REF else tuple(spec.choices)
             )
+            # A held value the picker does not offer joins it rather than being dropped.
+            # `unset` is the case that made this necessary: deliberately absent from
+            # `GESTURE_ACTIONS` because the app never writes one, but an imported config may
+            # hold it -- and without this the dialog opened on the first choice and *saved*
+            # it, turning a removal into a live binding just by looking at the row. The
+            # pass-through rule ADR-0008 sets for an unknown rule effect, applied here.
+            if isinstance(value, str) and value and value not in choices:
+                choices = (*choices, value)
             optional = not spec.required
             model = Gtk.StringList()
             if optional:

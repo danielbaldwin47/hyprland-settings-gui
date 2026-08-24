@@ -77,15 +77,15 @@ class TestDanglingCurves:
 
         findings = dangling_curve_references(entities)
 
-        assert [f.subject for f in findings] == ["windowsIn"]
-        assert "gone" in findings[0].message
+        assert [f.subject for _, f in findings] == ["windowsIn"]
+        assert "gone" in findings[0][1].message
 
     def test_a_spring_reference_is_checked_the_same_way(self) -> None:
         entities = _entities(
             animations=[Animation("windowsOut", {"enabled": True, "spring": "bouncy"})]
         )
 
-        assert [f.subject for f in dangling_curve_references(entities)] == ["windowsOut"]
+        assert [f.subject for _, f in dangling_curve_references(entities)] == ["windowsOut"]
 
     def test_hyprlands_own_curves_are_not_dangling(self) -> None:
         """The upstream example names `default` before declaring any curve of that name."""
@@ -110,7 +110,7 @@ class TestDanglingCurves:
 
         findings = missing_curve_references(entities)
 
-        assert [f.subject for f in findings] == ["windowsIn"]
+        assert [f.subject for _, f in findings] == ["windowsIn"]
 
     def test_deleting_a_curve_names_the_animations_that_would_break(self) -> None:
         entities = _entities(
@@ -454,7 +454,7 @@ class TestEnvFindings:
         that loads, which is the opposite of what a Finding means.
         """
         assert env_findings(EnvVar("", "1"))
-        assert env_findings(EnvVar("   ", "1"))
+        assert env_findings(EnvVar("   ", "1")) == (), "probed: an all-space name is config ok"
         assert env_findings(EnvVar("2FAST", "1")) == ()
         assert env_findings(EnvVar("has-a-dash", "1")) == ()
 
@@ -528,9 +528,30 @@ class TestGestureModifierNormalisation:
     def test_a_missing_modifier_is_the_empty_set_not_a_distinct_one(self) -> None:
         assert normalised_mods(None) == normalised_mods("") == frozenset()
 
-    def test_the_usual_separators_all_split(self) -> None:
+    def test_an_alias_is_the_same_modifier(self) -> None:
+        """Probed: these pairs shadow each other in the compositor."""
+        assert self._pair("CTRL", "CONTROL")
+        assert self._pair("ALT", "MOD1")
+        assert self._pair("SUPER", "MOD4")
+
+    def test_a_name_is_matched_as_a_substring(self) -> None:
+        """Probed: the string is scanned, not tokenised -- `XSUPERX` really is `SUPER`."""
+        assert normalised_mods("XSUPERX") == normalised_mods("SUPER")
+        assert normalised_mods("SUPERSHIFT") == normalised_mods("SUPER SHIFT")
+        assert normalised_mods("SUPER_SHIFT") == normalised_mods("SUPER SHIFT")
+
+    def test_the_usual_separators_all_agree(self) -> None:
         assert normalised_mods("SUPER+SHIFT") == normalised_mods("SUPER SHIFT")
         assert normalised_mods("SUPER, SHIFT") == normalised_mods("SUPER SHIFT")
+
+    def test_an_unrecognised_token_is_the_empty_mask_not_a_distinct_one(self) -> None:
+        """Probed: `mods="BOGUS"` shadows a gesture with no modifiers at all."""
+        assert normalised_mods("BOGUS") == frozenset()
+        assert self._pair("", "BOGUS")
+
+    def test_a_token_split_would_not_have_been_enough(self) -> None:
+        """The regression this replaced: splitting on whitespace missed every alias."""
+        assert normalised_mods("CONTROL") == normalised_mods("CTRL") == frozenset({"CTRL"})
 
 
 def test_two_identical_triggers_do_not_quote_the_row_at_itself() -> None:

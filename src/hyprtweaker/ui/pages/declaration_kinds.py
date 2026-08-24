@@ -447,12 +447,13 @@ def _permission_subtitle(permission: Permission) -> str:
 
 
 def _animation_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
-    index_of = {animation.leaf: index for index, animation in enumerate(entities.animations)}
-    found: list[tuple[int, Finding]] = []
-    for finding in (*dangling_curve_references(entities), *missing_curve_references(entities)):
-        # Safe to resolve by leaf: an animation's leaf *is* its identity, enforced on write.
-        if finding.subject in index_of:
-            found.append((index_of[finding.subject], finding))
+    # The cross-entity checks carry their own row index. Resolving them by leaf instead
+    # would collapse both rows' findings onto one whenever a leaf appears twice -- which
+    # the write gate prevents, but a hand-edited Module read back does not.
+    found: list[tuple[int, Finding]] = [
+        *dangling_curve_references(entities),
+        *missing_curve_references(entities),
+    ]
     for index, animation in enumerate(entities.animations):
         found += [(index, finding) for finding in animation_findings(animation)]
     return found

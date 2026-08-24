@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .model.entities import Animation, Curve, Device, EntitySet, EnvVar, Gesture
+from .triggers import MOD_ALIASES
 
 # --- field descriptions ------------------------------------------------------------------
 
@@ -337,21 +338,54 @@ GESTURE_IDENTITY_FIELDS: tuple[str, ...] = ("fingers", "direction", "mods")
 """The fields the compositor keys a gesture by -- see `GESTURE_DIRECTION_COVERS`."""
 
 
+def normalised_mods(value: Any) -> frozenset[str]:
+    """A modifier string as the *mask* the compositor compares, not as text.
+
+    Probed against the binary, and it is stranger than a token split: the string is scanned
+    for modifier names as **substrings**, case-folded, and unknown text contributes nothing.
+    So all of these shadow each other --
+
+    * `"SUPER"` / `"super"` / `"MOD4"` (alias, and case-insensitive),
+    * `"CTRL"` / `"CONTROL"`, `"ALT"` / `"MOD1"`,
+    * `"SUPER SHIFT"` / `"SUPERSHIFT"` / `"SUPER_SHIFT"` (no separator is required),
+    * `"XSUPERX"` / `"SUPER"` (a name embedded in noise still counts),
+    * `""` / `"BOGUS"` (an unrecognised token is the *empty* mask, not a distinct one),
+
+    -- while `"SUPER"` and `"ALT"`, or `"SUPER"` and `"SUPER SHIFT"`, correctly differ.
+
+    Two earlier attempts got this wrong in different ways: comparing the raw text missed
+    case and order, and splitting into tokens still missed `CTRL`/`CONTROL` and `ALT`/`MOD1`,
+    which real configs write. Both failures are silent in the worst way -- the rows look
+    fine and the file does not load.
+
+    `MOD_ALIASES` is reused rather than re-listed: a modifier set is the same domain thing
+    here as in a Bind's Trigger (ADR-0007), and two tables would drift.
+    """
+    if not value:
+        return frozenset()
+    text = str(value).upper()
+    return frozenset(canonical for name, canonical in MOD_ALIASES.items() if name in text)
+
+
 def _gesture_key(gesture: Gesture) -> tuple[Any, ...]:
     fields = gesture.fields
-    return (fields.get("fingers"), str(fields.get("mods") or ""))
+    return (fields.get("fingers"), normalised_mods(fields.get("mods")))
 
 
-def gesture_conflicts(gestures: Sequence[Gesture]) -> tuple[Finding, ...]:
+def gesture_conflicts(gestures: Sequence[Gesture]) -> tuple[tuple[int, Finding], ...]:
     """Gestures an earlier one shadows, which Hyprland refuses to load at all.
 
-    Reported against the *later* gesture, because that is the one the compositor names and
-    the one whose trigger has to change. Order matters: "previous shadows new" means the
-    first declaration wins, so the row to fix is always the lower one.
+    Returns `(index, finding)` rather than the finding alone, because a gesture has no
+    unique title to key on -- two rows may share a trigger exactly, which is the very case
+    this reports. Keying by title badged the culprit *and* its victim.
+
+    Reported against the *later* gesture: that is the one the compositor names, and the one
+    whose trigger has to change. The relation is genuinely asymmetric -- narrow-then-wide
+    (`left` then `swipe`) is legal.
     """
-    findings: list[Finding] = []
+    findings: list[tuple[int, Finding]] = []
     seen: list[tuple[tuple[Any, ...], str, str]] = []
-    for gesture in gestures:
+    for index, gesture in enumerate(gestures):
         if is_scripted(gesture):
             continue
         direction = str(gesture.fields.get("direction") or "")
@@ -359,11 +393,22 @@ def gesture_conflicts(gestures: Sequence[Gesture]) -> tuple[Finding, ...]:
         for other_key, other_direction, other_title in seen:
             covers = GESTURE_DIRECTION_COVERS.get(other_direction, frozenset())
             if other_key == key and direction in covers:
+                title = gesture_title(gesture)
+                # Naming the other row helps only when it reads differently; two rows with
+                # the same trigger would otherwise quote the row at itself.
+                blame = (
+                    "An earlier gesture with the same trigger"
+                    if other_title == title
+                    else f"“{other_title}”"
+                )
                 findings.append(
-                    Finding(
-                        gesture_title(gesture),
-                        f"“{other_title}” already covers this, so Hyprland refuses the "
-                        f"whole gestures file. Change the fingers, direction or modifiers.",
+                    (
+                        index,
+                        Finding(
+                            title,
+                            f"{blame} already covers this, so Hyprland refuses the whole "
+                            f"gestures file. Change the fingers, direction or modifiers.",
+                        ),
                     )
                 )
                 break
@@ -536,13 +581,18 @@ def device_field_bounds(
     """
     bounds: dict[str, tuple[float | None, float | None]] = {}
     for field_name, options in device_override_options(ranges).items():
-        lows = [ranges[name][0] for name in options if ranges[name][0] is not None]
-        highs = [ranges[name][1] for name in options if ranges[name][1] is not None]
-        if lows or highs:
-            bounds[field_name] = (
-                min(lows) if lows else None,  # type: ignore[type-var]
-                max(highs) if highs else None,  # type: ignore[type-var]
-            )
+        pairs = [ranges[name] for name in options if name in ranges]
+        if not pairs:
+            continue
+        # An Option with no bound at one end accepts anything there, so the widest pair has
+        # no bound there either. Taking min/max over only the *stated* bounds would impose
+        # one shadowed Option's limit on a device the other one governs.
+        lows = [low for low, _ in pairs]
+        highs = [high for _, high in pairs]
+        low = None if any(v is None for v in lows) else min(v for v in lows if v is not None)
+        high = None if any(v is None for v in highs) else max(v for v in highs if v is not None)
+        if low is not None or high is not None:
+            bounds[field_name] = (low, high)
     return bounds
 
 
@@ -571,17 +621,17 @@ def device_findings(device: Device) -> tuple[Finding, ...]:
 def env_findings(variable: EnvVar) -> tuple[Finding, ...]:
     """What would go wrong with one environment variable.
 
-    A name `setenv` will not take is the whole check: the *value* is free text by design
-    (it routinely holds commas, colons and paths), and Lua quoting handles it.
+    Almost nothing, as it turns out. Probed: a leading digit, a dash, a space, an `=` and
+    even an all-whitespace name are `config ok` -- `hl.env` hands the name to `setenv`
+    unvetted. Only the empty string is refused, and by name: "name must not be empty".
+
+    An earlier version flagged anything outside `ENV_NAME` as an error the compositor would
+    raise. It does not, and a Finding means something Hyprland *would* reject or ignore
+    (CONTEXT.md) -- so that check put a warning triangle on configs that load. `ENV_NAME`
+    stays as the conventional shape, for a caller that wants to advise rather than warn.
     """
-    if not ENV_NAME.match(variable.name):
-        return (
-            Finding(
-                variable.name,
-                "A variable name may only hold letters, digits and underscores, and may "
-                "not start with a digit.",
-            ),
-        )
+    if not variable.name:
+        return (Finding(variable.name, "A variable needs a name."),)
     return ()
 
 
@@ -669,7 +719,7 @@ class Finding:
     message: str
 
 
-def dangling_curve_references(entities: EntitySet) -> tuple[Finding, ...]:
+def dangling_curve_references(entities: EntitySet) -> tuple[tuple[int, Finding], ...]:
     """Animations naming a curve that nothing declares (and Hyprland would refuse).
 
     `hl.animation{bezier=...}` errors when the curve does not exist (CR:430-441), and an
@@ -685,24 +735,27 @@ def dangling_curve_references(entities: EntitySet) -> tuple[Finding, ...]:
     declared = {curve.name for curve in entities.curves}
     declared.update(BUILTIN_CURVES)
 
-    findings: list[Finding] = []
-    for animation in entities.animations:
+    findings: list[tuple[int, Finding]] = []
+    for index, animation in enumerate(entities.animations):
         if animation.fields.get("enabled") is False:
             continue
         for key in ANIMATION_CURVE_KEYS:
             reference = animation.fields.get(key)
             if isinstance(reference, str) and reference and reference not in declared:
                 findings.append(
-                    Finding(
-                        animation.leaf,
-                        f"No curve named “{reference}” is declared, "
-                        f"so Hyprland will refuse this animation.",
+                    (
+                        index,
+                        Finding(
+                            animation.leaf,
+                            f"No curve named “{reference}” is declared, "
+                            f"so Hyprland will refuse this animation.",
+                        ),
                     )
                 )
     return tuple(findings)
 
 
-def missing_curve_references(entities: EntitySet) -> tuple[Finding, ...]:
+def missing_curve_references(entities: EntitySet) -> tuple[tuple[int, Finding], ...]:
     """Enabled animations that name no curve at all -- the other way the parser refuses.
 
     "bezier or spring is required" (CR:453-454). Separate from the dangling case because
@@ -714,8 +767,8 @@ def missing_curve_references(entities: EntitySet) -> tuple[Finding, ...]:
     Module down -- and it is exactly what the Add flow produces when the form is saved
     without touching anything. See `animation_findings` for the required-field checks.
     """
-    findings: list[Finding] = []
-    for animation in entities.animations:
+    findings: list[tuple[int, Finding]] = []
+    for index, animation in enumerate(entities.animations):
         if animation.fields.get("enabled") is False:
             continue
         if any(animation.fields.get(key) for key in ANIMATION_CURVE_KEYS):
@@ -725,7 +778,7 @@ def missing_curve_references(entities: EntitySet) -> tuple[Finding, ...]:
             # would put two findings on one row when there is only one thing to do first.
             continue
         findings.append(
-            Finding(animation.leaf, "Pick a curve: Hyprland requires one to animate.")
+            (index, Finding(animation.leaf, "Pick a curve: Hyprland requires one to animate."))
         )
     return tuple(findings)
 
@@ -946,6 +999,7 @@ __all__ = [
     "gesture_title",
     "is_scripted",
     "missing_curve_references",
+    "normalised_mods",
     "overridden_options",
     "unknown_device_fields",
     "unknown_leaves",
