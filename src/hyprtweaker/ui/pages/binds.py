@@ -26,7 +26,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine.binds_analysis import (  # noqa: E402
     find_conflicts,
@@ -35,6 +35,7 @@ from hyprtweaker.engine.binds_analysis import (  # noqa: E402
 )
 from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind  # noqa: E402
+from hyprtweaker.ui.flash import flash  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -200,39 +201,6 @@ class BindActions:
     """Exchange two binds' positions -- which same-submap duplicate fires first."""
     edit_submap: Callable[[str | None], None]
     """Open the Submap editor; `None` means create one."""
-
-
-FLASH_CLASS = "bind-jump-flash"
-FLASH_MS = 1200
-
-_flash_css_installed = False
-
-
-def _install_flash_css() -> None:
-    """The jump flash's one CSS rule, installed once per display.
-
-    ADR-0007's jump is "navigate + flash the row"; focus alone scrolls but a keyboard
-    user's focus ring is the only sign anything moved. Lazy because the smoke tier
-    constructs pages against whatever display the harness has, and a missing display
-    must degrade to no flash, not a crash.
-    """
-    global _flash_css_installed
-    if _flash_css_installed:
-        return
-    display = Gdk.Display.get_default()
-    if display is None:  # pragma: no cover - no-display environments only
-        return
-    provider = Gtk.CssProvider()
-    provider.load_from_string(
-        f"row.{FLASH_CLASS} {{"
-        " background-color: alpha(@warning_bg_color, 0.35);"
-        " transition: background-color 0.6s ease;"
-        " }"
-    )
-    Gtk.StyleContext.add_provider_for_display(
-        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
-    _flash_css_installed = True
 
 
 class BindRow:
@@ -577,16 +545,8 @@ class BindsPage:
         """
         for row in self._rows:
             if row.index == index:
-                _install_flash_css()
-                widget = row.widget
-                widget.grab_focus()
-                widget.add_css_class(FLASH_CLASS)
-
-                def unflash(target: Gtk.Widget = widget) -> bool:
-                    target.remove_css_class(FLASH_CLASS)
-                    return False  # one-shot
-
-                GLib.timeout_add(FLASH_MS, unflash)
+                row.widget.grab_focus()
+                flash(row.widget)
                 return
 
     @property

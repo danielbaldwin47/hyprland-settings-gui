@@ -230,6 +230,7 @@ def plan_tasks_view(
     mapping: TasksMapping,
     *,
     show_advanced: bool = False,
+    revealed: frozenset[str] = frozenset(),
 ) -> tuple[CategoryPlan, ...]:
     """Every curated Page, plus a fallback Page for any Section the mapping never placed.
 
@@ -247,10 +248,22 @@ def plan_tasks_view(
             if isinstance(destination, EntitySpec):
                 pages.append(destination)
                 continue
-            pages.append(_plan_page(schema, destination, placed, show_advanced=show_advanced))
+            pages.append(
+                _plan_page(
+                    schema,
+                    destination,
+                    placed,
+                    show_advanced=show_advanced,
+                    revealed=revealed,
+                )
+            )
         planned.append(CategoryPlan(id=category.id, title=category.title, pages=tuple(pages)))
 
-    return tuple(_with_fallbacks(planned, schema, mapping, placed, show_advanced=show_advanced))
+    return tuple(
+        _with_fallbacks(
+            planned, schema, mapping, placed, show_advanced=show_advanced, revealed=revealed
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,6 +305,7 @@ def _plan_page(
     placed: dict[str, _Placement],
     *,
     show_advanced: bool,
+    revealed: frozenset[str],
 ) -> PagePlan:
     """One curated Page: its homed Sections first, then the Groups it curated by name.
 
@@ -307,7 +321,9 @@ def _plan_page(
         for option in schema.section(section):
             if _claimed_elsewhere(placed, option.name, spec.id):
                 continue
-            if not is_visible(option, show_advanced=show_advanced, view=View.TASKS):
+            if not is_visible(
+                option, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
+            ):
                 withheld += 1
                 continue
             title = _section_group_title(schema, option, section, multi=multi)
@@ -327,7 +343,9 @@ def _plan_page(
                 # shipped mapping honest for the shipped Schema; at runtime an older or
                 # newer compositor simply has fewer settings, which is not an error.
                 continue
-            if not is_visible(curated, show_advanced=show_advanced, view=View.TASKS):
+            if not is_visible(
+                curated, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
+            ):
                 withheld += 1
                 continue
             members.append(curated)
@@ -366,6 +384,7 @@ def _with_fallbacks(
     placed: dict[str, _Placement],
     *,
     show_advanced: bool,
+    revealed: frozenset[str],
 ) -> list[CategoryPlan]:
     """Append a Page per uncurated Section: a release adds settings rather than hiding them.
 
@@ -388,7 +407,9 @@ def _with_fallbacks(
             option
             for option in schema.section(section)
             if option.name not in placed
-            and is_visible(option, show_advanced=show_advanced, view=View.TASKS)
+            and is_visible(
+                option, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
+            )
         ]
         if not visible:
             # Every Option here is either curated elsewhere by name or is the hidden tier,

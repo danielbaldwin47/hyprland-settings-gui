@@ -10,7 +10,11 @@ Search was fixed early as view-independent and all-indexing: it sees every Optio
 
 ### Surface: sidebar search, not a palette
 
-The GNOME Settings pattern, as mocked: the magnifier button in the sidebar header swaps the sidebar title for a search entry; while the query is non-empty, grouped results replace the nav list, and selecting a result shows its Page in the content pane with the target Row flash-highlighted — the ADR-0013 one-off reveal. Clearing or escaping restores the nav list.
+The GNOME Settings pattern, as mocked: the magnifier button in the sidebar header reveals a search entry; while the query is non-empty, grouped results replace the nav list, and selecting a result shows its Page in the content pane with the target Row flash-highlighted — the ADR-0013 one-off reveal. Clearing or escaping restores the nav list.
+
+**Amended during #72 — the entry sits *below* the sidebar header, not in its title slot.** This clause originally read "swaps the sidebar title for a search entry", following the `Search.dc.html` mock. The platform will not have it, and the reason is worth recording so nobody re-derives it. GTK's type-to-search handler begins `if (!gtk_widget_get_mapped (bar)) return GDK_EVENT_PROPAGATE` (`gtksearchbar.c`), so a `GtkSearchBar` must stay **mapped even while the finder is closed** — which rules out parking it in a `GtkStack` page, hiding it, or swapping it in and out of the title slot. Each of those leaves every widget pointer intact while the shortcut silently does nothing, so only a mapping assertion or a real keystroke catches it. Sharing the title slot with the title *does* keep it mapped, but a closed `GtkSearchBar` collapses only vertically (its revealer slides down) and still measures min 85 / nat 224 px wide, which truncated the sidebar title to "Hyp…".
+
+Below the header is the arrangement the widget is designed for, and the only one correct on both counts: the title reads and typing opens the finder. **Type-to-search is a requirement of this ADR; the entry's placement within the sidebar is choreography** — so when the two proved mutually exclusive, the requirement won. The sidebar remains the search surface, which is what the palette alternative was rejected over; only the mock's pixel placement is given up.
 
 Shortcuts: **Ctrl+F** focuses search, and **type-to-search** — typing while focus is not in a text entry — focuses it too. Both are GNOME HIG conventions. No Ctrl+K overlay palette: foreign to libadwaita, and the sidebar already is the navigation surface.
 
