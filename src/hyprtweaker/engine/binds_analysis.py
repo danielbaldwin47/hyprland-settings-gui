@@ -140,9 +140,7 @@ def unreachable_submaps(entities: EntitySet) -> set[str]:
         changed = False
         for bind, target in entries:
             live = (
-                bind.submap is None
-                or bind.options.submap_universal
-                or bind.submap in reachable
+                bind.submap is None or bind.options.submap_universal or bind.submap in reachable
             )
             if live and target not in reachable:
                 reachable.add(target)
@@ -155,7 +153,9 @@ def unreachable_submaps(entities: EntitySet) -> set[str]:
     return names - reachable
 
 
-def save_submap(entities: EntitySet, *, original: str | None, name: str, reset_target: str) -> None:
+def save_submap(
+    entities: EntitySet, *, original: str | None, name: str, reset_target: str
+) -> None:
     """Create a Submap, or rename one and retune its reset target, in place (#66).
 
     `original` is `None` for a creation and the current name for an edit. A rename

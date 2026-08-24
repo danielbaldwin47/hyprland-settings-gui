@@ -49,14 +49,14 @@ FLAGS: tuple[tuple[str, str, str], ...] = (
     ("long_press", "Fires on a long press", ""),
     ("dont_inhibit", "Works while shortcuts are inhibited", ""),
     ("allow_input_capture", "Works during input capture", ""),
+    ("submap_universal", "Works in every submap", "Fires everywhere, not just where defined"),
 )
 """The flags the editor offers, in the order they read best.
 
 Not the whole of `BindOptions`: `click` and `drag` imply `release` and are mutually
-exclusive with it (ADR-0007), `submap_universal` belongs to the Submap editor (#66), and
-`auto_consuming` is absent from the stub though the code parses it. Those need constraint
-handling rather than a switch, and a switch that silently produced an invalid combination
-would be worse than not offering it yet.
+exclusive with it (ADR-0007), and `auto_consuming` is absent from the stub though the code
+parses it (#105). Those need constraint handling rather than a switch, and a switch that
+silently produced an invalid combination would be worse than not offering it yet.
 """
 
 INCOMPATIBLE = (("long_press", "repeating"), ("release", "repeating"))
@@ -71,7 +71,10 @@ class BindEditor(Adw.Dialog):
         *,
         on_done: Callable[[Bind], None],
         bind: Bind | None = None,
+        submap: str | None = None,
     ) -> None:
+        """`submap` is where a *new* bind will live (#66's per-submap add); an edited
+        bind keeps the submap it already has, and the parameter is ignored."""
         super().__init__(
             title="Edit keybind" if bind else "Add keybind",
             content_width=560,
@@ -79,6 +82,7 @@ class BindEditor(Adw.Dialog):
         )
         self._on_done = on_done
         self._original = bind
+        self._submap = bind.submap if bind is not None else submap
         self._chosen: Dispatcher | None = None
         self._arg_entries: dict[str, Gtk.Widget] = {}
         self._flag_switches: dict[str, Adw.SwitchRow] = {}
@@ -274,7 +278,7 @@ class BindEditor(Adw.Dialog):
         return values, ()
 
     def _in_submap(self) -> bool:
-        return bool(self._original.submap) if self._original else False
+        return bool(self._submap)
 
     def _capture(self) -> None:
         """Open Capture, prefilled with whatever is typed, and take back what it records."""
@@ -343,7 +347,10 @@ class BindEditor(Adw.Dialog):
                 keys=str(parse_trigger(self._trigger.get_text().strip())),
                 dispatcher=DispatcherCall(path=path, args=args, positional=positional),
                 options=options,
-                submap=self._original.submap if self._original else None,
+                submap=self._submap,
+                # Editing must not quietly re-enable a bind the conflict surface
+                # disabled -- `enabled` is list state, not something this form shows.
+                enabled=self._original.enabled if self._original else True,
                 origin=self._original.origin if self._original else "",
             )
         )

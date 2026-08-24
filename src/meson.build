@@ -105,6 +105,7 @@ package_sources = {
     'capture.py',
     'errors.py',
     'migration.py',
+    'submap_editor.py',
   ],
   'hyprtweaker/ui/pages': [
     '__init__.py',

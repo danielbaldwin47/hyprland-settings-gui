@@ -168,9 +168,7 @@ class TestUnreachable:
     def test_editing_an_implied_submap_declares_it(self) -> None:
         entities = EntitySet(binds=[exec_bind("right", submap="resize")])
         save_submap(entities, original="resize", name="resize", reset_target="landing")
-        assert [(s.name, s.reset_target) for s in entities.submaps] == [
-            ("resize", "landing")
-        ]
+        assert [(s.name, s.reset_target) for s in entities.submaps] == [("resize", "landing")]
 
     def test_a_rename_cascades_to_everything_the_name_meant(self) -> None:
         entities = EntitySet(

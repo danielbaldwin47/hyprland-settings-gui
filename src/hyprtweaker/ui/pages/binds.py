@@ -18,6 +18,7 @@ config is smaller than it is.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import gi
@@ -27,6 +28,11 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gtk  # noqa: E402
 
+from hyprtweaker.engine.binds_analysis import (  # noqa: E402
+    find_conflicts,
+    submap_names,
+    unreachable_submaps,
+)
 from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind  # noqa: E402
 
@@ -91,6 +97,50 @@ def flag_text(bind: Bind) -> str:
     return ", ".join(names)
 
 
+UNREACHABLE = "Nothing switches to this submap, so its keybinds can never fire."
+"""The unreachable flag's sentence (ADR-0007). Appended to the group description rather
+than hidden in a tooltip: the person most likely to hit this just made the submap and has
+not yet bound a key to enter it, and a sentence in place is the difference between a
+puzzle and a to-do."""
+
+
+def ordinal(number: int) -> str:
+    """1st, 2nd, 3rd... -- the fire-order spelling the conflict badge uses."""
+    if 10 <= number % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+    return f"{number}{suffix}"
+
+
+@dataclass(frozen=True, slots=True)
+class Rival:
+    """One other Bind on the same Trigger, as the conflict popover presents it."""
+
+    index: int
+    label: str
+    same_submap: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RowConflict:
+    """What one conflicted Row shows: its own fire order, and everyone it races."""
+
+    order: int
+    total: int
+    rivals: tuple[Rival, ...]
+
+    @property
+    def badge_text(self) -> str:
+        return f"Duplicate trigger · fires {ordinal(self.order)} of {self.total}"
+
+
+def rival_label(bind: Bind, order: int) -> str:
+    """One rival as one line: fire order, what it does, where it lives."""
+    place = "root keybinds" if bind.submap is None else f"submap {bind.submap}"
+    return f"{ordinal(order)}: {action_text(bind)} ({place})"
+
+
 def read_only_reason(bind: Bind) -> str:
     """Why this bind cannot be edited here, or `""` when it can be.
 
@@ -105,7 +155,13 @@ def read_only_reason(bind: Bind) -> str:
 
 
 class BindRow:
-    """One `Adw.ActionRow` for one Bind, plus what the Page needs to keep about it."""
+    """One `Adw.ActionRow` for one Bind, plus what the Page needs to keep about it.
+
+    The conflict badge is a `MenuButton` whose popover carries the *other* bind's identity
+    and the three verbs ADR-0007 demands -- jump to it, rebind it, disable it -- plus swap
+    fire order for same-submap duplicates, which is the one place order is visible enough
+    to be worth a control (#66). Never a bare "there is a conflict".
+    """
 
     def __init__(
         self,
@@ -114,10 +170,18 @@ class BindRow:
         *,
         on_edit: Callable[[int], None],
         on_remove: Callable[[int], None],
+        on_enable: Callable[[int, bool], None],
+        on_jump: Callable[[int], None],
+        on_rebind: Callable[[int], None],
+        on_swap: Callable[[int, int], None],
         editable: bool,
+        conflict: RowConflict | None = None,
     ) -> None:
         self.bind = bind
         self.index = index
+        self.conflict = conflict
+        self.conflict_badge: Gtk.MenuButton | None = None
+        self.disabled_badge: Gtk.Label | None = None
 
         reason = read_only_reason(bind)
 
@@ -137,6 +201,35 @@ class BindRow:
             label = Gtk.Label(label=description, css_classes=["dim-label"], wrap=True)
             label.set_max_width_chars(28)
             self.widget.add_suffix(label)
+
+        # A read-only bind still fires, so it still conflicts; the badge goes on before
+        # the read-only early-return for exactly that reason.
+        if conflict is not None:
+            self.conflict_badge = self._conflict_button(
+                conflict,
+                on_jump=on_jump,
+                on_rebind=on_rebind,
+                on_swap=on_swap,
+                on_enable=on_enable,
+                editable=editable,
+            )
+            self.widget.add_suffix(self.conflict_badge)
+
+        if not bind.enabled:
+            self.disabled_badge = Gtk.Label(
+                label="Disabled", css_classes=["dim-label", "caption"]
+            )
+            self.disabled_badge.set_tooltip_text(
+                "Kept in place but commented out in binds.lua; it does not fire."
+            )
+            self.widget.add_suffix(self.disabled_badge)
+            self.widget.add_css_class("dim-label")
+            if editable and not reason:
+                enable = Gtk.Button(label="Enable", valign=Gtk.Align.CENTER)
+                enable.add_css_class("flat")
+                enable.set_tooltip_text("Uncomment this bind so it fires again")
+                enable.connect("clicked", lambda _button: on_enable(index, True))
+                self.widget.add_suffix(enable)
 
         if reason:
             badge = Gtk.Label(label="Read-only", css_classes=["dim-label", "caption"])
@@ -159,6 +252,94 @@ class BindRow:
         remove.connect("clicked", lambda _button: on_remove(index))
         self.widget.add_suffix(remove)
 
+    def _conflict_button(
+        self,
+        conflict: RowConflict,
+        *,
+        on_jump: Callable[[int], None],
+        on_rebind: Callable[[int], None],
+        on_swap: Callable[[int, int], None],
+        on_enable: Callable[[int, bool], None],
+        editable: bool,
+    ) -> Gtk.MenuButton:
+        button = Gtk.MenuButton(
+            icon_name="dialog-warning-symbolic",
+            valign=Gtk.Align.CENTER,
+            css_classes=["flat", "warning"],
+            tooltip_text=conflict.badge_text,
+        )
+
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=6,
+            margin_top=6,
+            margin_bottom=6,
+            margin_start=6,
+            margin_end=6,
+        )
+        heading = Gtk.Label(label=conflict.badge_text, xalign=0)
+        heading.add_css_class("heading")
+        box.append(heading)
+        note = Gtk.Label(
+            label="Duplicates are legal: every one of these fires, in the order listed.",
+            xalign=0,
+            wrap=True,
+            css_classes=["dim-label", "caption"],
+        )
+        note.set_max_width_chars(44)
+        box.append(note)
+
+        popover = Gtk.Popover()
+
+        for rival in conflict.rivals:
+            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            label = Gtk.Label(label=rival.label, xalign=0, hexpand=True, wrap=True)
+            label.set_max_width_chars(36)
+            line.append(label)
+
+            def act(
+                callback: Callable[[], None], pop: Gtk.Popover = popover
+            ) -> Callable[[Gtk.Button], None]:
+                def clicked(_button: Gtk.Button) -> None:
+                    pop.popdown()
+                    callback()
+
+                return clicked
+
+            show = Gtk.Button(label="Show", valign=Gtk.Align.CENTER, css_classes=["flat"])
+            show.set_tooltip_text("Jump to this keybind")
+            show.connect("clicked", act(lambda r=rival: on_jump(r.index)))
+            line.append(show)
+
+            if editable:
+                rebind = Gtk.Button(
+                    label="Rebind", valign=Gtk.Align.CENTER, css_classes=["flat"]
+                )
+                rebind.set_tooltip_text("Record a different trigger for that keybind")
+                rebind.connect("clicked", act(lambda r=rival: on_rebind(r.index)))
+                line.append(rebind)
+
+                disable = Gtk.Button(
+                    label="Disable", valign=Gtk.Align.CENTER, css_classes=["flat"]
+                )
+                disable.set_tooltip_text("Comment that keybind out so only this one fires")
+                disable.connect("clicked", act(lambda r=rival: on_enable(r.index, False)))
+                line.append(disable)
+
+                if rival.same_submap:
+                    swap = Gtk.Button(
+                        label="Swap order", valign=Gtk.Align.CENTER, css_classes=["flat"]
+                    )
+                    swap.set_tooltip_text("Exchange which of the two fires first")
+                    swap.connect("clicked", act(lambda r=rival: on_swap(self.index, r.index)))
+                    line.append(swap)
+
+            box.append(line)
+
+        popover.set_child(box)
+        button.set_popover(popover)
+        return button
+
 
 class BindsPage:
     """The Page listing every Bind, rebuilt whenever the model's bind list moves.
@@ -177,25 +358,52 @@ class BindsPage:
         self,
         session: Session,
         *,
-        on_add: Callable[[], None],
+        on_add: Callable[[str | None], None],
         on_edit: Callable[[int], None],
         on_remove: Callable[[int], None],
+        on_enable: Callable[[int, bool], None],
+        on_rebind: Callable[[int], None],
+        on_swap: Callable[[int, int], None],
+        on_edit_submap: Callable[[str | None], None],
     ) -> None:
         self._session = session
         self._on_add = on_add
         self._on_edit = on_edit
         self._on_remove = on_remove
+        self._on_enable = on_enable
+        self._on_rebind = on_rebind
+        self._on_swap = on_swap
+        self._on_edit_submap = on_edit_submap
         self._rows: list[BindRow] = []
 
         self._page = Adw.PreferencesPage(title=self.title)
         self._groups: list[Adw.PreferencesGroup] = []
         self.refresh()
 
-    def _add_button(self) -> Gtk.Widget:
+    def _add_button(self, submap: str | None, editable: bool) -> Gtk.Widget:
         button = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER)
         button.add_css_class("flat")
-        button.set_tooltip_text("Add a keybind")
-        button.connect("clicked", lambda _button: self._on_add())
+        button.set_tooltip_text(
+            "Add a keybind" if submap is None else f"Add a keybind to {submap}"
+        )
+        button.set_sensitive(editable)
+        button.connect("clicked", lambda _button: self._on_add(submap))
+        return button
+
+    def _edit_submap_button(self, name: str, editable: bool) -> Gtk.Widget:
+        button = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER)
+        button.add_css_class("flat")
+        button.set_tooltip_text("Rename this submap or change its reset target")
+        button.set_sensitive(editable)
+        button.connect("clicked", lambda _button: self._on_edit_submap(name))
+        return button
+
+    def _new_submap_button(self, editable: bool) -> Gtk.Widget:
+        button = Gtk.Button(icon_name="folder-new-symbolic", valign=Gtk.Align.CENTER)
+        button.add_css_class("flat")
+        button.set_tooltip_text("Add a submap")
+        button.set_sensitive(editable)
+        button.connect("clicked", lambda _button: self._on_edit_submap(None))
         return button
 
     @property
@@ -221,6 +429,10 @@ class BindsPage:
 
         Rows keep their index into the model's flat list, not into the group, because that
         index is what an edit or a delete addresses.
+
+        Submap groups come from the model's declarations *and* the binds (#66): a submap
+        the user just created has no binds yet, and a group is the only place its rename
+        and reset-target controls can live.
         """
         for group in self._groups:
             self._page.remove(group)
@@ -228,17 +440,23 @@ class BindsPage:
         self._rows = []
 
         editable = bool(self._session.live)
+        entities = self._session.model.entities
         binds = self.binds
+        conflicts = find_conflicts(binds)
+        unreachable = unreachable_submaps(entities)
 
         root = Adw.PreferencesGroup(title="Keybinds")
-        root.set_header_suffix(self._add_button())
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        header.append(self._add_button(None, editable))
+        header.append(self._new_submap_button(editable))
+        root.set_header_suffix(header)
         self._add_group(root)
 
         indexed = list(enumerate(binds))
         rooted = [(index, bind) for index, bind in indexed if bind.submap is None]
         if rooted:
             for index, bind in rooted:
-                root.add(self._row(bind, index, editable))
+                root.add(self._row(bind, index, editable, conflicts))
         else:
             root.add(
                 Adw.ActionRow(
@@ -247,35 +465,84 @@ class BindsPage:
                 )
             )
 
-        for name in self._submap_order(binds):
-            group = Adw.PreferencesGroup(
-                title=f"Submap: {name}",
-                description="These keybinds only fire while this submap is active.",
-            )
+        for name in submap_names(entities):
+            description = "These keybinds only fire while this submap is active."
+            if name in unreachable:
+                description += f" {UNREACHABLE}"
+            group = Adw.PreferencesGroup(title=f"Submap: {name}", description=description)
+            suffix = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+            suffix.append(self._add_button(name, editable))
+            suffix.append(self._edit_submap_button(name, editable))
+            group.set_header_suffix(suffix)
             self._add_group(group)
-            for index, bind in indexed:
-                if bind.submap == name:
-                    group.add(self._row(bind, index, editable))
 
-    def _submap_order(self, binds: list[Bind]) -> list[str]:
-        """Every Submap that owns a bind, in the order the model holds them."""
-        seen: dict[str, None] = {}
-        for bind in binds:
-            if bind.submap is not None:
-                seen.setdefault(bind.submap, None)
-        return list(seen)
+            owned = [(index, bind) for index, bind in indexed if bind.submap == name]
+            for index, bind in owned:
+                group.add(self._row(bind, index, editable, conflicts))
+            if not owned:
+                group.add(
+                    Adw.ActionRow(
+                        title="No keybinds in this submap yet",
+                        subtitle="Add one with the button above.",
+                    )
+                )
+
+    def reveal(self, index: int) -> None:
+        """Bring the Row for the bind at `index` into view -- the conflict jump.
+
+        Focus, not selection: grabbing focus makes every ancestor scroll the row into
+        view, which is all "jump to it in context" needs (ADR-0007).
+        """
+        for row in self._rows:
+            if row.index == index:
+                row.widget.grab_focus()
+                return
+
+    @property
+    def groups(self) -> tuple[Adw.PreferencesGroup, ...]:
+        """Every built group, root first. What the UI smoke tier asserts against."""
+        return tuple(self._groups)
 
     def _add_group(self, group: Adw.PreferencesGroup) -> None:
         self._groups.append(group)
         self._page.add(group)
 
-    def _row(self, bind: Bind, index: int, editable: bool) -> Gtk.Widget:
+    def _row(
+        self,
+        bind: Bind,
+        index: int,
+        editable: bool,
+        conflicts: dict[int, tuple[int, ...]],
+    ) -> Gtk.Widget:
+        conflict: RowConflict | None = None
+        if index in conflicts:
+            group = conflicts[index]
+            binds = self.binds
+            conflict = RowConflict(
+                order=group.index(index) + 1,
+                total=len(group),
+                rivals=tuple(
+                    Rival(
+                        index=other,
+                        label=rival_label(binds[other], group.index(other) + 1),
+                        same_submap=binds[other].submap == bind.submap,
+                    )
+                    for other in group
+                    if other != index
+                ),
+            )
+
         row = BindRow(
             bind,
             index,
             on_edit=self._on_edit,
             on_remove=self._on_remove,
+            on_enable=self._on_enable,
+            on_jump=self.reveal,
+            on_rebind=self._on_rebind,
+            on_swap=self._on_swap,
             editable=editable,
+            conflict=conflict,
         )
         self._rows.append(row)
         return row.widget
