@@ -455,3 +455,67 @@ class TestPriorityRestore:
                 await queue.apply_now("decoration:rounding")
 
         run(scenario)
+
+
+# --- entity edits -----------------------------------------------------------------------------
+
+
+class TestEntityCommits:
+    """AC: a bind edit reaches disk (#64, ADR-0007).
+
+    An Entity edit carries no Option keys, because a transaction renders the model whole and
+    `keys` only scope the Read-back -- which binds have none of, being write-only over IPC.
+    The queue drops a batch with nothing dirty in it, so this is the flag that keeps a bind
+    edit from being silently swallowed on its way to the file.
+    """
+
+    def test_an_entity_commit_runs_a_transaction(self) -> None:
+        async def scenario() -> StubTransaction:
+            transaction = StubTransaction()
+            async with ApplyQueue(transaction, debounce=FAST) as queue:
+                queue.commit_entities()
+                await queue.drain()
+            return transaction
+
+        transaction = run(scenario)
+
+        assert transaction.calls == [()], "the bind edit never reached the writer"
+
+    def test_an_empty_commit_still_does_nothing(self) -> None:
+        """The guard this works around must stay in place for Options."""
+
+        async def scenario() -> StubTransaction:
+            transaction = StubTransaction()
+            async with ApplyQueue(transaction, debounce=FAST) as queue:
+                queue.commit()
+                await queue.drain()
+            return transaction
+
+        assert run(scenario).calls == []
+
+    def test_an_entity_commit_coalesces_with_option_edits(self) -> None:
+        """One reload for a gesture that moved both halves of the model."""
+
+        async def scenario() -> StubTransaction:
+            transaction = StubTransaction()
+            async with ApplyQueue(transaction, debounce=FAST) as queue:
+                queue.touch("general:gaps_in")
+                queue.commit_entities()
+                await queue.drain()
+            return transaction
+
+        assert run(scenario).calls == [("general:gaps_in",)]
+
+    def test_the_entity_flag_does_not_leak_into_the_next_batch(self) -> None:
+        """A second transaction must not run just because an earlier one had entities."""
+
+        async def scenario() -> StubTransaction:
+            transaction = StubTransaction()
+            async with ApplyQueue(transaction, debounce=FAST) as queue:
+                queue.commit_entities()
+                await queue.drain()
+                queue.commit()
+                await queue.drain()
+            return transaction
+
+        assert run(scenario).calls == [()]

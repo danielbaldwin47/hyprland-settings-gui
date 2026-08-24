@@ -14,6 +14,7 @@ package_sources = {
   ],
   'hyprtweaker/engine': [
     '__init__.py',
+    'dispatchers.py',
     'paths.py',
   ],
   'hyprtweaker/engine/apply': [
@@ -89,6 +90,7 @@ package_sources = {
   ],
   'hyprtweaker/engine/writer': [
     '__init__.py',
+    'binds.py',
     'lua.py',
     'modules.py',
     'syntax.py',
@@ -97,11 +99,13 @@ package_sources = {
   'hyprtweaker/ui': ['__init__.py'],
   'hyprtweaker/ui/dialogs': [
     '__init__.py',
+    'bind_editor.py',
     'errors.py',
     'migration.py',
   ],
   'hyprtweaker/ui/pages': [
     '__init__.py',
+    'binds.py',
     'config.py',
     'plan.py',
   ],

@@ -27,11 +27,19 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..model.options import ConfigModel
-from ..paths import ENTRYPOINT_NAME, ConfigPaths
+from ..paths import BINDS_MODULE, ENTRYPOINT_NAME, ConfigPaths
 from ..state.manifest import Manifest, ModuleRecord
 from ..state.manifest import is_damaged as manifest_is_damaged
 from . import syntax
-from .modules import is_option_module, module_relpath, render_entrypoint, render_module
+from .binds import render_binds_module
+from .modules import (
+    ENTITY_MODULES,
+    is_entity_module,
+    is_generated_module,
+    module_relpath,
+    render_entrypoint,
+    render_module,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +206,10 @@ class Writer:
                 )
             sources[relpath] = section
             rendered[relpath] = render_module(items, app_version=self._app_version)
+
+        binds = render_binds_module(model.entities, app_version=self._app_version)
+        if binds is not None:
+            rendered[BINDS_MODULE] = binds
         return rendered
 
     def module_options(self, model: ConfigModel) -> dict[str, tuple[str, ...]]:
@@ -230,6 +242,7 @@ class Writer:
         render a single line of Lua.
         """
         names = set(self.module_options(model))
+        names.update(ENTITY_MODULES)
         if self._paths.options_dir.is_dir():
             names.update(
                 path.relative_to(self._paths.app_dir).as_posix()
@@ -302,7 +315,12 @@ class Writer:
             else:
                 unchanged.append(name)
 
-        removed = self._prune(manifest, keep=set(rendered), off_limits=off_limits)
+        removed = self._prune(
+            manifest,
+            keep=set(rendered),
+            off_limits=off_limits,
+            prune_entities=model.entities_loaded,
+        )
 
         if ENTRYPOINT_NAME in off_limits:
             skipped.append(ENTRYPOINT_NAME)
@@ -507,7 +525,12 @@ class Writer:
         return True
 
     def _prune(
-        self, manifest: Manifest, keep: set[str], off_limits: frozenset[str]
+        self,
+        manifest: Manifest,
+        keep: set[str],
+        off_limits: frozenset[str],
+        *,
+        prune_entities: bool = True,
     ) -> list[str]:
         """Delete Modules the model no longer produces.
 
@@ -525,7 +548,13 @@ class Writer:
         """
         removed: list[str] = []
         for name in sorted(manifest.modules):
-            if name in keep or name in off_limits or not is_option_module(name):
+            if name in keep or name in off_limits or not is_generated_module(name):
+                continue
+            if is_entity_module(name) and not prune_entities:
+                # The model's Entity half was never read, so "the model renders no binds"
+                # is ignorance, not a decision -- and deleting the file on the strength of
+                # it would throw away every bind the user has. An Option Module cannot
+                # reach this state: Options are recovered from the compositor at startup.
                 continue
             path = self._paths.app_dir / name
             if path.is_file():

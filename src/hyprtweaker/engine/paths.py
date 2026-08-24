@@ -28,6 +28,13 @@ USER_MODULE = "user"
 LEGACY_MODULE = "legacy"
 VARS_MODULE = "vars"
 OPTIONS_DIR = "options"
+BINDS_MODULE = "binds.lua"
+"""The Entity Module for keybinds, at the App dir root rather than under `options/`.
+
+`binds` is both a Section and an Entity kind, so the two Modules would collide if entity
+Modules lived in `options/` -- and everything under `options/` is pruned against the Option
+model, which would delete this one on the first write (ADR-0005, ADR-0007).
+"""
 BRIDGE_DIR = "bridge"
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"

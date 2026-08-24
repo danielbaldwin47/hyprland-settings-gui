@@ -161,6 +161,10 @@ class Applier:
         """
         self._queue.commit(*names)
 
+    def commit_entities(self) -> None:
+        """An Entity changed: write the model and reload, with no Read-back (ADR-0007)."""
+        self._queue.commit_entities()
+
     async def apply(self, *names: str) -> ApplyResult:
         """Commit and await the transaction that carries `names`."""
         return await self._queue.apply(*names)

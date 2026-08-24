@@ -56,8 +56,10 @@ from hyprtweaker.engine.migration.flow import (  # noqa: E402
 )
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
+from hyprtweaker.engine.model.entities import Bind  # noqa: E402
 from hyprtweaker.engine.schema import Schema  # noqa: E402
 from hyprtweaker.session import AutoRevert, Session  # noqa: E402
+from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.errors import error_dialog  # noqa: E402
 from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     MigrationDialog,
@@ -65,6 +67,7 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     import_dialog,
     migration_dialog,
 )
+from hyprtweaker.ui.pages.binds import BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
@@ -158,6 +161,7 @@ class MainWindow(Adw.ApplicationWindow):
             navigate=self.reveal_option,
         )
         self._pages: list[ConfigPage] = []
+        self._binds_page: BindsPage | None = None
         self._offered: Detection | None = None
         """The import on offer, while one is (ADR-0009).
 
@@ -433,6 +437,11 @@ class MainWindow(Adw.ApplicationWindow):
         return tuple(self._pages)
 
     @property
+    def binds_page(self) -> BindsPage | None:
+        """The Binds Page, once `rebuild` has built it. The UI tier asserts against it."""
+        return self._binds_page
+
+    @property
     def show_advanced(self) -> bool:
         return bool(self._advanced_action.get_state().get_boolean())
 
@@ -461,7 +470,51 @@ class MainWindow(Adw.ApplicationWindow):
             self._stack.add_named(_scrolled(page.page), plan.section)
             self._sidebar.append(_sidebar_row(plan.section, plan.title, plan.option_count))
 
+        # An Entity Page, so it comes from the model rather than from the Schema plan: there
+        # is no Option behind a Bind to plan against (CONTEXT.md, ADR-0007).
+        self._binds_page = BindsPage(
+            self._session,
+            on_add=self._add_bind,
+            on_edit=self._edit_bind,
+            on_remove=self._remove_bind,
+        )
+        self._stack.add_named(_scrolled(self._binds_page.page), BindsPage.section)
+        self._sidebar.append(
+            _sidebar_row(BindsPage.section, BindsPage.title, len(self._binds_page.binds))
+        )
+
         self._select_section(selected or self._session.schema.section_names[0])
+        self.sync()
+
+    # --- binds ---------------------------------------------------------------------------
+
+    def _add_bind(self) -> None:
+        def done(bind: Bind) -> None:
+            if self._session.add_bind(bind):
+                self._refresh_binds()
+
+        BindEditor(on_done=done).present(self)
+
+    def _edit_bind(self, index: int) -> None:
+        if self._binds_page is None:
+            return
+        binds = self._binds_page.binds
+        if not 0 <= index < len(binds):
+            return
+
+        def done(bind: Bind) -> None:
+            if self._session.replace_bind(index, bind):
+                self._refresh_binds()
+
+        BindEditor(on_done=done, bind=binds[index]).present(self)
+
+    def _remove_bind(self, index: int) -> None:
+        if self._session.remove_bind(index):
+            self._refresh_binds()
+
+    def _refresh_binds(self) -> None:
+        if self._binds_page is not None:
+            self._binds_page.refresh()
         self.sync()
 
     def sync(self) -> None:
