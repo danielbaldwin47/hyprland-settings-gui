@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Coroutine, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,8 @@ from hyprtweaker.engine.apply import (
     read_state,
 )
 from hyprtweaker.engine.ipc import (
+    MONITOR_ADDED,
+    MONITOR_REMOVED,
     CommandClient,
     EventStream,
     Instance,
@@ -60,17 +63,26 @@ from hyprtweaker.engine.ipc import (
     NoInstance,
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
-from hyprtweaker.engine.model.entities import Bind, LayerRule, WindowRule
+from hyprtweaker.engine.model.entities import (
+    Bind,
+    LayerRule,
+    MonitorRule,
+    WindowRule,
+    WorkspaceRule,
+)
 from hyprtweaker.engine.paths import (
     BINDS_MODULE,
     LAYER_RULES_MODULE,
+    MONITORS_MODULE,
     WINDOW_RULES_MODULE,
+    WORKSPACE_RULES_MODULE,
     ConfigPaths,
 )
 from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
 from hyprtweaker.engine.writer.binds import parse_binds_module
+from hyprtweaker.engine.writer.monitors import parse_monitors_module
 from hyprtweaker.engine.writer.rules import parse_rules_module
 
 _log = logging.getLogger(__name__)
@@ -311,6 +323,12 @@ class Session:
         self._offline_reason: str | None = _NOT_CONNECTED_YET
         self._closing = False
         self._pending_restart: set[str] = set()
+        self._monitor_watchers: list[Callable[[], None]] = []
+        """Who wants to hear about display hotplug -- the Monitors page's canvas (#68).
+
+        A list of the session's own rather than a raw `EventStream.subscribe`, because
+        watchers register before the stream exists (the window builds against a session
+        that has not connected yet) and must survive it never existing at all."""
 
         self._undo = UndoStack()
         self._open_gestures: dict[str, OptionValue] = {}
@@ -737,6 +755,155 @@ class Session:
 
         return self.edit_rules(kind, shift)
 
+    # --- monitor rules ----------------------------------------------------------------------
+
+    @property
+    def monitor_rules(self) -> list[MonitorRule]:
+        """The live monitor rule list. Identity is the `output` string (ADR-0008)."""
+        return self._model.entities.monitors
+
+    def edit_monitor_rules(self, mutate: Callable[[list[MonitorRule]], None]) -> bool:
+        """Change the monitor rule list and write it, returning whether it was accepted.
+
+        Shaped like `edit_rules`, refusal and all -- and like it deliberately not on the
+        undo stack (the same Entity-undo leftover). Undo matters less here than anywhere:
+        display-breaking edits ride Confirm-or-revert, which is its own take-back.
+        """
+        if self._refuse("monitor rules"):
+            return False
+        mutate(self._model.entities.monitors)
+        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
+        return True
+
+    def patch_monitor_rule(self, output: str, fields: Mapping[str, Any]) -> bool:
+        """Merge `fields` into the rule for `output`, creating it if it has none.
+
+        A merge because that is what `hl.monitor` itself does (`lua-api-surface.md` §3):
+        the per-monitor rows each own one field, and a row that replaced the whole rule
+        would erase every sibling's value on each toggle.
+        """
+
+        def merge(rules: list[MonitorRule]) -> None:
+            del rules  # the adder addresses the same live list by identity
+            self._model.entities.add_monitor_rule(
+                MonitorRule(output=output, fields=dict(fields)), merge=True
+            )
+
+        return self.edit_monitor_rules(merge)
+
+    def remove_monitor_rule(self, output: str) -> bool:
+        """Delete the rule whose identity is `output`."""
+
+        def drop(rules: list[MonitorRule]) -> None:
+            rules[:] = [rule for rule in rules if rule.output != output]
+
+        return self.edit_monitor_rules(drop)
+
+    def monitor_snapshot(self) -> tuple[MonitorRule, ...]:
+        """The monitor rule list as it stands -- what Confirm-or-revert restores to.
+
+        A tuple of frozen dataclasses, so the snapshot cannot drift while the countdown
+        runs however many edits land in between.
+        """
+        return tuple(self._model.entities.monitors)
+
+    def restore_monitor_rules(self, snapshot: Sequence[MonitorRule]) -> bool:
+        """Put the monitor rule list back to `snapshot`, through a normal transaction.
+
+        The revert half of Confirm-or-revert (ADR-0008): a normal Apply rather than a file
+        restore, because rendering the previous model produces the previous `monitors.lua`
+        byte for byte -- same renderer, same input -- and a second way for bytes to reach
+        the App dir would be a second place for bugs to live (ADR-0010 made the same call
+        for undo).
+        """
+
+        def put_back(rules: list[MonitorRule]) -> None:
+            rules[:] = list(snapshot)
+
+        return self.edit_monitor_rules(put_back)
+
+    def watch_monitors(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Call `callback` on every display hotplug; returns the way to stop.
+
+        The Monitors page's refresh cue (ADR-0008: "hotplug refreshes the canvas"). The
+        callback runs on the main loop -- socket2 dispatch shares it under PyGObject's
+        asyncio integration -- and carries no payload: the page re-fetches `monitors`
+        wholesale, because added-vs-removed tells it nothing the fresh list does not.
+        """
+        self._monitor_watchers.append(callback)
+
+        def unwatch() -> None:
+            with suppress(ValueError):
+                self._monitor_watchers.remove(callback)
+
+        return unwatch
+
+    def _on_monitor_hotplug(self, _event: Any) -> None:
+        if self._closing:
+            return
+        for watcher in list(self._monitor_watchers):
+            watcher()
+
+    # --- workspace rules --------------------------------------------------------------------
+
+    @property
+    def workspace_rules(self) -> list[WorkspaceRule]:
+        """The live workspace rule list. Identity is the selector string (ADR-0008)."""
+        return self._model.entities.workspace_rules
+
+    def edit_workspace_rules(self, mutate: Callable[[list[WorkspaceRule]], None]) -> bool:
+        """Change the workspace rule list and write it. Shaped like `edit_monitor_rules`."""
+        if self._refuse("workspace rules"):
+            return False
+        mutate(self._model.entities.workspace_rules)
+        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
+        return True
+
+    def save_workspace_rule(self, rule: WorkspaceRule, *, original: str | None = None) -> bool:
+        """Add a workspace rule, or replace the one whose selector was `original`.
+
+        One rule per selector, enforced here rather than trusted to the UI (ADR-0008:
+        Hyprland merges duplicates, so a second row would be a lie). Adding an existing
+        selector merges field-wise -- exactly what the compositor would have done --
+        while *renaming* onto a taken selector is refused, because silently fusing two
+        rules the user meant as distinct discards one of them.
+        """
+        if self._refuse("workspace rules"):
+            return False
+
+        entities = self._model.entities
+        if original is None or original == rule.workspace:
+            replaced = False
+            if original is not None:
+                for index, existing in enumerate(entities.workspace_rules):
+                    if existing.workspace == original:
+                        entities.workspace_rules[index] = rule
+                        replaced = True
+                        break
+            if not replaced:
+                entities.add_workspace_rule(rule)
+        else:
+            if any(r.workspace == rule.workspace for r in entities.workspace_rules):
+                return False
+            for index, existing in enumerate(entities.workspace_rules):
+                if existing.workspace == original:
+                    entities.workspace_rules[index] = rule
+                    break
+            else:
+                entities.add_workspace_rule(rule)
+        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
+        return True
+
+    def remove_workspace_rule(self, selector: str) -> bool:
+        """Delete the rule whose identity is `selector`."""
+
+        def drop(rules: list[WorkspaceRule]) -> None:
+            rules[:] = [rule for rule in rules if rule.workspace != selector]
+
+        return self.edit_workspace_rules(drop)
+
+    # --- helper data ------------------------------------------------------------------------
+
     def fetch_clients(
         self, done: Callable[[tuple[Mapping[str, Any], ...] | None], None]
     ) -> None:
@@ -748,6 +915,16 @@ class Session:
         offers manual entry on the latter.
         """
         self._fetch_helper_data("clients", lambda client: client.clients(), done)
+
+    def fetch_monitors(
+        self, done: Callable[[tuple[Mapping[str, Any], ...] | None], None]
+    ) -> None:
+        """Live connected outputs for the Arrangement canvas, or `None` when unanswerable.
+
+        Helper data only, never rule state (ADR-0008): the reply positions the canvas and
+        fills the mode combos, and `None` degrades the page to its off-canvas lists.
+        """
+        self._fetch_helper_data("monitors", lambda client: client.monitors(), done)
 
     def fetch_layers(
         self, done: Callable[[tuple[Mapping[str, Any], ...] | None], None]
@@ -884,6 +1061,7 @@ class Session:
             return
 
         self._events = events
+        events.subscribe(self._on_monitor_hotplug, MONITOR_ADDED, MONITOR_REMOVED)
         self._client = client
         self._applier = Applier(
             model=self._model,
@@ -1130,7 +1308,7 @@ class Session:
         every load succeeded: marking it with `window_rules.lua` unread would let the next
         Option write prune a rules file the user merely broke.
         """
-        if self._load_binds() and self._load_rules():
+        if self._load_binds() and self._load_rules() and self._load_monitors():
             self._model.mark_entities_loaded()
 
     def _load_binds(self) -> bool:
@@ -1199,6 +1377,36 @@ class Session:
         _log.info("read %d window rule(s) and %d layer rule(s)", len(window), len(layer))
         self._model.entities.window_rules[:] = window
         self._model.entities.layer_rules[:] = layer
+        return True
+
+    def _load_monitors(self) -> bool:
+        """Read `monitors.lua` and `workspace_rules.lua` into the model.
+
+        The same shape as `_load_rules`, and for the same reasons: both files feed both
+        lists (a misfiled rule comes back as what it *is*), either file failing to
+        evaluate adopts neither and keeps `entities_loaded` unset, so the Writer cannot
+        prune a display layout the user merely broke.
+        """
+        monitors: list[MonitorRule] = []
+        workspace: list[WorkspaceRule] = []
+        for module in (MONITORS_MODULE, WORKSPACE_RULES_MODULE):
+            path = self._paths.app_dir / module
+            if not path.is_file():
+                continue
+            parsed = parse_monitors_module(path, module=module)
+            if not parsed.ok:
+                _log.warning(
+                    "%s would not evaluate, leaving it alone: %s", module, parsed.errors[0]
+                )
+                return False
+            monitors.extend(parsed.monitors)
+            workspace.extend(parsed.workspace_rules)
+
+        _log.info(
+            "read %d monitor rule(s) and %d workspace rule(s)", len(monitors), len(workspace)
+        )
+        self._model.entities.monitors[:] = monitors
+        self._model.entities.workspace_rules[:] = workspace
         return True
 
     def _on_stream_lost(self) -> None:

@@ -216,6 +216,22 @@ class CommandClient:
                 surfaces.extend(item for item in level if isinstance(item, Mapping))
         return tuple(surfaces)
 
+    async def monitors(self) -> tuple[Mapping[str, Any], ...]:
+        """Every connected output, as Hyprland describes it. The Arrangement canvas (#68).
+
+        Helper data only, never rule state (ADR-0008): geometry, scale, transform and
+        `availableModes` feed the canvas and the per-monitor combos, and nothing here is
+        reconciled with the model -- `desc:` identities, the catch-all and rules for
+        disconnected outputs are unrecoverable from state, which is the whole reason the
+        model reads `monitors.lua` instead. Raw mappings for the same reason `clients()`
+        returns them: the caller reads the fields it knows, and new ones ride along.
+        """
+        reply = await self._request("monitors", json_output=True)
+        payload = _parse_json(reply, "monitors")
+        if not isinstance(payload, list):
+            raise MalformedReply(f"monitors answered {payload!r}")
+        return tuple(item for item in payload if isinstance(item, Mapping))
+
     async def eval(self, code: str) -> EvalReply:
         """Run Lua in the live config state -- the Eval preview tier (ADR-0010).
 

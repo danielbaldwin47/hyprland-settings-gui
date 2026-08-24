@@ -20,7 +20,14 @@ from collections.abc import Sequence
 from typing import Any
 
 from ..model.values import lua_literal_for
-from ..paths import BINDS_MODULE, LAYER_RULES_MODULE, OPTIONS_DIR, WINDOW_RULES_MODULE
+from ..paths import (
+    BINDS_MODULE,
+    LAYER_RULES_MODULE,
+    MONITORS_MODULE,
+    OPTIONS_DIR,
+    WINDOW_RULES_MODULE,
+    WORKSPACE_RULES_MODULE,
+)
 from ..schema import ResolvedOption
 from .lua import GENERATED_BANNER, LuaTree, insert, render_table
 
@@ -55,14 +62,20 @@ def is_option_module(relpath: str) -> bool:
 
 
 ENTITY_MODULES: frozenset[str] = frozenset(
-    {BINDS_MODULE, WINDOW_RULES_MODULE, LAYER_RULES_MODULE}
+    {
+        BINDS_MODULE,
+        WINDOW_RULES_MODULE,
+        LAYER_RULES_MODULE,
+        MONITORS_MODULE,
+        WORKSPACE_RULES_MODULE,
+    }
 )
 """The App-dir-relative names of the Entity Modules the app generates.
 
-`binds.lua` (#64) plus the window and layer rule Modules (#67); `monitors.lua` and
-`workspace_rules.lua` join as their tickets land. Named as a set rather than inferred
-from "a `.lua` at the App dir root", because `legacy.lua` and `user.lua` live there too
-and the app must never touch those.
+`binds.lua` (#64), the window and layer rule Modules (#67), and the monitor and
+workspace rule Modules (#68). Named as a set rather than inferred from "a `.lua` at the
+App dir root", because `legacy.lua` and `user.lua` live there too and the app must never
+touch those.
 """
 
 
