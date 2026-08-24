@@ -490,15 +490,20 @@ def test_a_shadowed_gesture_is_flagged_on_the_row_it_belongs_to(tmp_path: Path) 
     assert "already covers this" in page.rows[1].findings[0].message
 
 
-def test_a_bad_variable_name_is_flagged(tmp_path: Path) -> None:
+def test_a_nameless_variable_is_flagged_and_an_unusual_name_is_not(tmp_path: Path) -> None:
+    """Probed: `hl.env` refuses only an empty name; a dash or a leading digit is fine.
+
+    Badging the merely-unusual ones put a warning triangle on configs that load.
+    """
     from hyprtweaker.engine.model.entities import EnvVar
 
     session, window = build_window(tmp_path)
-    session.model.entities.env.append(EnvVar("has-a-dash", "1"))
+    session.model.entities.env.extend([EnvVar("", "1"), EnvVar("has-a-dash", "1")])
     page = window.declaration_page("env")
     page.refresh()
 
     assert page.rows[0].findings
+    assert page.rows[1].findings == ()
 
 
 def test_the_permissions_page_states_the_option_they_depend_on(tmp_path: Path) -> None:
@@ -582,3 +587,59 @@ def test_what_the_add_form_produces_untouched_is_a_config_hyprland_loads(
         f"{result.stdout}\n{result.stderr}"
     )
     assert "config ok" in result.stdout
+
+
+def test_an_imported_unset_gesture_is_not_rewritten_on_open(tmp_path: Path) -> None:
+    """`unset` is not offered as a choice, but an imported config may hold one.
+
+    Without the pass-through the dialog opened on the first choice and saved it, turning a
+    removal into a live `workspace` binding just by looking at the row.
+    """
+    from hyprtweaker.engine.model.entities import Gesture
+
+    gesture = Gesture({"fingers": 3, "direction": "horizontal", "action": "unset"})
+    dialog = editor("gestures", entity=gesture)
+
+    assert dialog.collect()["action"] == "unset"
+    assert dialog.build().fields["action"] == "unset"
+
+
+def test_an_imported_animation_with_no_enabled_key_opens_on(tmp_path: Path) -> None:
+    """It carries a speed and a curve, so "off" would be the app answering for the user."""
+    from hyprtweaker.engine.model.entities import Animation
+
+    dialog = editor(
+        "animations",
+        entity=Animation("fade", {"speed": 3, "bezier": "default"}),
+        curve_names=("default",),
+    )
+
+    assert dialog.collect()["enabled"] is True
+
+
+def test_an_every_reload_autostart_command_can_be_saved(tmp_path: Path) -> None:
+    """Its legal event value is the empty string, which the blank check read as missing."""
+    from hyprtweaker.engine.model.entities import StartupCommand
+
+    dialog = editor("startup", entity=StartupCommand("waybar", event=""))
+
+    assert dialog.validate() is None
+    assert dialog.build().event == ""
+
+
+def test_two_gestures_with_one_trigger_badge_only_the_later_row(tmp_path: Path) -> None:
+    """Findings are keyed by row index; keying by title badged the culprit and its victim."""
+    from hyprtweaker.engine.model.entities import Gesture
+
+    session, window = build_window(tmp_path)
+    session.model.entities.gestures.extend(
+        [
+            Gesture({"fingers": 3, "direction": "up", "action": "workspace"}),
+            Gesture({"fingers": 3, "direction": "up", "action": "close"}),
+        ]
+    )
+    page = window.declaration_page("gestures")
+    page.refresh()
+
+    assert page.rows[0].findings == ()
+    assert page.rows[1].findings

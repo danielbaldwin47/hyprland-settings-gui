@@ -38,15 +38,24 @@ from hyprtweaker.engine.entities_catalog import (
     STARTUP_EVENTS,
     FieldSpec,
     FieldType,
+    Finding,
+    animation_findings,
     coerce,
+    curve_findings,
+    dangling_curve_references,
+    device_findings,
+    env_findings,
     field_text,
+    gesture_conflicts,
     gesture_title,
     is_scripted,
+    missing_curve_references,
 )
 from hyprtweaker.engine.model.entities import (
     Animation,
     Curve,
     Device,
+    EntitySet,
     EnvVar,
     Gesture,
     Permission,
@@ -111,6 +120,18 @@ class DeclarationKind:
     subtitle_of: Callable[[Any], str] = field(repr=False, default=lambda _: "")
     scripted: Callable[[Any], bool] = field(repr=False, default=lambda _: False)
     """Whether one entity is Lua the GUI lists but never edits. Only gestures can be."""
+
+    findings_for: Callable[[EntitySet], list[tuple[int, Finding]]] = field(
+        repr=False, default=lambda _entities: []
+    )
+    """Everything wrong with this kind's entities, as `(row index, finding)`.
+
+    Takes the whole `EntitySet`, not one entity, because three of the checks are
+    cross-entity: a dangling curve reference and a missing one are properties of the
+    *pair* of lists, and a shadowed gesture is a property of the list's order. Indexed
+    rather than keyed by title because gesture titles are not unique -- two rows sharing a
+    trigger is exactly what `gesture_conflicts` reports, and keying by title badged both.
+    """
 
     @property
     def all_fields(self) -> tuple[FieldSpec, ...]:
@@ -207,8 +228,13 @@ def _animation_from_form(values: Mapping[str, Any], original: Animation | None) 
     fields = {
         key: value for key, value in values.items() if key != "leaf" and value is not None
     }
-    # A curve is a bezier or a spring, never both -- picking one clears the other, rather
-    # than leaving a stale key the parser would reject (`animation_findings`).
+    # A curve is a bezier or a spring, never both -- the parser refuses a table carrying
+    # each (`animation_findings`). Enforced here *as well as* in the editor's
+    # `_clear_sibling_curve`, and the pair is deliberate rather than duplicated: that one
+    # keeps the two dropdowns honest while the user is looking at them, and this one is the
+    # invariant every save passes through, including saves from a form state no dropdown
+    # produced -- an entity read back from a hand-edited Module, or one an importer built.
+    # Dropping either leaves a hole: no live feedback, or a rule the UI can route around.
     if fields.get("bezier") and fields.get("spring"):
         fields.pop("spring", None)
     return Animation(
@@ -420,11 +446,52 @@ def _permission_subtitle(permission: Permission) -> str:
     return f"{permission.mode} {permission.kind}"
 
 
+def _animation_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+    index_of = {animation.leaf: index for index, animation in enumerate(entities.animations)}
+    found: list[tuple[int, Finding]] = []
+    for finding in (*dangling_curve_references(entities), *missing_curve_references(entities)):
+        # Safe to resolve by leaf: an animation's leaf *is* its identity, enforced on write.
+        if finding.subject in index_of:
+            found.append((index_of[finding.subject], finding))
+    for index, animation in enumerate(entities.animations):
+        found += [(index, finding) for finding in animation_findings(animation)]
+    return found
+
+
+def _curve_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+    return [
+        (index, finding)
+        for index, curve in enumerate(entities.curves)
+        for finding in curve_findings(curve)
+    ]
+
+
+def _device_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+    return [
+        (index, finding)
+        for index, device in enumerate(entities.devices)
+        for finding in device_findings(device)
+    ]
+
+
+def _env_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+    return [
+        (index, finding)
+        for index, variable in enumerate(entities.env)
+        for finding in env_findings(variable)
+    ]
+
+
+def _gesture_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+    return list(gesture_conflicts(entities.gestures))
+
+
 # --- the catalogue -------------------------------------------------------------------------
 
 KINDS: tuple[DeclarationKind, ...] = (
     DeclarationKind(
         kind="animations",
+        findings_for=_animation_findings,
         title_of=lambda entity: entity.leaf,
         subtitle_of=_animation_subtitle,
         section="entity:animations",
@@ -438,6 +505,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="curves",
+        findings_for=_curve_findings,
         title_of=lambda entity: entity.name,
         subtitle_of=_curve_subtitle,
         section="entity:curves",
@@ -451,6 +519,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="gestures",
+        findings_for=_gesture_findings,
         title_of=gesture_title,
         subtitle_of=_gesture_subtitle,
         scripted=is_scripted,
@@ -466,6 +535,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="devices",
+        findings_for=_device_findings,
         title_of=lambda entity: entity.name,
         subtitle_of=_device_subtitle,
         section="entity:devices",
@@ -480,6 +550,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="env",
+        findings_for=_env_findings,
         title_of=lambda entity: entity.name,
         subtitle_of=_env_subtitle,
         section="entity:env",
@@ -598,7 +669,10 @@ def missing_required(kind: str, values: Mapping[str, Any]) -> tuple[str, ...]:
     missing = [
         spec.label
         for spec in descriptor.all_fields
-        if spec.required and spec.name not in conditional and _blank(values.get(spec.name))
+        if spec.required
+        and spec.name not in conditional
+        and _blank(values.get(spec.name))
+        and values.get(spec.name) not in spec.choices
     ]
     if kind == "animations" and values.get("enabled") is True:
         # Probed against the binary, not read off the wiki: an enabled animation is
@@ -621,6 +695,12 @@ def missing_required(kind: str, values: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def _blank(value: Any) -> bool:
+    """Whether a form value counts as unfilled.
+
+    Guarded above by a choices check, because one legal value *is* blank: autostart's
+    "every time the config reloads" is the empty event name, so treating `""` as missing
+    made an existing every-reload command impossible to save at all.
+    """
     return value is None or (isinstance(value, str) and not value.strip())
 
 

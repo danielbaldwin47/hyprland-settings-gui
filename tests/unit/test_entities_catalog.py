@@ -19,6 +19,7 @@ from hyprtweaker.engine.entities_catalog import (
     UNSET_ACTION,
     FieldSpec,
     FieldType,
+    Finding,
     animation_findings,
     coerce,
     curve_findings,
@@ -31,6 +32,7 @@ from hyprtweaker.engine.entities_catalog import (
     gesture_conflicts,
     is_scripted,
     missing_curve_references,
+    normalised_mods,
     overridden_options,
     unknown_device_fields,
     unknown_leaves,
@@ -413,8 +415,9 @@ class TestGestureConflicts:
             self._gesture(fingers=3, direction="left"),
         ]
 
-        (finding,) = gesture_conflicts(gestures)
+        ((index, finding),) = gesture_conflicts(gestures)
 
+        assert index == 1, "the later row is the one that has to change"
         assert finding.subject == "3 fingers · left"
         assert "3 fingers · swipe" in finding.message
 
@@ -443,10 +446,17 @@ class TestEnvFindings:
     def test_a_usable_name_has_nothing_to_say(self) -> None:
         assert env_findings(EnvVar("XCURSOR_SIZE", "24")) == ()
 
-    def test_a_name_setenv_would_refuse_is_surfaced(self) -> None:
-        assert env_findings(EnvVar("2FAST", "1"))
-        assert env_findings(EnvVar("has-a-dash", "1"))
+    def test_only_an_empty_name_is_actually_refused(self) -> None:
+        """Probed: a leading digit, a dash, a space and an `=` are all `config ok`.
+
+        `hl.env` hands the name to `setenv` unvetted; only "" is rejected, by name. An
+        earlier version of this badged all four as errors -- a warning triangle on a config
+        that loads, which is the opposite of what a Finding means.
+        """
         assert env_findings(EnvVar("", "1"))
+        assert env_findings(EnvVar("   ", "1"))
+        assert env_findings(EnvVar("2FAST", "1")) == ()
+        assert env_findings(EnvVar("has-a-dash", "1")) == ()
 
     def test_a_value_is_free_text_by_design(self) -> None:
         """Values routinely hold commas, colons and paths; Lua quoting handles them."""
@@ -487,3 +497,59 @@ class TestDeviceBounds:
 
     def test_a_field_with_no_bounded_option_gets_none(self) -> None:
         assert "kb_layout" not in device_field_bounds(self._ranges())
+
+
+class TestGestureModifierNormalisation:
+    """Modifiers are a mask, so they have neither case nor order.
+
+    Comparing the raw strings missed both, which is worse than not checking: two rows that
+    shadow each other looked fine and the file would not load.
+    """
+
+    def _pair(self, one: str, other: str) -> tuple[tuple[int, Finding], ...]:
+        return gesture_conflicts(
+            [
+                Gesture({"fingers": 3, "direction": "horizontal", "action": "a", "mods": one}),
+                Gesture(
+                    {"fingers": 3, "direction": "horizontal", "action": "b", "mods": other}
+                ),
+            ]
+        )
+
+    def test_case_does_not_make_a_different_gesture(self) -> None:
+        assert self._pair("SUPER", "super")
+
+    def test_order_does_not_make_a_different_gesture(self) -> None:
+        assert self._pair("SUPER SHIFT", "SHIFT SUPER")
+
+    def test_genuinely_different_modifiers_still_differ(self) -> None:
+        assert not self._pair("SUPER", "ALT")
+
+    def test_a_missing_modifier_is_the_empty_set_not_a_distinct_one(self) -> None:
+        assert normalised_mods(None) == normalised_mods("") == frozenset()
+
+    def test_the_usual_separators_all_split(self) -> None:
+        assert normalised_mods("SUPER+SHIFT") == normalised_mods("SUPER SHIFT")
+        assert normalised_mods("SUPER, SHIFT") == normalised_mods("SUPER SHIFT")
+
+
+def test_two_identical_triggers_do_not_quote_the_row_at_itself() -> None:
+    """Both rows read the same, so naming "the other one" says nothing."""
+    gestures = [
+        Gesture({"fingers": 3, "direction": "up", "action": "a"}),
+        Gesture({"fingers": 3, "direction": "up", "action": "b"}),
+    ]
+
+    ((index, finding),) = gesture_conflicts(gestures)
+
+    assert index == 1, "only the later row is flagged, never both"
+    assert finding.message.startswith("An earlier gesture with the same trigger")
+
+
+def test_a_field_shadowing_a_bounded_and_an_unbounded_option_has_no_bound() -> None:
+    """The widest pair of "0..2" and "anything" is "anything", not "0..2"."""
+    bounds = device_field_bounds(
+        {"input:transform": (0, 6), "input:touchdevice:transform": (None, None)}
+    )
+
+    assert "transform" not in bounds

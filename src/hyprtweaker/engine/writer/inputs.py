@@ -4,10 +4,18 @@ Both are input surfaces the compositor resets on every reload and rebuilds from 
 (`lua-api-surface.md` §0), so omission really is deletion here and the renderers can stay
 as simple as the rule ones: whatever the model holds, one call per line, in order.
 
-They differ in identity. A gesture has none -- two three-finger horizontal swipes are two
-gestures, keyed internally by their own trigger, and the model keeps them by position. A
-device *is* its name, and `hl.device` merges per name (`EntitySet.add_device`), so what is
-written is one call per device carrying every field the user set on it.
+They differ in identity, and neither is a list position. A device *is* its name, and
+`hl.device` merges per name (`EntitySet.add_device`), so what is written is one call per
+device carrying every field the user set on it.
+
+A gesture is keyed by `(fingers, direction, mods)` with *containment* on direction --
+established by probing the binary, and contradicting `lua-api-surface.md` §11, which
+describes a five-tuple. The renderer does not act on that key, because a second gesture on
+a covered trigger is not a duplicate to merge: `hl.gesture` raises "Gesture will be
+overshadowed by a previous gesture" and the Module fails to load. It is written as held and
+surfaced on the row (`entities_catalog.gesture_conflicts`), for the reason unknown rule
+effects are written as held -- a config the app refuses to write is one the user cannot fix
+in the app.
 """
 
 from __future__ import annotations

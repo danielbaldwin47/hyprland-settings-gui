@@ -1069,11 +1069,17 @@ class Session:
         the global setting it overrides -- the "type-correct per the Schema" half of #70,
         and derived rather than curated so a Hyprland release moves both at once.
         """
+        # Every Option, including the unbounded ones: a field that shadows one bounded and
+        # one unbounded Option has no bound, and filtering here would hide the second and
+        # impose the first (`device_field_bounds`).
         return device_field_bounds(
             {
-                option.name: (option.range.min, option.range.max)
+                option.name: (
+                    (option.range.min, option.range.max)
+                    if option.range is not None
+                    else (None, None)
+                )
                 for option in self._schema.options
-                if option.range is not None
             }
         )
 

@@ -30,17 +30,7 @@ gi.require_version("Gtk", "4.0")
 
 from gi.repository import Adw, Gtk  # noqa: E402
 
-from hyprtweaker.engine.entities_catalog import (  # noqa: E402
-    Finding,
-    animation_findings,
-    curve_findings,
-    curve_usage,
-    dangling_curve_references,
-    device_findings,
-    env_findings,
-    gesture_conflicts,
-    missing_curve_references,
-)
+from hyprtweaker.engine.entities_catalog import Finding, curve_usage  # noqa: E402
 from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.pages.declaration_kinds import (  # noqa: E402
     BY_KIND,
@@ -228,7 +218,7 @@ class DeclarationsPage:
         self._add_button.set_sensitive(editable)
 
         entities = self.entities
-        by_subject = self._findings()
+        by_index = self._findings()
         shown = 0
         for index, entity in enumerate(entities):
             haystack = filter_haystack(self.kind, entity)
@@ -240,7 +230,7 @@ class DeclarationsPage:
                 kind=self.kind,
                 actions=self._actions,
                 editable=editable,
-                findings=by_subject.get(row_title(self.kind, entity), ()),
+                findings=by_index.get(index, ()),
             )
             self._rows.append(row)
             self._group.add(row.widget)
@@ -261,40 +251,21 @@ class DeclarationsPage:
             self._group.add(empty)
             self._listed.append(empty)
 
-    def _findings(self) -> dict[str, tuple[Finding, ...]]:
-        """Everything wrong with this kind's entities right now, keyed by row title.
+    def _findings(self) -> dict[int, tuple[Finding, ...]]:
+        """Everything wrong with this kind's entities right now, keyed by **row index**.
 
-        Computed per refresh rather than stored on the entity: a dangling curve reference
-        is a property of the *pair* of lists, so deleting a curve has to be able to light
-        up a row on the Animations page that nobody touched.
+        Computed per refresh rather than stored on the entity: three of the checks are
+        cross-entity -- deleting a curve has to light up an animation row nobody touched,
+        and a gesture is only shadowed relative to the ones above it.
+
+        By index, not by title. Gesture titles are not unique, and two rows sharing a
+        trigger is precisely what `gesture_conflicts` reports, so title keying badged both
+        the culprit and its victim.
         """
-        entities = self._session.model.entities
-        collected: list[Finding] = []
-        if self.kind == "animations":
-            # Two of the three are cross-entity: a dangling or missing curve reference is a
-            # property of the *pair* of lists, so it cannot live on the animation alone.
-            collected += list(dangling_curve_references(entities))
-            collected += list(missing_curve_references(entities))
-            for animation in entities.animations:
-                collected += list(animation_findings(animation))
-        elif self.kind == "curves":
-            for curve in entities.curves:
-                collected += list(curve_findings(curve))
-        elif self.kind == "devices":
-            for device in entities.devices:
-                collected += list(device_findings(device))
-        elif self.kind == "gestures":
-            # Also cross-entity, and the harshest of the lot: a shadowed gesture is not a
-            # warning, it is a Module that will not load at all.
-            collected += list(gesture_conflicts(entities.gestures))
-        elif self.kind == "env":
-            for variable in entities.env:
-                collected += list(env_findings(variable))
-
-        grouped: dict[str, list[Finding]] = {}
-        for finding in collected:
-            grouped.setdefault(finding.subject, []).append(finding)
-        return {subject: tuple(items) for subject, items in grouped.items()}
+        grouped: dict[int, list[Finding]] = {}
+        for index, finding in self._descriptor.findings_for(self._session.model.entities):
+            grouped.setdefault(index, []).append(finding)
+        return {index: tuple(items) for index, items in grouped.items()}
 
     def curve_users(self, name: str) -> tuple[str, ...]:
         """The animation leaves that name this curve -- the delete confirmation's content."""
