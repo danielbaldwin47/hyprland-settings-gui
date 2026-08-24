@@ -71,6 +71,20 @@ class MonitorProfile:
     connected: tuple[ConnectedOutput, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class MonitorStateSnapshot:
+    """Everything profile activation touches, frozen -- what its revert restores.
+
+    Wider than the monitor list alone: activation patches workspace pins and moves the
+    active pointer, so a revert that only put the monitor rules back would leave the
+    refused profile's pins and pointer standing.
+    """
+
+    monitors: tuple[MonitorRule, ...]
+    workspace_rules: tuple[WorkspaceRule, ...]
+    active: str | None
+
+
 # --- capture and activation --------------------------------------------------------------
 
 
@@ -100,9 +114,7 @@ def capture(
     """
     return MonitorProfile(
         name=name,
-        monitors=tuple(
-            MonitorRule(output=rule.output, fields=dict(rule.fields)) for rule in monitors
-        ),
+        monitors=_stripped(monitors),
         pins={rule.workspace: rule.fields.get(PIN_FIELD) for rule in workspace_rules},
         connected=tuple(connected),
     )
@@ -121,9 +133,7 @@ def activated(
     left unmade, because a pin is not a rule (ADR-0015: "an overlay patch on
     `workspace_rules.lua`, not a copy of the file").
     """
-    monitors = tuple(
-        MonitorRule(output=rule.output, fields=dict(rule.fields)) for rule in profile.monitors
-    )
+    monitors = _stripped(profile.monitors)
     patched: list[WorkspaceRule] = []
     for rule in workspace_rules:
         if rule.workspace in profile.pins:
@@ -163,6 +173,11 @@ def drift(
     """
     wanted_monitors, wanted_workspaces = activated(profile, workspace_rules=workspace_rules)
     return _shape(wanted_monitors, wanted_workspaces) != _shape(monitors, workspace_rules)
+
+
+def _stripped(rules: Sequence[MonitorRule]) -> tuple[MonitorRule, ...]:
+    """Fresh copies with origins dropped: a profile is data, not a file position."""
+    return tuple(MonitorRule(output=rule.output, fields=dict(rule.fields)) for rule in rules)
 
 
 def _shape(
@@ -215,7 +230,9 @@ class ProfileStore:
         try:
             data = json.loads((self._dir / f"{slug}.json").read_text(encoding="utf-8"))
             return _from_json(data)
-        except (OSError, ValueError, TypeError, AttributeError):
+        except (OSError, ValueError, TypeError, LookupError, AttributeError):
+            # LookupError covers the truncated-write shapes `_from_json` indexes into:
+            # a dict missing "name" must read as "not a profile", never as a crash.
             return None
 
     def save(self, profile: MonitorProfile) -> str:
@@ -307,6 +324,7 @@ __all__ = [
     "PIN_FIELD",
     "ConnectedOutput",
     "MonitorProfile",
+    "MonitorStateSnapshot",
     "ProfileStore",
     "activated",
     "capture",

@@ -167,6 +167,31 @@ class TestDrift:
         assert not drift(docked_profile(), monitors=monitors, workspace_rules=[])
 
 
+class TestGoldenActivation:
+    def test_golden_activation_render(self) -> None:
+        """The activated state as the Modules the user reads -- reviewable, checked in."""
+        from _golden import assert_matches_golden
+
+        from hyprtweaker.engine.writer.monitors import (
+            render_monitors_module,
+            render_workspace_rules_module,
+        )
+
+        current = [
+            WorkspaceRule(workspace="1", fields={"default": True}),
+            WorkspaceRule(workspace="2", fields={"monitor": "HDMI-A-1", "persistent": True}),
+            WorkspaceRule(workspace="9", fields={"monitor": "eDP-1"}),
+        ]
+        monitors, workspaces = activated(docked_profile(), workspace_rules=current)
+        text = (
+            (render_monitors_module(list(monitors), app_version="0.0.0-test") or "")
+            + "\n"
+            + (render_workspace_rules_module(list(workspaces), app_version="0.0.0-test") or "")
+        )
+        golden = Path(__file__).parent.parent / "golden" / "writer" / "profile-activation.lua"
+        assert_matches_golden(text, golden, "profile activation")
+
+
 class TestStore:
     def test_save_load_round_trip(self, tmp_path: Path) -> None:
         store = ProfileStore(tmp_path / "monitor-profiles")
@@ -201,6 +226,16 @@ class TestStore:
 
     def test_load_missing_is_none(self, tmp_path: Path) -> None:
         assert ProfileStore(tmp_path / "monitor-profiles").load("ghost") is None
+
+    def test_a_profile_missing_its_name_reads_as_none(self, tmp_path: Path) -> None:
+        # Valid JSON, wrong shape -- the truncated-write case: `load` must answer
+        # "not a profile", and `list` must keep building the page around it.
+        directory = tmp_path / "monitor-profiles"
+        directory.mkdir(parents=True)
+        (directory / "half.json").write_text('{"monitors": []}', encoding="utf-8")
+        store = ProfileStore(directory)
+        assert store.load("half") is None
+        assert store.list() == ()
 
     def test_active_pointer_round_trips(self, tmp_path: Path) -> None:
         store = ProfileStore(tmp_path / "monitor-profiles")

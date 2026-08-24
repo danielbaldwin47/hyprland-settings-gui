@@ -88,10 +88,13 @@ class ProfileActions:
     save: Callable[[str], None]
     """Capture the current setup under a name from the save dialog."""
     activate: Callable[[str], None]
+    """Render the named profile into the config -- wrapped in Confirm-or-revert."""
     update: Callable[[str], None]
     """Recapture over the named profile -- the drift badge's "Update profile"."""
     detach: Callable[[], None]
+    """Forget the active pointer; the config stays exactly as it is."""
     delete: Callable[[str], None]
+    """Remove the named profile's file; never touches the config."""
 
 
 class SaveProfileDialog(Adw.AlertDialog):

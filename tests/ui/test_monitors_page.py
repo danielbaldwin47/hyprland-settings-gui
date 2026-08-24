@@ -471,29 +471,53 @@ def test_save_dialog_cancel_saves_nothing() -> None:
     assert saved == []
 
 
-def test_profile_toast_offers_a_match_at_open(tmp_path: Path) -> None:
+def _window_with_docked_profile(tmp_path: Path) -> tuple[Any, Any]:
     session, window = build_window(tmp_path)
     session.save_monitor_profile("Docked", MONITORS)
     # Diverge from the capture, so activating the profile would change something.
     session.monitor_rules.append(monitor_rule("eDP-1", mode="1920x1080@60"))
+    return session, window
 
-    window._on_monitors_at_open(MONITORS)
+
+def test_profile_toast_offers_a_match_at_open(tmp_path: Path) -> None:
+    _session, window = _window_with_docked_profile(tmp_path)
+
+    window._on_monitors_event(MONITORS)
     toast = window.profile_toast
     assert toast is not None
     assert "Docked" in toast.get_title()
     assert toast.get_button_label() == "Activate"
 
 
-def test_profile_toast_is_app_open_only(tmp_path: Path) -> None:
-    session, window = build_window(tmp_path)
-    session.save_monitor_profile("Docked", MONITORS)
-    session.monitor_rules.append(monitor_rule("eDP-1", mode="1920x1080@60"))
+def test_profile_toast_one_click_activates(tmp_path: Path) -> None:
+    _session, window = _window_with_docked_profile(tmp_path)
+    window._on_monitors_event(MONITORS)
 
-    window._on_monitors_at_open(MONITORS)
+    activated: list[str] = []
+    window._activate_monitor_profile = activated.append  # the handler looks this up late
+    assert window.profile_toast is not None
+    window.profile_toast.emit("button-clicked")
+    assert activated == ["docked"]
+
+
+def test_profile_toast_dedupes_one_connected_set(tmp_path: Path) -> None:
+    _session, window = _window_with_docked_profile(tmp_path)
+
+    window._on_monitors_event(MONITORS)
     first = window.profile_toast
-    window._profile_toast = None
-    window._on_monitors_at_open(MONITORS)
-    assert first is not None and window.profile_toast is None
+    # The second socket2 event of the same docking must not stack a second toast.
+    window._on_monitors_event(MONITORS)
+    assert first is not None and window.profile_toast is first
+
+
+def test_profile_toast_offers_again_after_redock(tmp_path: Path) -> None:
+    _session, window = _window_with_docked_profile(tmp_path)
+
+    window._on_monitors_event(MONITORS)
+    first = window.profile_toast
+    window._on_monitors_event(MONITORS[:1])  # undocked: the set no longer matches
+    window._on_monitors_event(MONITORS)  # redocked mid-session (ADR-0018's case)
+    assert first is not None and window.profile_toast is not first
 
 
 def test_no_toast_when_nothing_would_change(tmp_path: Path) -> None:
@@ -504,5 +528,31 @@ def test_no_toast_when_nothing_would_change(tmp_path: Path) -> None:
     for rule in list(session.monitor_rules):
         session.monitor_rules.remove(rule)
 
-    window._on_monitors_at_open(MONITORS)
+    window._on_monitors_event(MONITORS)
     assert window.profile_toast is None
+
+
+def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None:
+    """The window half of AC 2: activation stands behind the countdown, revert undoes it."""
+    session, window = build_window(tmp_path)
+
+    class StubApplier:
+        def commit_entities(self) -> None:
+            pass
+
+    session._applier = StubApplier()
+    session._offline_reason = None
+    session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@60"})
+    slug = session.save_monitor_profile("Docked", MONITORS)
+    session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@48"})
+
+    window._activate_monitor_profile(slug)
+    dialog = window.profile_confirm
+    assert dialog is not None
+    assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@60"]
+    active = session.active_monitor_profile()
+    assert active is not None and active[0] == slug
+
+    dialog._on_response(dialog, "revert")
+    assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@48"]
+    assert session.active_monitor_profile() is None

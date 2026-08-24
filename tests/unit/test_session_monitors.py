@@ -325,6 +325,27 @@ class TestMonitorProfiles:
 
         assert session.restore_monitor_state(snapshot)
         assert applier.commits == commits + 1
-        assert session.monitor_rules == list(snapshot[0])
-        assert session.workspace_rules == list(snapshot[1])
+        assert session.monitor_rules == list(snapshot.monitors)
+        assert session.workspace_rules == list(snapshot.workspace_rules)
         assert session.active_monitor_profile() is None
+
+    def test_a_hand_edited_monitors_module_is_adopted_and_drifts(self, tmp_path: Path) -> None:
+        """The ADR-0015 drift trigger: a hand edit reaches the model, then the badge.
+
+        `_reread_monitors` is the foreign-reload hook; driven directly here because the
+        reload plumbing has its own tiers -- what this asserts is that the file's truth
+        replaces the model's and the active profile drifts on it.
+        """
+        session, _applier, slug = docked_session(tmp_path)
+        session.activate_monitor_profile(slug)
+        assert not session.monitor_profile_drift()
+
+        path = session.paths.app_dir / "monitors.lua"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            'hl.monitor({ output = "eDP-1", mode = "1920x1080@48" })\n', encoding="utf-8"
+        )
+        session._reread_monitors()
+
+        assert [rule.fields.get("mode") for rule in session.monitor_rules] == ["1920x1080@48"]
+        assert session.monitor_profile_drift()
