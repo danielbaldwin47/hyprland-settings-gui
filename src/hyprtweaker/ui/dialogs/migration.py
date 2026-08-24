@@ -141,7 +141,7 @@ class MigrationDialog(Adw.Dialog):
         for group in _loss_groups(preview.loss):
             column.append(group)
 
-        column.append(_rescue_group(self._flow.rescue_line))
+        column.append(_rescue_group(self._flow.rescue_command))
         page.get_child().set_content(_scrolled(column))
 
         proceed = _suggested("Back up and convert")
@@ -250,7 +250,7 @@ class MigrationDialog(Adw.Dialog):
             label=_countdown_text(ROLLBACK_SECONDS), css_classes=["title-1"]
         )
         group.add(_row("Rolling back in", "", suffix=self._countdown_label))
-        group.add(_row("If you are locked out", self._flow.rescue_line))
+        group.add(_row("If you are locked out", self._flow.rescue_command))
 
         column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         column.append(group)
@@ -417,12 +417,12 @@ def _loss_groups(report: LossReport) -> list[Adw.PreferencesGroup]:
     return groups
 
 
-def _rescue_group(rescue_line: str) -> Adw.PreferencesGroup:
+def _rescue_group(rescue_command: str) -> Adw.PreferencesGroup:
     group = Adw.PreferencesGroup(
         title="If you ever get locked out",
         description="From a TTY (Ctrl+Alt+F2), this puts you back:",
     )
-    group.add(_row("Rescue", rescue_line))
+    group.add(_row("Rescue", rescue_command))
     return group
 
 

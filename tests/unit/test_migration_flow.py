@@ -440,6 +440,42 @@ class TestForeignLuaPath:
         assert not paths.entrypoint.with_name("hyprland.lua.bak").exists()
 
 
+class TestTheRescueLine:
+    """The line a locked-out user types from a TTY has to match the path they came in on.
+
+    One constant served both, and it deleted `hyprland.lua` -- which is the generated file
+    on the legacy path and the user's only config on the Lua path (#131, ADR-0009).
+    """
+
+    def test_the_legacy_path_removes_the_generated_entrypoint(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        flow = flow_for(legacy, schema)
+        flow.detect()
+        assert "rm ~/.config/hypr/hyprland.lua" in flow.rescue_line
+
+    def test_the_lua_path_restores_the_backup(self, paths: ConfigPaths, schema: Schema) -> None:
+        paths.entrypoint.write_text("hl.config({})\n", encoding="utf-8")
+        flow = flow_for(paths, schema)
+        detection = flow.detect()
+
+        assert detection.kind is ConfigKind.FOREIGN_LUA
+        assert "hyprland.lua.bak" in flow.rescue_line
+        assert "rm " not in flow.rescue_line
+
+    def test_the_report_carries_the_same_line_the_wizard_shows(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """The report outlives the dialog, so a disagreement between the two is a rescue
+        instruction the user reads after the wizard is gone."""
+        paths.entrypoint.write_text("hl.config({})\n", encoding="utf-8")
+        flow = flow_for(paths, schema)
+        flow.detect()
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.result.loss.rescue_line == flow.rescue_line
+
+
 class TestFreshStart:
     def test_a_fresh_user_gets_a_working_entrypoint_and_nothing_set(
         self, paths: ConfigPaths, schema: Schema

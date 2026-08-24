@@ -32,7 +32,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from ..importer.loss import RESCUE_LINE, LossReport
+from ..importer.loss import LossReport, rescue_command, rescue_line
 from ..importer.lua.mapping import import_lua
 from ..importer.lua.sandbox import Consent
 from ..importer.mapping import ImportResult, import_config
@@ -513,8 +513,30 @@ class MigrationFlow:
 
     @property
     def rescue_line(self) -> str:
-        """The TTY escape hatch, printed in every report (ADR-0009)."""
-        return RESCUE_LINE
+        """The TTY escape hatch, printed in every report (ADR-0009).
+
+        Path-specific, because the two paths rescue in opposite directions: the legacy path
+        removes the Entrypoint this app generated, the Lua path restores the backup it
+        renamed the user's own file into. Read off the file being imported rather than the
+        detected kind, so an Import... of a `.conf` while a foreign `hyprland.lua` is in
+        place gets the line for the file it is actually replacing (#131).
+        """
+        return rescue_line(self._rescue_source())
+
+    @property
+    def rescue_command(self) -> str:
+        """The same escape hatch as a bare command, for the wizard's own rescue rows.
+
+        The dialog puts this in a Row where the report's Markdown would render as literal
+        asterisks and backticks, and a rescue instruction the user has to mentally strip
+        punctuation out of is one they can mistype at the worst possible moment.
+        """
+        return rescue_command(self._rescue_source())
+
+    def _rescue_source(self) -> Path | None:
+        """The file the rescue undoes the import of, once one has been chosen."""
+        detection = self.preview.detection if self.preview is not None else self.detection
+        return detection.source if detection is not None else None
 
     def _require_preview(self) -> Preview:
         if self.preview is None:

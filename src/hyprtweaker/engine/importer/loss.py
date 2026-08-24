@@ -34,7 +34,8 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
+from os import PathLike
+from pathlib import Path, PurePath
 from typing import Any
 
 from ..paths import ConfigPaths
@@ -42,26 +43,74 @@ from ..paths import ConfigPaths
 __all__ = [
     "FORMAT_VERSION",
     "LOSS_CODES",
+    "RESCUE_COMMAND_CONF",
+    "RESCUE_COMMAND_LUA",
+    "RESCUE_LINE_CONF",
+    "RESCUE_LINE_LUA",
+    "RESCUE_LINE_UNKNOWN",
     "LossClass",
     "LossCode",
     "LossContext",
     "LossItem",
     "LossReport",
     "describe",
+    "rescue_command",
+    "rescue_line",
 ]
 
 FORMAT_VERSION = 1
 
-RESCUE_LINE = (
-    "> **If Hyprland will not start:** from a TTY, run "
-    "`rm ~/.config/hypr/hyprland.lua` to go back to the previous config."
-)
-"""Printed in **every** report, including a clean one (ADR-0009).
+_RESCUE_PREFIX = "> **If Hyprland will not start:** from a TTY, "
 
-Every report, because the reader who needs it is the one who cannot open the app to look
-it up -- and a report that only carries the escape hatch when the Importer predicted
-trouble is missing exactly the case where the prediction was wrong.
-"""
+RESCUE_COMMAND_CONF = "rm ~/.config/hypr/hyprland.lua"
+"""The legacy path's rescue: the generated Entrypoint is the *new* file, and removing it
+hands the session back to the `hyprland.conf` that is still sitting there untouched."""
+
+RESCUE_COMMAND_LUA = "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua"
+"""The Lua path's rescue, and the reason this is a function of the source rather than one
+constant (#131).
+
+On the Lua path `hyprland.lua` *is* the user's config; the generated Entrypoint contests
+its name, so the original was renamed aside as `hyprland.lua.bak` before the switch
+(ADR-0009). Printing the legacy `rm` line here would delete the only copy the user has --
+under the heading that says it restores it."""
+
+RESCUE_LINE_CONF = f"{_RESCUE_PREFIX}run `{RESCUE_COMMAND_CONF}` to go back to `hyprland.conf`."
+
+RESCUE_LINE_LUA = f"{_RESCUE_PREFIX}run `{RESCUE_COMMAND_LUA}` to restore your previous config."
+
+RESCUE_LINE_UNKNOWN = (
+    f"{_RESCUE_PREFIX}restore your previous config: run `{RESCUE_COMMAND_LUA}` if that "
+    f"backup exists, otherwise `{RESCUE_COMMAND_CONF}`."
+)
+"""When the source was not recorded. Leads with the restore, because the two guesses are not
+symmetrically wrong: a needless `mv` fails harmlessly, a wrong `rm` is unrecoverable."""
+
+
+def rescue_command(source: str | PathLike[str] | None = None) -> str:
+    """The bare shell command, for surfaces that show a command rather than prose.
+
+    An unrecorded source takes the restoring command: it is the one that cannot destroy a
+    config by being wrong.
+    """
+    suffix = PurePath(str(source)).suffix.lower() if source else ""
+    return RESCUE_COMMAND_CONF if suffix == ".conf" else RESCUE_COMMAND_LUA
+
+
+def rescue_line(source: str | PathLike[str] | None = None) -> str:
+    """The TTY escape hatch for the import path `source` came in on (ADR-0009).
+
+    Printed in **every** report, including a clean one: the reader who needs it is the one
+    who cannot open the app to look it up, and a report that only carries the escape hatch
+    when the Importer predicted trouble is missing exactly the case where the prediction
+    was wrong.
+    """
+    suffix = PurePath(str(source)).suffix.lower() if source else ""
+    if suffix == ".lua":
+        return RESCUE_LINE_LUA
+    if suffix == ".conf":
+        return RESCUE_LINE_CONF
+    return RESCUE_LINE_UNKNOWN
 
 
 class LossClass(StrEnum):
@@ -412,6 +461,11 @@ class LossReport:
             created=record.get("created", ""),
         )
 
+    @property
+    def rescue_line(self) -> str:
+        """The escape hatch for the path this report's `source` came in on (#131)."""
+        return rescue_line(self.source)
+
     def render(self) -> str:
         """The Markdown copy: a summary line, the rescue line, then a section per class."""
         counts = self.counts()
@@ -422,7 +476,7 @@ class LossReport:
         lines.append("")
         summary = ", ".join(f"{counts[c]} {CLASS_TITLES[c].lower()}" for c in CLASS_ORDER)
         lines.append(f"{len(self.items)} findings -- {summary}.")
-        lines.extend(["", RESCUE_LINE])
+        lines.extend(["", self.rescue_line])
         if not self.items:
             lines.append("")
             lines.append("Nothing was lost in conversion.")

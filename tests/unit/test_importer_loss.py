@@ -22,6 +22,7 @@ from hyprtweaker.engine.importer.loss import (
     LossItem,
     LossReport,
     describe,
+    rescue_line,
 )
 from hyprtweaker.engine.importer.scalars import bool_prefix, direction, number, truthy
 from hyprtweaker.engine.paths import ConfigPaths
@@ -238,3 +239,44 @@ class TestPersistence:
         report.add(LossCode.RULE_VALUE_TYPE, "out of range", loss_class=LossClass.BREAKAGE)
         reloaded = LossReport.load(report.save(paths))
         assert reloaded.items[0].severity is LossClass.BREAKAGE
+
+
+class TestRescueLine:
+    """The TTY escape hatch has to match the path it is printed on (ADR-0009, #131).
+
+    One constant served both importers, and it said `rm ~/.config/hypr/hyprland.lua`. On the
+    legacy path that removes the file the app just generated and leaves `hyprland.conf` in
+    charge -- the intended rescue. On the Lua path `hyprland.lua` *is* the user's only
+    config, renamed aside as `hyprland.lua.bak` and contested by the generated one, so the
+    same line deletes the config and tells the user it restored it.
+    """
+
+    def test_the_legacy_path_removes_the_generated_entrypoint(self) -> None:
+        line = rescue_line("/home/tester/.config/hypr/hyprland.conf")
+        assert "rm ~/.config/hypr/hyprland.lua" in line
+        assert ".bak" not in line
+
+    def test_the_lua_path_restores_the_backup_instead_of_deleting_anything(self) -> None:
+        line = rescue_line("/home/tester/.config/hypr/hyprland.lua")
+        assert "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua" in line
+        assert "rm " not in line
+
+    def test_an_unknown_source_never_offers_a_bare_delete(self) -> None:
+        """A report whose source was not recorded still gets a line, and it leads with the
+        restore -- guessing wrong towards `rm` is the failure this whole class is about."""
+        line = rescue_line("")
+        assert "hyprland.lua.bak" in line
+        assert line.index("mv ") < line.index("rm ")
+
+    def test_a_lua_report_renders_the_restoring_line(self) -> None:
+        report = LossReport(source="/home/tester/.config/hypr/hyprland.lua")
+        rendered = report.render()
+        assert "hyprland.lua.bak" in rendered
+        assert "rm ~/.config/hypr/hyprland.lua" not in rendered
+
+    def test_a_conf_report_renders_the_removing_line(self) -> None:
+        report = LossReport(source="/home/tester/.config/hypr/hyprland.conf")
+        assert "rm ~/.config/hypr/hyprland.lua" in report.render()
+
+    def test_every_report_carries_one_even_when_nothing_was_lost(self) -> None:
+        assert "If Hyprland will not start" in LossReport().render()
