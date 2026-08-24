@@ -160,6 +160,7 @@ hl.window_rule({ name = "fix-xwayland-drags",
 * `gesture(spec: HL.GestureSpec): nil` (STUB:831). `HL.GestureSpec` (STUB:460-470) / parser CR:737-967: `fingers int 2-9` (req), `direction string` (req; `swipe|horizontal|vertical|left|right|up|down|pinch|pinchin|pinchout`, WIKI Gestures.md:33-42), `action` (req) = string `workspace|move|resize|special|close|float|fullscreen|cursor_zoom|cursorZoom|scroll_move|unset` **or** a Lua function **or** a table `{ start?, update?, finish? }` of functions (live gestures, WIKI Gestures.md:104-164); optional `mods string` (modmask via `stringToModMask`), `scale float 0.1-10`, `mode string` (float: `float|tile`; fullscreen: `maximize`; cursor_zoom: `mult|live`), `zoom_level` (string/number, cursor_zoom), `workspace_name` (special), `disable_inhibit bool`.
 * Semantics: `addGesture(...)` keyed by (fingers, direction, mods, scale, disable_inhibit); `action = "unset"` removes a matching gesture; all gestures cleared on reload. Function actions are SCRIPT.
 * Example: `hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })` (EX:236-240).
+* **Correction (#70, probed).** The key above is wrong. `Hyprland --verify-config` over all 100 direction pairs on 0.56.2 says a gesture is keyed by `(fingers, direction, mods)` with **containment** on direction — `swipe` shadows `horizontal`/`vertical`/`left`/`right`/`up`/`down`; `horizontal` shadows `left`/`right`; `vertical` shadows `up`/`down`; `pinch` shadows `pinchin`/`pinchout`. Neither `scale` nor `disable_inhibit` distinguishes anything. A shadowed gesture is **not** a silent overwrite: `hl.gesture` raises "Gesture will be overshadowed by a previous gesture" and the whole Module fails to load. Recorded as `entities_catalog.GESTURE_DIRECTION_COVERS`.
 
 ## 12. `hl.device(spec)` — **DECL**
 
@@ -220,8 +221,12 @@ hl.window_rule({ name = "fix-xwayland-drags",
 | `hl.workspace_rule{}` | `workspace` → 16 fields + `layout_opts{}` | **merge per workspace string** | cleared, replayed | DECL |
 | `hl.curve(name, {})` | bezier `points{{},{}}` \| spring `mass,stiffness,dampening` | overwrite by name | reset, replayed | DECL |
 | `hl.animation{}` | `leaf`, `enabled`, `speed`, `bezier`\|`spring`, `style?` | overwrite per leaf | tree reset, replayed | DECL |
+
+**Correction (#70, probed):** `enabled` is required on *every* `hl.animation` (`missing required field "enabled"`), `speed` is required whenever `enabled` is true, and `speed`'s lower bound is **exclusive** (`speed must be greater than 0`). The row above reads as though only `leaf` were mandatory.
 | `hl.gesture{}` | `fingers, direction, action` + `mods, scale, mode, zoom_level, workspace_name, disable_inhibit` | keyed add; `action="unset"` removes | cleared, replayed | DECL (+SCRIPT if function action) |
 | `hl.device{}` | `name` → 43 fields | **merge per device** | cleared, replayed | DECL |
+
+**Correction (#70):** the per-field numeric bounds given in §12 are not all right — `scroll_factor` is documented here as 0..100 and the shipped Generated schema says 0..2. The app derives device field bounds from the schema (`entities_catalog.device_field_bounds`) rather than from this doc.
 | `hl.env(k, v, dbus?)` | 2–3 positional strings | last wins; **no unset** | sticky (setenv), re-exported only if changed | DECL* |
 | `hl.exec_cmd(cmd, rules?)` | string + effect table | runs every call | top-level = every reload | DECL (autostart) / SCRIPT |
 | `hl.on("hyprland.start", fn)` | event + fn | append handlers | handlers cleared; `start` fires once | DECL (autostart block) |

@@ -20,15 +20,16 @@ Confirm it on the same machine with `pytest tests/integration -m hyprland`, whic
 
 ## 2. Diff
 
-Compare against the previous newest schema, at three layers:
+Compare against the previous newest schema, at four layers:
 
 1. **Schema diff** — classify every change: added / removed / **renamed** (heuristic: identical description + default across a removed/added pair — confirm against the release notes before recording) / retyped / range change / enum-map change / default change / new Section or subsection.
 2. **Stub API diff** — `hl.meta.lua` old vs new: entity constructors and their arg tables, the `hl.dsp.*` dispatcher table, `BindOptions` fields, rule match props and effects, `HL.EventName`.
 3. **Wiki diff** — `hyprwm/hyprland-wiki` `content/Configuring/**` at the matching point: re-run the restart-required regex (the `restart` overlay field is wiki prose only — nothing in source or IPC exports it), and note changed help anchors.
+4. **Entity catalogue diff** — `src/hyprtweaker/engine/entities_catalog.py`, the hand-curated half of the Entity surface (#70). Nothing in CI covers it, so it is the one layer that rots in silence: re-probe the new version and compare. `ANIMATION_LEAVES` against `hyprctl -j animations`; the `hl.device` key set, `GESTURE_DIRECTIONS`/`GESTURE_ACTIONS`, `PERMISSION_TYPES`/`PERMISSION_MODES` and the required-field rules against `Hyprland --verify-config` (a rejected key names itself); `GESTURE_DIRECTION_COVERS` by re-running the direction-pair sweep. Step 1 already stands up a Hyprland of `<ver>`, so all of it runs in that session.
 
 Output: `data/schema/hyprland-<ver>.diff.json` (machine, shipped beside the schema — the app's *New in \<version\>* grouping and Retired detection read it) plus a human summary for the PR.
 
-Done when every change in all three layers is classified — an unclassified change is a diff bug, not a skippable line.
+Done when every change in all four layers is classified — an unclassified change is a diff bug, not a skippable line.
 
 ## 3. Curate
 
@@ -39,6 +40,7 @@ Update `data/schema/overlay.json`:
 - **Removed** → `deprecated_in: <ver>` on the old entry (kept — the Overlay is version-independent; the entry still serves older schemas in the support window).
 - **Restart-list change** → update `restart` fields, hand-verified against the wiki prose.
 - **Stub API changes** (new dispatcher, new match prop, new effect, changed arg table) → update the engine's typed tables. A **new entity kind** is out of this protocol's scope: open a `ready-for-human` issue for it and say so in the PR.
+- **Entity catalogue changes** → update `entities_catalog.py` in the same PR. A leaf or field the app does not know is not a cosmetic gap: an unknown `hl.device` key is a hard error that takes the whole Module down, and a leaf the catalogue lacks is one the user cannot set. Unknown values already degrade to *shown, flagged* (ADR-0012's rule for Options, applied to Entities), so the PR is a curation update, never a rescue.
 
 Done when the CI overlay completeness test passes against the new schema locally.
 
