@@ -88,6 +88,13 @@ class GroupPlan:
 
     title: str
     options: tuple[ResolvedOption, ...]
+    description: str = ""
+    """Why this Group exists, when the heading alone does not say it.
+
+    Empty for the ordinary Groups, whose heading is the whole story. It earns its place on
+    the `New in <version>` fallback (#7, ADR-0012): "flagged" is what the spec asks of an
+    Option the curated mapping has not placed, and a heading naming a version does not, on
+    its own, tell the reader that these settings are uncurated rather than merely new."""
 
 
 @dataclass(frozen=True, slots=True)

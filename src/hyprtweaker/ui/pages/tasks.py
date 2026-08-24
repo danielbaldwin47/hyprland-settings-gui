@@ -40,6 +40,15 @@ the next curation pass removes, and a category that exists only to hold mistakes
 outlive them on screen. System is already the home of the least task-shaped Pages.
 """
 
+ORPHAN_CATEGORY_TITLE = "Other"
+"""The category invented only when the mapping has no `system` category to append to.
+
+A plain word rather than the `New in <version>` heading: that string names a *Group* of
+uncurated Options (`CONTEXT.md`: a Group is the titled block inside a Page), and reusing it
+one level up would put a Group's name where a category's belongs, telling the reader that a
+whole sidebar section is a version rather than a subject.
+"""
+
 
 def new_in_group_title(version: str) -> str:
     """The heading uncurated Options appear under (ADR-0012, #7).
@@ -49,6 +58,18 @@ def new_in_group_title(version: str) -> str:
     curates next exactly which release to diff.
     """
     return f"New in {version}"
+
+
+NEW_IN_GROUP_DESCRIPTION = (
+    "Settings this version of Hyprland has that the curated pages do not place yet. "
+    "They work exactly as they do in the Config view."
+)
+"""The flag #7 and ADR-0012 ask for ("appears ... flagged, until it is curated").
+
+The heading alone reads as *new*, which is not the same claim: it would leave a user to
+wonder whether an uncurated setting is half-supported. Saying it plainly is what makes the
+degradation legible rather than merely visible.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +239,7 @@ def plan_tasks_view(
     shipped mapping happens to be complete today.
     """
     placed = _placements(mapping)
+    by_name = {option.name: option for option in schema}
     planned: list[CategoryPlan] = []
 
     for category in mapping.categories:
@@ -226,10 +248,12 @@ def plan_tasks_view(
             if isinstance(destination, EntitySpec):
                 pages.append(destination)
                 continue
-            pages.append(_plan_page(schema, destination, placed, show_advanced=show_advanced))
+            pages.append(
+                _plan_page(schema, destination, placed, by_name, show_advanced=show_advanced)
+            )
         planned.append(CategoryPlan(id=category.id, title=category.title, pages=tuple(pages)))
 
-    return tuple(_with_fallbacks(planned, schema, mapping, show_advanced=show_advanced))
+    return tuple(_with_fallbacks(planned, schema, mapping, placed, show_advanced=show_advanced))
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,10 +278,22 @@ def _placements(mapping: TasksMapping) -> dict[str, _Placement]:
     return placements
 
 
+def _claimed_elsewhere(placed: dict[str, _Placement], name: str, page_id: str) -> bool:
+    """Whether some *other* Page named this Option, so its Section's home must not take it.
+
+    The one predicate the home-versus-named precedence turns on (`groups` outrank
+    `sections`), spelled once: written inline it reads as a comparison between a placement
+    and a page id, which is not the question being asked.
+    """
+    claim = placed.get(name)
+    return claim is not None and claim.page_id != page_id
+
+
 def _plan_page(
     schema: Schema,
     spec: PageSpec,
     placed: dict[str, _Placement],
+    by_name: dict[str, ResolvedOption],
     *,
     show_advanced: bool,
 ) -> PagePlan:
@@ -267,22 +303,19 @@ def _plan_page(
     like Rendering are settings pulled in from `misc`, and leading with borrowed settings
     would read as though `misc` were the subject.
     """
-    claimed: list[ResolvedOption] = []
     withheld = 0
 
     section_groups: dict[str, list[ResolvedOption]] = {}
     multi = len(spec.sections) > 1
     for section in spec.sections:
         for option in schema.section(section):
-            if placed.get(option.name, _Placement(spec.id, "", 0)).page_id != spec.id:
-                # Curated onto some other Page by name; its home does not get it.
+            if _claimed_elsewhere(placed, option.name, spec.id):
                 continue
             if not is_visible(option, show_advanced=show_advanced, view=View.TASKS):
                 withheld += 1
                 continue
             title = _section_group_title(schema, option, section, multi=multi)
             section_groups.setdefault(title, []).append(option)
-            claimed.append(option)
 
     groups = [
         GroupPlan(title=title, options=tuple(options))
@@ -292,7 +325,7 @@ def _plan_page(
     for group in spec.groups:
         members: list[ResolvedOption] = []
         for key in group.options:
-            curated = _option(schema, key)
+            curated = by_name.get(key)
             if curated is None:
                 # The mapping names an Option this Hyprland does not have. A test keeps the
                 # shipped mapping honest for the shipped Schema; at runtime an older or
@@ -330,30 +363,26 @@ def _section_group_title(
     return f"{section_title} · {derived}" if derived else section_title
 
 
-def _option(schema: Schema, key: str) -> ResolvedOption | None:
-    section = key.split(":", 1)[0]
-    for option in schema.section(section):
-        if option.name == key:
-            return option
-    return None
-
-
 def _with_fallbacks(
     planned: list[CategoryPlan],
     schema: Schema,
     mapping: TasksMapping,
+    placed: dict[str, _Placement],
     *,
     show_advanced: bool,
 ) -> list[CategoryPlan]:
     """Append a Page per uncurated Section: a release adds settings rather than hiding them.
 
-    Keyed on the Section rather than on the individual Option: an unplaced Option's home is
-    "its own Section's Page" (#7), which in the Config view always exists and in this view
-    has to be built. Whole Sections are what actually go missing -- an Option added to a
-    Section the mapping already homes needs no fallback, it simply appears.
+    Keyed on the Section rather than on the individual Option, which is a real limit worth
+    stating: an Option added to a Section the mapping *already* homes lands on that home
+    Page unflagged, because nothing here can tell it apart from the Options that were always
+    there. Detecting that needs a per-Option "added in" fact the Schema does not carry -- it
+    would come from diffing two shipped Generated schemas (ADR-0012's standing drift loop),
+    not from anything visible at plan time. Whole uncurated Sections are what this catches,
+    and they are the case where an Option would otherwise be unreachable rather than merely
+    unsorted.
     """
     homed = mapping.homed_sections
-    placed = _placements(mapping)
 
     fallbacks: list[PagePlan] = []
     for section in schema.section_names:
@@ -362,7 +391,7 @@ def _with_fallbacks(
         visible = [
             option
             for option in schema.section(section)
-            if placed.get(option.name, _Placement("", "", 0)).page_id == ""
+            if option.name not in placed
             and is_visible(option, show_advanced=show_advanced, view=View.TASKS)
         ]
         if not visible:
@@ -377,6 +406,7 @@ def _with_fallbacks(
                     GroupPlan(
                         title=new_in_group_title(schema.hyprland_version),
                         options=tuple(visible),
+                        description=NEW_IN_GROUP_DESCRIPTION,
                     ),
                 ),
                 withheld=0,
@@ -406,7 +436,7 @@ def _with_fallbacks(
         *planned,
         CategoryPlan(
             id=FALLBACK_CATEGORY,
-            title=new_in_group_title(schema.hyprland_version),
+            title=ORPHAN_CATEGORY_TITLE,
             pages=tuple(fallbacks),
         ),
     ]

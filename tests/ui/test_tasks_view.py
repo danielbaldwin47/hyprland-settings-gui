@@ -89,14 +89,25 @@ def test_every_curated_page_in_the_mapping_builds(tmp_path: Path) -> None:
 
 
 def test_the_four_categories_appear_as_headings(tmp_path: Path) -> None:
+    """That the categories *exist* is a headless question, settled in the unit tier.
+
+    What is asked here is what only a real sidebar can answer: that each one is built as a
+    row the pointer cannot land on. A selectable heading takes the selection and blanks the
+    content pane, and no tuple assertion can see that.
+    """
+    from gi.repository import Gtk
+
     _session, window = build_window(tmp_path)
 
-    assert [category.title for category in window.categories] == [
-        "Look",
-        "Windows",
-        "Input",
-        "System",
-    ]
+    headings = []
+    index = 0
+    while (row := window._sidebar.get_row_at_index(index)) is not None:
+        child = row.get_child()
+        if isinstance(child, Gtk.Label) and not row.get_selectable():
+            headings.append(child.get_text())
+        index += 1
+
+    assert headings == ["Look", "Windows", "Input", "System"]
 
 
 def test_every_entity_page_is_reachable_from_the_curated_sidebar(tmp_path: Path) -> None:
@@ -184,6 +195,38 @@ def test_switching_back_and_forth_leaves_the_curated_view_intact(tmp_path: Path)
     window.set_view(View.TASKS)
 
     assert [page.plan.section for page in window.pages] == before
+
+
+def test_switching_views_leaves_the_sidebar_agreeing_with_the_content(
+    tmp_path: Path,
+) -> None:
+    """The Views name their Pages differently, so a carried-over id selects nothing.
+
+    Found by probing rather than by reasoning: from `look.decoration`, switching to Config
+    left `get_selected_row()` empty while the stack had moved on to its first child -- a
+    window with no selected row but a Page on screen, which reads as a broken sidebar.
+    """
+    from hyprtweaker.ui.pages.plan import View
+
+    _session, window = build_window(tmp_path)
+    window._select_section("look.decoration")
+
+    window.set_view(View.CONFIG)
+
+    assert window._sidebar.get_selected_row() is not None
+    assert window._selected_section() == window.visible_section
+
+
+def test_a_page_that_exists_in_both_views_survives_the_switch(tmp_path: Path) -> None:
+    """An Entity Page is named the same in both arrangements, so it should be kept."""
+    from hyprtweaker.ui.pages.plan import View
+
+    _session, window = build_window(tmp_path)
+    window._select_section("binds")
+
+    window.set_view(View.CONFIG)
+
+    assert window._selected_section() == "binds"
 
 
 def test_the_view_choice_survives_a_restart(tmp_path: Path) -> None:

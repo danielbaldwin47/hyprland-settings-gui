@@ -29,7 +29,10 @@ class ConfigPage:
 
         self._page = Adw.PreferencesPage(title=plan.title)
         for group_plan in plan.groups:
-            group = Adw.PreferencesGroup(title=_escaped(group_plan.title))
+            group = Adw.PreferencesGroup(
+                title=_escaped(group_plan.title),
+                description=_escaped(group_plan.description),
+            )
             for option in group_plan.options:
                 row = factory.build(option)
                 self._rows.append(row)
@@ -86,8 +89,8 @@ class ConfigPage:
             row.chrome.refresh()
 
 
-def _escaped(title: str) -> str:
-    """A Group heading, safe to hand to libadwaita.
+def _escaped(text: str) -> str:
+    """A Group heading or description, safe to hand to libadwaita.
 
     `Adw.PreferencesGroup` parses its title as Pango markup, so a curated heading with an
     ampersand in it -- "Splash & wallpaper" -- renders as *nothing at all*, with only a
@@ -97,7 +100,7 @@ def _escaped(title: str) -> str:
     vanish. Escaping here rather than in the data keeps the plan's titles plain text --
     the sidebar and the tests read the same strings, and `&amp;` never leaks on screen.
     """
-    return GLib.markup_escape_text(title)
+    return GLib.markup_escape_text(text)
 
 
 def _withheld_group(plan: PagePlan) -> Adw.PreferencesGroup:

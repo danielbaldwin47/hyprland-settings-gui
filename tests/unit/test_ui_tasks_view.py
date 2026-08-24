@@ -15,6 +15,7 @@ from _support import SAMPLE_VERSION, SCHEMA_DIR
 from hyprtweaker.engine.schema import Visibility, load_schema
 from hyprtweaker.ui.pages.plan import PagePlan, View, is_visible, plan_config_view
 from hyprtweaker.ui.pages.tasks import (
+    NEW_IN_GROUP_DESCRIPTION,
     CategorySpec,
     EntitySpec,
     GroupSpec,
@@ -192,6 +193,25 @@ def test_an_uncurated_section_lands_in_the_new_in_version_group() -> None:
     assert {option.name for option in fallback[0].groups[0].options} == {
         option.name for option in SCHEMA.section("cursor")
     }
+
+
+def test_the_fallback_group_says_why_it_exists() -> None:
+    """#7 and ADR-0012 both say "flagged", and a version heading is not on its own a flag:
+    it reads as *new* rather than as *not yet placed on a curated page*."""
+    categories = plan_tasks_view(SCHEMA, uncurated("cursor"), show_advanced=True)
+    fallback = next(
+        page
+        for category in categories
+        for page in category.option_pages
+        if page.section == "tasks.new.cursor"
+    )
+
+    assert fallback.groups[0].description == NEW_IN_GROUP_DESCRIPTION
+
+
+def test_an_ordinary_curated_group_carries_no_description() -> None:
+    """The flag has to mean something, so it may not appear on Groups that are fine."""
+    assert all(group.description == "" for group in page_named("look.general").groups)
 
 
 def test_the_fallback_page_joins_the_system_category() -> None:

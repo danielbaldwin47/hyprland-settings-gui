@@ -27,7 +27,7 @@ auto-revert (ADR-0016), which is the only event the ADR reserves a toast for out
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -107,10 +107,10 @@ from hyprtweaker.ui.pages.rules import (  # noqa: E402
     WindowRulesPage,
 )
 from hyprtweaker.ui.pages.tasks import (  # noqa: E402
+    ORPHAN_CATEGORY_TITLE,
     CategoryPlan,
     TasksMapping,
     load_tasks_mapping,
-    new_in_group_title,
     plan_tasks_view,
 )
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
@@ -232,8 +232,8 @@ class MainWindow(Adw.ApplicationWindow):
         answer on a broken install: `_load_mapping` degrades to the Config view rather
         than failing to open a window."""
         self._categories: tuple[CategoryPlan, ...] = ()
-        self._destinations: list[tuple[str, str, int]] = []
-        """Every built Page as `(sidebar id, title, option count)`, in build order.
+        self._built: list[SidebarEntry] = []
+        """Every built Page, in build order, as the sidebar needs to know it.
 
         The sidebar is filled from this rather than during construction: the two Views
         show the same Pages in different orders, and building the Pages twice -- once per
@@ -709,13 +709,14 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._pages = []
         self._section_titles = {}
-        self._destinations = []
-        self._categories = ()
+        self._built = []
         self._sidebar.remove_all()
         while (child := self._stack.get_first_child()) is not None:
             self._stack.remove(child)
 
-        for plan in self._option_plans():
+        self._categories, option_plans = self._plan_view()
+
+        for plan in option_plans:
             page = ConfigPage(plan, self._factory)
             self._pages.append(page)
             self._stack.add_named(_scrolled(page.page), plan.section)
@@ -788,29 +789,31 @@ class MainWindow(Adw.ApplicationWindow):
             self._section_titles[page.section] = page.title
 
         self._fill_sidebar()
-        self._select_section(selected or self._first_destination())
+        self._select_section(self._restored(selected))
         self.sync()
 
     # --- arranging the sidebar ----------------------------------------------------------
 
-    def _option_plans(self) -> tuple[PagePlan, ...]:
-        """The Schema-generated Pages for the active View.
+    def _plan_view(self) -> tuple[tuple[CategoryPlan, ...], tuple[PagePlan, ...]]:
+        """The active View's categories and its Schema-generated Pages.
+
+        Returns both rather than assigning `self._categories` on the way past: this is the
+        *input* to a rebuild, and a planner that quietly mutates the window is one whose
+        result depends on when it was called.
 
         Config is every Section, generated and therefore incapable of drifting. Tasks is the
         curated mapping, which *can* drift and is allowed to (ADR-0012) -- so a mapping that
         will not load falls back to the Config arrangement rather than to an empty window.
         """
-        if self.view is View.CONFIG:
-            return plan_config_view(self._session.schema, show_advanced=self.show_advanced)
-
-        mapping = self._load_mapping()
+        mapping = None if self.view is View.CONFIG else self._load_mapping()
         if mapping is None:
-            return plan_config_view(self._session.schema, show_advanced=self.show_advanced)
+            return (), plan_config_view(self._session.schema, show_advanced=self.show_advanced)
 
-        self._categories = plan_tasks_view(
+        categories = plan_tasks_view(
             self._session.schema, mapping, show_advanced=self.show_advanced
         )
-        return tuple(page for category in self._categories for page in category.option_pages)
+        pages = tuple(page for category in categories for page in category.option_pages)
+        return categories, pages
 
     def _load_mapping(self) -> TasksMapping | None:
         """The curated mapping, or None if the install cannot produce one.
@@ -828,50 +831,52 @@ class MainWindow(Adw.ApplicationWindow):
         return self._mapping
 
     def _register(self, section: str, title: str, count: int) -> None:
-        self._destinations.append((section, title, count))
+        self._built.append(SidebarEntry(section=section, title=title, count=count))
+
+    def _restored(self, selected: str | None) -> str:
+        """Which Page to select after a rebuild: the one that was showing, if it still is.
+
+        A View switch is the case that needs this. The Views name their Pages differently --
+        `look.decoration` is `decoration` in the Config view -- so carrying the old id across
+        a switch selects nothing, and `_select_section` walking off the end of the list is
+        silent. That left the sidebar with no selection while the stack showed its first
+        child: the window disagreeing with itself about where the user is.
+        """
+        if selected is not None and any(entry.section == selected for entry in self._built):
+            return selected
+        if self._built:
+            return self._built[0].section
+        return self._session.schema.section_names[0]
 
     def _fill_sidebar(self) -> None:
         """Put the built Pages in the sidebar, in the order the active View wants them."""
         if self.view is View.CONFIG or not self._categories:
-            for section, title, count in self._destinations:
-                self._sidebar.append(_sidebar_row(section, title, count))
+            for entry in self._built:
+                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
             return
 
-        known = {section: (title, count) for section, title, count in self._destinations}
+        known = {entry.section: entry for entry in self._built}
         listed: set[str] = set()
         for category in self._categories:
             self._sidebar.append(_category_heading(category.title))
             for page in category.pages:
-                section = page.section
-                entry = known.get(section)
+                entry = known.get(page.section)
                 if entry is None:
                     # The mapping references an Entity Page this build did not produce --
                     # a kind that has not shipped yet, or a renamed id. Skipping the row is
                     # right; inventing one would put a sidebar entry in front of no Page.
                     continue
-                self._sidebar.append(_sidebar_row(section, entry[0], entry[1]))
-                listed.add(section)
+                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
+                listed.add(entry.section)
 
         # Anything built but not named by the mapping still gets a row. Entity Pages are the
         # real case: #70 can add a kind before the curation places it, and an unlisted Page
         # is exactly the "setting we forgot" failure the fallback group exists to prevent.
-        leftovers = [
-            (section, title, count)
-            for section, title, count in self._destinations
-            if section not in listed
-        ]
+        leftovers = [entry for entry in self._built if entry.section not in listed]
         if leftovers:
-            self._sidebar.append(
-                _category_heading(new_in_group_title(self._session.schema.hyprland_version))
-            )
-            for section, title, count in leftovers:
-                self._sidebar.append(_sidebar_row(section, title, count))
-
-    def _first_destination(self) -> str:
-        """The Page to open when nothing was selected before."""
-        if self._destinations:
-            return self._destinations[0][0]
-        return self._session.schema.section_names[0]
+            self._sidebar.append(_category_heading(ORPHAN_CATEGORY_TITLE))
+            for entry in leftovers:
+                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
 
     # --- binds ---------------------------------------------------------------------------
 
@@ -1753,6 +1758,21 @@ def _dependents(schema: Schema) -> dict[str, tuple[str, ...]]:
 
 def _scrolled(page: Adw.PreferencesPage) -> Gtk.ScrolledWindow:
     return Gtk.ScrolledWindow(child=page, hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+
+@dataclass(frozen=True, slots=True)
+class SidebarEntry:
+    """One built Page, as the sidebar needs to know it: where to go, and what to call it.
+
+    A type rather than the `(str, str, int)` tuple this began as -- three same-shaped
+    strings and an int, indexed positionally, is exactly the clump the repo's other plan
+    objects are dataclasses to avoid. `section` is the `GtkStack` child name, which is also
+    what a sidebar row is named and what `_select_section` navigates by.
+    """
+
+    section: str
+    title: str
+    count: int
 
 
 def _view_from(value: str) -> View:

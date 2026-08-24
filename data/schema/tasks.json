@@ -20,7 +20,13 @@
     "Absent from this file on purpose: the hidden tier (`debug`, `quirks`, `experimental`,",
     "`input-capture`). ADR-0013 §5 makes it Config-view-only, so it has no Tasks home at any",
     "switch setting. The canvas's 19th page was an Advanced page holding exactly those; the",
-    "ADR is later and wins, which is why there are 18 destinations of options here."
+    "ADR is later and wins, so that page is not here.",
+    "",
+    "Counts, so a curator can check them: 23 destinations in all -- 12 option Pages and 11",
+    "entity references. That is more rows than the canvas's 19 because its consolidated",
+    "Pages are split here: an Entity Page comes from the model and cannot be merged into an",
+    "option Page, so 'Animations' is a Page of `animations` options *beside* the Animation",
+    "tree and Animation curves Pages, rather than one Page containing all three."
   ],
   "categories": [
     {
