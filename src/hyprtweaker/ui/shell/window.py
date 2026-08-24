@@ -315,7 +315,6 @@ class MainWindow(Adw.ApplicationWindow):
         self._sidebar.connect("row-selected", self._on_section_selected)
         self._finder = Finder(
             self._index,
-            title=SIDEBAR_TITLE,
             on_activate=self.open_hit,
             on_mode_changed=self._show_sidebar_mode,
         )
@@ -347,7 +346,7 @@ class MainWindow(Adw.ApplicationWindow):
     # --- construction -----------------------------------------------------------------------
 
     def _build_sidebar(self) -> Adw.NavigationPage:
-        header = Adw.HeaderBar(title_widget=self._finder.title)
+        header = Adw.HeaderBar()
         header.pack_end(self._menu_button())
         header.pack_start(self._finder.button)
 
@@ -373,6 +372,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._finder.capture_keys_from(self)
 
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        # Directly under the header, which is both what ADR-0017's amended §Surface asks for
+        # and the only place a `GtkSearchBar` can live without breaking type-to-search: it
+        # has to stay mapped while the finder is closed, and it never collapses horizontally.
+        body.append(self._finder.bar)
         body.append(self._build_view_switcher())
         body.append(self._sidebar_stack)
 

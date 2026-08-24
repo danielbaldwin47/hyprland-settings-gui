@@ -1,4 +1,4 @@
-"""The sidebar's search surface: entry, results list, and the title it replaces (ADR-0017).
+"""The sidebar's search surface: the entry, its results, and the mode they imply (ADR-0017).
 
 Split out of `window.py` rather than added to it. The window is "the window, the sidebar and
 the two Views"; a finder is a second thing with its own widgets, its own keyboard handling
@@ -10,14 +10,20 @@ query, the ranked list, and which of the two the sidebar header shows -- and kno
 about navigating to a hit. Opening one is the window's job, because it is the window that
 holds the View, the Pages and the One-off reveal; this only says which `Hit` was chosen.
 
-**Why the title swaps the way it does.** ADR-0017's surface is "the magnifier button in the
-sidebar header swaps the sidebar title for a search entry" -- so the entry lives in the
-header's title slot, not on a row of its own beneath it. The title and the search bar share
-one box and the *title* is the half that hides, because GTK's type-to-search handler starts
-with `if (!gtk_widget_get_mapped (bar)) return GDK_EVENT_PROPAGATE` (`gtksearchbar.c`): any
-arrangement that leaves the bar unmapped between searches -- a `GtkStack` page, `set_visible
-(False)`, swapping it in and out of the title slot -- disables the shortcut while leaving
-every widget pointer in place, so nothing that inspects the widget tree can tell.
+**Why the bar sits below the header rather than in the title slot.** ADR-0017 first said the
+magnifier "swaps the sidebar title for a search entry"; §Surface was amended during #72
+because the platform will not have it. GTK's type-to-search handler starts with
+`if (!gtk_widget_get_mapped (bar)) return GDK_EVENT_PROPAGATE` (`gtksearchbar.c`), so the bar
+must stay mapped even while the finder is closed -- which rules out a `GtkStack` page, and
+rules out hiding or unparenting it between searches. Sharing the title slot with the title
+keeps it mapped but charges that slot the bar's *horizontal* measurement forever: a closed
+`GtkSearchBar` collapses only vertically (its revealer slides down), so it still measures
+min 85 / nat 224 px, and the sidebar title rendered as "Hyp...".
+
+Below the header is what the widget is built for -- the revealer slides *down* because that
+is where a search bar is meant to live -- and it is the only one of the three arrangements
+correct on both counts: the title reads, and typing opens the finder. Type-to-search is an
+ADR requirement and the title-slot choreography is not, so the requirement wins.
 """
 
 from __future__ import annotations
@@ -60,7 +66,6 @@ class Finder:
         self,
         index: SearchIndex,
         *,
-        title: str,
         on_activate: Callable[[Hit], None],
         on_mode_changed: Callable[[str], None],
     ) -> None:
@@ -96,20 +101,6 @@ class Finder:
         self.results.connect("row-activated", self._on_row_activated)
         self.results.set_header_func(_result_header)
 
-        # Both children live in one box and the *bar* is never hidden -- only the title is.
-        # A `GtkStack` here looks equivalent and is not: GTK's type-to-search handler begins
-        # `if (!gtk_widget_get_mapped (bar)) return GDK_EVENT_PROPAGATE`
-        # (`gtksearchbar.c`), and a non-visible stack child is never mapped -- so parking
-        # the bar in a stack page silently kills the shortcut while leaving every widget
-        # pointer intact. The bar collapses to zero size on its own when the search mode is
-        # off, which is what makes "always present" and "invisible until asked for"
-        # compatible.
-        self._window_title = Adw.WindowTitle(title=title)
-        self.bar.set_hexpand(True)
-        self.title = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        self.title.append(self._window_title)
-        self.title.append(self.bar)
-
         self.button = Gtk.ToggleButton(
             icon_name="system-search-symbolic",
             tooltip_text="Search settings (Ctrl+F)",
@@ -132,7 +123,7 @@ class Finder:
 
     @property
     def active(self) -> bool:
-        """Whether the finder is open -- the entry showing instead of the title."""
+        """Whether the finder is open -- the bar revealed, the entry showing."""
         return self.bar.get_search_mode()
 
     @property
@@ -180,13 +171,12 @@ class Finder:
     # --- internals -----------------------------------------------------------------------
 
     def _on_mode_toggled(self) -> None:
-        """Opening swaps the title for the entry; closing puts the title back and clears.
+        """Closing the finder drops the query and gives the nav list back.
 
         Clearing on close is what makes Escape a full undo of the search rather than a way
         to hide a query that is still filtering: reopening should offer an empty finder, not
         the last search's results (ADR-0017: "clearing or escaping restores the nav list").
         """
-        self._window_title.set_visible(not self.active)
         if not self.active:
             self.entry.set_text("")
         self._refresh()

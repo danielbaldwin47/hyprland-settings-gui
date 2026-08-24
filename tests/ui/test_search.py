@@ -141,15 +141,16 @@ def test_type_to_search_is_wired_to_the_window(window: Any) -> None:
     assert window.finder.bar.get_key_capture_widget() is window
 
 
-def test_type_to_search_survives_the_title_swap(window: Any) -> None:
+def test_the_closed_search_bar_stays_mapped(window: Any) -> None:
     """The search bar must stay **mapped** while the finder is closed, not merely parented.
 
-    This is the assertion the wiring test above cannot make. GTK's capture handler opens
-    with `if (!gtk_widget_get_mapped (bar)) return GDK_EVENT_PROPAGATE` (`gtksearchbar.c`),
-    so an arrangement that hides the bar between searches -- a `GtkStack` page was the first
-    attempt at ADR-0017's title swap -- leaves `get_key_capture_widget()` pointing at the
-    window while type-to-search does nothing at all. Every widget pointer still checks out;
-    only the mapping tells you.
+    This is the assertion the wiring test above cannot make, and the one that pins ADR-0017
+    §Surface's amendment. GTK's capture handler opens with
+    `if (!gtk_widget_get_mapped (bar)) return GDK_EVENT_PROPAGATE` (`gtksearchbar.c`), so any
+    arrangement that hides the bar between searches -- a `GtkStack` page in the header title
+    slot was the first attempt -- leaves `get_key_capture_widget()` pointing at the window
+    while type-to-search does nothing at all. Every widget pointer still checks out; only the
+    mapping tells you.
     """
     assert not window.search_mode
     assert window.finder.bar.get_mapped(), "the closed finder's bar is unmapped: dead shortcut"
