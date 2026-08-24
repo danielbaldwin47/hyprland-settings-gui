@@ -36,7 +36,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gio, GLib, Graphene, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Graphene, Gtk  # noqa: E402
 
 from hyprtweaker.engine.apply import (  # noqa: E402
     Action,
@@ -66,7 +66,7 @@ from hyprtweaker.engine.model.entities import (  # noqa: E402
 )
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
-from hyprtweaker.engine.schema import Schema  # noqa: E402
+from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.session import AutoRevert, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
@@ -85,8 +85,9 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
 )
 from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
+from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
-from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
+from hyprtweaker.ui.pages.config import ConfigPage, escaped  # noqa: E402
 from hyprtweaker.ui.pages.declarations import (  # noqa: E402
     PAGES as DECLARATION_PAGES,
 )
@@ -99,7 +100,12 @@ from hyprtweaker.ui.pages.monitors import (  # noqa: E402
     MonitorsPage,
     ProfileActions,
 )
-from hyprtweaker.ui.pages.plan import PagePlan, View, plan_config_view  # noqa: E402
+from hyprtweaker.ui.pages.plan import (  # noqa: E402
+    PagePlan,
+    View,
+    is_visible,
+    plan_config_view,
+)
 from hyprtweaker.ui.pages.rules import (  # noqa: E402
     LayerRulesPage,
     RuleActions,
@@ -114,6 +120,7 @@ from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     plan_tasks_view,
 )
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
+from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
 
 IMPORT_ACTION = "import-config"
 EXPORT_ACTION = "export-config"
@@ -153,6 +160,24 @@ Wired twice on purpose -- a `GtkShortcutController` on the window, and the appli
 accelerator when there is an application. The controller is what makes the keystroke work at
 all (and what the UI tier can drive); the accelerator is what makes the menu item show
 "Ctrl+Z" beside itself."""
+
+SEARCH_ACTION = "search"
+SEARCH_ACCELERATOR = "<Control>f"
+"""Ctrl+F, the GNOME HIG's find shortcut, on the window (ADR-0017).
+
+Deliberately not Ctrl+K: a palette overlay has no libadwaita precedent, and the sidebar is
+already this app's navigation surface. Type-to-search is the other half and costs nothing
+here -- `Gtk.SearchBar.set_key_capture_widget` is exactly the "typing while focus is not in
+a text entry starts a search" rule, implemented by the toolkit rather than by a key handler
+of ours that would have to know which widgets count as text entries."""
+
+SEARCH_RESULT_LIMIT = 50
+"""How many hits the sidebar lists.
+
+Not a ranking decision -- the index ranks the whole corpus and this takes the head of it.
+A cap exists because a two-letter query matches most of the Schema, and a sidebar rebuilding
+300 rows per keystroke is a stutter the user reads as the app thinking. Fifty is well past
+where anyone scrolls: someone who has not found it by then types another letter."""
 
 SEVERE_BANNER_CLASS = "error"
 """libadwaita's own red styling, for ADR-0016's "Red Banner".
@@ -257,6 +282,19 @@ class MainWindow(Adw.ApplicationWindow):
         Held because it outranks the health Banner: "settings can't be saved yet, Convert..."
         is more use to someone on an unmigrated box than "no compositor", and it is the only
         Banner state with a way out on its own button."""
+        self._index = SearchIndex.build(session.schema)
+        """The finder's index, built once here (ADR-0017 §Index build).
+
+        At construction rather than on first Ctrl+F: the build is one pass over the Schema
+        and the alternative is a first search that stutters, which is the one search the
+        user judges the feature by."""
+        self._revealed: frozenset[str] = frozenset()
+        """The Options a search hit has earned a place for on this visit (the One-off reveal).
+
+        At most one name at a time, and cleared the moment the user navigates anywhere
+        themselves. Holding it on the window rather than on the Row is what makes it
+        genuinely one-off: it is an input to `rebuild`, so nothing has to remember to undo
+        it -- the next ordinary rebuild simply does not carry it."""
         self._dependents = _dependents(session.schema)
         self._last_failure: str | None = None
         self._closing = False
@@ -279,6 +317,34 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._sidebar = Gtk.ListBox(css_classes=["navigation-sidebar"])
         self._sidebar.connect("row-selected", self._on_section_selected)
+        # `row-activated` fires for a click or Enter and *not* for a programmatic
+        # `select_row`, which is the distinction the One-off reveal needs: the reveal itself
+        # selects a row, and a handler on `row-selected` would drop the reveal it just made.
+        self._sidebar.connect("row-activated", lambda *_: self._end_one_off_reveal())
+
+        self._results = Gtk.ListBox(css_classes=["navigation-sidebar"])
+        self._results.connect("row-activated", self._on_result_activated)
+        self._results.set_header_func(_result_header)
+        self._search_entry = Gtk.SearchEntry(placeholder_text="Search settings")
+        self._search_entry.connect("search-changed", lambda *_: self._on_search_changed())
+        self._search_entry.connect("activate", lambda *_: self._activate_selected_result())
+        # Arrows reach the results without the hands leaving the entry (ADR-0017: "the
+        # sidebar's search-results mode needs keyboard traversal ... since Ctrl+F users
+        # won't reach for the mouse"). Moving the *selection* rather than the focus is what
+        # keeps typing possible mid-traversal: refining the query after two Downs should
+        # still go into the entry.
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_search_key)
+        self._search_entry.add_controller(keys)
+        self._search_bar = Gtk.SearchBar()
+
+        self._hits: tuple[Hit, ...] = ()
+        """The hits currently listed, positionally matched to the rows in `_results`.
+
+        A parallel tuple rather than an attribute on each row: a `GtkListBoxRow` can only
+        carry a string name, and stuffing a dotted key through that would make the row the
+        source of truth for which Option it means -- which is how a stale row navigates
+        somewhere the list no longer shows."""
 
         self._stack = Gtk.Stack(vexpand=True)
         self._banner = Adw.Banner(revealed=False)
@@ -305,19 +371,71 @@ class MainWindow(Adw.ApplicationWindow):
     def _build_sidebar(self) -> Adw.NavigationPage:
         header = Adw.HeaderBar()
         header.pack_end(self._menu_button())
+        header.pack_start(self._search_button())
 
         scroller = Gtk.ScrolledWindow(
             child=self._sidebar,
             hscrollbar_policy=Gtk.PolicyType.NEVER,
             vexpand=True,
         )
+        results = Gtk.ScrolledWindow(
+            child=self._results,
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vexpand=True,
+        )
+
+        # Which of the two the sidebar is showing is a function of the query alone (ADR-0017:
+        # "while the query is non-empty, grouped results replace the nav list"). A stack
+        # rather than reusing one ListBox: the nav list holds the selection the content pane
+        # is showing, and refilling it with results would destroy that -- so escaping a
+        # search would land the user on a different Page than the one they left.
+        self._sidebar_stack = Gtk.Stack(vexpand=True)
+        self._sidebar_stack.add_named(scroller, _NAV_MODE)
+        self._sidebar_stack.add_named(results, _RESULTS_MODE)
+
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        body.append(self._build_search_bar())
         body.append(self._build_view_switcher())
-        body.append(scroller)
+        body.append(self._sidebar_stack)
 
         toolbar = Adw.ToolbarView(content=body)
         toolbar.add_top_bar(header)
         return Adw.NavigationPage(title="Hyprland", child=toolbar)
+
+    def _search_button(self) -> Gtk.ToggleButton:
+        """The magnifier in the sidebar header (ADR-0017), bound to the search bar.
+
+        A property binding rather than two handlers: the bar's mode also changes from
+        Ctrl+F, from type-to-search and from Escape, and a button kept in step by hand goes
+        wrong the first time one of those three fires.
+        """
+        button = Gtk.ToggleButton(
+            icon_name="system-search-symbolic",
+            tooltip_text="Search settings (Ctrl+F)",
+        )
+        button.bind_property(
+            "active",
+            self._search_bar,
+            "search-mode-enabled",
+            GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE,
+        )
+        return button
+
+    def _build_search_bar(self) -> Gtk.SearchBar:
+        """The finder itself: an entry that reveals under the sidebar header.
+
+        `set_key_capture_widget(self)` is type-to-search, and using the toolkit's version
+        rather than a key handler is the whole point -- GTK already knows that a keystroke
+        landing in a text entry, a spin button or a dialog is not the start of a search,
+        and every Row on every Page of this app is one of those.
+        """
+        self._search_bar.set_child(self._search_entry)
+        self._search_bar.set_key_capture_widget(self)
+        self._search_bar.connect_entry(self._search_entry)
+        self._search_bar.connect(
+            "notify::search-mode-enabled", lambda *_: self._on_search_mode_changed()
+        )
+        return self._search_bar
 
     def _build_view_switcher(self) -> Gtk.Widget:
         """The segmented control above the sidebar list (#7).
@@ -424,13 +542,21 @@ class MainWindow(Adw.ApplicationWindow):
             action.connect("activate", handler)
             self.add_action(action)
 
+        search = Gio.SimpleAction.new(SEARCH_ACTION, None)
+        search.connect("activate", self._on_search_action)
+        self.add_action(search)
+
         controller = Gtk.ShortcutController(scope=Gtk.ShortcutScope.MANAGED)
-        controller.add_shortcut(
-            Gtk.Shortcut(
-                trigger=Gtk.ShortcutTrigger.parse_string(UNDO_ACCELERATOR),
-                action=Gtk.NamedAction.new(f"win.{UNDO_ACTION}"),
+        for accelerator, action in (
+            (UNDO_ACCELERATOR, UNDO_ACTION),
+            (SEARCH_ACCELERATOR, SEARCH_ACTION),
+        ):
+            controller.add_shortcut(
+                Gtk.Shortcut(
+                    trigger=Gtk.ShortcutTrigger.parse_string(accelerator),
+                    action=Gtk.NamedAction.new(f"win.{action}"),
+                )
             )
-        )
         self.add_controller(controller)
 
         application = self.get_application()
@@ -438,6 +564,7 @@ class MainWindow(Adw.ApplicationWindow):
             # Only the label, and only when there is an application to ask: a window built
             # bare -- which is how the smoke tier builds one -- has no accel map to write to.
             application.set_accels_for_action(f"win.{UNDO_ACTION}", [UNDO_ACCELERATOR])
+            application.set_accels_for_action(f"win.{SEARCH_ACTION}", [SEARCH_ACCELERATOR])
 
     # --- migration, import and export ----------------------------------------------------
 
@@ -807,10 +934,17 @@ class MainWindow(Adw.ApplicationWindow):
         """
         mapping = None if self.view is View.CONFIG else self._load_mapping()
         if mapping is None:
-            return (), plan_config_view(self._session.schema, show_advanced=self.show_advanced)
+            return (), plan_config_view(
+                self._session.schema,
+                show_advanced=self.show_advanced,
+                revealed=self._revealed,
+            )
 
         categories = plan_tasks_view(
-            self._session.schema, mapping, show_advanced=self.show_advanced
+            self._session.schema,
+            mapping,
+            show_advanced=self.show_advanced,
+            revealed=self._revealed,
         )
         pages = tuple(page for category in categories for page in category.option_pages)
         return categories, pages
@@ -1576,7 +1710,174 @@ class MainWindow(Adw.ApplicationWindow):
             return f"{titles[0]} changed"
         return f"{len(titles)} settings changed"
 
-    def reveal_option(self, name: str) -> None:
+    # --- search -------------------------------------------------------------------------
+
+    @property
+    def hits(self) -> tuple[Hit, ...]:
+        """The results the sidebar is listing. What the UI smoke tier asserts against."""
+        return self._hits
+
+    @property
+    def search_mode(self) -> bool:
+        """Whether the finder is open."""
+        return self._search_bar.get_search_mode()
+
+    @property
+    def revealed(self) -> frozenset[str]:
+        """The Options a search hit is showing one-off, despite the Advanced switch."""
+        return self._revealed
+
+    @property
+    def search_entry(self) -> Gtk.SearchEntry:
+        """The finder's entry. The UI tier asserts Ctrl+F leaves the cursor in it."""
+        return self._search_entry
+
+    @property
+    def search_bar(self) -> Gtk.SearchBar:
+        """The finder's bar. The UI tier asserts type-to-search is wired to it."""
+        return self._search_bar
+
+    @property
+    def sidebar(self) -> Gtk.ListBox:
+        """The nav list. The UI tier drives it to check the One-off reveal ends."""
+        return self._sidebar
+
+    @property
+    def sidebar_mode(self) -> str:
+        """Whether the sidebar is listing Pages (`nav`) or results (`results`)."""
+        return self._sidebar_stack.get_visible_child_name() or _NAV_MODE
+
+    def start_search(self) -> None:
+        """Open the finder and put the cursor in it -- Ctrl+F, and the magnifier."""
+        self._search_bar.set_search_mode(True)
+        self._search_entry.grab_focus()
+
+    def search(self, text: str) -> None:
+        """Open the finder on `text`, as though it had been typed.
+
+        The one entry point that does not depend on a keystroke reaching a widget, which is
+        what makes the results assertable: driving this through synthesised key events would
+        test the toolkit's event plumbing rather than the finder.
+
+        The results are refreshed here rather than left to the entry's own signal because
+        `Gtk.SearchEntry` deliberately holds `search-changed` back for ~150 ms -- the right
+        behaviour for someone typing, and a race for a caller that sets the whole query at
+        once and expects to be able to read the answer.
+        """
+        self.start_search()
+        self._search_entry.set_text(text)
+        self._on_search_changed()
+
+    def _on_search_action(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        self.start_search()
+
+    def _on_search_mode_changed(self) -> None:
+        """Closing the finder restores the nav list and drops the query.
+
+        Clearing the entry is what makes Escape a full undo of the search rather than a way
+        to hide a query that is still filtering: reopening should offer an empty finder, not
+        the last search's results (ADR-0017: "clearing or escaping restores the nav list").
+        """
+        if not self.search_mode:
+            self._search_entry.set_text("")
+            self._show_results(())
+
+    def _on_search_changed(self) -> None:
+        query = self._search_entry.get_text()
+        self._show_results(self._index.query(query, limit=SEARCH_RESULT_LIMIT))
+
+    def _show_results(self, hits: tuple[Hit, ...]) -> None:
+        """Put `hits` in the sidebar, or give the nav list back when there are none.
+
+        An empty query and a query that matches nothing are deliberately different: the
+        first restores the nav list, the second stays in results mode showing "No matches",
+        because silently reverting to the nav list would read as the search having been
+        forgotten rather than answered.
+        """
+        self._hits = hits
+        self._results.remove_all()
+
+        if not self._search_entry.get_text().strip():
+            self._sidebar_stack.set_visible_child_name(_NAV_MODE)
+            return
+
+        for hit in hits:
+            self._results.append(_result_row(hit))
+        if not hits:
+            self._results.append(_no_matches_row())
+
+        self._sidebar_stack.set_visible_child_name(_RESULTS_MODE)
+        first = self._results.get_row_at_index(0)
+        if first is not None and hits:
+            self._results.select_row(first)
+
+    def _on_search_key(self, _controller: Gtk.EventControllerKey, keyval: int, *_: Any) -> bool:
+        """Down/Up walk the results while the cursor stays in the entry."""
+        step = {Gdk.KEY_Down: 1, Gdk.KEY_Up: -1}.get(keyval)
+        if step is None or not self._hits:
+            return False
+        selected = self._results.get_selected_row()
+        index = 0 if selected is None else selected.get_index() + step
+        row = self._results.get_row_at_index(max(0, min(index, len(self._hits) - 1)))
+        if row is not None:
+            self._results.select_row(row)
+        return True
+
+    def _activate_selected_result(self) -> None:
+        """Enter in the entry opens the highlighted hit -- the no-mouse path."""
+        row = self._results.get_selected_row()
+        if row is not None:
+            self._on_result_activated(self._results, row)
+
+    def _on_result_activated(self, _list: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
+        index = row.get_index()
+        if 0 <= index < len(self._hits):
+            self.open_hit(self._hits[index])
+
+    def open_hit(self, hit: Hit) -> None:
+        """Navigate to a search result: the active View first, Config only if it must.
+
+        ADR-0017's navigation rule, in the order it states it. A hit resolves against the
+        View the user chose; the switch to Config happens only when the Row has no home
+        there at all -- the `hidden` tier while in Tasks -- and when it does happen it is
+        the *ordinary* View switch, remembered like any manual toggle, because a temporary
+        hidden view state is the thing that ADR rejected.
+
+        The One-off reveal then covers the other reason a Row may not exist: the Advanced
+        switch. Recorded before the rebuild rather than after, since it is an input to the
+        plan the rebuild works from.
+        """
+        if not self._has_home(hit.option):
+            self.set_view(View.CONFIG)
+
+        self._revealed = frozenset({hit.name})
+        self.rebuild()
+        self.reveal_option(hit.name, flash_row=True)
+
+    def _end_one_off_reveal(self) -> None:
+        """The visit is over: the user navigated somewhere themselves.
+
+        Rebuilding is what actually takes the Row back out -- clearing the set alone would
+        leave a withheld Row standing on a Page the Advanced switch says should not have it,
+        until something else happened to rebuild. Guarded, because the common case is that
+        there is no reveal outstanding and rebuilding 353 Rows per sidebar click would be an
+        expensive way to do nothing.
+        """
+        if not self._revealed:
+            return
+        self._revealed = frozenset()
+        self.rebuild()
+
+    def _has_home(self, option: ResolvedOption) -> bool:
+        """Whether this Option can appear in the active View at any switch setting.
+
+        Asked of `plan.is_visible` with the switch forced on rather than by testing the tier
+        here: the rule about which tiers a View admits is ADR-0013's and lives there, and a
+        second copy of it in the shell is one that would not be updated together with it.
+        """
+        return is_visible(option, show_advanced=True, view=self.view)
+
+    def reveal_option(self, name: str, *, flash_row: bool = False) -> None:
         """Show the Row for one Option and put the keyboard on it.
 
         What the Dependency badge does when clicked (ADR-0013 §3): "Requires Snap floating
@@ -1598,9 +1899,9 @@ class MainWindow(Adw.ApplicationWindow):
             return
         page, row = found
         self._select_section(page.plan.section)
-        GLib.idle_add(self._put_on_screen, row, priority=GLib.PRIORITY_LOW)
+        GLib.idle_add(self._put_on_screen, row, flash_row, priority=GLib.PRIORITY_LOW)
 
-    def _put_on_screen(self, row: OptionRow) -> bool:
+    def _put_on_screen(self, row: OptionRow, flash_row: bool = False) -> bool:
         """Scroll a Row into view and leave the keyboard on it.
 
         Both, because neither is enough alone: an *insensitive* widget cannot take focus --
@@ -1611,6 +1912,11 @@ class MainWindow(Adw.ApplicationWindow):
         _scroll_into_view(row.widget)
         if not row.control.grab_focus():
             row.widget.grab_focus()
+        if flash_row:
+            # ADR-0017's "flash-highlighted". A search hit lands the user on a Page they did
+            # not choose, several screens down: the scroll alone tells them nothing about
+            # *which* of the Rows now on screen is the one they searched for.
+            flash(row.widget)
         return False
 
     # --- signals ------------------------------------------------------------------------------
@@ -1704,6 +2010,64 @@ class MainWindow(Adw.ApplicationWindow):
                 self._sidebar.select_row(row)
                 return
             index += 1
+
+
+_NAV_MODE = "nav"
+_RESULTS_MODE = "results"
+
+_SETTINGS_GROUP = "Settings"
+"""ADR-0017's first result group. The second -- "Rules & entities" -- is #75.
+
+Named and rendered as a group from the start, with the header function keyed on the hit
+rather than hard-coded: adding the Entity group later is then a second value here and a
+second branch in `_result_header`, not a rewrite of the results list into a grouped one."""
+
+
+def _result_row(hit: Hit) -> Gtk.ListBoxRow:
+    """One search hit: what the Row is called, and the key that addresses it.
+
+    The dotted key as subtitle, which is the one place outside the Help popover it belongs
+    (ADR-0013 §1) -- in a result list it is what disambiguates the four Options all titled
+    "Corner rounding", and someone who typed a key wants to see the key they matched.
+    """
+    row = Adw.ActionRow(
+        title=escaped(hit.title),
+        subtitle=escaped(hit.dotted_key),
+        # The sidebar is 220px at its narrowest and a dotted key is long: left alone,
+        # `group.groupbar.gradient_rounding_power` wraps to three hyphenated lines and the
+        # list stops being scannable. One line for the title, two for the key -- and *two*
+        # rather than one because these lines ellipsise at the end, and a key's leaf is
+        # exactly what tells `...gradient_rounding` from `...gradient_rounding_power`.
+        title_lines=1,
+        subtitle_lines=2,
+    )
+    row.set_name(hit.name)
+    row.set_activatable(True)
+    return row
+
+
+def _no_matches_row() -> Gtk.ListBoxRow:
+    row = Adw.ActionRow(title="No matches", css_classes=["dim-label"])
+    row.set_activatable(False)
+    row.set_selectable(False)
+    return row
+
+
+def _result_header(row: Gtk.ListBoxRow, before: Gtk.ListBoxRow | None) -> None:
+    """ "Settings" above the first result, and nothing above the rest."""
+    if before is not None or not row.get_selectable():
+        row.set_header(None)
+        return
+    row.set_header(
+        Gtk.Label(
+            label=_SETTINGS_GROUP,
+            xalign=0.0,
+            css_classes=["heading", "dim-label"],
+            margin_start=12,
+            margin_top=8,
+            margin_bottom=4,
+        )
+    )
 
 
 _REVEAL_MARGIN = 24.0

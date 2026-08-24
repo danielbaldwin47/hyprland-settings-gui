@@ -148,7 +148,7 @@ def test_a_curated_heading_with_an_ampersand_is_not_swallowed_by_pango(
     """
     from gi.repository import Pango
 
-    from hyprtweaker.ui.pages.config import _escaped
+    from hyprtweaker.ui.pages.config import escaped
 
     _session, window = build_window(tmp_path)
 
@@ -162,7 +162,7 @@ def test_a_curated_heading_with_an_ampersand_is_not_swallowed_by_pango(
     assert curated, "no curated heading has an ampersand -- this test now guards nothing"
 
     for title in curated:
-        _ok, _attrs, text, _accel = Pango.parse_markup(_escaped(title), -1, "\0")
+        _ok, _attrs, text, _accel = Pango.parse_markup(escaped(title), -1, "\0")
         assert text == title
 
 

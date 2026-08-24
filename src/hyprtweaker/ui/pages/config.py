@@ -30,8 +30,8 @@ class ConfigPage:
         self._page = Adw.PreferencesPage(title=plan.title)
         for group_plan in plan.groups:
             group = Adw.PreferencesGroup(
-                title=_escaped(group_plan.title),
-                description=_escaped(group_plan.description),
+                title=escaped(group_plan.title),
+                description=escaped(group_plan.description),
             )
             for option in group_plan.options:
                 row = factory.build(option)
@@ -89,7 +89,7 @@ class ConfigPage:
             row.chrome.refresh()
 
 
-def _escaped(text: str) -> str:
+def escaped(text: str) -> str:
     """A Group heading or description, safe to hand to libadwaita.
 
     `Adw.PreferencesGroup` parses its title as Pango markup, so a curated heading with an
