@@ -816,6 +816,12 @@ def map_keywords(
             "named window rules are emitted before anonymous ones, because hyprlang "
             "evaluated them in that order while Lua uses plain call order",
         )
+    # The L15 reorder happens here, once, so that everything downstream -- the writer,
+    # the editor, drag reorder -- sees one list whose position is simply the truth. Lua
+    # registers in pure call order, so after this the plain list order *is* legacy
+    # precedence, and the GUI owns it from now on (ADR-0008).
+    mapper.entities.window_rules[:] = mapper.entities.ordered_window_rules()
+    mapper.entities.layer_rules[:] = mapper.entities.ordered_layer_rules()
     return ImportResult(
         model=model,
         entities=mapper.entities,

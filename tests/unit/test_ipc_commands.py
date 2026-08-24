@@ -154,6 +154,53 @@ def test_a_configerrors_reply_of_the_wrong_shape_is_malformed() -> None:
     run(scenario)
 
 
+# --- clients and layers (the pickers, #67) ------------------------------------------------
+
+
+def test_clients_asks_with_the_json_flag_and_returns_the_windows() -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        windows = await client.clients()
+        assert fake.requests == ["j/clients"]
+        assert [window["class"] for window in windows] == ["kitty", "helium"]
+        # The camelCase spellings are the wire's, and the picker reads them as such.
+        assert windows[1]["initialClass"] == "helium"
+
+    run(scenario)
+
+
+def test_a_clients_reply_of_the_wrong_shape_is_malformed() -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        fake.conversation["j/clients"] = '{"clients": []}'
+        with pytest.raises(MalformedReply):
+            await client.clients()
+
+    run(scenario)
+
+
+def test_layers_flattens_outputs_and_levels_into_surfaces() -> None:
+    """A layer rule matches `namespace` and nothing else, so surfaces are the answer."""
+
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        surfaces = await client.layers()
+        assert fake.requests == ["j/layers"]
+        assert [surface["namespace"] for surface in surfaces] == [
+            "wallpaper",
+            "forest-shell:keep-awake",
+            "waybar",
+        ]
+
+    run(scenario)
+
+
+def test_a_layers_reply_of_the_wrong_shape_is_malformed() -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        fake.conversation["j/layers"] = "[]"
+        with pytest.raises(MalformedReply):
+            await client.layers()
+
+    run(scenario)
+
+
 # --- eval ---------------------------------------------------------------------------------
 
 

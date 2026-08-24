@@ -27,7 +27,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..model.options import ConfigModel
-from ..paths import BINDS_MODULE, ENTRYPOINT_NAME, ConfigPaths
+from ..paths import (
+    BINDS_MODULE,
+    ENTRYPOINT_NAME,
+    LAYER_RULES_MODULE,
+    WINDOW_RULES_MODULE,
+    ConfigPaths,
+)
 from ..state.manifest import Manifest, ModuleRecord
 from ..state.manifest import is_damaged as manifest_is_damaged
 from . import syntax
@@ -40,6 +46,7 @@ from .modules import (
     render_entrypoint,
     render_module,
 )
+from .rules import render_layer_rules_module, render_window_rules_module
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +217,16 @@ class Writer:
         binds = render_binds_module(model.entities, app_version=self._app_version)
         if binds is not None:
             rendered[BINDS_MODULE] = binds
+        window_rules = render_window_rules_module(
+            model.entities.window_rules, app_version=self._app_version
+        )
+        if window_rules is not None:
+            rendered[WINDOW_RULES_MODULE] = window_rules
+        layer_rules = render_layer_rules_module(
+            model.entities.layer_rules, app_version=self._app_version
+        )
+        if layer_rules is not None:
+            rendered[LAYER_RULES_MODULE] = layer_rules
         return rendered
 
     def module_options(self, model: ConfigModel) -> dict[str, tuple[str, ...]]:

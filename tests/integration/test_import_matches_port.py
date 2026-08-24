@@ -194,10 +194,10 @@ def test_the_imported_config_renders_the_same_screen_every_time(
 
 @pytest.mark.xfail(
     reason=(
-        "needs the Entity writer of #64. The mapping produces Binds, Rules and monitor "
-        "rules, but the Writer renders Option Modules only, so the booted config is "
-        "missing every window rule the port has -- roughly a third of the screen. The "
-        "state-level comparison above is the part that is checkable today."
+        "needs the monitor-rule writer (ADR-0008's Displays ticket). Binds (#64) and "
+        "window/layer rules (#67) now render, but monitor rules still do not, so the "
+        "booted output geometry differs from the port's. The state-level comparison "
+        "above is the part that is checkable today."
     ),
     strict=False,
 )

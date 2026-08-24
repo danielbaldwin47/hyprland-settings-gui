@@ -92,6 +92,41 @@ read-only. The array shape is the captured one (one element per error line); the
 messages are the spellings research #5 §6 documents: a `file:line`-prefixed `hl.config`
 complaint and a failed `require`."""
 
+CLIENTS = (
+    "[\n"
+    '{\n    "address": "0x556e03b36ef0",\n    "class": "kitty",\n    "title": "~",\n'
+    '    "initialClass": "kitty",\n    "initialTitle": "kitty",\n    "xwayland": false,\n'
+    '    "workspace": {"id": 1, "name": "1"},\n    "floating": false\n},\n'
+    '{\n    "address": "0x556e03b37000",\n    "class": "helium",\n'
+    '    "title": "Issue #67 - Helium",\n    "initialClass": "helium",\n'
+    '    "initialTitle": "Helium Setup - Helium",\n    "xwayland": false,\n'
+    '    "workspace": {"id": 2, "name": "2"},\n    "floating": true\n}\n'
+    "]\n"
+)
+"""Captured off a live Hyprland 0.56.2 (trimmed to the keys the picker reads).
+
+`j/clients` answers a JSON **array** of window objects; `class`/`initialClass` are the
+camelCase spellings the wire actually uses, which is exactly the sort of thing worth
+capturing rather than guessing (#67, Pick a window)."""
+
+LAYERS = (
+    "{\n"
+    '"eDP-1": {\n'
+    '    "levels": {\n'
+    '        "0": [\n'
+    '            {"address": "0x1", "namespace": "wallpaper", "pid": 890},\n'
+    '            {"address": "0x2", "namespace": "forest-shell:keep-awake", "pid": 890}\n'
+    "        ],\n"
+    '        "1": [],\n'
+    '        "2": [{"address": "0x3", "namespace": "waybar", "pid": 901}]\n'
+    "    }\n"
+    "}\n"
+    "}\n"
+)
+"""Captured off a live Hyprland 0.56.2: an **object keyed by output**, each with a
+`levels` object of arrays -- nested where `clients` is flat, which is why the client
+flattens it (#67, Pick a layer)."""
+
 OK = "ok"
 """From source: `reload` answers this unconditionally, and `eval` answers it on success."""
 
@@ -104,6 +139,8 @@ live precisely because the refusal happens before anything is evaluated."""
 
 CONVERSATION: Mapping[str, str] = {
     "j/binds": BINDS,
+    "j/clients": CLIENTS,
+    "j/layers": LAYERS,
     "j/getoption general:gaps_in": GAPS_IN,
     "j/getoption general:layout": LAYOUT,
     "j/getoption misc:disable_autoreload": AUTORELOAD,

@@ -60,12 +60,18 @@ from hyprtweaker.engine.ipc import (
     NoInstance,
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
-from hyprtweaker.engine.model.entities import Bind
-from hyprtweaker.engine.paths import BINDS_MODULE, ConfigPaths
+from hyprtweaker.engine.model.entities import Bind, LayerRule, WindowRule
+from hyprtweaker.engine.paths import (
+    BINDS_MODULE,
+    LAYER_RULES_MODULE,
+    WINDOW_RULES_MODULE,
+    ConfigPaths,
+)
 from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
 from hyprtweaker.engine.writer.binds import parse_binds_module
+from hyprtweaker.engine.writer.rules import parse_rules_module
 
 _log = logging.getLogger(__name__)
 
@@ -656,6 +662,127 @@ class Session:
         self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
         return True
 
+    def rules(self, kind: str) -> list[WindowRule] | list[LayerRule]:
+        """The live rule list for a kind -- `"window"` or `"layer"`.
+
+        One accessor rather than two properties because every caller is already
+        parameterised by kind: the two Pages are the same class twice (ADR-0008: "same
+        list model and editor shell").
+        """
+        if kind == "window":
+            return self._model.entities.window_rules
+        if kind == "layer":
+            return self._model.entities.layer_rules
+        raise ValueError(f"unknown rule kind {kind!r}")
+
+    def edit_rules(self, kind: str, mutate: Callable[[list[Any]], None]) -> bool:
+        """Change a rule list and write it, returning whether the edit was accepted.
+
+        `mutate` is handed the live list because for Rules position *is* identity
+        (ADR-0008): later rules win per Effect, and there is no key to address an
+        anonymous rule by. Shaped exactly like `edit_binds`, refusal and all, and like it
+        deliberately not on the undo stack (the same leftover).
+        """
+        if self._refuse(f"{kind} rules"):
+            return False
+        mutate(self.rules(kind))
+        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
+        return True
+
+    def add_rule(self, kind: str, rule: WindowRule | LayerRule) -> bool:
+        """Append a Rule -- last, where it wins over everything it conflicts with."""
+        return self.edit_rules(kind, lambda rules: rules.append(rule))
+
+    def replace_rule(self, kind: str, index: int, rule: WindowRule | LayerRule) -> bool:
+        """Replace the Rule at `index`, keeping its position."""
+
+        def swap(rules: list[Any]) -> None:
+            if 0 <= index < len(rules):
+                rules[index] = rule
+
+        return self.edit_rules(kind, swap)
+
+    def remove_rule(self, kind: str, index: int) -> bool:
+        """Delete the Rule at `index`."""
+
+        def drop(rules: list[Any]) -> None:
+            if 0 <= index < len(rules):
+                del rules[index]
+
+        return self.edit_rules(kind, drop)
+
+    def set_rule_enabled(self, kind: str, index: int, enabled: bool) -> bool:
+        """Enable or disable the Rule at `index`, in place.
+
+        The point of `enabled` over deletion is that nothing moves (ADR-0008): the rule
+        stays in the file at its position, and re-enabling restores the world as it was.
+        """
+
+        def flip(rules: list[Any]) -> None:
+            if 0 <= index < len(rules):
+                rules[index] = replace(rules[index], enabled=enabled)
+
+        return self.edit_rules(kind, flip)
+
+    def move_rule(self, kind: str, index: int, to: int) -> bool:
+        """Move the Rule at `index` to position `to` -- the drag reorder (ADR-0008).
+
+        A move rather than a swap because that is what dragging *is*: everything between
+        the two positions shifts by one, which is exactly how the user read the gesture.
+        """
+
+        def shift(rules: list[Any]) -> None:
+            if 0 <= index < len(rules) and 0 <= to < len(rules) and index != to:
+                rules.insert(to, rules.pop(index))
+
+        return self.edit_rules(kind, shift)
+
+    def fetch_clients(
+        self, done: Callable[[tuple[Mapping[str, Any], ...] | None], None]
+    ) -> None:
+        """Live open windows for the Pick-a-window helper, or `None` when unanswerable.
+
+        Helper data only, never rule state (ADR-0008): the reply prefills a Match and is
+        thrown away. `None` rather than `()` on a dead or absent compositor, because "no
+        windows are open" and "nobody is there to ask" degrade differently -- the picker
+        offers manual entry on the latter.
+        """
+        client = self._client
+        if client is None:
+            done(None)
+            return
+
+        async def run() -> None:
+            try:
+                payload = await client.clients()
+            except IpcError as error:
+                _log.debug("clients query failed: %s", error)
+                done(None)
+                return
+            done(payload)
+
+        self._spawn(run())
+
+    def fetch_layers(
+        self, done: Callable[[tuple[Mapping[str, Any], ...] | None], None]
+    ) -> None:
+        """Live layer surfaces for the Pick-a-layer helper, or `None` when unanswerable."""
+        client = self._client
+        if client is None:
+            done(None)
+            return
+
+        async def run() -> None:
+            try:
+                payload = await client.layers()
+            except IpcError as error:
+                _log.debug("layers query failed: %s", error)
+                done(None)
+                return
+            done(payload)
+
+        self._spawn(run())
+
     def _refuse(self, name: str) -> bool:
         """Whether this session must decline an edit -- and leave the model alone doing it.
 
@@ -794,9 +921,11 @@ class Session:
         `hyprctl binds` is blind to `code:N` and reports every Lua bind as `__lua` -- so
         they are read from `binds.lua` itself first (ADR-0007). Without that read the model
         would open holding no binds while the file holds dozens, the Page would say the
-        user has none, and the next Option write would prune the file as stale.
+        user has none, and the next Option write would prune the file as stale. Rules are
+        in the same position -- `hyprctl clients` is helper data, never rule state
+        (ADR-0008) -- so they come from their own Modules the same way.
         """
-        self._load_binds()
+        self._load_entities()
         owned = self._owned()
         result = await read_state(self._model, client, owned)
         _log.info(
@@ -936,6 +1065,7 @@ class Session:
             len(result.cleared),
         )
         self._reread_binds()
+        self._reread_rules()
         # The other half ADR-0016 asks for: somebody else's reload can break the config just
         # as thoroughly as the app's own, and it surfaces identically.
         await self._scan(client)
@@ -973,27 +1103,60 @@ class Session:
 
         self._load_binds()
 
-    def _load_binds(self) -> None:
+    def _reread_rules(self) -> None:
+        """Adopt hand-edited rule Modules, gated on the Manifest hash like binds.
+
+        One gate over both files, one load for both: `_load_rules` splices the two lists
+        together anyway (a misfiled rule belongs to whichever kind it *is*), so re-reading
+        them separately would let the un-edited file's stale parse overwrite the edited
+        one's adoption.
+        """
+        changed = False
+        for module in (WINDOW_RULES_MODULE, LAYER_RULES_MODULE):
+            path = self._paths.app_dir / module
+            if not path.is_file():
+                continue
+            try:
+                current = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            record = self._manifest().modules.get(module)
+            if record is None or record.sha256 != content_hash(current):
+                changed = True
+        if changed:
+            self._load_rules()
+
+    def _load_entities(self) -> None:
+        """The startup read of every Entity Module, and the keeper of `entities_loaded`.
+
+        The flag is load bearing rather than informational -- it is what stops the Writer
+        from reading "the model renders no binds" as "the user deleted their binds" and
+        pruning the file. It is also *global* to all Entity Modules, so it is only set when
+        every load succeeded: marking it with `window_rules.lua` unread would let the next
+        Option write prune a rules file the user merely broke.
+        """
+        if self._load_binds() and self._load_rules():
+            self._model.mark_entities_loaded()
+
+    def _load_binds(self) -> bool:
         """Read `binds.lua` into the model, or leave the model alone saying why.
 
         The startup read as well as the foreign-reload one: binds are the half of the model
         the compositor cannot answer for, so the file is the only place they come from.
 
-        A file that will not evaluate leaves `entities_loaded` false, and that flag is load
-        bearing rather than informational -- it is what stops the Writer from reading "the
-        model renders no binds" as "the user deleted their binds" and pruning the file.
+        Returns whether the model now speaks for the file -- `False` leaves
+        `entities_loaded` unset (`_load_entities`).
         """
         path = self._paths.app_dir / BINDS_MODULE
         if not path.is_file():
             # No file is a real answer: a fresh install has no binds, and the model saying
             # so is correct rather than ignorant.
-            self._model.mark_entities_loaded()
-            return
+            return True
 
         parsed = parse_binds_module(path)
         if not parsed.ok:
             _log.warning("binds.lua would not evaluate, leaving it alone: %s", parsed.errors[0])
-            return
+            return False
 
         binds = list(parsed.binds)
         # Constructs the model cannot represent are kept as action-less Binds rather than
@@ -1011,7 +1174,37 @@ class Session:
         self._model.entities.binds[:] = binds
         self._model.entities.unbinds[:] = list(parsed.unbinds)
         self._model.entities.submaps[:] = list(parsed.submaps)
-        self._model.mark_entities_loaded()
+        return True
+
+    def _load_rules(self) -> bool:
+        """Read `window_rules.lua` and `layer_rules.lua` into the model.
+
+        Both files feed both lists: `parse_rules_module` reports a misfiled rule as what
+        it *is*, so a layer rule hand-added to `window_rules.lua` still lands in the layer
+        list rather than vanishing. Either file failing to evaluate adopts neither --
+        splicing half an edit would leave the model disagreeing with one file in order to
+        agree with the other -- and returns `False`, which keeps `entities_loaded` unset
+        and the Writer's hands off both files (`_load_entities`).
+        """
+        window: list[WindowRule] = []
+        layer: list[LayerRule] = []
+        for module in (WINDOW_RULES_MODULE, LAYER_RULES_MODULE):
+            path = self._paths.app_dir / module
+            if not path.is_file():
+                continue
+            parsed = parse_rules_module(path, module=module)
+            if not parsed.ok:
+                _log.warning(
+                    "%s would not evaluate, leaving it alone: %s", module, parsed.errors[0]
+                )
+                return False
+            window.extend(parsed.window_rules)
+            layer.extend(parsed.layer_rules)
+
+        _log.info("read %d window rule(s) and %d layer rule(s)", len(window), len(layer))
+        self._model.entities.window_rules[:] = window
+        self._model.entities.layer_rules[:] = layer
+        return True
 
     def _on_stream_lost(self) -> None:
         """Hyprland closed the event stream -- it has exited."""
