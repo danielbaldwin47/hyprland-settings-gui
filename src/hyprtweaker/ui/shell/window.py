@@ -63,6 +63,7 @@ from hyprtweaker.engine.model.entities import (  # noqa: E402
     LayerRule,
     MonitorRule,
     WindowRule,
+    WorkspaceRule,
 )
 from hyprtweaker.engine.schema import Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
@@ -81,7 +82,11 @@ from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
-from hyprtweaker.ui.pages.monitors import MonitorActions, MonitorsPage  # noqa: E402
+from hyprtweaker.ui.pages.monitors import (  # noqa: E402
+    MonitorActions,
+    MonitorsPage,
+    ProfileActions,
+)
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
 from hyprtweaker.ui.pages.rules import (  # noqa: E402
     LayerRulesPage,
@@ -194,6 +199,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._dependents = _dependents(session.schema)
         self._last_failure: str | None = None
         self._closing = False
+        self._profile_toast: Adw.Toast | None = None
+        self._profile_match_offered = False
         self._undo_toast: Adw.Toast | None = None
         """The undo offer currently on screen, so the next one replaces it.
 
@@ -550,6 +557,13 @@ class MainWindow(Adw.ApplicationWindow):
                 rename=self._rename_monitor_rule,
                 remove=self._remove_monitor_rule,
             ),
+            profiles=ProfileActions(
+                save=self._save_monitor_profile,
+                activate=self._activate_monitor_profile,
+                update=self._update_monitor_profile,
+                detach=self._detach_monitor_profile,
+                delete=self._delete_monitor_profile,
+            ),
         )
         self._stack.add_named(_scrolled(self._monitors_page.page), MonitorsPage.section)
         self._sidebar.append(
@@ -557,7 +571,9 @@ class MainWindow(Adw.ApplicationWindow):
                 MonitorsPage.section, MonitorsPage.title, len(self._monitors_page.rules)
             )
         )
-        self._session.fetch_monitors(self._monitors_page.set_connected)
+        # The app-open answer feeds the canvas *and* the Profile-match toast: one fetch,
+        # riding the same helper-data lane hotplug refreshes use (ADR-0018).
+        self._session.fetch_monitors(self._on_monitors_at_open)
 
         self._select_section(selected or self._session.schema.section_names[0])
         self.sync()
@@ -759,6 +775,90 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_monitor_hotplug(self) -> None:
         """A display came or went: refresh the canvas and the hint badges (ADR-0008)."""
+        self._refresh_monitors()
+
+    # --- monitor profiles -----------------------------------------------------------------
+
+    @property
+    def profile_toast(self) -> Adw.Toast | None:
+        """The app-open Profile-match toast, if one was offered. Probed by the smoke tier."""
+        return self._profile_toast
+
+    def _on_monitors_at_open(self, monitors: tuple[Mapping[str, Any], ...] | None) -> None:
+        """The first helper answer: position the canvas, then offer a matching profile."""
+        if self._monitors_page is not None:
+            self._monitors_page.set_connected(monitors)
+        self._offer_profile_match(monitors)
+
+    def _offer_profile_match(self, monitors: tuple[Mapping[str, Any], ...] | None) -> None:
+        """The app-open Profile-match toast (ADR-0018): once per run, one click activates.
+
+        Only when activating would change something -- a stable setup launching into the
+        profile it already is must hear nothing. App-open only: hotplug refreshes ride
+        `set_connected` directly, so a dock plugged in later stays quiet in v1
+        (auto-activation is ADR-0015's deferred fog).
+        """
+        if self._profile_match_offered or not monitors:
+            return
+        self._profile_match_offered = True
+        match = self._session.matching_monitor_profile(monitors)
+        if match is None:
+            return
+        slug, profile = match
+        toast = Adw.Toast(
+            title=f'Displays match profile "{profile.name}"',
+            button_label="Activate",
+            timeout=10,
+        )
+        toast.connect("button-clicked", lambda _t: self._activate_monitor_profile(slug))
+        self._profile_toast = toast
+        self._toasts.add_toast(toast)
+
+    def _save_monitor_profile(self, name: str) -> None:
+        """Capture the current setup under `name` -- the save dialog's verb."""
+        if self._monitors_page is None:
+            return
+        self._session.save_monitor_profile(name, self._monitors_page.connected)
+        self._toasts.add_toast(Adw.Toast(title=f'Saved profile "{name}"'))
+        self._refresh_monitors()
+
+    def _activate_monitor_profile(self, slug: str) -> None:
+        """Activation: one transaction, then Confirm-or-revert (ADR-0015).
+
+        The snapshot is wider than a field edit's -- both rule lists plus the active
+        pointer -- because activation touches workspace pins too, and a revert that
+        left the refused profile's pins standing would be half a revert.
+        """
+        snapshot = self._session.monitor_state_snapshot()
+        if not self._session.activate_monitor_profile(slug):
+            return
+        self._refresh_monitors()
+        ConfirmRevertDialog(
+            on_keep=self._refresh_monitors,
+            on_revert=lambda: self._revert_monitor_state(snapshot),
+        ).present(self)
+
+    def _revert_monitor_state(
+        self,
+        snapshot: tuple[tuple[MonitorRule, ...], tuple[WorkspaceRule, ...], str | None],
+    ) -> None:
+        self._session.restore_monitor_state(snapshot)
+        self._refresh_monitors()
+
+    def _update_monitor_profile(self, slug: str) -> None:
+        """The drift badge's "Update": recapture reality into the profile."""
+        if self._monitors_page is None:
+            return
+        if self._session.update_monitor_profile(slug, self._monitors_page.connected):
+            self._refresh_monitors()
+
+    def _detach_monitor_profile(self) -> None:
+        """The drift badge's "Detach": keep the setup, stop tracking the profile."""
+        self._session.detach_monitor_profile()
+        self._refresh_monitors()
+
+    def _delete_monitor_profile(self, slug: str) -> None:
+        self._session.delete_monitor_profile(slug)
         self._refresh_monitors()
 
     def _refresh_monitors(self) -> None:
