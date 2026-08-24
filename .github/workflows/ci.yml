@@ -12,6 +12,14 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Skip ceiling for the pytest jobs: equals today's intentional data-driven
+  # skips (corpus rices without binds, parametrized doc-skips). A missing
+  # dependency skips tests silently -- lua5.4's absence once skipped 72 tests
+  # while the job stayed green -- so any count above this fails the job.
+  # The PR that adds or removes an intentional skip moves this number with it.
+  SKIP_CEILING: '12'
+
 jobs:
   lint:
     name: ruff + mypy (engine)
@@ -48,7 +56,13 @@ jobs:
       # against the masked one in the ui-smoke job below.
       - env:
           HYPRTWEAKER_REQUIRE_LUAC: '1'
-        run: pytest tests/unit -v
+        run: |
+          set -o pipefail
+          pytest tests/unit -v 2>&1 | tee pytest-out.log
+          test -s pytest-out.log
+          SKIPPED=$(grep -oE '[0-9]+ skipped' pytest-out.log | tail -1 | grep -oE '[0-9]+' || echo 0)
+          echo "skipped: $SKIPPED (ceiling $SKIP_CEILING)"
+          [ "$SKIPPED" -le "$SKIP_CEILING" ] || { echo "::error::$SKIPPED tests skipped, above the ceiling of $SKIP_CEILING -- a dependency is probably missing"; exit 1; }
 
   ui-smoke:
     name: UI smoke tier (GTK4 + libadwaita)
@@ -74,7 +88,15 @@ jobs:
         # tests/unit runs here too: this is the only runner where gi genuinely
         # imports, so it is the only place the seam test's mask is proven to be
         # doing work rather than passing because gi was absent anyway.
-        run: xvfb-run -a .venv/bin/python -m pytest tests/ui tests/unit -v
+        # Same skip ceiling: the UI tier itself must contribute zero skips
+        # (HYPRTWEAKER_REQUIRE_UI hard-fails a dead GTK env).
+        run: |
+          set -o pipefail
+          xvfb-run -a .venv/bin/python -m pytest tests/ui tests/unit -v 2>&1 | tee pytest-out.log
+          test -s pytest-out.log
+          SKIPPED=$(grep -oE '[0-9]+ skipped' pytest-out.log | tail -1 | grep -oE '[0-9]+' || echo 0)
+          echo "skipped: $SKIPPED (ceiling $SKIP_CEILING)"
+          [ "$SKIPPED" -le "$SKIP_CEILING" ] || { echo "::error::$SKIPPED tests skipped, above the ceiling of $SKIP_CEILING -- a dependency is probably missing"; exit 1; }
 
   build:
     name: meson build + install
@@ -99,6 +121,8 @@ jobs:
       - name: meson test
         # Exercises the wiring a PKGBUILD check() will use (ADR-0019). The UI
         # tier skips here -- no display on this job, and no HYPRTWEAKER_REQUIRE_UI.
+        # No skip ceiling here: this job wraps the same suites the two pytest
+        # jobs already guard, and its UI-tier skip is intentional.
         run: meson test -C build --print-errorlogs
       - run: DESTDIR="$PWD/_install" meson install -C build
       - name: The installed launcher runs, and the install is complete
