@@ -27,6 +27,25 @@ Here rather than in `modules.py` because both renderers need it -- Option Module
 will be lost is one copy too many.
 """
 
+
+def render_entity_module(calls: list[str], *, comment: str, app_version: str) -> str | None:
+    """The shared Entity Module shell: banner, one comment line, one call per line.
+
+    `None` for an empty list so the writer prunes the Module -- absence is how this
+    config model spells "no rules", the same as for binds. Shared by the rule and
+    monitor renderers, so the three sentences a user reads at the top of every Entity
+    Module exist exactly once.
+    """
+    if not calls:
+        return None
+    header = (
+        f"{GENERATED_BANNER.format(version=app_version)}\n"
+        f"-- {comment}\n"
+        f"-- Edits here are read back into the app, not overwritten.\n"
+    )
+    return header + "\n" + "\n".join(calls) + "\n"
+
+
 LUA_KEYWORDS = frozenset(
     {
         "and", "break", "do", "else", "elseif", "end", "false", "for", "function",

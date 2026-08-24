@@ -26,7 +26,7 @@ auto-revert (ADR-0016), which is the only event the ADR reserves a toast for out
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -58,12 +58,18 @@ from hyprtweaker.engine.migration.flow import (  # noqa: E402
 )
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
-from hyprtweaker.engine.model.entities import Bind, LayerRule, WindowRule  # noqa: E402
+from hyprtweaker.engine.model.entities import (  # noqa: E402
+    Bind,
+    LayerRule,
+    MonitorRule,
+    WindowRule,
+)
 from hyprtweaker.engine.schema import Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.session import AutoRevert, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
+from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.errors import error_dialog  # noqa: E402
 from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     MigrationDialog,
@@ -75,6 +81,7 @@ from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
+from hyprtweaker.ui.pages.monitors import MonitorActions, MonitorsPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
 from hyprtweaker.ui.pages.rules import (  # noqa: E402
     LayerRulesPage,
@@ -176,6 +183,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._binds_page: BindsPage | None = None
         self._window_rules_page: WindowRulesPage | None = None
         self._layer_rules_page: LayerRulesPage | None = None
+        self._monitors_page: MonitorsPage | None = None
+        self._session.watch_monitors(self._on_monitor_hotplug)
         self._offered: Detection | None = None
         """The import on offer, while one is (ADR-0009).
 
@@ -466,6 +475,11 @@ class MainWindow(Adw.ApplicationWindow):
         return self._layer_rules_page
 
     @property
+    def monitors_page(self) -> MonitorsPage | None:
+        """The Displays Page, once built. The UI tier asserts against it."""
+        return self._monitors_page
+
+    @property
     def show_advanced(self) -> bool:
         return bool(self._advanced_action.get_state().get_boolean())
 
@@ -525,6 +539,25 @@ class MainWindow(Adw.ApplicationWindow):
             self._sidebar.append(
                 _sidebar_row(rules_page.section, rules_page.title, len(rules_page.rules))
             )
+
+        # The Displays destination: an Entity Page over monitor rules plus the live
+        # helper data the canvas draws from (ADR-0008, #68).
+        self._monitors_page = MonitorsPage(
+            self._session,
+            actions=MonitorActions(
+                apply_breaking=self._apply_monitor_breaking,
+                apply_benign=self._apply_monitor_benign,
+                rename=self._rename_monitor_rule,
+                remove=self._remove_monitor_rule,
+            ),
+        )
+        self._stack.add_named(_scrolled(self._monitors_page.page), MonitorsPage.section)
+        self._sidebar.append(
+            _sidebar_row(
+                MonitorsPage.section, MonitorsPage.title, len(self._monitors_page.rules)
+            )
+        )
+        self._session.fetch_monitors(self._monitors_page.set_connected)
 
         self._select_section(selected or self._session.schema.section_names[0])
         self.sync()
@@ -686,6 +719,59 @@ class MainWindow(Adw.ApplicationWindow):
         page = self._rules_page(kind)
         if page is not None:
             page.refresh()
+        self.sync()
+
+    # --- monitors -------------------------------------------------------------------------
+
+    def _apply_monitor_breaking(self, output: str, fields: Mapping[str, Any]) -> None:
+        """A display-breaking edit: apply, then Confirm-or-revert (ADR-0008).
+
+        The snapshot is taken *before* the patch, so revert restores what the user was
+        looking at when they made the change -- silence, Esc, or the countdown expiring
+        all put it back; only the Keep button makes the new state stand.
+        """
+        snapshot = self._session.monitor_snapshot()
+        if not self._session.patch_monitor_rule(output, fields):
+            return
+        self._refresh_monitors()
+        ConfirmRevertDialog(
+            on_keep=self._refresh_monitors,
+            on_revert=lambda: self._revert_monitors(snapshot),
+        ).present(self)
+
+    def _revert_monitors(self, snapshot: tuple[MonitorRule, ...]) -> None:
+        self._session.restore_monitor_rules(snapshot)
+        self._refresh_monitors()
+
+    def _apply_monitor_benign(self, output: str, fields: Mapping[str, Any]) -> None:
+        """A benign edit (vrr, an absent display's rule): instant per ADR-0003."""
+        if self._session.patch_monitor_rule(output, fields):
+            self._refresh_monitors()
+
+    def _rename_monitor_rule(self, output: str, to: str) -> None:
+        """The "Match by" toggle: same rule, other identity string (ADR-0008)."""
+        if self._session.rename_monitor_rule(output, to):
+            self._refresh_monitors()
+
+    def _remove_monitor_rule(self, output: str) -> None:
+        if self._session.remove_monitor_rule(output):
+            self._refresh_monitors()
+
+    def _on_monitor_hotplug(self) -> None:
+        """A display came or went: refresh the canvas and the hint badges (ADR-0008)."""
+        self._refresh_monitors()
+
+    def _refresh_monitors(self) -> None:
+        """Re-fetch the connected outputs; the answer rebuilds the page.
+
+        One rebuild, not two: `fetch_monitors` always answers -- synchronously with
+        `None` when nobody is listening, asynchronously with data when Hyprland is --
+        and `set_connected` rebuilds on either, so refreshing here first would pay for
+        every edit twice.
+        """
+        if self._monitors_page is None:
+            return
+        self._session.fetch_monitors(self._monitors_page.set_connected)
         self.sync()
 
     def sync(self) -> None:

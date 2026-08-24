@@ -43,6 +43,13 @@ Two files rather than one `rules.lua` because the two lists are independently or
 "later wins" is per kind -- and a broken hand edit to one must not take the other down
 with it (per-module pcall blast radius, ADR-0005).
 """
+MONITORS_MODULE = "monitors.lua"
+WORKSPACE_RULES_MODULE = "workspace_rules.lua"
+"""The Entity Modules for monitor and workspace rules (ADR-0008), beside the others.
+
+Separate files for the same blast-radius reason: a hand edit that breaks the workspace
+rules must not black out the monitor layout with it.
+"""
 BRIDGE_DIR = "bridge"
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"

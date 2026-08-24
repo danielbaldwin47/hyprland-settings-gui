@@ -31,7 +31,9 @@ from ..paths import (
     BINDS_MODULE,
     ENTRYPOINT_NAME,
     LAYER_RULES_MODULE,
+    MONITORS_MODULE,
     WINDOW_RULES_MODULE,
+    WORKSPACE_RULES_MODULE,
     ConfigPaths,
 )
 from ..state.manifest import Manifest, ModuleRecord
@@ -46,6 +48,7 @@ from .modules import (
     render_entrypoint,
     render_module,
 )
+from .monitors import render_monitors_module, render_workspace_rules_module
 from .rules import render_layer_rules_module, render_window_rules_module
 
 
@@ -227,6 +230,16 @@ class Writer:
         )
         if layer_rules is not None:
             rendered[LAYER_RULES_MODULE] = layer_rules
+        monitors = render_monitors_module(
+            model.entities.monitors, app_version=self._app_version
+        )
+        if monitors is not None:
+            rendered[MONITORS_MODULE] = monitors
+        workspace_rules = render_workspace_rules_module(
+            model.entities.workspace_rules, app_version=self._app_version
+        )
+        if workspace_rules is not None:
+            rendered[WORKSPACE_RULES_MODULE] = workspace_rules
         return rendered
 
     def module_options(self, model: ConfigModel) -> dict[str, tuple[str, ...]]:
