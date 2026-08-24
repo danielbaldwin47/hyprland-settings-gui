@@ -126,19 +126,35 @@ def render_options(options: BindOptions) -> str:
     return f"{{ {inner} }}"
 
 
+DISABLED_PREFIX = "-- disabled: "
+"""How a disabled bind is spelled in the file (#66).
+
+A comment rather than an absence, because deleting would renumber every bind after it --
+identity is position (ADR-0007) -- and a comment keeps the file the interface: the line is
+readable in a text editor, and removing the prefix by hand re-enables the bind. Read-back
+revives these lines before evaluation and re-marks them disabled by line number.
+"""
+
+
 def render_bind(bind: Bind, *, depth: int = 0) -> str | None:
     """One `hl.bind(...)` line, or `None` for a bind with no emittable action.
 
     A `dispatcher` of `None` means a function-valued action, which belongs to `user.lua`
     and renders read-only in the GUI (ADR-0007). There is no Lua the app could write for
     it, and inventing something would be worse than leaving it where it already works.
+
+    A disabled bind renders as the same line behind `DISABLED_PREFIX`: canonical enough
+    to read back, inert enough to never fire.
     """
     if bind.dispatcher is None:
         return None
     parts = [lua_string(bind.keys), render_dispatcher(bind.dispatcher)]
     if rendered := render_options(bind.options):
         parts.append(rendered)
-    return f"{INDENT * depth}hl.bind({', '.join(parts)})"
+    line = f"hl.bind({', '.join(parts)})"
+    if not bind.enabled:
+        line = f"{DISABLED_PREFIX}{line}"
+    return f"{INDENT * depth}{line}"
 
 
 def render_binds_module(entities: EntitySet, *, app_version: str) -> str | None:
@@ -179,11 +195,15 @@ def render_binds_module(entities: EntitySet, *, app_version: str) -> str | None:
 
 
 def _submap_blocks(entities: EntitySet) -> list[list[str]]:
-    """One `hl.define_submap` block per Submap that has anything in it.
+    """One `hl.define_submap` block per Submap.
 
     Submaps named by a bind but never declared still get a block: dropping the block would
     drop the binds, and a bind whose submap was only ever implied is exactly what an
     imported config looks like.
+
+    A *declared* submap emits even when empty (#66): a submap the user just created has no
+    binds yet, and pruning its block would silently delete it on the very next write. Only
+    an implied-and-empty submap is skipped, because there is nothing to say about it.
     """
     declared = {submap.name: submap for submap in entities.submaps}
     order: list[str] = list(declared)
@@ -204,7 +224,7 @@ def _submap_blocks(entities: EntitySet) -> list[list[str]]:
             for unbind in entities.unbinds
             if unbind.submap == name and unbind.keys
         )
-        if not body:
+        if not body and name not in declared:
             continue
         opener = ", ".join(
             filter(
@@ -231,16 +251,44 @@ def parse_binds_module(source: str | Path, *, timeout: float = 5.0) -> ParsedBin
     Reading it costs nothing the user is not already paying. Consent is emphatically *not*
     implied for a foreign config -- that path goes through the Migration wizard and asks.
     """
-    if isinstance(source, Path):
-        return _parse_path(source, timeout=timeout)
+    text = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
+    revived, disabled_lines = _revive_disabled(text)
 
+    # Always evaluated from a scratch copy, even when given a real path: the disabled
+    # pre-pass edits the text, and the one thing this must never do is write the edit back
+    # over the user's file. The copy keeps the module's basename so origins still read as
+    # `binds.lua:N`, and the pre-pass preserves line numbers exactly, so `N` is the line
+    # in the real file.
     with tempfile.TemporaryDirectory(prefix="hyprtweaker-binds-") as scratch:
         path = Path(scratch) / BINDS_MODULE
-        path.write_text(source, encoding="utf-8")
-        return _parse_path(path, timeout=timeout)
+        path.write_text(revived, encoding="utf-8")
+        return _parse_path(path, timeout=timeout, disabled_lines=disabled_lines)
 
 
-def _parse_path(path: Path, *, timeout: float) -> ParsedBinds:
+def _revive_disabled(text: str) -> tuple[str, frozenset[int]]:
+    """Uncomment every `DISABLED_PREFIX` line, remembering which 1-based lines they were.
+
+    Line-for-line, never inserting or removing one, because the line numbers are how the
+    evaluated calls are matched back to their disabledness. Only the canonical spelling is
+    revived -- `DISABLED_PREFIX` followed by an `hl.` call -- so an ordinary hand-written
+    comment stays a comment.
+    """
+    lines = text.split("\n")
+    disabled: set[int] = set()
+    for number, line in enumerate(lines, start=1):
+        stripped = line.lstrip()
+        if stripped.startswith(DISABLED_PREFIX):
+            rest = stripped[len(DISABLED_PREFIX) :]
+            if rest.startswith("hl."):
+                indent = line[: len(line) - len(stripped)]
+                lines[number - 1] = f"{indent}{rest}"
+                disabled.add(number)
+    return "\n".join(lines), frozenset(disabled)
+
+
+def _parse_path(
+    path: Path, *, timeout: float, disabled_lines: frozenset[int] = frozenset()
+) -> ParsedBinds:
     from ..importer.lua.mapping import (
         bind_options_from_value,
         dispatcher_from_value,
@@ -282,6 +330,7 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedBinds:
                     dispatcher=dispatcher,
                     options=bind_options_from_value(args[2] if len(args) > 2 else None),
                     submap=call.submap,
+                    enabled=call.line not in disabled_lines,
                     origin=call.origin,
                 )
             )

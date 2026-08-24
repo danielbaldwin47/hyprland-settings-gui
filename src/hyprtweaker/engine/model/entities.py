@@ -155,12 +155,18 @@ class Bind:
     `hl.bind`'s first argument -- there is no mods/key table form. `submap` names the
     Submap the bind belongs to (`None` = root), which decides which `hl.define_submap`
     callback it is emitted inside.
+
+    `enabled` is the conflict surface's "disable it" (ADR-0007, #66): a disabled bind stays
+    in the list at its position -- identity is position, and deleting would renumber every
+    bind after it -- but is emitted as a canonical comment the writer can read back, so it
+    never fires and never conflicts.
     """
 
     keys: str
     dispatcher: DispatcherCall | None = None
     options: BindOptions = field(default_factory=BindOptions)
     submap: str | None = None
+    enabled: bool = True
     origin: str = ""
 
 

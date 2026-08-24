@@ -14,6 +14,7 @@ package_sources = {
   ],
   'hyprtweaker/engine': [
     '__init__.py',
+    'binds_analysis.py',
     'dispatchers.py',
     'paths.py',
     'triggers.py',

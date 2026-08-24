@@ -272,3 +272,117 @@ class TestPruning:
 
         assert relpath in result.removed
         assert not (paths.app_dir / relpath).is_file()
+
+
+class TestDisabled:
+    """A disabled bind is a comment the app can read back (#66).
+
+    Commented rather than dropped, because deleting would renumber every bind after it
+    (identity is position, ADR-0007), and commented in a *canonical* spelling so the file
+    stays the interface: a user can read it, and uncommenting by hand re-enables.
+    """
+
+    def test_a_disabled_bind_renders_as_a_comment(self) -> None:
+        text = render(EntitySet(binds=[exec_bind("SUPER + Q", "kitty", enabled=False)]))
+        assert '-- disabled: hl.bind("SUPER + Q"' in text
+
+    def test_a_disabled_bind_reads_back_disabled_in_place(self) -> None:
+        entities = EntitySet(
+            binds=[
+                exec_bind("SUPER + Q", "a"),
+                exec_bind("SUPER + Q", "b", enabled=False),
+                exec_bind("SUPER + W", "c"),
+            ]
+        )
+        parsed = parse_binds_module(render(entities))
+        assert [(b.keys, b.enabled) for b in parsed.binds] == [
+            ("SUPER + Q", True),
+            ("SUPER + Q", False),
+            ("SUPER + W", True),
+        ]
+
+    def test_a_disabled_submap_bind_keeps_its_submap(self) -> None:
+        entities = EntitySet(
+            submaps=[Submap(name="resize")],
+            binds=[exec_bind("right", "grow", submap="resize", enabled=False)],
+        )
+        parsed = parse_binds_module(render(entities))
+        assert [(b.keys, b.submap, b.enabled) for b in parsed.binds] == [
+            ("right", "resize", False)
+        ]
+
+    def test_a_hand_written_comment_is_not_a_disabled_bind(self) -> None:
+        parsed = parse_binds_module(
+            '-- hl.bind("SUPER + Q", hl.dsp.exec_cmd{ command = "old" })\n'
+            'hl.bind("SUPER + W", hl.dsp.exec_cmd{ command = "kitty" })\n'
+        )
+        assert [b.keys for b in parsed.binds] == ["SUPER + W"]
+
+
+class TestSubmapPersistence:
+    """Submaps survive the Writer whole: declaration, reset target, emptiness (#66)."""
+
+    def test_an_empty_declared_submap_still_emits(self) -> None:
+        # Creating a submap and adding binds later must survive a write in between --
+        # pruning the empty block would silently delete what the user just made.
+        entities = EntitySet(
+            submaps=[Submap(name="resize")],
+            binds=[exec_bind("SUPER + Q", "kitty")],
+        )
+        assert 'hl.define_submap("resize", function()' in render(entities)
+
+    def test_an_empty_declared_submap_round_trips(self) -> None:
+        entities = EntitySet(submaps=[Submap(name="resize", reset_target="move")])
+        parsed = parse_binds_module(render(entities))
+        assert [(s.name, s.reset_target) for s in parsed.submaps] == [("resize", "move")]
+
+    def test_reset_target_round_trips(self) -> None:
+        entities = EntitySet(
+            submaps=[Submap(name="resize", reset_target="landing")],
+            binds=[exec_bind("right", "grow", submap="resize")],
+        )
+        parsed = parse_binds_module(render(entities))
+        assert parsed.submaps[0].reset_target == "landing"
+
+    def test_submaps_golden(self) -> None:
+        """The whole submap surface, one golden file: the acceptance round-trip (#66)."""
+        from pathlib import Path
+
+        from _golden import assert_matches_golden
+
+        entities = EntitySet(
+            submaps=[
+                Submap(name="resize", reset_target="landing"),
+                Submap(name="landing"),
+                Submap(name="empty"),
+            ],
+            binds=[
+                Bind(
+                    keys="SUPER + R",
+                    dispatcher=DispatcherCall(path="submap", positional=("resize",)),
+                ),
+                exec_bind("right", "grow", submap="resize"),
+                exec_bind("right", "grow-more", submap="resize", enabled=False),
+                exec_bind(
+                    "SUPER + escape",
+                    "leave",
+                    submap="landing",
+                    options=BindOptions(submap_universal=True),
+                ),
+            ],
+        )
+        text = render(entities)
+        golden = Path(__file__).parent.parent / "golden" / "writer" / "binds-submaps.lua"
+        assert_matches_golden(text, golden, "the submap binds.lua")
+
+        parsed = parse_binds_module(text)
+        assert parsed.ok
+        assert [(s.name, s.reset_target) for s in parsed.submaps] == [
+            ("resize", "landing"),
+            ("landing", ""),
+            ("empty", ""),
+        ]
+        assert [(b.keys, b.submap, b.enabled) for b in parsed.binds] == [
+            (b.keys, b.submap, b.enabled) for b in entities.binds
+        ]
+        assert parsed.binds[3].options.submap_universal is True
