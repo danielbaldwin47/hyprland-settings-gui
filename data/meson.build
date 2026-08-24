@@ -10,6 +10,7 @@
 schema_files = files(
   'schema/hyprland-0.56.2.json',
   'schema/overlay.json',
+  'schema/tasks.json',
 )
 
 install_data(

@@ -27,7 +27,7 @@ auto-revert (ADR-0016), which is the only event the ADR reserves a toast for out
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +64,7 @@ from hyprtweaker.engine.model.entities import (  # noqa: E402
     MonitorRule,
     WindowRule,
 )
+from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
@@ -98,12 +99,19 @@ from hyprtweaker.ui.pages.monitors import (  # noqa: E402
     MonitorsPage,
     ProfileActions,
 )
-from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
+from hyprtweaker.ui.pages.plan import PagePlan, View, plan_config_view  # noqa: E402
 from hyprtweaker.ui.pages.rules import (  # noqa: E402
     LayerRulesPage,
     RuleActions,
     RulesPage,
     WindowRulesPage,
+)
+from hyprtweaker.ui.pages.tasks import (  # noqa: E402
+    ORPHAN_CATEGORY_TITLE,
+    CategoryPlan,
+    TasksMapping,
+    load_tasks_mapping,
+    plan_tasks_view,
 )
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
 
@@ -167,8 +175,17 @@ Page. A revealed Row wears an "Advanced" pill so it is legible as one (`rows/chr
 Search's one-off reveal -- reaching a withheld Row without flipping this at all -- is
 ADR-0017's and arrives with #67.
 
-Session-scoped: the remembered choice belongs in the Prefs file with the View choice and the
-dialog answers, and that file is #71."""
+Remembered in the Prefs file alongside the View choice (#71, ADR-0019), so the switch a
+power user leaves on is still on tomorrow."""
+
+VIEW_ACTION = "view"
+"""Which sidebar arrangement is showing: the segmented control above the sidebar list.
+
+A window action rather than a widget's own state because #7 puts the same choice in two
+places -- the control and the primary menu -- and ADR-0017 adds a third caller, a search hit
+whose Row has no home in the active View. One action means those three cannot disagree, and
+a search-driven switch is remembered exactly like a manual one, which is what the ADR asks
+for ("one mechanism, no temporary hidden state")."""
 
 
 class MainWindow(Adw.ApplicationWindow):
@@ -195,6 +212,32 @@ class MainWindow(Adw.ApplicationWindow):
             on_edited=self._on_option_edited,
             navigate=self.reveal_option,
         )
+        self._prefs_store = PrefsStore(session.paths.state_dir)
+        self._prefs = self._prefs_store.load()
+        """Preferences as last stored, read once. Never the Hyprland config model (ADR-0019).
+
+        Read at construction rather than per-use so a `$XDG_STATE_HOME` that disappears
+        mid-session cannot change the view out from under the user."""
+        self._view = _view_from(self._prefs.view)
+        """The active sidebar arrangement, and the source of truth for it.
+
+        Held here rather than read off the switcher's buttons: three callers can change it
+        (the control, the menu, and a search hit landing outside the active View), and a
+        widget that is both the state and one of the callers is how a toggle handler ends
+        up rebuilding the window twice per click."""
+        self._mapping: TasksMapping | None = None
+        """The curated Tasks mapping, loaded on first use and kept.
+
+        Lazy because a Config-view user never needs it, and `None` is also the honest
+        answer on a broken install: `_load_mapping` degrades to the Config view rather
+        than failing to open a window."""
+        self._categories: tuple[CategoryPlan, ...] = ()
+        self._built: list[SidebarEntry] = []
+        """Every built Page, in build order, as the sidebar needs to know it.
+
+        The sidebar is filled from this rather than during construction: the two Views
+        show the same Pages in different orders, and building the Pages twice -- once per
+        arrangement -- is how a Page ends up in one View only."""
         self._pages: list[ConfigPage] = []
         self._binds_page: BindsPage | None = None
         self._window_rules_page: WindowRulesPage | None = None
@@ -268,9 +311,48 @@ class MainWindow(Adw.ApplicationWindow):
             hscrollbar_policy=Gtk.PolicyType.NEVER,
             vexpand=True,
         )
-        toolbar = Adw.ToolbarView(content=scroller)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        body.append(self._build_view_switcher())
+        body.append(scroller)
+
+        toolbar = Adw.ToolbarView(content=body)
         toolbar.add_top_bar(header)
         return Adw.NavigationPage(title="Hyprland", child=toolbar)
+
+    def _build_view_switcher(self) -> Gtk.Widget:
+        """The segmented control above the sidebar list (#7).
+
+        Two linked `ToggleButton`s rather than `Adw.ToggleGroup`: the group widget arrived in
+        libadwaita 1.7 and the app's floor is lower, so using it would trade a working
+        switcher on older distributions for one line less code here.
+
+        The buttons drive the window action rather than each other. A toggle handler that
+        flipped its sibling directly would re-enter on that flip -- the classic segmented
+        control bug where one click rebuilds the view twice.
+        """
+        box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            homogeneous=True,
+            css_classes=["linked"],
+            margin_start=6,
+            margin_end=6,
+            margin_top=6,
+            margin_bottom=6,
+        )
+        self._view_buttons: dict[View, Gtk.ToggleButton] = {}
+        for view, label, tooltip in (
+            (View.TASKS, "Tasks", "Settings grouped by what you want to change"),
+            (View.CONFIG, "Config", "One page per Hyprland config section"),
+        ):
+            button = Gtk.ToggleButton(
+                label=label,
+                tooltip_text=tooltip,
+                active=view is self.view,
+            )
+            button.connect("toggled", self._on_view_button_toggled, view)
+            self._view_buttons[view] = button
+            box.append(button)
+        return box
 
     def _build_content(self) -> Adw.NavigationPage:
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -288,6 +370,14 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append("Undo", f"win.{UNDO_ACTION}")
         menu.append("Show advanced settings", f"win.{SHOW_ADVANCED_ACTION}")
 
+        # The View choice, in the menu as well as in the segmented control (#7). Two ways to
+        # the same action, because the control is discoverable and the menu is where someone
+        # who has already hidden the sidebar can still reach it.
+        views = Gio.Menu()
+        views.append("Tasks", f"win.{VIEW_ACTION}('{View.TASKS.value}')")
+        views.append("Config", f"win.{VIEW_ACTION}('{View.CONFIG.value}')")
+        menu.append_section("View", views)
+
         interop = Gio.Menu()
         interop.append("Import...", f"win.{IMPORT_ACTION}")
         interop.append("Export...", f"win.{EXPORT_ACTION}")
@@ -303,11 +393,22 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _install_actions(self) -> None:
         advanced = Gio.SimpleAction.new_stateful(
-            SHOW_ADVANCED_ACTION, None, GLib.Variant.new_boolean(False)
+            SHOW_ADVANCED_ACTION,
+            None,
+            GLib.Variant.new_boolean(self._prefs.show_advanced),
         )
         advanced.connect("activate", self._on_toggle_advanced)
         self.add_action(advanced)
         self._advanced_action = advanced
+
+        view = Gio.SimpleAction.new_stateful(
+            VIEW_ACTION,
+            GLib.VariantType.new("s"),
+            GLib.Variant.new_string(self._view.value),
+        )
+        view.connect("activate", self._on_choose_view)
+        self.add_action(view)
+        self._view_action = view
 
         undo = Gio.SimpleAction.new(UNDO_ACTION, None)
         undo.connect("activate", self._on_undo)
@@ -527,30 +628,99 @@ class MainWindow(Adw.ApplicationWindow):
         return bool(self._advanced_action.get_state().get_boolean())
 
     @property
+    def view(self) -> View:
+        """Which sidebar arrangement is showing (#7)."""
+        return self._view
+
+    @property
+    def categories(self) -> tuple[CategoryPlan, ...]:
+        """The curated categories currently built. Empty in the Config view.
+
+        The UI smoke tier asserts against this: it is how "the Tasks view built all its
+        Pages" becomes a question a headless test can ask of a real window.
+        """
+        return self._categories
+
+    def set_view(self, view: View) -> None:
+        """Switch arrangement and remember the choice (#7, ADR-0019).
+
+        The one entry point for all three callers -- the control, the menu, and ADR-0017's
+        search hit whose Row has no home in the active View -- so that a search-driven
+        switch persists exactly like a manual one rather than silently reverting next start.
+        """
+        if view is self._view:
+            return
+        self._view = view
+        self._remember(self._prefs.with_view(view.value))
+        self._view_action.set_state(GLib.Variant.new_string(view.value))
+        self._sync_view_buttons()
+        self.rebuild()
+
+    def _sync_view_buttons(self) -> None:
+        """Put the segmented control where the state says, without re-entering.
+
+        `set_active` emits `toggled`, whose handler calls back into `set_view`; blocking the
+        handler is what keeps one click from rebuilding the window twice.
+        """
+        for view, button in self._view_buttons.items():
+            button.handler_block_by_func(self._on_view_button_toggled)
+            button.set_active(view is self._view)
+            button.handler_unblock_by_func(self._on_view_button_toggled)
+
+    def _on_view_button_toggled(self, button: Gtk.ToggleButton, view: View) -> None:
+        if button.get_active():
+            self.set_view(view)
+        elif view is self._view:
+            # The only button in a segmented pair cannot be turned *off*: clicking the
+            # active one would otherwise leave the sidebar showing no arrangement at all.
+            self._sync_view_buttons()
+
+    def _on_choose_view(self, _action: Gio.SimpleAction, parameter: Any) -> None:
+        self.set_view(_view_from(parameter.get_string()))
+
+    def _remember(self, prefs: Prefs) -> None:
+        """Hold the new preferences and try to store them.
+
+        A failed write is deliberately silent: `$XDG_STATE_HOME` being read-only means the
+        choice will not survive a restart, which is not worth a toast over the Row the user
+        is looking at, and `PrefsStore.save` has already declined to raise.
+        """
+        self._prefs = prefs
+        self._prefs_store.save(prefs)
+
+    @property
     def visible_section(self) -> str | None:
         """Which Section's Page the content pane is showing."""
         return self._stack.get_visible_child_name()
 
     def rebuild(self) -> None:
-        """Build one Page per Section, replacing whatever was there.
+        """Build every Page for the active View, replacing whatever was there.
 
         Whole-view rebuild rather than per-Row reveal: the Advanced switch changes which
         Options exist on a Page and therefore which Group each one lands in, and rebuilding
         from the plan is the only version of that which cannot drift from `plan.py`.
+
+        The Pages go into the stack here and the sidebar is filled at the end, from
+        `_destinations`. Two passes because the Views differ only in how the same Pages are
+        arranged and named -- interleaving construction with sidebar order is what would
+        let a Page exist in one View and not the other, which is the one thing #7 forbids.
         """
         selected = self._selected_section()
 
         self._pages = []
         self._section_titles = {}
+        self._built = []
         self._sidebar.remove_all()
         while (child := self._stack.get_first_child()) is not None:
             self._stack.remove(child)
 
-        for plan in plan_config_view(self._session.schema, show_advanced=self.show_advanced):
+        self._categories, option_plans = self._plan_view()
+
+        for plan in option_plans:
             page = ConfigPage(plan, self._factory)
             self._pages.append(page)
             self._stack.add_named(_scrolled(page.page), plan.section)
-            self._sidebar.append(_sidebar_row(plan.section, plan.title, plan.option_count))
+            self._register(plan.section, plan.title, plan.option_count)
             self._section_titles[plan.section] = plan.title
 
         # An Entity Page, so it comes from the model rather than from the Schema plan: there
@@ -569,9 +739,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
         self._stack.add_named(_scrolled(self._binds_page.page), BindsPage.section)
         self._section_titles[BindsPage.section] = BindsPage.title
-        self._sidebar.append(
-            _sidebar_row(BindsPage.section, BindsPage.title, len(self._binds_page.binds))
-        )
+        self._register(BindsPage.section, BindsPage.title, len(self._binds_page.binds))
 
         # The rule Pages: the same Entity-Page shape, twice (ADR-0008).
         self._window_rules_page = WindowRulesPage(
@@ -583,9 +751,7 @@ class MainWindow(Adw.ApplicationWindow):
         for rules_page in (self._window_rules_page, self._layer_rules_page):
             self._stack.add_named(_scrolled(rules_page.page), rules_page.section)
             self._section_titles[rules_page.section] = rules_page.title
-            self._sidebar.append(
-                _sidebar_row(rules_page.section, rules_page.title, len(rules_page.rules))
-            )
+            self._register(rules_page.section, rules_page.title, len(rules_page.rules))
 
         # The Displays destination: an Entity Page over monitor rules plus the live
         # helper data the canvas draws from (ADR-0008, #68).
@@ -607,11 +773,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
         self._stack.add_named(_scrolled(self._monitors_page.page), MonitorsPage.section)
         self._section_titles[MonitorsPage.section] = MonitorsPage.title
-        self._sidebar.append(
-            _sidebar_row(
-                MonitorsPage.section, MonitorsPage.title, len(self._monitors_page.rules)
-            )
-        )
+        self._register(MonitorsPage.section, MonitorsPage.title, len(self._monitors_page.rules))
         # The app-open answer feeds the canvas *and* the Profile-match toast: one fetch,
         # riding the same helper-data lane hotplug refreshes use (ADR-0018).
         self._session.fetch_monitors(self._on_monitors_event)
@@ -623,11 +785,98 @@ class MainWindow(Adw.ApplicationWindow):
             page = page_class(self._session, actions=self._declaration_actions(page_class.kind))
             self._declaration_pages[page_class.kind] = page
             self._stack.add_named(_scrolled(page.page), page.section)
-            self._sidebar.append(_sidebar_row(page.section, page.title, len(page.entities)))
+            self._register(page.section, page.title, len(page.entities))
             self._section_titles[page.section] = page.title
 
-        self._select_section(selected or self._session.schema.section_names[0])
+        self._fill_sidebar()
+        self._select_section(self._restored(selected))
         self.sync()
+
+    # --- arranging the sidebar ----------------------------------------------------------
+
+    def _plan_view(self) -> tuple[tuple[CategoryPlan, ...], tuple[PagePlan, ...]]:
+        """The active View's categories and its Schema-generated Pages.
+
+        Returns both rather than assigning `self._categories` on the way past: this is the
+        *input* to a rebuild, and a planner that quietly mutates the window is one whose
+        result depends on when it was called.
+
+        Config is every Section, generated and therefore incapable of drifting. Tasks is the
+        curated mapping, which *can* drift and is allowed to (ADR-0012) -- so a mapping that
+        will not load falls back to the Config arrangement rather than to an empty window.
+        """
+        mapping = None if self.view is View.CONFIG else self._load_mapping()
+        if mapping is None:
+            return (), plan_config_view(self._session.schema, show_advanced=self.show_advanced)
+
+        categories = plan_tasks_view(
+            self._session.schema, mapping, show_advanced=self.show_advanced
+        )
+        pages = tuple(page for category in categories for page in category.option_pages)
+        return categories, pages
+
+    def _load_mapping(self) -> TasksMapping | None:
+        """The curated mapping, or None if the install cannot produce one.
+
+        Swallowed rather than raised because this runs inside `rebuild`, which runs on every
+        switch flip: a broken or missing `tasks.json` should cost the user the curated view,
+        not the ability to open the app. The unit tier asserts the shipped file loads, which
+        is where a packaging mistake is supposed to be caught.
+        """
+        if self._mapping is None:
+            try:
+                self._mapping = load_tasks_mapping()
+            except (OSError, ValueError, KeyError):
+                return None
+        return self._mapping
+
+    def _register(self, section: str, title: str, count: int) -> None:
+        self._built.append(SidebarEntry(section=section, title=title, count=count))
+
+    def _restored(self, selected: str | None) -> str:
+        """Which Page to select after a rebuild: the one that was showing, if it still is.
+
+        A View switch is the case that needs this. The Views name their Pages differently --
+        `look.decoration` is `decoration` in the Config view -- so carrying the old id across
+        a switch selects nothing, and `_select_section` walking off the end of the list is
+        silent. That left the sidebar with no selection while the stack showed its first
+        child: the window disagreeing with itself about where the user is.
+        """
+        if selected is not None and any(entry.section == selected for entry in self._built):
+            return selected
+        if self._built:
+            return self._built[0].section
+        return self._session.schema.section_names[0]
+
+    def _fill_sidebar(self) -> None:
+        """Put the built Pages in the sidebar, in the order the active View wants them."""
+        if self.view is View.CONFIG or not self._categories:
+            for entry in self._built:
+                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
+            return
+
+        known = {entry.section: entry for entry in self._built}
+        listed: set[str] = set()
+        for category in self._categories:
+            self._sidebar.append(_category_heading(category.title))
+            for page in category.pages:
+                entry = known.get(page.section)
+                if entry is None:
+                    # The mapping references an Entity Page this build did not produce --
+                    # a kind that has not shipped yet, or a renamed id. Skipping the row is
+                    # right; inventing one would put a sidebar entry in front of no Page.
+                    continue
+                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
+                listed.add(entry.section)
+
+        # Anything built but not named by the mapping still gets a row. Entity Pages are the
+        # real case: #70 can add a kind before the curation places it, and an unlisted Page
+        # is exactly the "setting we forgot" failure the fallback group exists to prevent.
+        leftovers = [entry for entry in self._built if entry.section not in listed]
+        if leftovers:
+            self._sidebar.append(_category_heading(ORPHAN_CATEGORY_TITLE))
+            for entry in leftovers:
+                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
 
     # --- binds ---------------------------------------------------------------------------
 
@@ -1419,6 +1668,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_toggle_advanced(self, action: Gio.SimpleAction, _parameter: Any) -> None:
         action.set_state(GLib.Variant.new_boolean(not self.show_advanced))
+        self._remember(self._prefs.with_show_advanced(self.show_advanced))
         self.rebuild()
 
     def _on_close_request(self, *_: Any) -> bool:
@@ -1508,6 +1758,53 @@ def _dependents(schema: Schema) -> dict[str, tuple[str, ...]]:
 
 def _scrolled(page: Adw.PreferencesPage) -> Gtk.ScrolledWindow:
     return Gtk.ScrolledWindow(child=page, hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+
+@dataclass(frozen=True, slots=True)
+class SidebarEntry:
+    """One built Page, as the sidebar needs to know it: where to go, and what to call it.
+
+    A type rather than the `(str, str, int)` tuple this began as -- three same-shaped
+    strings and an int, indexed positionally, is exactly the clump the repo's other plan
+    objects are dataclasses to avoid. `section` is the `GtkStack` child name, which is also
+    what a sidebar row is named and what `_select_section` navigates by.
+    """
+
+    section: str
+    title: str
+    count: int
+
+
+def _view_from(value: str) -> View:
+    """A stored or action-supplied view name, degraded to the default if unrecognised.
+
+    The Prefs file is plain JSON a user can edit and an older app can have written, so an
+    unknown name has to open *something*. Tasks is that something (#7); raising here would
+    turn a stale preference into an app that cannot start.
+    """
+    try:
+        return View(value)
+    except ValueError:
+        return View.TASKS
+
+
+def _category_heading(title: str) -> Gtk.ListBoxRow:
+    """A category label in the Tasks sidebar: visible, never selectable.
+
+    Not selectable and not activatable because it has no Page behind it -- a heading that
+    took the selection would blank the content pane. `_select_section` walks rows by name
+    and this one has none, so it is invisible to navigation as well as to the pointer.
+    """
+    label = Gtk.Label(
+        label=title,
+        xalign=0.0,
+        css_classes=["heading", "dim-label"],
+        margin_top=12,
+        margin_bottom=2,
+        margin_start=6,
+    )
+    row = Gtk.ListBoxRow(child=label, selectable=False, activatable=False)
+    return row
 
 
 def _sidebar_row(section: str, title: str, count: int) -> Gtk.ListBoxRow:

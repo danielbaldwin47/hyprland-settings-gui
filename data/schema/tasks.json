@@ -1,0 +1,203 @@
+{
+  "format_version": 1,
+  "_comment": [
+    "The curated Tasks view (#7): four categories, each an ordered list of destinations.",
+    "Data, not code, so a Hyprland release re-curates by editing JSON and a wrong page is a",
+    "one-line diff rather than a patch. `hyprtweaker.ui.pages.tasks` is the reader.",
+    "",
+    "A destination is either an option Page -- `id`, `title`, and what it claims -- or an",
+    "`entity` reference naming a Page the shell already builds (binds, the rule lists,",
+    "Displays, and the seven declarative Pages of #70). Entities are referenced rather than",
+    "described because their content comes from the model, not from the Schema.",
+    "",
+    "An option Page claims Options two ways. `sections` claims whole Sections: the Page is",
+    "that Section's home, and every Option in it lands here unless a group pulls it away.",
+    "`groups` claims named Options explicitly, under a heading the curator chose -- this is",
+    "how `input` splits four ways and how `misc` dissolves, both of which the design canvas",
+    "asks for. A key may be claimed by exactly one group across the whole file; the",
+    "completeness test enforces that, so a copy-paste cannot silently duplicate a setting.",
+    "",
+    "Absent from this file on purpose: the hidden tier (`debug`, `quirks`, `experimental`,",
+    "`input-capture`). ADR-0013 §5 makes it Config-view-only, so it has no Tasks home at any",
+    "switch setting. The canvas's 19th page was an Advanced page holding exactly those; the",
+    "ADR is later and wins, so that page is not here.",
+    "",
+    "Counts, so a curator can check them: 23 destinations in all -- 12 option Pages and 11",
+    "entity references. That is more rows than the canvas's 19 because its consolidated",
+    "Pages are split here: an Entity Page comes from the model and cannot be merged into an",
+    "option Page, so 'Animations' is a Page of `animations` options *beside* the Animation",
+    "tree and Animation curves Pages, rather than one Page containing all three."
+  ],
+  "categories": [
+    {
+      "id": "look",
+      "title": "Look",
+      "pages": [
+        {
+          "id": "look.general",
+          "title": "General",
+          "sections": ["general"],
+          "groups": [
+            {
+              "title": "Splash & wallpaper",
+              "options": [
+                "misc:disable_hyprland_logo",
+                "misc:disable_splash_rendering",
+                "misc:col.splash",
+                "misc:splash_font_family",
+                "misc:force_default_wallpaper",
+                "misc:background_color",
+                "misc:font_family"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "look.decoration",
+          "title": "Decoration",
+          "sections": ["decoration"]
+        },
+        {
+          "id": "look.animations",
+          "title": "Animations",
+          "sections": ["animations"]
+        },
+        { "entity": "entity:animations" },
+        { "entity": "entity:curves" },
+        {
+          "id": "look.layouts",
+          "title": "Layouts",
+          "sections": ["layout", "dwindle", "master", "scrolling"]
+        }
+      ]
+    },
+    {
+      "id": "windows",
+      "title": "Windows",
+      "pages": [
+        {
+          "id": "windows.windows",
+          "title": "Windows & Groups",
+          "sections": ["group", "misc"]
+        },
+        { "entity": "window_rules" },
+        { "entity": "layer_rules" }
+      ]
+    },
+    {
+      "id": "input",
+      "title": "Input",
+      "pages": [
+        {
+          "id": "input.keyboard",
+          "title": "Keyboard",
+          "groups": [
+            {
+              "title": "Layout",
+              "options": [
+                "input:kb_model",
+                "input:kb_layout",
+                "input:kb_variant",
+                "input:kb_options",
+                "input:kb_rules",
+                "input:kb_file"
+              ]
+            },
+            {
+              "title": "Typing",
+              "options": [
+                "input:repeat_rate",
+                "input:repeat_delay",
+                "input:numlock_by_default",
+                "input:resolve_binds_by_sym"
+              ]
+            },
+            {
+              "title": "Virtual keyboards",
+              "options": [
+                "input:virtualkeyboard:share_states",
+                "input:virtualkeyboard:release_pressed_on_close"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "input.pointer",
+          "title": "Mouse & Touchpad",
+          "sections": ["input"]
+        },
+        {
+          "id": "input.gestures",
+          "title": "Gestures",
+          "sections": ["gestures"]
+        },
+        { "entity": "entity:gestures" },
+        { "entity": "entity:devices" },
+        {
+          "id": "input.shortcuts",
+          "title": "Shortcut behaviour",
+          "sections": ["binds"]
+        },
+        { "entity": "binds" }
+      ]
+    },
+    {
+      "id": "system",
+      "title": "System",
+      "pages": [
+        { "entity": "monitors" },
+        {
+          "id": "system.cursor",
+          "title": "Cursor",
+          "sections": ["cursor"]
+        },
+        { "entity": "entity:env" },
+        { "entity": "entity:autostart" },
+        {
+          "id": "system.ecosystem",
+          "title": "Popups & permissions",
+          "sections": ["ecosystem"]
+        },
+        { "entity": "entity:permissions" },
+        {
+          "id": "system.rendering",
+          "title": "Rendering",
+          "sections": ["render", "opengl", "xwayland"],
+          "groups": [
+            {
+              "title": "Power & displays",
+              "options": [
+                "misc:vrr",
+                "misc:mouse_move_enables_dpms",
+                "misc:key_press_enables_dpms",
+                "misc:render_unfocused_fps",
+                "misc:screencopy_force_8b",
+                "misc:disable_scale_notification"
+              ]
+            },
+            {
+              "title": "Session lock",
+              "options": [
+                "misc:allow_session_lock_restore",
+                "misc:session_lock_xray",
+                "misc:session_lock_blur",
+                "misc:lockdead_screen_delay"
+              ]
+            },
+            {
+              "title": "Diagnostics",
+              "options": [
+                "misc:disable_autoreload",
+                "misc:disable_xdg_env_checks",
+                "misc:disable_hyprland_guiutils_check",
+                "misc:disable_watchdog_warning",
+                "misc:enable_anr_dialog",
+                "misc:anr_missed_pings"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
