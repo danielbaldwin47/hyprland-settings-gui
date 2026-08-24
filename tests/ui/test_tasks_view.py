@@ -210,6 +210,7 @@ def test_switching_views_leaves_the_sidebar_agreeing_with_the_content(
 
     _session, window = build_window(tmp_path)
     window._select_section("look.decoration")
+    assert window.visible_section == "look.decoration"
 
     window.set_view(View.CONFIG)
 
@@ -218,15 +219,22 @@ def test_switching_views_leaves_the_sidebar_agreeing_with_the_content(
 
 
 def test_a_page_that_exists_in_both_views_survives_the_switch(tmp_path: Path) -> None:
-    """An Entity Page is named the same in both arrangements, so it should be kept."""
+    """An Entity Page is named the same in both arrangements, so it should be kept.
+
+    Deliberately *not* `binds`: that id is ambiguous, because the `binds` Schema Section and
+    the Keybinds Entity Page share it, and a test standing on an ambiguous id would go green
+    on the very sidebar-versus-content disagreement this pins. The stack child is asserted
+    for the same reason -- a selected row naming the right id is only half the claim.
+    """
     from hyprtweaker.ui.pages.plan import View
 
     _session, window = build_window(tmp_path)
-    window._select_section("binds")
+    window._select_section("entity:animations")
 
     window.set_view(View.CONFIG)
 
-    assert window._selected_section() == "binds"
+    assert window._selected_section() == "entity:animations"
+    assert window.visible_section == "entity:animations"
 
 
 def test_the_view_choice_survives_a_restart(tmp_path: Path) -> None:

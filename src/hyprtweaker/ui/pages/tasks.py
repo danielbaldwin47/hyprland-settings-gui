@@ -239,7 +239,6 @@ def plan_tasks_view(
     shipped mapping happens to be complete today.
     """
     placed = _placements(mapping)
-    by_name = {option.name: option for option in schema}
     planned: list[CategoryPlan] = []
 
     for category in mapping.categories:
@@ -248,9 +247,7 @@ def plan_tasks_view(
             if isinstance(destination, EntitySpec):
                 pages.append(destination)
                 continue
-            pages.append(
-                _plan_page(schema, destination, placed, by_name, show_advanced=show_advanced)
-            )
+            pages.append(_plan_page(schema, destination, placed, show_advanced=show_advanced))
         planned.append(CategoryPlan(id=category.id, title=category.title, pages=tuple(pages)))
 
     return tuple(_with_fallbacks(planned, schema, mapping, placed, show_advanced=show_advanced))
@@ -293,7 +290,6 @@ def _plan_page(
     schema: Schema,
     spec: PageSpec,
     placed: dict[str, _Placement],
-    by_name: dict[str, ResolvedOption],
     *,
     show_advanced: bool,
 ) -> PagePlan:
@@ -325,7 +321,7 @@ def _plan_page(
     for group in spec.groups:
         members: list[ResolvedOption] = []
         for key in group.options:
-            curated = by_name.get(key)
+            curated = schema.get(key)
             if curated is None:
                 # The mapping names an Option this Hyprland does not have. A test keeps the
                 # shipped mapping honest for the shipped Schema; at runtime an older or
