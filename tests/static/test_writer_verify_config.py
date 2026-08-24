@@ -108,3 +108,128 @@ def test_the_options_lua_cannot_express_are_the_only_ones_left_out(tmp_path: Pat
     _, emitted, total = write_everything(tmp_path, "0.56.2")
 
     assert (total - emitted) == 5, f"{total - emitted} Options were skipped, expected 5"
+
+
+def write_declarations(root: Path, version: str) -> ConfigPaths:
+    """Write a config holding one of every declarative Entity kind (#70).
+
+    Separate from the maximal Option config above because the two prove different things.
+    That one asks whether 353 *values* are spelled the way their parsers read; this one asks
+    whether six *call shapes* are the ones `hl.curve`, `hl.animation`, `hl.gesture`,
+    `hl.device`, `hl.env`, `hl.permission` and `hl.exec_cmd` accept.
+
+    `luac -p` cannot answer that: every wrong shape here is valid Lua. A device field name
+    that does not exist, a `curve =` key the wiki shows and the parser rejects, an animation
+    naming a curve nothing declared -- each parses perfectly and takes the Module down.
+    """
+    from hyprtweaker.engine.model.entities import (
+        Animation,
+        Curve,
+        Device,
+        EnvVar,
+        Gesture,
+        Permission,
+        StartupCommand,
+    )
+
+    paths = ConfigPaths.rooted_at(root)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+
+    model = ConfigModel(load_schema(version, SCHEMA_DIR))
+    entities = model.entities
+    entities.curves.extend(
+        [
+            Curve("easeOutQuint", {"type": "bezier", "points": [[0.23, 1], [0.32, 1]]}),
+            Curve("easy", {"type": "spring", "mass": 1, "stiffness": 238.1, "dampening": 24.2}),
+        ]
+    )
+    entities.animations.extend(
+        [
+            Animation(
+                "windowsIn",
+                {"enabled": True, "speed": 4.1, "bezier": "easeOutQuint", "style": "popin 87%"},
+            ),
+            Animation("windowsOut", {"enabled": True, "speed": 1.49, "spring": "easy"}),
+            Animation("border", {"enabled": False}),
+        ]
+    )
+    entities.gestures.extend(
+        [
+            Gesture({"fingers": 3, "direction": "horizontal", "action": "workspace"}),
+            Gesture(
+                {
+                    "fingers": 4,
+                    "direction": "up",
+                    "action": "special",
+                    "workspace_name": "magic",
+                    "scale": 1.5,
+                    "mods": "SUPER",
+                    "disable_inhibit": True,
+                }
+            ),
+        ]
+    )
+    entities.devices.extend(
+        [
+            Device("epic-mouse-v1", {"sensitivity": -0.5, "natural_scroll": True}),
+            Device(
+                "at-translated-set-2-keyboard",
+                {"kb_layout": "us,de", "repeat_rate": 50, "repeat_delay": 300},
+            ),
+            Device("my-tablet", {"region_position": [10, 20], "transform": 1}),
+        ]
+    )
+    entities.env.extend(
+        [
+            EnvVar("XCURSOR_SIZE", "24"),
+            EnvVar("GDK_BACKEND", "wayland,x11,*"),
+            EnvVar("XDG_CURRENT_DESKTOP", "Hyprland", dbus=True),
+        ]
+    )
+    entities.permissions.extend(
+        [
+            Permission("/usr/(bin|local/bin)/grim", "screencopy", "allow"),
+            Permission("/usr/bin/hyprlock", "keyboard", "deny"),
+        ]
+    )
+    entities.startup.extend(
+        [
+            StartupCommand("true"),
+            StartupCommand("[workspace 2 silent] true", raw=True),
+            StartupCommand("true", event=""),
+            StartupCommand("true", event="hyprland.shutdown"),
+        ]
+    )
+    model.mark_entities_loaded()
+
+    Writer(paths, app_version="0.0.0-test").write(model)
+    return paths
+
+
+def test_every_declarative_entity_kind_is_a_config_hyprland_accepts(tmp_path: Path) -> None:
+    paths = write_declarations(tmp_path, "0.56.2")
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    assert result.returncode == 0, (
+        f"Hyprland rejected the generated entity Modules:\n{result.stdout}\n{result.stderr}"
+    )
+    assert "config ok" in result.stdout
+
+
+def test_the_entity_modules_were_actually_written(tmp_path: Path) -> None:
+    """Guards the test above: "accepted" must not come from having written nothing."""
+    paths = write_declarations(tmp_path, "0.56.2")
+
+    written = {path.name for path in paths.app_dir.glob("*.lua")}
+
+    assert {
+        "animations.lua",
+        "gestures.lua",
+        "devices.lua",
+        "env.lua",
+        "permissions.lua",
+        "autostart.lua",
+    } <= written

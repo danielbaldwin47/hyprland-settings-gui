@@ -28,10 +28,16 @@ from pathlib import Path
 
 from ..model.options import ConfigModel
 from ..paths import (
+    ANIMATIONS_MODULE,
+    AUTOSTART_MODULE,
     BINDS_MODULE,
+    DEVICES_MODULE,
     ENTRYPOINT_NAME,
+    ENV_MODULE,
+    GESTURES_MODULE,
     LAYER_RULES_MODULE,
     MONITORS_MODULE,
+    PERMISSIONS_MODULE,
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
@@ -39,7 +45,9 @@ from ..paths import (
 from ..state.manifest import Manifest, ModuleRecord
 from ..state.manifest import is_damaged as manifest_is_damaged
 from . import syntax
+from .animations import render_animations_module
 from .binds import render_binds_module
+from .inputs import render_devices_module, render_gestures_module
 from .modules import (
     ENTITY_MODULES,
     is_entity_module,
@@ -50,6 +58,11 @@ from .modules import (
 )
 from .monitors import render_monitors_module, render_workspace_rules_module
 from .rules import render_layer_rules_module, render_window_rules_module
+from .session_scope import (
+    render_autostart_module,
+    render_env_module,
+    render_permissions_module,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,29 +230,45 @@ class Writer:
             sources[relpath] = section
             rendered[relpath] = render_module(items, app_version=self._app_version)
 
-        binds = render_binds_module(model.entities, app_version=self._app_version)
-        if binds is not None:
-            rendered[BINDS_MODULE] = binds
-        window_rules = render_window_rules_module(
-            model.entities.window_rules, app_version=self._app_version
+        entities = model.entities
+        version = self._app_version
+        # One table rather than a block per kind: with eleven Entity Modules the
+        # render-then-skip-if-None shape is the same four lines eleven times, and the
+        # kinds that were forgotten in an earlier pass were the ones furthest down the
+        # repetition. `None` means "nothing to write", which the prune reads as a deletion.
+        entity_modules: tuple[tuple[str, str | None], ...] = (
+            (BINDS_MODULE, render_binds_module(entities, app_version=version)),
+            (
+                WINDOW_RULES_MODULE,
+                render_window_rules_module(entities.window_rules, app_version=version),
+            ),
+            (
+                LAYER_RULES_MODULE,
+                render_layer_rules_module(entities.layer_rules, app_version=version),
+            ),
+            (MONITORS_MODULE, render_monitors_module(entities.monitors, app_version=version)),
+            (
+                WORKSPACE_RULES_MODULE,
+                render_workspace_rules_module(entities.workspace_rules, app_version=version),
+            ),
+            (
+                ANIMATIONS_MODULE,
+                render_animations_module(
+                    entities.curves, entities.animations, app_version=version
+                ),
+            ),
+            (GESTURES_MODULE, render_gestures_module(entities.gestures, app_version=version)),
+            (DEVICES_MODULE, render_devices_module(entities.devices, app_version=version)),
+            (ENV_MODULE, render_env_module(entities.env, app_version=version)),
+            (
+                PERMISSIONS_MODULE,
+                render_permissions_module(entities.permissions, app_version=version),
+            ),
+            (AUTOSTART_MODULE, render_autostart_module(entities.startup, app_version=version)),
         )
-        if window_rules is not None:
-            rendered[WINDOW_RULES_MODULE] = window_rules
-        layer_rules = render_layer_rules_module(
-            model.entities.layer_rules, app_version=self._app_version
-        )
-        if layer_rules is not None:
-            rendered[LAYER_RULES_MODULE] = layer_rules
-        monitors = render_monitors_module(
-            model.entities.monitors, app_version=self._app_version
-        )
-        if monitors is not None:
-            rendered[MONITORS_MODULE] = monitors
-        workspace_rules = render_workspace_rules_module(
-            model.entities.workspace_rules, app_version=self._app_version
-        )
-        if workspace_rules is not None:
-            rendered[WORKSPACE_RULES_MODULE] = workspace_rules
+        for relpath, text in entity_modules:
+            if text is not None:
+                rendered[relpath] = text
         return rendered
 
     def module_options(self, model: ConfigModel) -> dict[str, tuple[str, ...]]:

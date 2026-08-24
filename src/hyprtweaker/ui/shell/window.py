@@ -71,6 +71,10 @@ from hyprtweaker.session import AutoRevert, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
+from hyprtweaker.ui.dialogs.declaration_editor import (  # noqa: E402
+    DeclarationEditor,
+    taken_identities,
+)
 from hyprtweaker.ui.dialogs.errors import error_dialog  # noqa: E402
 from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     MigrationDialog,
@@ -82,6 +86,13 @@ from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
+from hyprtweaker.ui.pages.declarations import (  # noqa: E402
+    PAGES as DECLARATION_PAGES,
+)
+from hyprtweaker.ui.pages.declarations import (  # noqa: E402
+    DeclarationActions,
+    DeclarationsPage,
+)
 from hyprtweaker.ui.pages.monitors import (  # noqa: E402
     MonitorActions,
     MonitorsPage,
@@ -189,6 +200,13 @@ class MainWindow(Adw.ApplicationWindow):
         self._window_rules_page: WindowRulesPage | None = None
         self._layer_rules_page: LayerRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
+        self._declaration_pages: dict[str, DeclarationsPage] = {}
+        self._section_titles: dict[str, str] = {}
+        """Every built Page's heading, by the sidebar id it answers to.
+
+        Filled by `rebuild` from the Pages themselves, so a Page that is not a Section
+        -- every Entity Page -- gets the name it calls itself rather than one derived
+        from its internal id."""
         self._session.watch_monitors(self._on_monitor_hotplug)
         self._offered: Detection | None = None
         """The import on offer, while one is (ADR-0009).
@@ -486,6 +504,19 @@ class MainWindow(Adw.ApplicationWindow):
         """The Layer rules Page, once built. The UI tier asserts against it."""
         return self._layer_rules_page
 
+    def declaration_page(self, kind: str) -> DeclarationsPage | None:
+        """One declarative Entity Page by kind, once built. The UI tier asserts against it.
+
+        A lookup rather than seven properties: the Pages are one class seven times, so
+        seven accessors would be seven chances for one of them to name the wrong kind.
+        """
+        return self._declaration_pages.get(kind)
+
+    @property
+    def declaration_pages(self) -> tuple[DeclarationsPage, ...]:
+        """Every declarative Page, in sidebar order."""
+        return tuple(self._declaration_pages.values())
+
     @property
     def monitors_page(self) -> MonitorsPage | None:
         """The Displays Page, once built. The UI tier asserts against it."""
@@ -510,6 +541,7 @@ class MainWindow(Adw.ApplicationWindow):
         selected = self._selected_section()
 
         self._pages = []
+        self._section_titles = {}
         self._sidebar.remove_all()
         while (child := self._stack.get_first_child()) is not None:
             self._stack.remove(child)
@@ -519,6 +551,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._pages.append(page)
             self._stack.add_named(_scrolled(page.page), plan.section)
             self._sidebar.append(_sidebar_row(plan.section, plan.title, plan.option_count))
+            self._section_titles[plan.section] = plan.title
 
         # An Entity Page, so it comes from the model rather than from the Schema plan: there
         # is no Option behind a Bind to plan against (CONTEXT.md, ADR-0007).
@@ -535,6 +568,7 @@ class MainWindow(Adw.ApplicationWindow):
             ),
         )
         self._stack.add_named(_scrolled(self._binds_page.page), BindsPage.section)
+        self._section_titles[BindsPage.section] = BindsPage.title
         self._sidebar.append(
             _sidebar_row(BindsPage.section, BindsPage.title, len(self._binds_page.binds))
         )
@@ -548,6 +582,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
         for rules_page in (self._window_rules_page, self._layer_rules_page):
             self._stack.add_named(_scrolled(rules_page.page), rules_page.section)
+            self._section_titles[rules_page.section] = rules_page.title
             self._sidebar.append(
                 _sidebar_row(rules_page.section, rules_page.title, len(rules_page.rules))
             )
@@ -571,6 +606,7 @@ class MainWindow(Adw.ApplicationWindow):
             ),
         )
         self._stack.add_named(_scrolled(self._monitors_page.page), MonitorsPage.section)
+        self._section_titles[MonitorsPage.section] = MonitorsPage.title
         self._sidebar.append(
             _sidebar_row(
                 MonitorsPage.section, MonitorsPage.title, len(self._monitors_page.rules)
@@ -579,6 +615,16 @@ class MainWindow(Adw.ApplicationWindow):
         # The app-open answer feeds the canvas *and* the Profile-match toast: one fetch,
         # riding the same helper-data lane hotplug refreshes use (ADR-0018).
         self._session.fetch_monitors(self._on_monitors_event)
+
+        # The seven declarative Entity Pages (#70): one class over a field catalogue, so
+        # this loop is the whole registration rather than seven blocks like the ones above.
+        self._declaration_pages = {}
+        for page_class in DECLARATION_PAGES:
+            page = page_class(self._session, actions=self._declaration_actions(page_class.kind))
+            self._declaration_pages[page_class.kind] = page
+            self._stack.add_named(_scrolled(page.page), page.section)
+            self._sidebar.append(_sidebar_row(page.section, page.title, len(page.entities)))
+            self._section_titles[page.section] = page.title
 
         self._select_section(selected or self._session.schema.section_names[0])
         self.sync()
@@ -740,6 +786,113 @@ class MainWindow(Adw.ApplicationWindow):
         page = self._rules_page(kind)
         if page is not None:
             page.refresh()
+        self.sync()
+
+    # --- declarative entities (#70) -------------------------------------------------------
+
+    def _declaration_actions(self, kind: str) -> DeclarationActions:
+        return DeclarationActions(
+            add=lambda: self._add_declaration(kind),
+            edit=lambda index: self._edit_declaration(kind, index),
+            remove=lambda index: self._remove_declaration(kind, index),
+        )
+
+    def _curve_names(self) -> tuple[str, ...]:
+        """The curves an animation may name -- what makes the dropdown truthful."""
+        return tuple(curve.name for curve in self._session.curves if curve.name)
+
+    def _add_declaration(self, kind: str) -> None:
+        def done(entity: Any) -> None:
+            if self._session.add_declaration(kind, entity):
+                self._refresh_declarations(kind)
+
+        DeclarationEditor(
+            kind=kind,
+            on_done=done,
+            curve_names=self._curve_names(),
+            taken=taken_identities(kind, self._session.declarations(kind)),
+            bounds=self._session.device_field_bounds,
+        ).present(self)
+
+    def _edit_declaration(self, kind: str, index: int) -> None:
+        entities = self._session.declarations(kind)
+        if not 0 <= index < len(entities):
+            return
+
+        def done(entity: Any) -> None:
+            if self._session.replace_declaration(kind, index, entity):
+                self._refresh_declarations(kind)
+
+        DeclarationEditor(
+            kind=kind,
+            on_done=done,
+            entity=entities[index],
+            curve_names=self._curve_names(),
+            taken=taken_identities(kind, entities, skip=index),
+            bounds=self._session.device_field_bounds,
+        ).present(self)
+
+    def _remove_declaration(self, kind: str, index: int) -> None:
+        """Delete one entity, warning first when other rows depend on it.
+
+        Only curves can be depended on: an animation that names a deleted curve stops
+        Hyprland from loading the whole animation Module, so this is the one delete on
+        these Pages that can break something the user is not looking at.
+        """
+        entities = self._session.declarations(kind)
+        if not 0 <= index < len(entities):
+            return
+
+        if kind == "curves":
+            # Asked of the Page, which owns the question -- the window recomputing it from
+            # the model would be a second answer to "who uses this curve".
+            page = self._declaration_pages.get("curves")
+            users = page.curve_users(entities[index].name) if page is not None else ()
+            if users:
+                self._confirm_curve_delete(index, entities[index].name, users)
+                return
+
+        if self._session.remove_declaration(kind, index):
+            self._refresh_declarations(kind)
+
+    def _confirm_curve_delete(self, index: int, name: str, users: tuple[str, ...]) -> None:
+        listed = ", ".join(users)
+        dialog = Adw.AlertDialog(
+            heading=f"Delete the curve “{name}”?",
+            body=(
+                f"{len(users)} animation(s) name it: {listed}. Without it Hyprland "
+                f"refuses them, and the whole animations file stops loading."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete anyway")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def answered(_dialog: Adw.AlertDialog, response: str) -> None:
+            if response == "delete" and self._session.remove_declaration("curves", index):
+                self._refresh_declarations("curves")
+                # The animations that named it now carry a dangling reference, so their
+                # Page has to be rebuilt too -- the finding lives on a row nobody touched.
+                self._refresh_declarations("animations")
+
+        dialog.connect("response", answered)
+        dialog.present(self)
+
+    def _refresh_declarations(self, kind: str) -> None:
+        page = self._declaration_pages.get(kind)
+        if page is not None:
+            page.refresh()
+        if kind == "curves":
+            animations = self._declaration_pages.get("animations")
+            if animations is not None:
+                animations.refresh()
+        if kind == "devices":
+            # A per-device override badges the Options it shadows, so the Option Pages are
+            # now out of date about themselves.
+            for page_ in self._pages:
+                page_.refresh()
         self.sync()
 
     # --- monitors -------------------------------------------------------------------------
@@ -1249,8 +1402,20 @@ class MainWindow(Adw.ApplicationWindow):
             return
         section = row.get_name()
         self._stack.set_visible_child_name(section)
-        self._content_page.set_title(self._session.schema.section_title(section))
+        self._content_page.set_title(self._page_title(section))
         self._split.set_show_content(True)
+
+    def _page_title(self, section: str) -> str:
+        """The heading for the selected Page: the Page's own title, else the Schema's.
+
+        Entity Pages are not Sections, so asking the Schema about one gets a *derived*
+        title -- the raw id with its first letter capitalised. That reads as "Monitors"
+        where the Page says "Displays", and after #70's `entity:` namespacing it reads as
+        "Entity:animations", which is an internal id on screen. The Page already knows what
+        it is called; the Schema only has to answer for Sections.
+        """
+        title = self._section_titles.get(section)
+        return title if title is not None else self._session.schema.section_title(section)
 
     def _on_toggle_advanced(self, action: Gio.SimpleAction, _parameter: Any) -> None:
         action.set_state(GLib.Variant.new_boolean(not self.show_advanced))
@@ -1275,11 +1440,20 @@ class MainWindow(Adw.ApplicationWindow):
         return None if row is None else row.get_name()
 
     def _select_section(self, section: str) -> None:
-        for index in range(len(self._pages)):
-            row = self._sidebar.get_row_at_index(index)
-            if row is not None and row.get_name() == section:
+        """Select the sidebar row named `section`, wherever in the list it sits.
+
+        Walks until the list runs out rather than stopping at `len(self._pages)`: the
+        Schema Pages are only the *first* stretch of the sidebar, and every Entity Page --
+        binds, the rule lists, Displays, and the seven of #70 -- is appended after them.
+        Bounding the search by the Schema Page count made every one of them unreachable by
+        name, which is the path a restored selection and a search hit both take.
+        """
+        index = 0
+        while (row := self._sidebar.get_row_at_index(index)) is not None:
+            if row.get_name() == section:
                 self._sidebar.select_row(row)
                 return
+            index += 1
 
 
 _REVEAL_MARGIN = 24.0

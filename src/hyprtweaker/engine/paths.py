@@ -50,6 +50,32 @@ WORKSPACE_RULES_MODULE = "workspace_rules.lua"
 Separate files for the same blast-radius reason: a hand edit that breaks the workspace
 rules must not black out the monitor layout with it.
 """
+ANIMATIONS_MODULE = "animations.lua"
+"""Curves *and* animations, in one Module -- the one place the blast-radius split is wrong.
+
+Everywhere else one file per kind is right because the kinds are independent. These two are
+not: `hl.animation{bezier = "easy"}` is refused unless a curve named `easy` already exists,
+so the curves must be declared first. Lua executes a file top to bottom, but the Entrypoint
+requires Modules in sorted order -- and `animations` sorts before `curves`, which would put
+every reference before its declaration. One file makes the ordering a property of the
+renderer, which can guarantee it, instead of a property of a filename, which cannot.
+
+Nothing is lost to blast radius by merging them: a broken curve takes down the animations
+that name it whether or not they share a file.
+"""
+GESTURES_MODULE = "gestures.lua"
+DEVICES_MODULE = "devices.lua"
+ENV_MODULE = "env.lua"
+PERMISSIONS_MODULE = "permissions.lua"
+AUTOSTART_MODULE = "autostart.lua"
+"""The remaining declarative Entity Modules (#70), beside the others.
+
+One file per kind for the blast-radius reason the rule and monitor Modules split for: a
+hand edit that breaks the gestures must not take autostart -- or the display layout --
+down with it. `env.lua` and `permissions.lua` in particular are the two kinds Hyprland
+does *not* reset on reload (`lua-api-surface.md` §13, §15), so a user reading the App dir
+to find out what is still set from last boot has one file per question.
+"""
 BRIDGE_DIR = "bridge"
 MONITOR_PROFILES_DIR = "monitor-profiles"
 """Monitor profiles, one `<slug>.json` each, in the App dir (ADR-0015).

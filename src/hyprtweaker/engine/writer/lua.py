@@ -13,7 +13,8 @@ phantom reloads and phantom hand-edit warnings.
 from __future__ import annotations
 
 import re
-from typing import TypeAlias
+from collections.abc import Mapping, Sequence
+from typing import Any, TypeAlias
 
 from ..model.values import lua_string
 
@@ -44,6 +45,56 @@ def render_entity_module(calls: list[str], *, comment: str, app_version: str) ->
         f"-- Edits here are read back into the app, not overwritten.\n"
     )
     return header + "\n" + "\n".join(calls) + "\n"
+
+
+def ordered_fields(
+    fields: Mapping[str, Any], *, first: Sequence[str] = ()
+) -> list[tuple[str, Any]]:
+    """An Entity's field table in a canonical order: `first` as listed, then alphabetical.
+
+    Determinism again (see the module docstring), but for a reason the Option renderer does
+    not have. An Entity's fields make a *round trip*: the app writes them, and reads its own
+    Module back through the Lua recorder to adopt hand edits. The recorder hands back a Lua
+    table, whose key order is not the file's -- so "emit the fields as held" spells one
+    entity two ways depending on whether the model was last filled by an editor or by a
+    read. That is a changed content hash with no changed meaning: a phantom write, a
+    phantom reload, and a hand-edit warning about an edit nobody made.
+
+    `first` carries the keys whose position is meaning rather than convention -- the ones a
+    reader looks for to tell what an entity *is*, like a curve's `type` -- so the rest can
+    be sorted without making the file harder to read than the one a human would have
+    written.
+    """
+    remaining = {key: value for key, value in fields.items() if key not in first}
+    leading = [(key, fields[key]) for key in first if key in fields]
+    return [
+        (key, canonical_number(value)) for key, value in leading + sorted(remaining.items())
+    ]
+
+
+def canonical_number(value: Any) -> Any:
+    """`1.0` as `1`, recursively -- the other half of the round-trip determinism above.
+
+    The hyprlang Importer parses every bezier coordinate and every speed as a Python
+    `float`, so it produces `1.0` where a user wrote `1`. Lua has no such distinction to
+    preserve: the recorder hands `1.0` back as an integer, so the second render of an
+    entity the first render wrote would spell the same number differently -- one phantom
+    write per Module on the first startup after an import. Canonicalising here means the
+    file says what the user typed, and says it the same way every time.
+
+    Safe in the direction it goes: every field that takes a float takes an integer too,
+    while several that want an integer (`repeat_rate`, `fingers`) would be handed a `.0`
+    they have no parser for.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, Mapping):
+        return {key: canonical_number(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
+        return [canonical_number(item) for item in value]
+    return value
 
 
 LUA_KEYWORDS = frozenset(

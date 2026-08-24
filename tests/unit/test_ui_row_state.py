@@ -12,6 +12,7 @@ answers.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from _support import SAMPLE_VERSION, SCHEMA_DIR
@@ -26,6 +27,7 @@ from hyprtweaker.engine.schema import (
 )
 from hyprtweaker.ui.rows.state import (
     ADVANCED_PILL,
+    DEVICE_PILL,
     NO_VALUE,
     OVERRIDDEN_PILL,
     PENDING_RESTART_PILL,
@@ -57,12 +59,14 @@ class FakeContext:
         pending_restart: frozenset[str] = frozenset(),
         unapplied: frozenset[str] = frozenset(),
         overridden: frozenset[str] = frozenset(),
+        device_overrides: Mapping[str, tuple[str, ...]] | None = None,
     ) -> None:
         self.schema: Schema = SCHEMA
         self.live = live
         self.pending_restart = pending_restart
         self.unapplied = unapplied
         self.overridden = overridden
+        self.device_overrides: Mapping[str, tuple[str, ...]] = device_overrides or {}
         self.model = ConfigModel(SCHEMA)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
@@ -224,6 +228,41 @@ def test_the_override_pill_names_user_lua_so_the_user_knows_where_to_look() -> N
 
     (pill,) = row_state(SCHEMA["decoration:rounding"], context).pills
     assert "user.lua" in pill.tooltip
+
+
+def test_an_option_a_device_overrides_wears_the_per_device_pill() -> None:
+    """ADR-0013's `device-override` Row state, driven by the per-device Entities (#70).
+
+    Distinct from "Overridden", which is about a file loaded after the app's own: this one
+    is scoped to particular hardware, so the Row still holds true for every other device.
+    """
+    context = FakeContext(device_overrides={"input:sensitivity": ("epic-mouse-v1",)})
+
+    assert _pills(SCHEMA["input:sensitivity"], context) == (DEVICE_PILL,)
+    assert _pills(SCHEMA["input:kb_layout"], context) == (), "only the key a device sets"
+
+
+def test_the_per_device_pill_names_the_device_so_the_user_knows_which() -> None:
+    """A badge saying "something overrides this" without saying what is a puzzle, and here
+    the answer is knowable -- the device is a row in the app."""
+    context = FakeContext(
+        device_overrides={"input:sensitivity": ("epic-mouse-v1", "trackball")}
+    )
+
+    (pill,) = row_state(SCHEMA["input:sensitivity"], context).pills
+
+    assert "epic-mouse-v1" in pill.tooltip
+    assert "trackball" in pill.tooltip
+
+
+def test_a_device_override_does_not_dim_the_row_or_block_editing() -> None:
+    """A per-device value winning for one mouse is `hl.device` working, not a failure."""
+    context = FakeContext(device_overrides={"input:sensitivity": ("epic-mouse-v1",)})
+
+    state = row_state(SCHEMA["input:sensitivity"], context)
+
+    assert state.editable
+    assert state.dependency is None
 
 
 def test_an_advanced_restart_flagged_option_wears_both_pills_in_order() -> None:

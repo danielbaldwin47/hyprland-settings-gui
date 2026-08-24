@@ -18,6 +18,14 @@
 -- the user's consent every time.
 
 local entry, basedir, outpath, policy = arg[1], arg[2], arg[3], arg[4] or "block"
+
+-- Whether `hl.on` handlers are *entered* rather than only captured. Off for any foreign
+-- config: ADR-0009 lifts whole handlers into `legacy.lua` verbatim, and running one would
+-- both double-count what it declares and execute code the user never asked us to run.
+-- On for exactly one caller -- the writer reading its own `autostart.lua` back (#70) --
+-- where the handler is a block this app generated, holds nothing but `hl.exec_cmd` calls,
+-- and is the only place those calls can be seen from.
+local run_handlers = (arg[5] == "run")
 local passthrough = policy == "passthrough"
 
 ----------------------------------------------------------------------
@@ -157,6 +165,30 @@ for _, name in ipairs(DECL) do
   end
 end
 
+-- A gesture's action may be a Lua function, which is the only form Hyprland offers for
+-- "run this dispatcher" (there is no string dispatcher action). The app writes exactly
+-- that for an imported `gesture = …, dispatcher, …`, so reading its own `gestures.lua`
+-- back has to be able to see inside the closure -- otherwise the dispatcher is lost on
+-- the first restart and the gesture degrades to un-editable. Same bracketing, same
+-- `run_handlers` gate, and the same reason it is off for foreign configs, as `hl.on`.
+local rec_gesture = hl.gesture
+hl.gesture = function(...)
+  rec_gesture(...)
+  if not run_handlers then return end
+  local spec = ...
+  local action = type(spec) == "table" and spec.action or nil
+  if type(action) ~= "function" then return end
+  local src, line = callsite()
+  record.calls[#record.calls + 1] =
+    { call = "gesture_action_enter", args = {}, src = src, line = line }
+  local ok, err = pcall(action)
+  if not ok then
+    record.errors[#record.errors + 1] = "gesture action: " .. tostring(err)
+  end
+  record.calls[#record.calls + 1] =
+    { call = "gesture_action_leave", args = {}, src = src, line = line }
+end
+
 hl.define_submap = function(name, reset_or_fn, maybe_fn)
   -- Real signature is (name, fn) or (name, reset_target, fn).
   local reset, fn = "", reset_or_fn
@@ -182,6 +214,19 @@ hl.on = function(event, fn)
     args = { event = event, handler = capture_fn(fn, "on:" .. tostring(event)) },
     src = src, line = line,
   }
+  if not run_handlers or type(fn) ~= "function" then return end
+  -- Bracketed rather than tagged: the calls the handler makes are recorded by the same
+  -- `rec` every top-level call uses, so the event has to be readable from the stream's
+  -- shape instead of from a field only some calls would carry. A handler that raises
+  -- still gets its `on_leave`, or every call after it would read as still inside.
+  record.calls[#record.calls + 1] = { call = "on_enter", args = { event = event },
+                                      src = src, line = line }
+  local ok, err = pcall(fn)
+  if not ok then
+    record.errors[#record.errors + 1] = "on(" .. tostring(event) .. "): " .. tostring(err)
+  end
+  record.calls[#record.calls + 1] = { call = "on_leave", args = { event = event },
+                                      src = src, line = line }
 end
 
 hl.timer = function(spec) rec("timer", spec, 1) end
