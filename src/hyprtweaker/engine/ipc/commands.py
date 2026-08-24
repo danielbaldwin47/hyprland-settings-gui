@@ -177,6 +177,45 @@ class CommandClient:
             raise MalformedReply(f"binds answered {payload!r}")
         return len(payload)
 
+    async def clients(self) -> tuple[Mapping[str, Any], ...]:
+        """Every open window, as Hyprland describes it. The Pick-a-window helper (#67).
+
+        Helper data only, never rule state (ADR-0008): the reply prefills a Match in the
+        Rule editor and is thrown away. Nothing here is written back or reconciled with
+        the model, which is why the raw mappings are returned rather than a typed shape --
+        the caller reads `class`, `title`, `initialClass`, `initialTitle` and `xwayland`,
+        and any field Hyprland adds later comes along for free.
+        """
+        reply = await self._request("clients", json_output=True)
+        payload = _parse_json(reply, "clients")
+        if not isinstance(payload, list):
+            raise MalformedReply(f"clients answered {payload!r}")
+        return tuple(item for item in payload if isinstance(item, Mapping))
+
+    async def layers(self) -> tuple[Mapping[str, Any], ...]:
+        """Every surface on every layer, flattened. The Pick-a-layer helper (#67).
+
+        The wire shape is nested -- outputs, then levels, then surfaces -- and every
+        caller wants the surfaces (a layer rule matches `namespace`, nothing else), so the
+        flattening lives here where the wire format is already a concern.
+        """
+        reply = await self._request("layers", json_output=True)
+        payload = _parse_json(reply, "layers")
+        if not isinstance(payload, Mapping):
+            raise MalformedReply(f"layers answered {payload!r}")
+        surfaces: list[Mapping[str, Any]] = []
+        for output in payload.values():
+            if not isinstance(output, Mapping):
+                continue
+            levels = output.get("levels")
+            if not isinstance(levels, Mapping):
+                continue
+            for level in levels.values():
+                if not isinstance(level, list):
+                    continue
+                surfaces.extend(item for item in level if isinstance(item, Mapping))
+        return tuple(surfaces)
+
     async def eval(self, code: str) -> EvalReply:
         """Run Lua in the live config state -- the Eval preview tier (ADR-0010).
 

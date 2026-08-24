@@ -58,7 +58,7 @@ from hyprtweaker.engine.migration.flow import (  # noqa: E402
 )
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
-from hyprtweaker.engine.model.entities import Bind  # noqa: E402
+from hyprtweaker.engine.model.entities import Bind, LayerRule, WindowRule  # noqa: E402
 from hyprtweaker.engine.schema import Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.session import AutoRevert, Session  # noqa: E402
@@ -71,10 +71,17 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     import_dialog,
     migration_dialog,
 )
+from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
+from hyprtweaker.ui.pages.rules import (  # noqa: E402
+    LayerRulesPage,
+    RuleActions,
+    RulesPage,
+    WindowRulesPage,
+)
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
 
 IMPORT_ACTION = "import-config"
@@ -167,6 +174,8 @@ class MainWindow(Adw.ApplicationWindow):
         )
         self._pages: list[ConfigPage] = []
         self._binds_page: BindsPage | None = None
+        self._window_rules_page: WindowRulesPage | None = None
+        self._layer_rules_page: LayerRulesPage | None = None
         self._offered: Detection | None = None
         """The import on offer, while one is (ADR-0009).
 
@@ -447,6 +456,16 @@ class MainWindow(Adw.ApplicationWindow):
         return self._binds_page
 
     @property
+    def window_rules_page(self) -> WindowRulesPage | None:
+        """The Window rules Page, once built. The UI tier asserts against it."""
+        return self._window_rules_page
+
+    @property
+    def layer_rules_page(self) -> LayerRulesPage | None:
+        """The Layer rules Page, once built. The UI tier asserts against it."""
+        return self._layer_rules_page
+
+    @property
     def show_advanced(self) -> bool:
         return bool(self._advanced_action.get_state().get_boolean())
 
@@ -493,6 +512,19 @@ class MainWindow(Adw.ApplicationWindow):
         self._sidebar.append(
             _sidebar_row(BindsPage.section, BindsPage.title, len(self._binds_page.binds))
         )
+
+        # The rule Pages: the same Entity-Page shape, twice (ADR-0008).
+        self._window_rules_page = WindowRulesPage(
+            self._session, actions=self._rule_actions("window")
+        )
+        self._layer_rules_page = LayerRulesPage(
+            self._session, actions=self._rule_actions("layer")
+        )
+        for rules_page in (self._window_rules_page, self._layer_rules_page):
+            self._stack.add_named(_scrolled(rules_page.page), rules_page.section)
+            self._sidebar.append(
+                _sidebar_row(rules_page.section, rules_page.title, len(rules_page.rules))
+            )
 
         self._select_section(selected or self._session.schema.section_names[0])
         self.sync()
@@ -577,6 +609,83 @@ class MainWindow(Adw.ApplicationWindow):
     def _refresh_binds(self) -> None:
         if self._binds_page is not None:
             self._binds_page.refresh()
+        self.sync()
+
+    # --- rules ---------------------------------------------------------------------------
+
+    def _rule_actions(self, kind: str) -> RuleActions:
+        return RuleActions(
+            add=lambda: self._add_rule(kind),
+            edit=lambda index: self._edit_rule(kind, index),
+            remove=lambda index: self._remove_rule(kind, index),
+            enable=lambda index, enabled: self._set_rule_enabled(kind, index, enabled),
+            move=lambda index, to: self._move_rule(kind, index, to),
+        )
+
+    def _rules_page(self, kind: str) -> RulesPage | None:
+        return self._window_rules_page if kind == "window" else self._layer_rules_page
+
+    def _rule_fetch(self, kind: str) -> Callable[..., None] | None:
+        """The live half of the Rule editor, or `None` when nobody is answering.
+
+        `None` rather than a callable that fails, because the editor uses it to decide
+        whether to *offer* the pick button at all -- ADR-0008 degrades to manual entry.
+        """
+        if not self._session.live:
+            return None
+        return self._session.fetch_clients if kind == "window" else self._session.fetch_layers
+
+    def _taken_rule_names(self, kind: str, *, besides: int | None = None) -> tuple[str, ...]:
+        rules = self._session.rules(kind)
+        return tuple(
+            rule.name for index, rule in enumerate(rules) if rule.name and index != besides
+        )
+
+    def _add_rule(self, kind: str) -> None:
+        def done(rule: WindowRule | LayerRule) -> None:
+            if self._session.add_rule(kind, rule):
+                self._refresh_rules(kind)
+
+        RuleEditor(
+            kind=kind,
+            on_done=done,
+            taken_names=self._taken_rule_names(kind),
+            fetch_targets=self._rule_fetch(kind),
+        ).present(self)
+
+    def _edit_rule(self, kind: str, index: int) -> None:
+        rules = self._session.rules(kind)
+        if not 0 <= index < len(rules):
+            return
+
+        def done(rule: WindowRule | LayerRule) -> None:
+            if self._session.replace_rule(kind, index, rule):
+                self._refresh_rules(kind)
+
+        RuleEditor(
+            kind=kind,
+            on_done=done,
+            rule=rules[index],
+            taken_names=self._taken_rule_names(kind, besides=index),
+            fetch_targets=self._rule_fetch(kind),
+        ).present(self)
+
+    def _remove_rule(self, kind: str, index: int) -> None:
+        if self._session.remove_rule(kind, index):
+            self._refresh_rules(kind)
+
+    def _set_rule_enabled(self, kind: str, index: int, enabled: bool) -> None:
+        if self._session.set_rule_enabled(kind, index, enabled):
+            self._refresh_rules(kind)
+
+    def _move_rule(self, kind: str, index: int, to: int) -> None:
+        if self._session.move_rule(kind, index, to):
+            self._refresh_rules(kind)
+
+    def _refresh_rules(self, kind: str) -> None:
+        page = self._rules_page(kind)
+        if page is not None:
+            page.refresh()
         self.sync()
 
     def sync(self) -> None:

@@ -17,6 +17,7 @@ package_sources = {
     'binds_analysis.py',
     'dispatchers.py',
     'paths.py',
+    'rules_catalog.py',
     'triggers.py',
   ],
   'hyprtweaker/engine/apply': [
@@ -95,6 +96,7 @@ package_sources = {
     'binds.py',
     'lua.py',
     'modules.py',
+    'rules.py',
     'syntax.py',
     'writer.py',
   ],
@@ -105,6 +107,7 @@ package_sources = {
     'capture.py',
     'errors.py',
     'migration.py',
+    'rule_editor.py',
     'submap_editor.py',
   ],
   'hyprtweaker/ui/pages': [
@@ -112,6 +115,7 @@ package_sources = {
     'binds.py',
     'config.py',
     'plan.py',
+    'rules.py',
   ],
   'hyprtweaker/ui/rows': [
     '__init__.py',

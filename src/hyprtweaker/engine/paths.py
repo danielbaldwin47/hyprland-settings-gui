@@ -35,6 +35,14 @@ BINDS_MODULE = "binds.lua"
 Modules lived in `options/` -- and everything under `options/` is pruned against the Option
 model, which would delete this one on the first write (ADR-0005, ADR-0007).
 """
+WINDOW_RULES_MODULE = "window_rules.lua"
+LAYER_RULES_MODULE = "layer_rules.lua"
+"""The Entity Modules for window and layer rules (ADR-0008), beside `binds.lua`.
+
+Two files rather than one `rules.lua` because the two lists are independently ordered --
+"later wins" is per kind -- and a broken hand edit to one must not take the other down
+with it (per-module pcall blast radius, ADR-0005).
+"""
 BRIDGE_DIR = "bridge"
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"

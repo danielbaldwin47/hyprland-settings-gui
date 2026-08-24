@@ -29,7 +29,7 @@ Rules are the second-largest Entity class in the corpus (window rules 3–332 pe
 
 ### Rule editor anatomy
 
-- **Match group**: add-prop picker over the 18 typed props; per-prop typed input — regex entry (validated, full-match semantics surfaced by showing anchors as implicit), bool tri-state, int spin, workspace-selector entry, tag entry — each with a negate toggle (`negative:`). Live badge: "matches N open windows" (client-side approximation; RE2 vs Python divergence is accepted for exotic patterns). At least one prop required.
+- **Match group**: add-prop picker over the 18 typed props; per-prop typed input — regex entry (validated, full-match semantics surfaced by showing anchors as implicit), bool tri-state, int spin, workspace-selector entry, tag entry — string-valued props (regex, workspace selector, tag) with a negate toggle (`negative:` lives inside the value string, so only strings can carry it; a bool negates through its own switch, an int through its value — amended by #67). Live badge: "matches N open windows" (client-side approximation; RE2 vs Python divergence is accepted for exotic patterns). At least one prop required.
 - **Effects group**: add-effect picker grouped by category (Placement / Focus / Appearance / Behaviour / Advanced), rows generated from the entity Schema with the same typed widgets as options. Unknown/plugin effects: a raw key+value "custom effect" row, pass-through, never dropped. String-grammar effects (`opacity`, `fullscreen_state`, `suppress_event`) get helper widgets that emit the string. `border_color`: gradient editor for the single-gradient case; raw-string mode for the active+inactive pair.
 
 ### Pick a window
