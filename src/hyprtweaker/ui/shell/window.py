@@ -362,11 +362,9 @@ class MainWindow(Adw.ApplicationWindow):
             vexpand=True,
         )
 
-        # Which of the two the sidebar is showing is a function of the query alone (ADR-0017:
-        # "while the query is non-empty, grouped results replace the nav list"). A stack
-        # rather than reusing one ListBox: the nav list holds the selection the content pane
-        # is showing, and refilling it with results would destroy that -- so escaping a
-        # search would land the user on a different Page than the one they left.
+        # Which of the two is showing is a function of the query alone, and the finder says
+        # so (ADR-0017: "while the query is non-empty, grouped results replace the nav
+        # list"). Why a stack rather than one refilled ListBox: `_show_sidebar_mode`.
         self._sidebar_stack = Gtk.Stack(vexpand=True)
         self._sidebar_stack.add_named(scroller, NAV_MODE)
         self._sidebar_stack.add_named(results, RESULTS_MODE)

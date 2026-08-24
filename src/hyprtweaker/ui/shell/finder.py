@@ -10,12 +10,14 @@ query, the ranked list, and which of the two the sidebar header shows -- and kno
 about navigating to a hit. Opening one is the window's job, because it is the window that
 holds the View, the Pages and the One-off reveal; this only says which `Hit` was chosen.
 
-**Why the title is a `GtkStack`.** ADR-0017's surface is "the magnifier button in the
+**Why the title swaps the way it does.** ADR-0017's surface is "the magnifier button in the
 sidebar header swaps the sidebar title for a search entry" -- so the entry lives in the
-header's title slot, not on a row of its own beneath it. A stack rather than
-`set_title_widget` calls on each toggle, because the `GtkSearchBar` has to stay parented
-even while the title is showing: it owns the type-to-search key capture, and a widget that
-is unparented between searches captures nothing.
+header's title slot, not on a row of its own beneath it. The title and the search bar share
+one box and the *title* is the half that hides, because GTK's type-to-search handler starts
+with `if (!gtk_widget_get_mapped (bar)) return GDK_EVENT_PROPAGATE` (`gtksearchbar.c`): any
+arrangement that leaves the bar unmapped between searches -- a `GtkStack` page, `set_visible
+(False)`, swapping it in and out of the title slot -- disables the shortcut while leaving
+every widget pointer in place, so nothing that inspects the widget tree can tell.
 """
 
 from __future__ import annotations
@@ -42,9 +44,6 @@ where anyone scrolls: someone who has not found it by then types another letter.
 
 NAV_MODE = "nav"
 RESULTS_MODE = "results"
-
-_TITLE_CHILD = "title"
-_SEARCH_CHILD = "search"
 
 SETTINGS_GROUP = "Settings"
 """ADR-0017's first result group. The second -- "Rules & entities" -- is #75."""
@@ -97,9 +96,19 @@ class Finder:
         self.results.connect("row-activated", self._on_row_activated)
         self.results.set_header_func(_result_header)
 
-        self.title = Gtk.Stack()
-        self.title.add_named(Adw.WindowTitle(title=title), _TITLE_CHILD)
-        self.title.add_named(self.bar, _SEARCH_CHILD)
+        # Both children live in one box and the *bar* is never hidden -- only the title is.
+        # A `GtkStack` here looks equivalent and is not: GTK's type-to-search handler begins
+        # `if (!gtk_widget_get_mapped (bar)) return GDK_EVENT_PROPAGATE`
+        # (`gtksearchbar.c`), and a non-visible stack child is never mapped -- so parking
+        # the bar in a stack page silently kills the shortcut while leaving every widget
+        # pointer intact. The bar collapses to zero size on its own when the search mode is
+        # off, which is what makes "always present" and "invisible until asked for"
+        # compatible.
+        self._window_title = Adw.WindowTitle(title=title)
+        self.bar.set_hexpand(True)
+        self.title = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.title.append(self._window_title)
+        self.title.append(self.bar)
 
         self.button = Gtk.ToggleButton(
             icon_name="system-search-symbolic",
@@ -177,7 +186,7 @@ class Finder:
         to hide a query that is still filtering: reopening should offer an empty finder, not
         the last search's results (ADR-0017: "clearing or escaping restores the nav list").
         """
-        self.title.set_visible_child_name(_SEARCH_CHILD if self.active else _TITLE_CHILD)
+        self._window_title.set_visible(not self.active)
         if not self.active:
             self.entry.set_text("")
         self._refresh()
