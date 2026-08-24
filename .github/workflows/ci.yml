@@ -56,10 +56,11 @@ jobs:
       # against the masked one in the ui-smoke job below.
       - env:
           HYPRTWEAKER_REQUIRE_LUAC: '1'
-          # 12 + 2: this runner has no gi, so test_ui_binds_text.py and
-          # test_ui_rules_text.py importorskip out as two module-level skips
-          # (their 31 tests run in the ui-smoke job, where gi exists).
-          SKIP_CEILING: '14'
+          # 12 + 3: this runner has no gi, so test_ui_binds_text.py,
+          # test_ui_rules_text.py and test_ui_declaration_text.py importorskip
+          # out as three module-level skips (their tests run in the ui-smoke
+          # job, where gi exists).
+          SKIP_CEILING: '15'
         run: |
           set -o pipefail
           pytest tests/unit -v 2>&1 | tee pytest-out.log
