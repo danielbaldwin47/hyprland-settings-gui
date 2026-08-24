@@ -104,7 +104,7 @@ package_sources = {
     'modules.py',
     'monitors.py',
     'rules.py',
-    'sticky.py',
+    'session_scope.py',
     'syntax.py',
     'writer.py',
   ],

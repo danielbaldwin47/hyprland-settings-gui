@@ -23,12 +23,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hyprtweaker.engine.entities_catalog import (
+    ANIMATION_CURVE_KEYS,
+    ANIMATION_FIELD_SPECS,
     ANIMATION_FIELDS,
     ANIMATION_LEAVES,
     CURVE_TYPES,
     DEVICE_FIELDS,
     EVERY_RELOAD,
     GESTURE_FIELDS,
+    PERMISSION_ENFORCE_OPTION,
     PERMISSION_MODES,
     PERMISSION_TYPES,
     SPRING_FIELDS,
@@ -37,6 +40,7 @@ from hyprtweaker.engine.entities_catalog import (
     FieldType,
     coerce,
     field_text,
+    gesture_title,
     is_scripted,
 )
 from hyprtweaker.engine.model.entities import (
@@ -95,6 +99,19 @@ class DeclarationKind:
         repr=False, default=lambda _values, original: original
     )
 
+    title_of: Callable[[Any], str] = field(repr=False, default=str)
+    """One entity's row title. A callable per kind, not a `kind ==` cascade.
+
+    The cascade is the shape this whole module exists to avoid: seven kinds times four
+    questions is twenty-eight branches spread over the Page, the editor and the window,
+    each of which has to be kept in step by hand. Every per-kind answer hangs off the
+    descriptor instead, so adding a kind is one entry here and nothing anywhere else.
+    """
+
+    subtitle_of: Callable[[Any], str] = field(repr=False, default=lambda _: "")
+    scripted: Callable[[Any], bool] = field(repr=False, default=lambda _: False)
+    """Whether one entity is Lua the GUI lists but never edits. Only gestures can be."""
+
     @property
     def all_fields(self) -> tuple[FieldSpec, ...]:
         return self.fields + self.optional
@@ -102,13 +119,24 @@ class DeclarationKind:
 
 # --- curves --------------------------------------------------------------------------------
 
+_BEZIER_POINT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("x0", "First point X"),
+    ("y0", "First point Y"),
+    ("x1", "Second point X"),
+    ("y1", "Second point Y"),
+)
+"""The four numbers a bezier's two control points are asked for as.
+
+Listed once, and read twice -- by the form that shows them and by the completeness check
+that knows they are required only for a bezier. Two lists would drift the moment a label
+was reworded, and the drift would show up as a form that asks for "First point X" and
+complains that "Point 1 X" is missing.
+"""
+
 _CURVE_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("name", FieldType.STRING, "Name", required=True),
     FieldSpec("type", FieldType.ENUM, "Kind", required=True, choices=CURVE_TYPES),
-    FieldSpec("x0", FieldType.FLOAT, "First point X"),
-    FieldSpec("y0", FieldType.FLOAT, "First point Y"),
-    FieldSpec("x1", FieldType.FLOAT, "Second point X"),
-    FieldSpec("y1", FieldType.FLOAT, "Second point Y"),
+    *(FieldSpec(name, FieldType.FLOAT, label) for name, label in _BEZIER_POINT_FIELDS),
     *SPRING_FIELDS,
 )
 """A bezier's two control points asked for as four numbers, not as a nested list.
@@ -324,150 +352,27 @@ def _startup_from_form(
     )
 
 
-# --- the catalogue -------------------------------------------------------------------------
-
-KINDS: tuple[DeclarationKind, ...] = (
-    DeclarationKind(
-        kind="animations",
-        section="entity:animations",
-        title="Animation tree",
-        singular="animation",
-        description="One entry per part of the animation tree. Each needs a curve.",
-        empty_hint="Add one to override Hyprland's default animation for that part.",
-        fields=_ANIMATION_FIELDS,
-        to_form=_animation_to_form,
-        from_form=_animation_from_form,
-    ),
-    DeclarationKind(
-        kind="curves",
-        section="entity:curves",
-        title="Animation curves",
-        singular="curve",
-        description="Named easing curves the animations above refer to by name.",
-        empty_hint="Hyprland's built-in default and linear curves are always available.",
-        fields=_CURVE_FIELDS,
-        to_form=_curve_to_form,
-        from_form=_curve_from_form,
-    ),
-    DeclarationKind(
-        kind="gestures",
-        section="entity:gestures",
-        title="Gesture bindings",
-        singular="gesture",
-        description="Touchpad and touchscreen gestures.",
-        empty_hint="Add one to swipe between workspaces or resize a window.",
-        fields=GESTURE_FIELDS[:3],
-        optional=GESTURE_FIELDS[3:],
-        to_form=_gesture_to_form,
-        from_form=_gesture_from_form,
-    ),
-    DeclarationKind(
-        kind="devices",
-        section="entity:devices",
-        title="Devices",
-        singular="device",
-        description="Per-device input settings. These win over the matching Input settings.",
-        empty_hint="Add one to give a single mouse, keyboard or tablet its own settings.",
-        fields=(_DEVICE_NAME,),
-        optional=DEVICE_FIELDS,
-        to_form=_device_to_form,
-        from_form=_device_from_form,
-    ),
-    DeclarationKind(
-        kind="env",
-        section="entity:env",
-        title="Environment",
-        singular="variable",
-        description="Variables exported into the session Hyprland starts.",
-        empty_hint="Add one to set something like XCURSOR_SIZE for every program.",
-        note=(
-            "Removing a variable here takes it out of the config, but Hyprland cannot "
-            "unset it in a running session -- that needs a restart."
-        ),
-        fields=_ENV_FIELDS,
-        to_form=_env_to_form,
-        from_form=_env_from_form,
-    ),
-    DeclarationKind(
-        kind="startup",
-        section="entity:autostart",
-        title="Autostart",
-        singular="command",
-        description="Commands Hyprland runs for you, in the order listed.",
-        empty_hint="Add one to start your bar, notification daemon or wallpaper tool.",
-        fields=_STARTUP_FIELDS,
-        to_form=_startup_to_form,
-        from_form=_startup_from_form,
-    ),
-    DeclarationKind(
-        kind="permissions",
-        section="entity:permissions",
-        title="Permissions",
-        singular="permission",
-        description="Which programs may record the screen, read the cursor, or grab input.",
-        empty_hint="Without any entries, Hyprland asks about every request.",
-        note=(
-            "Permissions are read once when Hyprland starts, so changes here take effect "
-            "after a restart."
-        ),
-        fields=_PERMISSION_FIELDS,
-        to_form=_permission_to_form,
-        from_form=_permission_from_form,
-    ),
-)
-
-BY_KIND: dict[str, DeclarationKind] = {item.kind: item for item in KINDS}
-BY_SECTION: dict[str, DeclarationKind] = {item.section: item for item in KINDS}
-
-
 # --- row text ------------------------------------------------------------------------------
 
 _EVENT_TEXT: dict[str, str] = dict(STARTUP_EVENTS)
+"""Autostart event value to the sentence a user picks it by."""
 
 
-def row_title(kind: str, entity: Any) -> str:
-    """The bold line of one entity's row -- what it *is*, in as few words as carry it."""
-    if kind == "curves":
-        return entity.name
-    if kind == "animations":
-        return entity.leaf
-    if kind == "devices":
-        return entity.name
-    if kind == "env":
-        return entity.name
-    if kind == "permissions":
-        return entity.binary
-    if kind == "startup":
-        return entity.command
-    fields = entity.fields
-    fingers = fields.get("fingers")
-    direction = fields.get("direction")
-    parts = [f"{fingers} fingers" if fingers else "", str(direction or "")]
-    return " · ".join(part for part in parts if part) or "Gesture"
-
-
-def row_subtitle(kind: str, entity: Any) -> str:
-    """The dim line: how this entity is configured, summarised."""
-    if kind == "curves":
-        return _curve_subtitle(entity)
-    if kind == "animations":
-        return _animation_subtitle(entity)
-    if kind == "gestures":
-        return _gesture_subtitle(entity)
-    if kind == "devices":
-        count = len(entity.fields)
-        if not count:
-            return "No settings yet"
-        return ", ".join(
-            f"{key} {field_text(value)}" for key, value in sorted(entity.fields.items())
-        )
-    if kind == "env":
-        return f"{entity.value} · exported to D-Bus" if entity.dbus else entity.value
-    if kind == "permissions":
-        return f"{entity.mode} {entity.kind}"
-    return _EVENT_TEXT.get(entity.event, entity.event or "Every time the config reloads") + (
-        " · without rule parsing" if entity.raw else ""
+def _device_subtitle(device: Device) -> str:
+    if not device.fields:
+        return "No settings yet"
+    return ", ".join(
+        f"{key} {field_text(value)}" for key, value in sorted(device.fields.items())
     )
+
+
+def _env_subtitle(variable: EnvVar) -> str:
+    return f"{variable.value} · exported to D-Bus" if variable.dbus else variable.value
+
+
+def _startup_subtitle(command: StartupCommand) -> str:
+    when = _EVENT_TEXT.get(command.event, command.event or "Every time the config reloads")
+    return f"{when} · without rule parsing" if command.raw else when
 
 
 def _curve_subtitle(curve: Curve) -> str:
@@ -505,12 +410,143 @@ def _gesture_subtitle(gesture: Gesture) -> str:
         return "Runs Lua from your own config"
     fields = gesture.fields
     parts = [str(fields.get("action") or "")]
-    if fields.get("mods"):
-        parts.insert(0, str(fields["mods"]))
     for key in ("workspace_name", "mode", "scale", "zoom_level"):
         if fields.get(key) is not None:
             parts.append(f"{key.replace('_', ' ')} {field_text(fields[key])}")
     return " · ".join(part for part in parts if part) or "Gesture"
+
+
+def _permission_subtitle(permission: Permission) -> str:
+    return f"{permission.mode} {permission.kind}"
+
+
+# --- the catalogue -------------------------------------------------------------------------
+
+KINDS: tuple[DeclarationKind, ...] = (
+    DeclarationKind(
+        kind="animations",
+        title_of=lambda entity: entity.leaf,
+        subtitle_of=_animation_subtitle,
+        section="entity:animations",
+        title="Animation tree",
+        singular="animation",
+        description="One entry per part of the animation tree. Each needs a curve.",
+        empty_hint="Add one to override Hyprland's default animation for that part.",
+        fields=_ANIMATION_FIELDS,
+        to_form=_animation_to_form,
+        from_form=_animation_from_form,
+    ),
+    DeclarationKind(
+        kind="curves",
+        title_of=lambda entity: entity.name,
+        subtitle_of=_curve_subtitle,
+        section="entity:curves",
+        title="Animation curves",
+        singular="curve",
+        description="Named easing curves the animations above refer to by name.",
+        empty_hint="Hyprland's built-in default and linear curves are always available.",
+        fields=_CURVE_FIELDS,
+        to_form=_curve_to_form,
+        from_form=_curve_from_form,
+    ),
+    DeclarationKind(
+        kind="gestures",
+        title_of=gesture_title,
+        subtitle_of=_gesture_subtitle,
+        scripted=is_scripted,
+        section="entity:gestures",
+        title="Gesture bindings",
+        singular="gesture",
+        description="Touchpad and touchscreen gestures.",
+        empty_hint="Add one to swipe between workspaces or resize a window.",
+        fields=GESTURE_FIELDS[:3],
+        optional=GESTURE_FIELDS[3:],
+        to_form=_gesture_to_form,
+        from_form=_gesture_from_form,
+    ),
+    DeclarationKind(
+        kind="devices",
+        title_of=lambda entity: entity.name,
+        subtitle_of=_device_subtitle,
+        section="entity:devices",
+        title="Devices",
+        singular="device",
+        description="Per-device input settings. These win over the matching Input settings.",
+        empty_hint="Add one to give a single mouse, keyboard or tablet its own settings.",
+        fields=(_DEVICE_NAME,),
+        optional=DEVICE_FIELDS,
+        to_form=_device_to_form,
+        from_form=_device_from_form,
+    ),
+    DeclarationKind(
+        kind="env",
+        title_of=lambda entity: entity.name,
+        subtitle_of=_env_subtitle,
+        section="entity:env",
+        title="Environment",
+        singular="variable",
+        description="Variables exported into the session Hyprland starts.",
+        empty_hint="Add one to set something like XCURSOR_SIZE for every program.",
+        note=(
+            "Removing a variable here takes it out of the config, but Hyprland cannot "
+            "unset it in a running session -- that needs a restart."
+        ),
+        fields=_ENV_FIELDS,
+        to_form=_env_to_form,
+        from_form=_env_from_form,
+    ),
+    DeclarationKind(
+        kind="startup",
+        title_of=lambda entity: entity.command,
+        subtitle_of=_startup_subtitle,
+        section="entity:autostart",
+        title="Autostart",
+        singular="command",
+        description="Commands Hyprland runs for you, in the order listed.",
+        empty_hint="Add one to start your bar, notification daemon or wallpaper tool.",
+        note=(
+            "Startup commands are handed to Hyprland when it starts, so one added here "
+            "runs from your next login rather than now."
+        ),
+        fields=_STARTUP_FIELDS,
+        to_form=_startup_to_form,
+        from_form=_startup_from_form,
+    ),
+    DeclarationKind(
+        kind="permissions",
+        title_of=lambda entity: entity.binary,
+        subtitle_of=_permission_subtitle,
+        section="entity:permissions",
+        title="Permissions",
+        singular="permission",
+        description="Which programs may record the screen, read the cursor, or grab input.",
+        empty_hint="Without any entries, Hyprland asks about every request.",
+        note=(
+            f"Permissions only apply when “{PERMISSION_ENFORCE_OPTION}” is on, and they "
+            f"are read once when Hyprland starts, so changes here take effect after a "
+            f"restart."
+        ),
+        fields=_PERMISSION_FIELDS,
+        to_form=_permission_to_form,
+        from_form=_permission_from_form,
+    ),
+)
+
+BY_KIND: dict[str, DeclarationKind] = {item.kind: item for item in KINDS}
+BY_SECTION: dict[str, DeclarationKind] = {item.section: item for item in KINDS}
+
+
+# --- row text ------------------------------------------------------------------------------
+
+
+def row_title(kind: str, entity: Any) -> str:
+    """The bold line of one entity's row -- what it *is*, in as few words as carry it."""
+    return BY_KIND[kind].title_of(entity)
+
+
+def row_subtitle(kind: str, entity: Any) -> str:
+    """The dim line: how this entity is configured, summarised."""
+    return BY_KIND[kind].subtitle_of(entity)
 
 
 def choice_label(spec: FieldSpec, value: str) -> str:
@@ -537,15 +573,8 @@ def read_only(kind: str, entity: Any) -> bool:
     Only gestures can be: an `action` that is a Lua function came from `user.lua` and is
     code the app never authored (ADR-0007's rule for function-valued bind actions).
     """
-    return kind == "gestures" and is_scripted(entity)
+    return BY_KIND[kind].scripted(entity)
 
-
-_BEZIER_POINT_FIELDS: tuple[tuple[str, str], ...] = (
-    ("x0", "First point X"),
-    ("y0", "First point Y"),
-    ("x1", "Second point X"),
-    ("y1", "Second point Y"),
-)
 
 _CURVE_SHAPE_FIELDS: frozenset[str] = frozenset(
     {name for name, _ in _BEZIER_POINT_FIELDS} | {spec.name for spec in SPRING_FIELDS}
@@ -556,8 +585,9 @@ _CURVE_SHAPE_FIELDS: frozenset[str] = frozenset(
 def missing_required(kind: str, values: Mapping[str, Any]) -> tuple[str, ...]:
     """The labels of required fields the form has not filled in.
 
-    A curve's point fields are required only for a bezier and its spring fields only for a
-    spring, which is why this asks the descriptor rather than reading `required` alone.
+    Two kinds have fields whose requiredness depends on another field: a curve's points
+    matter only for a bezier and its constants only for a spring, and an animation needs a
+    speed and a curve only when it is enabled. So this cannot read `required` alone.
     """
     descriptor = BY_KIND[kind]
     # The curve shape fields are required *conditionally* -- a bezier needs four numbers
@@ -570,6 +600,16 @@ def missing_required(kind: str, values: Mapping[str, Any]) -> tuple[str, ...]:
         for spec in descriptor.all_fields
         if spec.required and spec.name not in conditional and _blank(values.get(spec.name))
     ]
+    if kind == "animations" and values.get("enabled") is True:
+        # Probed against the binary, not read off the wiki: an enabled animation is
+        # rejected without a speed ("missing required field \"speed\"") and again without a
+        # curve ("bezier or spring is required"). A form that let either through produced
+        # an `animations.lua` that would not load, from two clicks in the Add flow.
+        if values.get("speed") is None:
+            missing.append(ANIMATION_FIELD_SPECS["speed"].label)
+        if not any(values.get(key) for key in ANIMATION_CURVE_KEYS):
+            missing.append("Bezier curve or Spring curve")
+
     if kind == "curves":
         if values.get("type") == "spring":
             missing += [spec.label for spec in SPRING_FIELDS if _blank(values.get(spec.name))]

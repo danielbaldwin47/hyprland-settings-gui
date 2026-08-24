@@ -33,7 +33,7 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 from hyprtweaker.engine import binds_analysis
 from hyprtweaker.engine.apply import (
@@ -53,7 +53,11 @@ from hyprtweaker.engine.apply import (
     plan,
     read_state,
 )
-from hyprtweaker.engine.entities_catalog import overridden_options
+from hyprtweaker.engine.entities_catalog import (
+    IDENTITY_FIELD,
+    device_field_bounds,
+    overridden_options,
+)
 from hyprtweaker.engine.ipc import (
     MONITOR_ADDED,
     MONITOR_REMOVED,
@@ -969,22 +973,6 @@ class Session:
     what a kind is called.
     """
 
-    _KEYED_BY: ClassVar[dict[str, str]] = {
-        "curves": "name",
-        "animations": "leaf",
-        "devices": "name",
-        "env": "name",
-    }
-    """Which kinds have an identity field, and which attribute holds it.
-
-    The four Hyprland itself keys: a second `hl.curve("easy", ...)` overwrites the first, a
-    second `hl.animation{leaf="fade"}` wins, `hl.device` merges per name, and the last
-    `hl.env` for a name is the value the session gets. So two rows sharing one of these
-    identities is a list that says something the compositor will not do -- which is the
-    same reason ADR-0008 keys workspace rules by selector. Gestures, permissions and
-    startup commands have no identity: duplicates there are legal and meaningful.
-    """
-
     def declarations(self, kind: str) -> list[Any]:
         """The live list for one declarative Entity kind."""
         if kind not in self.DECLARATION_KINDS:
@@ -1002,7 +990,7 @@ class Session:
 
     def identity_of(self, kind: str, entity: Any) -> str | None:
         """The identity string of one entity, or `None` for a kind that has no identity."""
-        attribute = self._KEYED_BY.get(kind)
+        attribute = IDENTITY_FIELD.get(kind)
         return None if attribute is None else str(getattr(entity, attribute))
 
     def _identity_taken(self, kind: str, entity: Any, *, index: int | None) -> bool:
@@ -1049,43 +1037,14 @@ class Session:
 
     @property
     def curves(self) -> list[Curve]:
-        """The live curve list. Identity is the name (`hl.curve` overwrites by it)."""
-        return self._model.entities.curves
+        """The live curve list. Identity is the name (`hl.curve` overwrites by it).
 
-    @property
-    def animations(self) -> list[Animation]:
-        """The live animation list, one entry per leaf of the animation tree."""
-        return self._model.entities.animations
-
-    @property
-    def gestures(self) -> list[Gesture]:
-        """The live gesture list. No identity: position is all a gesture has."""
-        return self._model.entities.gestures
-
-    @property
-    def devices(self) -> list[Device]:
-        """The live per-device override list. Identity is the device name."""
-        return self._model.entities.devices
-
-    @property
-    def env_vars(self) -> list[EnvVar]:
-        """The live environment variable list.
-
-        Named `env_vars` rather than `env` because `Session.env` would read as the app's
-        own environment, which this is emphatically not: these are variables the *config*
-        exports into the compositor's session.
+        The one declarative kind with a named accessor, because it has a caller that is not
+        a Page: the animation editor's curve picker, which needs the curves while showing
+        the animations. Everything else goes through `declarations(kind)` -- a property per
+        kind would be seven more names for what one parameterised call already answers.
         """
-        return self._model.entities.env
-
-    @property
-    def permissions(self) -> list[Permission]:
-        """The live permission list. Applied on first launch only (ADR-0012 restart rule)."""
-        return self._model.entities.permissions
-
-    @property
-    def startup_commands(self) -> list[StartupCommand]:
-        """The live autostart list, in the order the file runs them."""
-        return self._model.entities.startup
+        return self._model.entities.curves
 
     @property
     def device_overrides(self) -> dict[str, tuple[str, ...]]:
@@ -1100,6 +1059,22 @@ class Session:
         return overridden_options(
             self._model.entities.devices,
             (option.name for option in self._schema.options),
+        )
+
+    @property
+    def device_field_bounds(self) -> dict[str, tuple[float | None, float | None]]:
+        """The min/max each per-device field inherits from the Options it shadows.
+
+        Read by the device editor so a per-device number is bounded by the same range as
+        the global setting it overrides -- the "type-correct per the Schema" half of #70,
+        and derived rather than curated so a Hyprland release moves both at once.
+        """
+        return device_field_bounds(
+            {
+                option.name: (option.range.min, option.range.max)
+                for option in self._schema.options
+                if option.range is not None
+            }
         )
 
     # --- monitor profiles -------------------------------------------------------------------

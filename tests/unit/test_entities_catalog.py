@@ -15,6 +15,8 @@ from hyprtweaker.engine.entities_catalog import (
     BUILTIN_CURVES,
     DEVICE_FIELD_SPECS,
     DEVICE_ONLY_FIELDS,
+    GESTURE_ACTIONS,
+    UNSET_ACTION,
     FieldSpec,
     FieldType,
     animation_findings,
@@ -22,15 +24,25 @@ from hyprtweaker.engine.entities_catalog import (
     curve_findings,
     curve_usage,
     dangling_curve_references,
+    device_field_bounds,
     device_override_options,
+    env_findings,
     field_text,
+    gesture_conflicts,
     is_scripted,
     missing_curve_references,
     overridden_options,
     unknown_device_fields,
     unknown_leaves,
 )
-from hyprtweaker.engine.model.entities import Animation, Curve, Device, EntitySet, Gesture
+from hyprtweaker.engine.model.entities import (
+    Animation,
+    Curve,
+    Device,
+    EntitySet,
+    EnvVar,
+    Gesture,
+)
 from hyprtweaker.engine.schema import load_schema
 
 SCHEMA = load_schema(SAMPLE_VERSION, SCHEMA_DIR)
@@ -151,15 +163,42 @@ class TestFindings:
         )
 
     def test_a_speed_outside_the_range_is_surfaced(self) -> None:
-        assert animation_findings(Animation("fade", {"speed": 500}))
-        assert animation_findings(Animation("fade", {"speed": 0}))
-        assert animation_findings(Animation("fade", {"speed": 4.1})) == ()
+        ok = {"enabled": True, "bezier": "default"}
+
+        assert animation_findings(Animation("fade", {**ok, "speed": 500}))
+        assert animation_findings(Animation("fade", {**ok, "speed": 0}))
+        assert animation_findings(Animation("fade", {**ok, "speed": 4.1})) == ()
 
     def test_naming_both_a_bezier_and_a_spring_is_surfaced(self) -> None:
-        findings = animation_findings(Animation("fade", {"bezier": "a", "spring": "b"}))
+        findings = animation_findings(
+            Animation("fade", {"enabled": True, "speed": 3, "bezier": "a", "spring": "b"})
+        )
 
         assert findings
-        assert "not both" in findings[0].message
+        assert "not both" in findings[-1].message
+
+    def test_every_animation_must_say_whether_it_is_on(self) -> None:
+        """Probed: `hl.animation{leaf="fade"}` is `missing required field "enabled"`.
+
+        Not a harmless no-op -- it is an error that takes the whole Module down, and it is
+        what the Add form produced for anyone who saved without touching the switch.
+        """
+        findings = animation_findings(Animation("fade", {}))
+
+        assert findings
+        assert "whether this animation is on" in findings[0].message
+
+    def test_an_enabled_animation_must_have_a_speed(self) -> None:
+        """Probed: with `enabled = true` and no speed, `missing required field "speed"`."""
+        findings = animation_findings(Animation("fade", {"enabled": True, "bezier": "default"}))
+
+        assert [f.message for f in findings] == [
+            "Set a speed: Hyprland requires one to animate."
+        ]
+
+    def test_an_animation_that_is_merely_off_needs_nothing_else(self) -> None:
+        """Probed: `{leaf, enabled=false}` alone is `config ok`."""
+        assert animation_findings(Animation("fade", {"enabled": False})) == ()
 
     def test_a_leaf_this_version_does_not_have_is_shown_rather_than_rejected(self) -> None:
         """The ADR-0012 degradation rule: show more, not less."""
@@ -268,3 +307,183 @@ class TestCoercion:
         assert field_text(4.10) == "4.1"
         assert field_text([10, 20]) == "10, 20"
         assert field_text(None) == ""
+
+
+# --- gesture shadowing ----------------------------------------------------------------------
+
+
+class TestGestureConflicts:
+    """Direction containment, mapped out of `Hyprland --verify-config` over all 100 pairs.
+
+    The research doc gets this wrong -- it describes a five-tuple key including `scale` and
+    `disable_inhibit`. The binary keys on `(fingers, direction, mods)` and treats direction
+    as a *containment* hierarchy, and a shadowed gesture is a hard error rather than a
+    duplicate: "Gesture will be overshadowed by a previous gesture".
+    """
+
+    def _gesture(self, **fields: object) -> Gesture:
+        return Gesture(fields={"action": "close", **fields})
+
+    def test_an_identical_trigger_is_a_conflict(self) -> None:
+        gestures = [
+            self._gesture(fingers=3, direction="horizontal"),
+            self._gesture(fingers=3, direction="horizontal"),
+        ]
+
+        findings = gesture_conflicts(gestures)
+
+        assert len(findings) == 1
+
+    def test_a_swipe_shadows_every_direction_under_it(self) -> None:
+        for covered in ("horizontal", "vertical", "left", "right", "up", "down"):
+            gestures = [
+                self._gesture(fingers=3, direction="swipe"),
+                self._gesture(fingers=3, direction=covered),
+            ]
+
+            assert gesture_conflicts(gestures), covered
+
+    def test_horizontal_shadows_left_and_right_but_not_up(self) -> None:
+        assert gesture_conflicts(
+            [
+                self._gesture(fingers=3, direction="horizontal"),
+                self._gesture(fingers=3, direction="left"),
+            ]
+        )
+        assert not gesture_conflicts(
+            [
+                self._gesture(fingers=3, direction="horizontal"),
+                self._gesture(fingers=3, direction="up"),
+            ]
+        )
+
+    def test_pinch_shadows_its_two_directions(self) -> None:
+        assert gesture_conflicts(
+            [
+                self._gesture(fingers=3, direction="pinch"),
+                self._gesture(fingers=3, direction="pinchin"),
+            ]
+        )
+
+    def test_the_narrow_direction_does_not_shadow_the_wide_one(self) -> None:
+        """Order is meaning: "previous shadows new", so only the later row is at fault."""
+        assert not gesture_conflicts(
+            [
+                self._gesture(fingers=3, direction="left"),
+                self._gesture(fingers=3, direction="swipe"),
+            ]
+        )
+
+    def test_a_different_finger_count_is_a_different_gesture(self) -> None:
+        assert not gesture_conflicts(
+            [
+                self._gesture(fingers=3, direction="horizontal"),
+                self._gesture(fingers=4, direction="horizontal"),
+            ]
+        )
+
+    def test_different_modifiers_make_a_different_gesture(self) -> None:
+        assert not gesture_conflicts(
+            [
+                self._gesture(fingers=3, direction="horizontal"),
+                self._gesture(fingers=3, direction="horizontal", mods="SUPER"),
+            ]
+        )
+
+    def test_scale_does_not_distinguish_two_gestures(self) -> None:
+        """The research doc says it does; the binary says it does not."""
+        assert gesture_conflicts(
+            [
+                self._gesture(fingers=3, direction="horizontal", scale=1.0),
+                self._gesture(fingers=3, direction="horizontal", scale=2.0),
+            ]
+        )
+
+    def test_disable_inhibit_does_not_distinguish_two_gestures_either(self) -> None:
+        assert gesture_conflicts(
+            [
+                self._gesture(fingers=3, direction="horizontal"),
+                self._gesture(fingers=3, direction="horizontal", disable_inhibit=True),
+            ]
+        )
+
+    def test_the_conflict_is_reported_against_the_row_that_has_to_change(self) -> None:
+        gestures = [
+            self._gesture(fingers=3, direction="swipe"),
+            self._gesture(fingers=3, direction="left"),
+        ]
+
+        (finding,) = gesture_conflicts(gestures)
+
+        assert finding.subject == "3 fingers · left"
+        assert "3 fingers · swipe" in finding.message
+
+    def test_a_scripted_gesture_is_not_judged(self) -> None:
+        """Its trigger is whatever the Lua does; the app cannot reason about it."""
+        assert not gesture_conflicts(
+            [
+                Gesture({"fingers": 3, "direction": "swipe", "action": {"__fn": 1}}),
+                self._gesture(fingers=3, direction="left"),
+            ]
+        )
+
+    def test_unset_is_never_offered_as_a_choice(self) -> None:
+        """Probed: `action="unset"` alone is "Can't remove a non-existent gesture".
+
+        A generated Module is replayed from empty on every reload, so there is never a
+        previous gesture for it to remove (Implication 1).
+        """
+        assert UNSET_ACTION not in GESTURE_ACTIONS
+
+
+# --- environment variables --------------------------------------------------------------------
+
+
+class TestEnvFindings:
+    def test_a_usable_name_has_nothing_to_say(self) -> None:
+        assert env_findings(EnvVar("XCURSOR_SIZE", "24")) == ()
+
+    def test_a_name_setenv_would_refuse_is_surfaced(self) -> None:
+        assert env_findings(EnvVar("2FAST", "1"))
+        assert env_findings(EnvVar("has-a-dash", "1"))
+        assert env_findings(EnvVar("", "1"))
+
+    def test_a_value_is_free_text_by_design(self) -> None:
+        """Values routinely hold commas, colons and paths; Lua quoting handles them."""
+        assert env_findings(EnvVar("GDK_BACKEND", "wayland,x11,*")) == ()
+
+
+# --- device bounds ------------------------------------------------------------------------
+
+
+class TestDeviceBounds:
+    def _ranges(self) -> dict[str, tuple[float | None, float | None]]:
+        return {
+            option.name: (option.range.min, option.range.max)
+            for option in SCHEMA
+            if option.range is not None
+        }
+
+    def test_bounds_come_from_the_option_the_field_shadows(self) -> None:
+        bounds = device_field_bounds(self._ranges())
+
+        assert bounds["repeat_rate"] == (0, 200)
+        assert bounds["rotation"] == (0, 359)
+
+    def test_the_schema_beats_the_research_doc(self) -> None:
+        """`lua-api-surface.md` gives `scroll_factor` as 0..100; the Schema says 0..2.
+
+        The reason these are derived rather than curated: a hand-copied number is wrong the
+        moment either source moves, and here one of them already was.
+        """
+        assert device_field_bounds(self._ranges())["scroll_factor"] == (0, 2)
+
+    def test_a_field_shadowing_two_options_takes_the_widest_pair(self) -> None:
+        bounds = device_field_bounds(
+            {"input:transform": (0, 3), "input:touchdevice:transform": (1, 6)}
+        )
+
+        assert bounds["transform"] == (0, 6)
+
+    def test_a_field_with_no_bounded_option_gets_none(self) -> None:
+        assert "kb_layout" not in device_field_bounds(self._ranges())

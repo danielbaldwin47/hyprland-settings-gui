@@ -47,7 +47,6 @@ from hyprtweaker.engine.apply import (  # noqa: E402
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
-from hyprtweaker.engine.entities_catalog import curve_usage  # noqa: E402
 from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
 from hyprtweaker.engine.ipc import CommandClient, Instance, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
@@ -812,6 +811,7 @@ class MainWindow(Adw.ApplicationWindow):
             on_done=done,
             curve_names=self._curve_names(),
             taken=taken_identities(kind, self._session.declarations(kind)),
+            bounds=self._session.device_field_bounds,
         ).present(self)
 
     def _edit_declaration(self, kind: str, index: int) -> None:
@@ -829,6 +829,7 @@ class MainWindow(Adw.ApplicationWindow):
             entity=entities[index],
             curve_names=self._curve_names(),
             taken=taken_identities(kind, entities, skip=index),
+            bounds=self._session.device_field_bounds,
         ).present(self)
 
     def _remove_declaration(self, kind: str, index: int) -> None:
@@ -843,7 +844,10 @@ class MainWindow(Adw.ApplicationWindow):
             return
 
         if kind == "curves":
-            users = curve_usage(self._session.model.entities, entities[index].name).leaves
+            # Asked of the Page, which owns the question -- the window recomputing it from
+            # the model would be a second answer to "who uses this curve".
+            page = self._declaration_pages.get("curves")
+            users = page.curve_users(entities[index].name) if page is not None else ()
             if users:
                 self._confirm_curve_delete(index, entities[index].name, users)
                 return

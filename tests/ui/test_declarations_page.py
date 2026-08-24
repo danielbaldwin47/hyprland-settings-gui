@@ -9,12 +9,17 @@ the repo's probe-before-screenshot rule.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 APP_VERSION = "0.0.0-test"
+
+from hyprtweaker.ui.pages.declaration_kinds import BY_KIND  # noqa: E402
 
 KINDS = ("animations", "curves", "gestures", "devices", "env", "startup", "permissions")
 
@@ -219,7 +224,7 @@ def test_declaring_the_curve_puts_the_row_back_to_normal(tmp_path: Path) -> None
 
     session, window = build_window(tmp_path)
     session.model.entities.animations.append(
-        Animation("windowsIn", {"enabled": True, "bezier": "easy"})
+        Animation("windowsIn", {"enabled": True, "speed": 4, "bezier": "easy"})
     )
     session.model.entities.curves.append(
         Curve("easy", {"type": "bezier", "points": [[0.2, 1], [0.3, 1]]})
@@ -389,3 +394,191 @@ def test_every_kinds_editor_constructs(kind: str, tmp_path: Path) -> None:
 
     assert dialog.get_title()
     assert dialog.collect() is not None
+
+
+def test_an_untouched_switch_still_writes_its_key(tmp_path: Path) -> None:
+    """`hl.animation` rejects a missing `enabled` outright -- probed, not documented.
+
+    The switch shows a state either way, so one nobody touched used to write *nothing*, and
+    the Add flow produced `hl.animation({leaf = "fade"})`: an error that takes the whole
+    animations Module down, from two clicks and no mistake.
+    """
+    dialog = editor("animations")
+
+    assert "enabled" in dialog.collect()
+
+
+def test_an_enabled_animation_will_not_save_without_a_curve(tmp_path: Path) -> None:
+    """Speed is not in the message because a spin row always holds a number; the curve is
+    a dropdown that can honestly be empty, and Hyprland requires one either way."""
+    from hyprtweaker.engine.model.entities import Animation
+
+    dialog = editor("animations", entity=Animation("fade", {"enabled": True}))
+
+    problem = dialog.validate()
+
+    assert problem is not None
+    assert "curve" in problem.lower()
+
+
+def test_the_speed_a_spin_row_seeds_is_a_speed_hyprland_accepts(tmp_path: Path) -> None:
+    """The other half of the rule: a seeded speed must not be one the parser rejects.
+
+    `speed` is `0 < x <= 100`, so a spin row that opened at its lower bound of 0 would
+    write a value the compositor refuses.
+    """
+    from hyprtweaker.engine.entities_catalog import ANIMATION_SPEED_MAX, ANIMATION_SPEED_MIN
+
+    dialog = editor("animations")
+
+    speed = dialog.collect()["speed"]
+
+    assert ANIMATION_SPEED_MIN < speed <= ANIMATION_SPEED_MAX
+
+
+def test_an_animation_that_is_merely_off_saves_as_it_is(tmp_path: Path) -> None:
+    from hyprtweaker.engine.model.entities import Animation
+
+    dialog = editor("animations", entity=Animation("border", {"enabled": False}))
+
+    assert dialog.validate() is None
+
+
+def test_a_device_number_is_bounded_by_the_option_it_shadows(tmp_path: Path) -> None:
+    """ "Type-correct per the Schema": the per-device value gets the global one's range."""
+    from hyprtweaker.engine.model.entities import Device
+
+    session, _window = build_window(tmp_path)
+    dialog = editor(
+        "devices",
+        entity=Device("kb", {"repeat_rate": 50}),
+        bounds=session.device_field_bounds,
+    )
+
+    adjustment = dialog._rows["repeat_rate"].get_adjustment()
+    adjustment.set_value(9999)
+
+    assert dialog.collect()["repeat_rate"] == 200
+
+
+def test_unset_is_not_offered_in_the_gesture_action_picker(tmp_path: Path) -> None:
+    """It only ever removes a gesture declared earlier, and a Module starts empty."""
+    dialog = editor("gestures")
+
+    model = dialog._rows["action"].get_model()
+    offered = {model.get_string(i) for i in range(model.get_n_items())}
+
+    assert "unset" not in offered
+
+
+def test_a_shadowed_gesture_is_flagged_on_the_row_it_belongs_to(tmp_path: Path) -> None:
+    """Not a duplicate warning -- Hyprland refuses to load the file at all."""
+    from hyprtweaker.engine.model.entities import Gesture
+
+    session, window = build_window(tmp_path)
+    session.model.entities.gestures.extend(
+        [
+            Gesture({"fingers": 3, "direction": "swipe", "action": "workspace"}),
+            Gesture({"fingers": 3, "direction": "left", "action": "close"}),
+        ]
+    )
+    page = window.declaration_page("gestures")
+    page.refresh()
+
+    assert page.rows[0].findings == ()
+    assert page.rows[1].findings
+    assert "already covers this" in page.rows[1].findings[0].message
+
+
+def test_a_bad_variable_name_is_flagged(tmp_path: Path) -> None:
+    from hyprtweaker.engine.model.entities import EnvVar
+
+    session, window = build_window(tmp_path)
+    session.model.entities.env.append(EnvVar("has-a-dash", "1"))
+    page = window.declaration_page("env")
+    page.refresh()
+
+    assert page.rows[0].findings
+
+
+def test_the_permissions_page_states_the_option_they_depend_on(tmp_path: Path) -> None:
+    """A permission list that is quietly inert is the falsehood ADR-0013 forbids."""
+    from hyprtweaker.engine.entities_catalog import PERMISSION_ENFORCE_OPTION
+    from hyprtweaker.ui.pages.declaration_kinds import BY_KIND
+
+    _session, _window = build_window(tmp_path)
+
+    assert PERMISSION_ENFORCE_OPTION in BY_KIND["permissions"].note
+
+
+def test_the_autostart_page_says_when_a_new_command_first_runs(tmp_path: Path) -> None:
+    """A handler registered on a later reload never fires, so "added" is not "running"."""
+    from hyprtweaker.ui.pages.declaration_kinds import BY_KIND
+
+    assert BY_KIND["startup"].note
+
+
+@pytest.mark.skipif(shutil.which("Hyprland") is None, reason="no Hyprland binary")
+def test_what_the_add_form_produces_untouched_is_a_config_hyprland_loads(
+    tmp_path: Path,
+) -> None:
+    """The guard for a whole class of bug: a *default* that writes invalid config.
+
+    Two of these shipped in one review round -- a switch that wrote no `enabled` key, and a
+    speed spin that opened at 0 when the parser wants `> 0`. Both were reachable by opening
+    the Add dialog and pressing Save, and neither was visible to any test that built its
+    entities by hand. So this builds them the way a user does: straight out of the form.
+    """
+    from hyprtweaker.engine.model import ConfigModel
+    from hyprtweaker.engine.paths import ConfigPaths
+    from hyprtweaker.engine.schema import load_schema
+    from hyprtweaker.engine.writer import Writer
+
+    root = Path(__file__).resolve().parents[2]
+    paths = ConfigPaths.rooted_at(tmp_path / "cfg")
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", root / "data" / "schema"))
+
+    for kind in KINDS:
+        dialog = editor(kind, curve_names=("easy",))
+        values = dict(dialog.collect())
+        # The identity and free-text fields are the ones a form cannot invent; everything
+        # else stays exactly as the dialog opened it.
+        for name, filler in (
+            ("name", "easy" if kind == "curves" else "probe-device"),
+            ("leaf", "fade"),
+            ("value", "1"),
+            ("binary", "/usr/bin/probe"),
+            ("command", "true"),
+            ("bezier", "default"),
+        ):
+            if name in {spec.name for spec in BY_KIND[kind].all_fields} and not values.get(
+                name
+            ):
+                values[name] = filler
+        model.entities.__getattribute__(kind).append(BY_KIND[kind].from_form(values, None))
+
+    model.mark_entities_loaded()
+    Writer(paths, app_version="0.0.0-test").write(model)
+
+    runtime = tmp_path / "run"
+    runtime.mkdir()
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY")
+    }
+    environment["XDG_RUNTIME_DIR"] = str(runtime)
+    result = subprocess.run(
+        ["Hyprland", "--verify-config", "-c", str(paths.entrypoint)],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=180,
+    )
+
+    assert result.returncode == 0, (
+        f"the Add form's own defaults produce a config Hyprland rejects:\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+    assert "config ok" in result.stdout

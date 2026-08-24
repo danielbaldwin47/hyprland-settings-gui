@@ -24,7 +24,7 @@ from hyprtweaker.engine.schema import load_schema
 from hyprtweaker.engine.writer.animations import render_animations_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
 from hyprtweaker.engine.writer.inputs import render_devices_module, render_gestures_module
-from hyprtweaker.engine.writer.sticky import (
+from hyprtweaker.engine.writer.session_scope import (
     render_autostart_module,
     render_env_module,
     render_permissions_module,

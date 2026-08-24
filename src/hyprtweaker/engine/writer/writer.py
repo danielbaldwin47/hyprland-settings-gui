@@ -58,7 +58,7 @@ from .modules import (
 )
 from .monitors import render_monitors_module, render_workspace_rules_module
 from .rules import render_layer_rules_module, render_window_rules_module
-from .sticky import (
+from .session_scope import (
     render_autostart_module,
     render_env_module,
     render_permissions_module,

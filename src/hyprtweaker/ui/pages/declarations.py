@@ -36,8 +36,10 @@ from hyprtweaker.engine.entities_catalog import (  # noqa: E402
     curve_findings,
     curve_usage,
     dangling_curve_references,
+    device_findings,
+    env_findings,
+    gesture_conflicts,
     missing_curve_references,
-    unknown_device_fields,
 )
 from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.pages.declaration_kinds import (  # noqa: E402
@@ -269,6 +271,8 @@ class DeclarationsPage:
         entities = self._session.model.entities
         collected: list[Finding] = []
         if self.kind == "animations":
+            # Two of the three are cross-entity: a dangling or missing curve reference is a
+            # property of the *pair* of lists, so it cannot live on the animation alone.
             collected += list(dangling_curve_references(entities))
             collected += list(missing_curve_references(entities))
             for animation in entities.animations:
@@ -278,14 +282,14 @@ class DeclarationsPage:
                 collected += list(curve_findings(curve))
         elif self.kind == "devices":
             for device in entities.devices:
-                collected += [
-                    Finding(
-                        device.name,
-                        f"Hyprland has no per-device setting called “{key}”, "
-                        f"so it will refuse this device.",
-                    )
-                    for key in unknown_device_fields(device)
-                ]
+                collected += list(device_findings(device))
+        elif self.kind == "gestures":
+            # Also cross-entity, and the harshest of the lot: a shadowed gesture is not a
+            # warning, it is a Module that will not load at all.
+            collected += list(gesture_conflicts(entities.gestures))
+        elif self.kind == "env":
+            for variable in entities.env:
+                collected += list(env_findings(variable))
 
         grouped: dict[str, list[Finding]] = {}
         for finding in collected:

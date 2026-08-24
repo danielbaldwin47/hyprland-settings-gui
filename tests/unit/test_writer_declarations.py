@@ -39,7 +39,7 @@ from hyprtweaker.engine.writer.inputs import (
     render_gesture,
     render_gestures_module,
 )
-from hyprtweaker.engine.writer.sticky import (
+from hyprtweaker.engine.writer.session_scope import (
     render_autostart_module,
     render_env,
     render_env_module,

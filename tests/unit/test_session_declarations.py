@@ -114,7 +114,7 @@ class TestTheEnvelope:
 
         assert session.replace_declaration("startup", 0, StartupCommand("c"))
 
-        assert [item.command for item in session.startup_commands] == ["c", "b"]
+        assert [item.command for item in session.declarations("startup")] == ["c", "b"]
         assert applier.commits == 3
 
     def test_remove_takes_the_addressed_one(self, tmp_path: Path) -> None:
@@ -124,7 +124,7 @@ class TestTheEnvelope:
 
         assert session.remove_declaration("startup", 1)
 
-        assert [item.command for item in session.startup_commands] == ["a", "c"]
+        assert [item.command for item in session.declarations("startup")] == ["a", "c"]
 
     def test_an_index_off_the_end_writes_nothing_of_substance(self, tmp_path: Path) -> None:
         session, _ = live_session(tmp_path)
@@ -132,7 +132,7 @@ class TestTheEnvelope:
 
         session.remove_declaration("startup", 9)
 
-        assert [item.command for item in session.startup_commands] == ["a"]
+        assert [item.command for item in session.declarations("startup")] == ["a"]
 
 
 class TestIdentity:
@@ -152,7 +152,7 @@ class TestIdentity:
 
         assert not session.add_declaration("animations", Animation("fade", {"enabled": False}))
 
-        assert len(session.animations) == 1
+        assert len(session.declarations("animations")) == 1
 
     def test_a_second_device_of_the_same_name_is_refused(self, tmp_path: Path) -> None:
         session, _ = live_session(tmp_path)
@@ -218,12 +218,22 @@ class TestDeviceOverrideBadges:
 
 
 class TestNamedAccessors:
-    def test_each_kind_has_a_readable_name_of_its_own(self, tmp_path: Path) -> None:
-        """The Pages read these; `declarations(kind)` is for the generic shell."""
+    def test_curves_are_reachable_by_name_because_the_editor_needs_them(
+        self, tmp_path: Path
+    ) -> None:
+        """The one kind with a caller that is not its own Page: the curve picker.
+
+        Every other kind goes through `declarations(kind)`; a property apiece would be
+        seven more names for what one parameterised call already answers.
+        """
+        session, _ = live_session(tmp_path)
+        session.add_declaration("curves", SAMPLES["curves"])
+
+        assert [curve.name for curve in session.curves] == ["easy"]
+
+    def test_the_generic_accessor_answers_for_every_kind(self, tmp_path: Path) -> None:
         session, _ = live_session(tmp_path)
         for kind, entity in SAMPLES.items():
             session.add_declaration(kind, entity)
 
-        assert session.curves and session.animations and session.gestures
-        assert session.devices and session.env_vars and session.permissions
-        assert session.startup_commands
+        assert all(session.declarations(kind) for kind in SAMPLES)

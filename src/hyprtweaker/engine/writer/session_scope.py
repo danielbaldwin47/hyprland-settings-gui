@@ -1,6 +1,8 @@
 """The canonical `env.lua`, `permissions.lua` and `autostart.lua` Modules (#70).
 
-Three kinds, one file, because they share the property that makes them the odd ones out:
+Named for the *scope* they share rather than for a kind, because they are the three that
+outlive a config reload -- everything else in `writer/` is named for the one kind it emits.
+Three kinds in one file, because they share the property that makes them the odd ones out:
 **omission is not deletion here.** Every other Entity kind is wiped and replayed on each
 reload, so deleting a line deletes the thing. Not these three:
 

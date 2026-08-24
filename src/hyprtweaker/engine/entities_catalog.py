@@ -29,7 +29,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from .model.entities import Animation, Curve, Device, EntitySet, Gesture
+from .model.entities import Animation, Curve, Device, EntitySet, EnvVar, Gesture
 
 # --- field descriptions ------------------------------------------------------------------
 
@@ -58,6 +58,15 @@ class FieldSpec:
     choices: tuple[str, ...] = ()
     minimum: float | None = None
     maximum: float | None = None
+    default: float | None = None
+    """What a numeric field opens at, when its lower bound is not a legal value.
+
+    A spin row must hold *some* number, and taking the bound is wrong wherever the bound is
+    exclusive: `speed` is `0 < x <= 100`, so a row that opened at 0 wrote a value the
+    compositor refuses ("speed must be greater than 0") for anyone who accepted the
+    default. Only set where the bound would lie.
+    """
+
     help: str = ""
 
     @property
@@ -93,9 +102,23 @@ SPRING_MIN = 0.5
 """`mass`, `stiffness` and `dampening` must each exceed this (CR:342-386)."""
 
 SPRING_FIELDS: tuple[FieldSpec, ...] = (
-    FieldSpec("mass", FieldType.FLOAT, "Mass", required=True, minimum=SPRING_MIN),
-    FieldSpec("stiffness", FieldType.FLOAT, "Stiffness", required=True, minimum=SPRING_MIN),
-    FieldSpec("dampening", FieldType.FLOAT, "Dampening", required=True, minimum=SPRING_MIN),
+    FieldSpec("mass", FieldType.FLOAT, "Mass", required=True, minimum=SPRING_MIN, default=1.0),
+    FieldSpec(
+        "stiffness",
+        FieldType.FLOAT,
+        "Stiffness",
+        required=True,
+        minimum=SPRING_MIN,
+        default=100.0,
+    ),
+    FieldSpec(
+        "dampening",
+        FieldType.FLOAT,
+        "Dampening",
+        required=True,
+        minimum=SPRING_MIN,
+        default=10.0,
+    ),
 )
 
 
@@ -151,13 +174,19 @@ reports but no config should name.
 
 ANIMATION_SPEED_MIN = 0.0
 ANIMATION_SPEED_MAX = 100.0
-"""`speed` is `0 < x <= 100` (CR:417-426); legacy hyprlang was unbounded."""
+"""`speed` is `0 < x <= 100` (CR:417-426); legacy hyprlang was unbounded.
+
+The lower bound is **exclusive** -- probed: `speed = 0` is "speed must be greater than 0".
+That is why the field carries a `default`, and why `animation_findings` tests `<` rather
+than `<=` at this end.
+"""
 
 ANIMATION_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(
         "enabled",
         FieldType.BOOL,
         "Enabled",
+        required=True,
         help="Off is the same as the legacy `animation = leaf, 0`.",
     ),
     FieldSpec(
@@ -166,6 +195,7 @@ ANIMATION_FIELDS: tuple[FieldSpec, ...] = (
         "Speed",
         minimum=ANIMATION_SPEED_MIN,
         maximum=ANIMATION_SPEED_MAX,
+        default=1.0,
         help="In tenths of a second: higher is slower.",
     ),
     FieldSpec("bezier", FieldType.CURVE_REF, "Bezier curve"),
@@ -199,6 +229,17 @@ GESTURE_DIRECTIONS: tuple[str, ...] = (
     "pinchout",
 )
 
+UNSET_ACTION = "unset"
+"""The delete primitive `hl.gesture` offers, and the one action the app never writes.
+
+Probed: `hl.gesture{direction="horizontal", action="unset"}` on its own is an error --
+"Can't remove a non-existent gesture". A generated Module is replayed from empty on every
+reload (`lua-api-surface.md` §0, Implication 1), so there is never a previous gesture for
+it to remove, and offering it as a choice would let someone build a row whose only effect
+is to break the file. Accepted on *import*, because a hand-written config may use it
+against a gesture the app cannot see; never offered as a choice.
+"""
+
 GESTURE_ACTIONS: tuple[str, ...] = (
     "workspace",
     "resize",
@@ -209,9 +250,8 @@ GESTURE_ACTIONS: tuple[str, ...] = (
     "fullscreen",
     "cursor_zoom",
     "scroll_move",
-    "unset",
 )
-"""The string actions. A gesture whose action is a Lua function is script, not config.
+"""The string actions the app offers. A Lua-function action is script, not config.
 
 Such a gesture is listed read-only rather than edited, the way a function-valued Bind
 action is (ADR-0007) -- `is_scripted` is the test.
@@ -264,6 +304,81 @@ GESTURE_FIELDS: tuple[FieldSpec, ...] = (
 )
 
 GESTURE_FIELD_SPECS: dict[str, FieldSpec] = _spec_map(GESTURE_FIELDS)
+
+
+GESTURE_DIRECTION_COVERS: dict[str, frozenset[str]] = {
+    "swipe": frozenset({"swipe", "horizontal", "vertical", "left", "right", "up", "down"}),
+    "horizontal": frozenset({"horizontal", "left", "right"}),
+    "vertical": frozenset({"vertical", "up", "down"}),
+    "pinch": frozenset({"pinch", "pinchin", "pinchout"}),
+    "left": frozenset({"left"}),
+    "right": frozenset({"right"}),
+    "up": frozenset({"up"}),
+    "down": frozenset({"down"}),
+    "pinchin": frozenset({"pinchin"}),
+    "pinchout": frozenset({"pinchout"}),
+}
+"""Which directions each direction *shadows*, mapped out of the compositor itself.
+
+Established by probing `Hyprland --verify-config` over all 100 direction pairs, because
+the research doc is wrong about this: `lua-api-surface.md` §11 describes the gesture key as
+the five-tuple `(fingers, direction, mods, scale, disable_inhibit)`, and the binary keys on
+`(fingers, direction, mods)` with *containment* on direction. A `swipe` shadows every
+directional swipe under it; `horizontal` shadows `left` and `right`; `pinch` shadows
+`pinchin` and `pinchout`. Neither `scale` nor `disable_inhibit` distinguishes anything.
+
+This matters more than a docs footnote, because a shadowed gesture is not a warning:
+`hl.gesture` *raises* -- "Gesture will be overshadowed by a previous gesture" -- and takes
+the whole Module down. Unlike Binds, where duplicate Triggers are legal and fire in order
+(ADR-0007), a second gesture on a covered trigger is a config that will not load.
+"""
+
+GESTURE_IDENTITY_FIELDS: tuple[str, ...] = ("fingers", "direction", "mods")
+"""The fields the compositor keys a gesture by -- see `GESTURE_DIRECTION_COVERS`."""
+
+
+def _gesture_key(gesture: Gesture) -> tuple[Any, ...]:
+    fields = gesture.fields
+    return (fields.get("fingers"), str(fields.get("mods") or ""))
+
+
+def gesture_conflicts(gestures: Sequence[Gesture]) -> tuple[Finding, ...]:
+    """Gestures an earlier one shadows, which Hyprland refuses to load at all.
+
+    Reported against the *later* gesture, because that is the one the compositor names and
+    the one whose trigger has to change. Order matters: "previous shadows new" means the
+    first declaration wins, so the row to fix is always the lower one.
+    """
+    findings: list[Finding] = []
+    seen: list[tuple[tuple[Any, ...], str, str]] = []
+    for gesture in gestures:
+        if is_scripted(gesture):
+            continue
+        direction = str(gesture.fields.get("direction") or "")
+        key = _gesture_key(gesture)
+        for other_key, other_direction, other_title in seen:
+            covers = GESTURE_DIRECTION_COVERS.get(other_direction, frozenset())
+            if other_key == key and direction in covers:
+                findings.append(
+                    Finding(
+                        gesture_title(gesture),
+                        f"“{other_title}” already covers this, so Hyprland refuses the "
+                        f"whole gestures file. Change the fingers, direction or modifiers.",
+                    )
+                )
+                break
+        seen.append((key, direction, gesture_title(gesture)))
+    return tuple(findings)
+
+
+def gesture_title(gesture: Gesture) -> str:
+    """A gesture's trigger as one short phrase -- how a row and a finding both name it."""
+    fields = gesture.fields
+    fingers = fields.get("fingers")
+    parts = [f"{fingers} fingers" if fingers else "", str(fields.get("direction") or "")]
+    if fields.get("mods"):
+        parts.insert(0, str(fields["mods"]))
+    return " · ".join(part for part in parts if part) or "Gesture"
 
 
 def is_scripted(gesture: Gesture) -> bool:
@@ -404,12 +519,95 @@ def overridden_options(
     return {option: tuple(names) for option, names in hits.items()}
 
 
+def device_field_bounds(
+    ranges: Mapping[str, tuple[float | None, float | None]],
+) -> dict[str, tuple[float | None, float | None]]:
+    """The min/max for each device field, taken from the Options it shadows.
+
+    Derived rather than hand-listed for the reason `device_override_options` is: the
+    numbers move on a Hyprland release, and a copy here would go quietly stale. It also
+    turns out to be the *more accurate* route -- the research doc gives `scroll_factor` as
+    0..100 and the shipped Schema says 0..2.
+
+    Where a field shadows two Options the widest pair wins. Which of the two applies
+    depends on the device's class, which the app cannot know without the compositor, and a
+    bound that refuses a value the user's hardware accepts is worse than one that permits a
+    value it does not: the first is unusable, the second is a finding.
+    """
+    bounds: dict[str, tuple[float | None, float | None]] = {}
+    for field_name, options in device_override_options(ranges).items():
+        lows = [ranges[name][0] for name in options if ranges[name][0] is not None]
+        highs = [ranges[name][1] for name in options if ranges[name][1] is not None]
+        if lows or highs:
+            bounds[field_name] = (
+                min(lows) if lows else None,  # type: ignore[type-var]
+                max(highs) if highs else None,  # type: ignore[type-var]
+            )
+    return bounds
+
+
 def unknown_device_fields(device: Device) -> tuple[str, ...]:
     """Keys on a device that `hl.device` would reject outright, in the order held."""
     return tuple(str(key) for key in device.fields if str(key) not in DEVICE_FIELD_SPECS)
 
 
+def device_findings(device: Device) -> tuple[Finding, ...]:
+    """What Hyprland would say about one per-device override.
+
+    Here rather than in the Page for the reason every other kind's findings are here: the
+    sentence describing what the compositor rejects belongs beside the rule that says it
+    would, so a Release check has one file to re-verify.
+    """
+    return tuple(
+        Finding(
+            device.name,
+            f"Hyprland has no per-device setting called “{key}”, so it will refuse "
+            f"this device.",
+        )
+        for key in unknown_device_fields(device)
+    )
+
+
+def env_findings(variable: EnvVar) -> tuple[Finding, ...]:
+    """What would go wrong with one environment variable.
+
+    A name `setenv` will not take is the whole check: the *value* is free text by design
+    (it routinely holds commas, colons and paths), and Lua quoting handles it.
+    """
+    if not ENV_NAME.match(variable.name):
+        return (
+            Finding(
+                variable.name,
+                "A variable name may only hold letters, digits and underscores, and may "
+                "not start with a digit.",
+            ),
+        )
+    return ()
+
+
 # --- environment variables (`lua-api-surface.md` §13) -------------------------------------
+
+IDENTITY_FIELD: dict[str, str] = {
+    "curves": "name",
+    "animations": "leaf",
+    "devices": "name",
+    "env": "name",
+}
+"""Which declarative kinds have an identity, and the attribute that holds it.
+
+The four Hyprland itself keys: a second `hl.curve("easy", ...)` overwrites the first, a
+second `hl.animation{leaf="fade"}` wins, `hl.device` merges per name, and the last
+`hl.env` for a name is the value the session gets. Two rows sharing one of these describes
+a config the compositor will not produce, which is the reason ADR-0008 keys workspace
+rules by selector.
+
+Gestures are absent on purpose even though they *are* keyed: their key is a tuple with
+containment on one member, so `gesture_conflicts` answers for them instead of a field
+name. Permissions and autostart commands take genuine duplicates.
+
+One map, read by both the session's write gate and the editor's up-front refusal, so the
+two cannot come to disagree about what counts as the same row.
+"""
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 """What a POSIX environment variable may be named -- `setenv` rejects the rest."""
@@ -509,6 +707,12 @@ def missing_curve_references(entities: EntitySet) -> tuple[Finding, ...]:
 
     "bezier or spring is required" (CR:453-454). Separate from the dangling case because
     the fix is different: this one needs a curve *chosen*, not declared.
+
+    A bare `hl.animation{leaf = "fade"}` used to be exempted here on the theory that it
+    carried no intent to animate. Probing the binary killed that theory: it is not a
+    harmless no-op, it is an error ("missing required field \"enabled\"") that takes the
+    Module down -- and it is exactly what the Add flow produces when the form is saved
+    without touching anything. See `animation_findings` for the required-field checks.
     """
     findings: list[Finding] = []
     for animation in entities.animations:
@@ -516,9 +720,9 @@ def missing_curve_references(entities: EntitySet) -> tuple[Finding, ...]:
             continue
         if any(animation.fields.get(key) for key in ANIMATION_CURVE_KEYS):
             continue
-        if not animation.fields:
-            # A bare `hl.animation{leaf=...}` carries no intent to enable anything; the
-            # importer never produces one and flagging it would badge an empty row.
+        if "enabled" not in animation.fields:
+            # Already reported as a missing required field; saying "pick a curve" as well
+            # would put two findings on one row when there is only one thing to do first.
             continue
         findings.append(
             Finding(animation.leaf, "Pick a curve: Hyprland requires one to animate.")
@@ -562,8 +766,31 @@ def curve_findings(curve: Curve) -> tuple[Finding, ...]:
 
 
 def animation_findings(animation: Animation) -> tuple[Finding, ...]:
-    """What Hyprland would say about one animation, curve references aside."""
+    """What Hyprland would say about one animation, curve references aside.
+
+    The required-field rules are the binary's, not the wiki's -- probed with
+    `--verify-config`, which rejects each of these by name:
+
+    * `enabled` is required on *every* animation, even one that only turns a leaf off.
+    * `speed` is required whenever `enabled` is true, and ignored when it is false.
+
+    Both were missing from the research doc's account of `hl.animation`, and both are
+    reachable from the Add form in two clicks.
+    """
     findings: list[Finding] = []
+    enabled = animation.fields.get("enabled")
+    if "enabled" not in animation.fields:
+        findings.append(
+            Finding(
+                animation.leaf,
+                "Say whether this animation is on: Hyprland requires it, and refuses the "
+                "whole animations file without it.",
+            )
+        )
+    elif enabled is not False and animation.fields.get("speed") is None:
+        findings.append(
+            Finding(animation.leaf, "Set a speed: Hyprland requires one to animate.")
+        )
     if animation.leaf not in ANIMATION_LEAVES:
         findings.append(
             Finding(
@@ -683,12 +910,15 @@ __all__ = [
     "EVERY_RELOAD",
     "GESTURE_ACTIONS",
     "GESTURE_DIRECTIONS",
+    "GESTURE_DIRECTION_COVERS",
     "GESTURE_FIELDS",
     "GESTURE_FIELD_SPECS",
     "GESTURE_FINGERS_MAX",
     "GESTURE_FINGERS_MIN",
+    "GESTURE_IDENTITY_FIELDS",
     "GESTURE_SCALE_MAX",
     "GESTURE_SCALE_MIN",
+    "IDENTITY_FIELD",
     "PERMISSION_ENFORCE_OPTION",
     "PERMISSION_MODES",
     "PERMISSION_TYPES",
@@ -697,6 +927,7 @@ __all__ = [
     "SPRING_MIN",
     "STARTUP_EVENT",
     "STARTUP_EVENTS",
+    "UNSET_ACTION",
     "CurveUsage",
     "FieldSpec",
     "FieldType",
@@ -706,8 +937,13 @@ __all__ = [
     "curve_findings",
     "curve_usage",
     "dangling_curve_references",
+    "device_field_bounds",
+    "device_findings",
     "device_override_options",
+    "env_findings",
     "field_text",
+    "gesture_conflicts",
+    "gesture_title",
     "is_scripted",
     "missing_curve_references",
     "overridden_options",

@@ -18,7 +18,7 @@ form shows the ones that are set, each with a remove button, and offers the rest
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import gi
@@ -30,6 +30,7 @@ from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine.entities_catalog import (  # noqa: E402
     BUILTIN_CURVES,
+    IDENTITY_FIELD,
     FieldSpec,
     FieldType,
     field_text,
@@ -64,6 +65,7 @@ class DeclarationEditor(Adw.Dialog):
         entity: Any | None = None,
         curve_names: Sequence[str] = (),
         taken: Sequence[str] = (),
+        bounds: Mapping[str, tuple[float | None, float | None]] | None = None,
     ) -> None:
         """`curve_names` fills the bezier and spring dropdowns, so an animation can only
         name a curve that exists -- the dangling reference prevented at the point it would
@@ -89,6 +91,10 @@ class DeclarationEditor(Adw.Dialog):
             dict(self._descriptor.to_form(entity)) if entity is not None else {}
         )
         self._curve_names = tuple(dict.fromkeys((*BUILTIN_CURVES, *curve_names)))
+        # Per-field min/max the *Schema* supplies, for the one kind whose fields shadow
+        # Options (`device_field_bounds`). Empty for every other kind, and empty when the
+        # caller has no Schema to hand -- in which case the spec's own bounds still apply.
+        self._bounds: Mapping[str, tuple[float | None, float | None]] = bounds or {}
         self._rows: dict[str, Gtk.Widget] = {}
 
         # A label rather than an `Adw.Banner`: ADR-0016 reserves the Banner for the
@@ -209,6 +215,12 @@ class DeclarationEditor(Adw.Dialog):
         if spec.type is FieldType.BOOL:
             row = Adw.SwitchRow(title=spec.label, active=bool(value))
             row.connect("notify::active", self._on_switch, spec)
+            # Seeded, not left to the first toggle. A switch shows a state either way, so
+            # an untouched one that wrote nothing produced a table with the key *absent* --
+            # and `hl.animation` rejects a missing `enabled` outright, which is what the
+            # Add flow produced for anyone who accepted the default.
+            if spec.required:
+                self._values[spec.name] = row.get_active()
             return row
 
         if spec.type in (FieldType.ENUM, FieldType.CURVE_REF):
@@ -225,14 +237,24 @@ class DeclarationEditor(Adw.Dialog):
             selected = offsets.index(value) if value in offsets else 0
             row = Adw.ComboRow(title=spec.label, model=model, selected=selected)
             row.connect("notify::selected", self._on_choice, spec, offsets)
+            # Seeded for the same reason a switch is: a required dropdown shows its first
+            # choice whether or not anybody picked it, so leaving the value unwritten meant
+            # `hl.gesture` got no `direction` and `hl.permission` got no `type` -- both
+            # rejected by name, both reachable by opening Add and pressing Save.
+            if spec.required and offsets and offsets[selected] is not None:
+                self._values[spec.name] = offsets[selected]
             return row
 
         if spec.type in (FieldType.INT, FieldType.FLOAT):
             digits = 0 if spec.type is FieldType.INT else 3
             step = 1.0 if spec.type is FieldType.INT else 0.05
-            lower = spec.minimum if spec.minimum is not None else -_WIDE
-            upper = spec.maximum if spec.maximum is not None else _WIDE
-            current = float(value) if isinstance(value, int | float) else max(lower, 0.0)
+            low, high = self._bounds.get(spec.name, (None, None))
+            low = spec.minimum if spec.minimum is not None else low
+            high = spec.maximum if spec.maximum is not None else high
+            lower = low if low is not None else -_WIDE
+            upper = high if high is not None else _WIDE
+            opening = spec.default if spec.default is not None else max(lower, 0.0)
+            current = float(value) if isinstance(value, int | float) else opening
             adjustment = Gtk.Adjustment(
                 value=min(max(current, lower), upper),
                 lower=lower,
@@ -333,9 +355,14 @@ class DeclarationEditor(Adw.Dialog):
 
 
 def _identity_of(kind: str, entity: Any) -> str | None:
-    attribute = {"curves": "name", "animations": "leaf", "devices": "name", "env": "name"}.get(
-        kind
-    )
+    """One entity's identity string, or `None` for a kind that takes duplicates.
+
+    Reads `IDENTITY_FIELD` rather than its own copy of the map: the editor refuses a
+    duplicate up front and the session refuses it again at the write gate, and two copies
+    of "what counts as the same row" is two chances for the dialog to accept what the
+    session will silently drop.
+    """
+    attribute = IDENTITY_FIELD.get(kind)
     return None if attribute is None else str(getattr(entity, attribute))
 
 
@@ -344,6 +371,8 @@ def _neutral(spec: FieldSpec) -> Any:
     if spec.type is FieldType.BOOL:
         return True
     if spec.type in (FieldType.INT, FieldType.FLOAT):
+        if spec.default is not None:
+            return _as_number(spec, spec.default)
         lower = spec.minimum if spec.minimum is not None else 0.0
         return _as_number(spec, max(lower, 0.0))
     if spec.type is FieldType.ENUM and spec.choices:
