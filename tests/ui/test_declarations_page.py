@@ -66,6 +66,66 @@ def test_the_pages_reach_the_sidebar_under_their_own_sections(tmp_path: Path) ->
     assert len(window.declaration_pages) == len(KINDS)
 
 
+def test_no_page_shares_a_stack_id_or_a_title_with_another(tmp_path: Path) -> None:
+    """Hyprland has an `animations` Section *and* an animation tree; likewise `gestures`.
+
+    A stack child name used twice is not an error GTK raises -- it keeps the first page,
+    drops the second, and writes a warning to stderr that no test tier reads. The Page then
+    simply is not in the app, which is how this shipped past a green suite the first time.
+    Two sidebar rows with the same title are the same defect one layer up: legible, and
+    still a puzzle.
+    """
+    _session, window = build_window(tmp_path)
+
+    ids = [page.plan.section for page in window.pages]
+    titles = [page.plan.title for page in window.pages]
+    ids += [page.section for page in window.declaration_pages]
+    titles += [page.title for page in window.declaration_pages]
+
+    assert len(set(ids)) == len(ids), f"duplicate stack id: {sorted(_repeats(ids))}"
+    assert len(set(titles)) == len(titles), f"duplicate title: {sorted(_repeats(titles))}"
+
+
+def _repeats(values: list[str]) -> set[str]:
+    seen: set[str] = set()
+    return {value for value in values if value in seen or seen.add(value)}  # type: ignore[func-returns-value]
+
+
+def test_each_page_can_actually_be_selected_by_name(tmp_path: Path) -> None:
+    """The sidebar search used to stop at the Schema Pages, so no Entity Page was reachable.
+
+    Silent, too: selecting a name that is not found simply leaves the previous row
+    selected, so the Page existed, appeared in the sidebar, and could not be opened by any
+    code path that navigates by name.
+    """
+    _session, window = build_window(tmp_path)
+
+    for kind in KINDS:
+        section = window.declaration_page(kind).section
+        window._select_section(section)
+
+        assert window._selected_section() == section, kind
+
+
+def test_the_heading_says_the_pages_name_not_its_internal_id(tmp_path: Path) -> None:
+    """The heading used to come from the Schema, which has never heard of an Entity Page.
+
+    It answers with a title derived from the id, so `entity:animations` reached the screen
+    as "Entity:animations" -- an internal identifier, shown to the user, in the largest
+    text on the page.
+    """
+    _session, window = build_window(tmp_path)
+
+    for kind in KINDS:
+        page = window.declaration_page(kind)
+        window._select_section(page.section)
+
+        heading = window._content_page.get_title()
+
+        assert heading == page.title, kind
+        assert "entity:" not in heading.lower()
+
+
 def test_an_empty_page_says_what_the_kind_is_for(tmp_path: Path) -> None:
     _session, window = build_window(tmp_path)
 

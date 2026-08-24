@@ -58,7 +58,18 @@ class DeclarationKind:
     """`EntitySet`'s own attribute name -- what `Session.declarations` takes."""
 
     section: str
-    """The sidebar id. Distinct from `kind` because the sidebar names Pages, not lists."""
+    """The sidebar id, namespaced `entity:` because a Section and an Entity kind collide.
+
+    Hyprland has an `animations` Section *and* an animation tree, a `gestures` Section
+    *and* gesture bindings. The Config view puts one stack page per Section beside one per
+    Entity kind, so a bare `animations` is two different pages under one name -- GTK keeps
+    the first and drops the second, silently, with only a warning on stderr. The same
+    collision `paths.py` solves for Module filenames by putting Option Modules under
+    `options/`, solved the same way: give the entity side a namespace.
+
+    The titles are kept distinct for the reader's sake as well as the widget tree's -- two
+    sidebar rows both saying "Animations" is a puzzle even when both of them work.
+    """
 
     title: str
     singular: str
@@ -318,8 +329,8 @@ def _startup_from_form(
 KINDS: tuple[DeclarationKind, ...] = (
     DeclarationKind(
         kind="animations",
-        section="animations",
-        title="Animations",
+        section="entity:animations",
+        title="Animation tree",
         singular="animation",
         description="One entry per part of the animation tree. Each needs a curve.",
         empty_hint="Add one to override Hyprland's default animation for that part.",
@@ -329,7 +340,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="curves",
-        section="curves",
+        section="entity:curves",
         title="Animation curves",
         singular="curve",
         description="Named easing curves the animations above refer to by name.",
@@ -340,8 +351,8 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="gestures",
-        section="gestures",
-        title="Gestures",
+        section="entity:gestures",
+        title="Gesture bindings",
         singular="gesture",
         description="Touchpad and touchscreen gestures.",
         empty_hint="Add one to swipe between workspaces or resize a window.",
@@ -352,7 +363,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="devices",
-        section="devices",
+        section="entity:devices",
         title="Devices",
         singular="device",
         description="Per-device input settings. These win over the matching Input settings.",
@@ -364,7 +375,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="env",
-        section="env",
+        section="entity:env",
         title="Environment",
         singular="variable",
         description="Variables exported into the session Hyprland starts.",
@@ -379,7 +390,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="startup",
-        section="autostart",
+        section="entity:autostart",
         title="Autostart",
         singular="command",
         description="Commands Hyprland runs for you, in the order listed.",
@@ -390,7 +401,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     ),
     DeclarationKind(
         kind="permissions",
-        section="permissions",
+        section="entity:permissions",
         title="Permissions",
         singular="permission",
         description="Which programs may record the screen, read the cursor, or grab input.",

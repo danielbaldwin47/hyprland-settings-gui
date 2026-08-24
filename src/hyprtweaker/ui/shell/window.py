@@ -202,6 +202,12 @@ class MainWindow(Adw.ApplicationWindow):
         self._layer_rules_page: LayerRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
+        self._section_titles: dict[str, str] = {}
+        """Every built Page's heading, by the sidebar id it answers to.
+
+        Filled by `rebuild` from the Pages themselves, so a Page that is not a Section
+        -- every Entity Page -- gets the name it calls itself rather than one derived
+        from its internal id."""
         self._session.watch_monitors(self._on_monitor_hotplug)
         self._offered: Detection | None = None
         """The import on offer, while one is (ADR-0009).
@@ -536,6 +542,7 @@ class MainWindow(Adw.ApplicationWindow):
         selected = self._selected_section()
 
         self._pages = []
+        self._section_titles = {}
         self._sidebar.remove_all()
         while (child := self._stack.get_first_child()) is not None:
             self._stack.remove(child)
@@ -545,6 +552,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._pages.append(page)
             self._stack.add_named(_scrolled(page.page), plan.section)
             self._sidebar.append(_sidebar_row(plan.section, plan.title, plan.option_count))
+            self._section_titles[plan.section] = plan.title
 
         # An Entity Page, so it comes from the model rather than from the Schema plan: there
         # is no Option behind a Bind to plan against (CONTEXT.md, ADR-0007).
@@ -561,6 +569,7 @@ class MainWindow(Adw.ApplicationWindow):
             ),
         )
         self._stack.add_named(_scrolled(self._binds_page.page), BindsPage.section)
+        self._section_titles[BindsPage.section] = BindsPage.title
         self._sidebar.append(
             _sidebar_row(BindsPage.section, BindsPage.title, len(self._binds_page.binds))
         )
@@ -574,6 +583,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
         for rules_page in (self._window_rules_page, self._layer_rules_page):
             self._stack.add_named(_scrolled(rules_page.page), rules_page.section)
+            self._section_titles[rules_page.section] = rules_page.title
             self._sidebar.append(
                 _sidebar_row(rules_page.section, rules_page.title, len(rules_page.rules))
             )
@@ -597,6 +607,7 @@ class MainWindow(Adw.ApplicationWindow):
             ),
         )
         self._stack.add_named(_scrolled(self._monitors_page.page), MonitorsPage.section)
+        self._section_titles[MonitorsPage.section] = MonitorsPage.title
         self._sidebar.append(
             _sidebar_row(
                 MonitorsPage.section, MonitorsPage.title, len(self._monitors_page.rules)
@@ -614,6 +625,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._declaration_pages[page_class.kind] = page
             self._stack.add_named(_scrolled(page.page), page.section)
             self._sidebar.append(_sidebar_row(page.section, page.title, len(page.entities)))
+            self._section_titles[page.section] = page.title
 
         self._select_section(selected or self._session.schema.section_names[0])
         self.sync()
@@ -1386,8 +1398,20 @@ class MainWindow(Adw.ApplicationWindow):
             return
         section = row.get_name()
         self._stack.set_visible_child_name(section)
-        self._content_page.set_title(self._session.schema.section_title(section))
+        self._content_page.set_title(self._page_title(section))
         self._split.set_show_content(True)
+
+    def _page_title(self, section: str) -> str:
+        """The heading for the selected Page: the Page's own title, else the Schema's.
+
+        Entity Pages are not Sections, so asking the Schema about one gets a *derived*
+        title -- the raw id with its first letter capitalised. That reads as "Monitors"
+        where the Page says "Displays", and after #70's `entity:` namespacing it reads as
+        "Entity:animations", which is an internal id on screen. The Page already knows what
+        it is called; the Schema only has to answer for Sections.
+        """
+        title = self._section_titles.get(section)
+        return title if title is not None else self._session.schema.section_title(section)
 
     def _on_toggle_advanced(self, action: Gio.SimpleAction, _parameter: Any) -> None:
         action.set_state(GLib.Variant.new_boolean(not self.show_advanced))
@@ -1412,11 +1436,20 @@ class MainWindow(Adw.ApplicationWindow):
         return None if row is None else row.get_name()
 
     def _select_section(self, section: str) -> None:
-        for index in range(len(self._pages)):
-            row = self._sidebar.get_row_at_index(index)
-            if row is not None and row.get_name() == section:
+        """Select the sidebar row named `section`, wherever in the list it sits.
+
+        Walks until the list runs out rather than stopping at `len(self._pages)`: the
+        Schema Pages are only the *first* stretch of the sidebar, and every Entity Page --
+        binds, the rule lists, Displays, and the seven of #70 -- is appended after them.
+        Bounding the search by the Schema Page count made every one of them unreachable by
+        name, which is the path a restored selection and a search hit both take.
+        """
+        index = 0
+        while (row := self._sidebar.get_row_at_index(index)) is not None:
+            if row.get_name() == section:
                 self._sidebar.select_row(row)
                 return
+            index += 1
 
 
 _REVEAL_MARGIN = 24.0
