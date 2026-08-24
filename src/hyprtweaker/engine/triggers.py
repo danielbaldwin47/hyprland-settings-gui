@@ -263,19 +263,28 @@ def parse_trigger(text: str) -> Trigger:
     return Trigger(tuple(m for m in MODIFIERS if m in set(mods)), " + ".join(keys))
 
 
-def validate_trigger(text: str, *, in_submap: bool = False) -> TriggerProblem | None:
-    """The worst thing wrong with this trigger string, or None if it is fine.
+def validate_trigger(
+    trigger: str | Trigger, *, in_submap: bool = False
+) -> TriggerProblem | None:
+    """The worst thing wrong with this trigger, or None if it is fine.
+
+    Takes either form so a caller that already holds a parsed `Trigger` -- the Capture
+    dialog does, on every keystroke -- does not pay to render it to a string and parse it
+    straight back.
 
     Deliberately looser than GNOME's shortcut validation, per ADR-0007: modifier-less
     binds are legal in Hyprland, and a bare unmodified letter is a real (if usually
     unwise) bind -- so that warns rather than blocks. Only what would genuinely not fire,
     or would break the config, blocks.
     """
-    stripped = text.strip()
-    if not stripped:
+    if isinstance(trigger, str):
+        stripped = trigger.strip()
+        if not stripped:
+            return TriggerProblem(Severity.BLOCK, "Press a key combination.")
+        trigger = parse_trigger(stripped)
+    elif not trigger.mods and not trigger.key:
         return TriggerProblem(Severity.BLOCK, "Press a key combination.")
 
-    trigger = parse_trigger(stripped)
     key = trigger.key
 
     if not key:

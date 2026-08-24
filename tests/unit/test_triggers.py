@@ -141,6 +141,24 @@ def test_empty_is_blocked() -> None:
     assert problem is not None and problem.blocking
 
 
+@needs_xkb
+def test_validation_accepts_a_parsed_trigger_directly() -> None:
+    """The dialog holds a Trigger already; it should not have to round-trip a string."""
+    assert validate_trigger(Trigger(("SUPER",), "Q")) is None
+    dead = validate_trigger(Trigger(("SUPER",), "notakey"))
+    assert dead is not None and dead.blocking
+    assert validate_trigger(Trigger()) is not None
+
+
+def test_string_and_trigger_forms_agree() -> None:
+    for text in ("SUPER + Q", "SUPER + notakey", "catchall", "SUPER + SHIFT", "mouse_up"):
+        from_text = validate_trigger(text)
+        from_parsed = validate_trigger(parse_trigger(text))
+        assert (from_text is None) == (from_parsed is None), text
+        if from_text is not None and from_parsed is not None:
+            assert from_text.severity is from_parsed.severity, text
+
+
 def test_modifier_only_is_blocked() -> None:
     problem = validate_trigger("SUPER + SHIFT")
     assert problem is not None and problem.blocking

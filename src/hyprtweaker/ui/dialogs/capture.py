@@ -133,7 +133,15 @@ class CaptureDialog(Adw.Dialog):
         # Manual entry stays reachable: capture cannot produce a `switch:` trigger, and a
         # key this keyboard does not have still needs a way in (ADR-0007 keeps text entry
         # as the fallback, not as a second-class path).
-        group = Adw.PreferencesGroup(title="Or type it")
+        group = Adw.PreferencesGroup(
+            title="Or type it",
+            # Named explicitly because the limitation is invisible otherwise: GTK never
+            # delivers switch events to an application, so a lid or tablet-mode switch
+            # cannot be captured however hard the user presses it.
+            description=(
+                "Lid and tablet-mode switches cannot be captured -- type switch:<name> instead."
+            ),
+        )
         self._manual = Adw.EntryRow(title="Trigger")
         if self._initial:
             self._manual.set_text(self._initial)
@@ -317,7 +325,7 @@ class CaptureDialog(Adw.Dialog):
             return
 
         self._shortcut.set_text(trigger.display())
-        problem = validate_trigger(str(trigger), in_submap=self._in_submap)
+        problem = validate_trigger(trigger, in_submap=self._in_submap)
         if problem is None:
             self._problem.set_visible(False)
             self._confirm.set_sensitive(True)
@@ -334,7 +342,7 @@ class CaptureDialog(Adw.Dialog):
         trigger = self._captured
         if trigger is None:
             return
-        problem = validate_trigger(str(trigger), in_submap=self._in_submap)
+        problem = validate_trigger(trigger, in_submap=self._in_submap)
         if problem is not None and problem.blocking:
             self._refresh()
             return
