@@ -14,6 +14,7 @@ package_sources = {
   ],
   'hyprtweaker/engine': [
     '__init__.py',
+    'binds_analysis.py',
     'dispatchers.py',
     'paths.py',
     'triggers.py',
@@ -104,6 +105,7 @@ package_sources = {
     'capture.py',
     'errors.py',
     'migration.py',
+    'submap_editor.py',
   ],
   'hyprtweaker/ui/pages': [
     '__init__.py',

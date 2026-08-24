@@ -30,10 +30,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Coroutine, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from hyprtweaker.engine import binds_analysis
 from hyprtweaker.engine.apply import (
     Action,
     Applier,
@@ -611,6 +612,49 @@ class Session:
                 del binds[index]
 
         return self.edit_binds(drop)
+
+    def set_bind_enabled(self, index: int, enabled: bool) -> bool:
+        """Enable or disable the Bind at `index`, in place.
+
+        The conflict surface's "disable it" (ADR-0007, #66). In place because the point of
+        `enabled` over deletion is exactly that nothing moves: every other bind keeps its
+        position, and re-enabling restores the world as it was.
+        """
+
+        def flip(binds: list[Bind]) -> None:
+            if 0 <= index < len(binds):
+                binds[index] = replace(binds[index], enabled=enabled)
+
+        return self.edit_binds(flip)
+
+    def swap_binds(self, first: int, second: int) -> bool:
+        """Exchange the positions of two Binds -- which of two duplicates fires first.
+
+        A swap rather than a general move because that is what fire order among duplicates
+        *is* (ADR-0007): the conflict badge says "fires 1st", and this is the control that
+        makes it say otherwise. Everything between the two stays put.
+        """
+
+        def exchange(binds: list[Bind]) -> None:
+            if 0 <= first < len(binds) and 0 <= second < len(binds) and first != second:
+                binds[first], binds[second] = binds[second], binds[first]
+
+        return self.edit_binds(exchange)
+
+    def save_submap(self, *, original: str | None, name: str, reset_target: str) -> bool:
+        """Create a Submap, or rename one and retune its reset target (#66).
+
+        The cascade semantics live in `engine.binds_analysis.save_submap`, where they are
+        tested headless; this is only the write gate around them, shaped like `edit_binds`.
+        """
+        if self._refuse("submaps"):
+            return False
+
+        binds_analysis.save_submap(
+            self._model.entities, original=original, name=name, reset_target=reset_target
+        )
+        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
+        return True
 
     def _refuse(self, name: str) -> bool:
         """Whether this session must decline an edit -- and leave the model alone doing it.

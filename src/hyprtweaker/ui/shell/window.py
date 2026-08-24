@@ -27,6 +27,7 @@ auto-revert (ADR-0016), which is the only event the ADR reserves a toast for out
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ from hyprtweaker.engine.apply import (  # noqa: E402
     UndoStep,
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
+from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
 from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
 from hyprtweaker.engine.ipc import CommandClient, Instance, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
@@ -58,8 +60,10 @@ from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind  # noqa: E402
 from hyprtweaker.engine.schema import Schema  # noqa: E402
+from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.session import AutoRevert, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
+from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.errors import error_dialog  # noqa: E402
 from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     MigrationDialog,
@@ -67,7 +71,8 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     import_dialog,
     migration_dialog,
 )
-from hyprtweaker.ui.pages.binds import BindsPage  # noqa: E402
+from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
+from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
@@ -474,9 +479,15 @@ class MainWindow(Adw.ApplicationWindow):
         # is no Option behind a Bind to plan against (CONTEXT.md, ADR-0007).
         self._binds_page = BindsPage(
             self._session,
-            on_add=self._add_bind,
-            on_edit=self._edit_bind,
-            on_remove=self._remove_bind,
+            actions=BindActions(
+                add=self._add_bind,
+                edit=self._edit_bind,
+                remove=self._remove_bind,
+                enable=self._set_bind_enabled,
+                rebind=self._rebind_bind,
+                swap=self._swap_binds,
+                edit_submap=self._edit_submap,
+            ),
         )
         self._stack.add_named(_scrolled(self._binds_page.page), BindsPage.section)
         self._sidebar.append(
@@ -488,12 +499,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     # --- binds ---------------------------------------------------------------------------
 
-    def _add_bind(self) -> None:
+    def _add_bind(self, submap: str | None = None) -> None:
         def done(bind: Bind) -> None:
             if self._session.add_bind(bind):
                 self._refresh_binds()
 
-        BindEditor(on_done=done).present(self)
+        BindEditor(on_done=done, submap=submap).present(self)
 
     def _edit_bind(self, index: int) -> None:
         if self._binds_page is None:
@@ -511,6 +522,57 @@ class MainWindow(Adw.ApplicationWindow):
     def _remove_bind(self, index: int) -> None:
         if self._session.remove_bind(index):
             self._refresh_binds()
+
+    def _set_bind_enabled(self, index: int, enabled: bool) -> None:
+        if self._session.set_bind_enabled(index, enabled):
+            self._refresh_binds()
+
+    def _swap_binds(self, first: int, second: int) -> None:
+        if self._session.swap_binds(first, second):
+            self._refresh_binds()
+
+    def _rebind_bind(self, index: int) -> None:
+        """The conflict popover's "rebind it": Capture on the other bind, directly.
+
+        Straight to Capture rather than through the full editor (ADR-0007): the problem
+        being solved is *only* that two binds share a trigger, and the fix is a new
+        trigger for one of them.
+        """
+        if self._binds_page is None:
+            return
+        binds = self._binds_page.binds
+        if not 0 <= index < len(binds):
+            return
+        bind = binds[index]
+
+        def done(text: str) -> None:
+            keys = str(parse_trigger(text.strip()))
+            if keys and self._session.replace_bind(index, replace(bind, keys=keys)):
+                self._refresh_binds()
+
+        CaptureDialog(
+            on_done=done,
+            initial=bind.keys,
+            in_submap=bool(bind.submap) or bind.options.submap_universal,
+        ).present(self)
+
+    def _edit_submap(self, name: str | None) -> None:
+        """Open the Submap editor: `name` is `None` for a creation, else the submap."""
+        entities = self._session.model.entities
+        current = next((s for s in entities.submaps if s.name == name), None)
+
+        def done(new_name: str, reset_target: str) -> None:
+            if self._session.save_submap(
+                original=name, name=new_name, reset_target=reset_target
+            ):
+                self._refresh_binds()
+
+        SubmapEditor(
+            on_done=done,
+            taken=submap_names(entities),
+            name=name or "",
+            reset_target=current.reset_target if current is not None else "",
+        ).present(self)
 
     def _refresh_binds(self) -> None:
         if self._binds_page is not None:
