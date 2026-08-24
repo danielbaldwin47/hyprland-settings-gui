@@ -208,6 +208,21 @@ def test_a_permission_written_as_a_table_reads_the_same(imported) -> None:  # ty
     )
 
 
+def test_a_top_level_exec_cmd_is_the_every_reload_kind(imported) -> None:  # type: ignore[no-untyped-def]
+    """The recorder only ever sees a top-level call, and that one re-runs on every reload.
+
+    A run-*once* command lives inside an `hl.on("hyprland.start", ...)` handler the recorder
+    captures without entering (see the test below), so nothing that reaches the mapper is
+    run-once. Reading it as one would promise the user their command runs a single time
+    while the file re-runs it on every reload (`lua-api-surface.md` §14).
+    """
+    result = imported('hl.exec_cmd("hyprpaper")\n')
+
+    command = result.entities.startup[0]
+    assert command.command == "hyprpaper"
+    assert command.event == "", "a top-level exec_cmd is the old `exec`, not `exec-once`"
+
+
 # --- script constructs --------------------------------------------------------------------
 
 

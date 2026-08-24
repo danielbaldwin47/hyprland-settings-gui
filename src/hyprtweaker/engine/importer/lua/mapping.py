@@ -23,6 +23,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from ...entities_catalog import EVERY_RELOAD
 from ...model.entities import (
     Animation,
     Bind,
@@ -616,9 +617,21 @@ class _Mapper:
             self.entities.plugins.append(PluginLoad(path=args[0], origin=call.origin))
 
     def _map_exec_cmd(self, call: Call) -> None:
+        """A recorded `hl.exec_cmd` -- always the top-level one, so always every-reload.
+
+        `event = ""` rather than the dataclass's `hyprland.start` default: the recorder only
+        ever sees a call the file made while it was being executed, and a run-once command
+        lives inside an `hl.on("hyprland.start", ...)` handler the recorder captures without
+        entering (`SCRIPT_CALLS`). So every `exec_cmd` that reaches here is the old `exec`,
+        which re-runs on every reload -- taking the default would promise a user their
+        command runs once when the file makes it run again on each reload
+        (`lua-api-surface.md` §14).
+        """
         args = positional_args(call)
         if args and isinstance(args[0], str):
-            self.entities.startup.append(StartupCommand(command=args[0], origin=call.origin))
+            self.entities.startup.append(
+                StartupCommand(command=args[0], event=EVERY_RELOAD, origin=call.origin)
+            )
 
 
 def map_recording(

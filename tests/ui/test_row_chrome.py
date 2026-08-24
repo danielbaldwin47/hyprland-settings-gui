@@ -41,6 +41,7 @@ class FakeSession:
         self.pending_restart: frozenset[str] = frozenset()
         self.unapplied: frozenset[str] = frozenset()
         self.overridden: frozenset[str] = frozenset()
+        self.device_overrides: dict[str, tuple[str, ...]] = {}
         self.model = ConfigModel(SCHEMA)
         self.applied: list[str] = []
 

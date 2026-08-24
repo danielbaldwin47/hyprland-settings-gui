@@ -47,6 +47,7 @@ from hyprtweaker.engine.apply import (  # noqa: E402
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
+from hyprtweaker.engine.entities_catalog import curve_usage  # noqa: E402
 from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
 from hyprtweaker.engine.ipc import CommandClient, Instance, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
@@ -71,6 +72,10 @@ from hyprtweaker.session import AutoRevert, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
+from hyprtweaker.ui.dialogs.declaration_editor import (  # noqa: E402
+    DeclarationEditor,
+    taken_identities,
+)
 from hyprtweaker.ui.dialogs.errors import error_dialog  # noqa: E402
 from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     MigrationDialog,
@@ -82,6 +87,13 @@ from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
+from hyprtweaker.ui.pages.declarations import (  # noqa: E402
+    PAGES as DECLARATION_PAGES,
+)
+from hyprtweaker.ui.pages.declarations import (  # noqa: E402
+    DeclarationActions,
+    DeclarationsPage,
+)
 from hyprtweaker.ui.pages.monitors import (  # noqa: E402
     MonitorActions,
     MonitorsPage,
@@ -189,6 +201,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._window_rules_page: WindowRulesPage | None = None
         self._layer_rules_page: LayerRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
+        self._declaration_pages: dict[str, DeclarationsPage] = {}
         self._session.watch_monitors(self._on_monitor_hotplug)
         self._offered: Detection | None = None
         """The import on offer, while one is (ADR-0009).
@@ -486,6 +499,19 @@ class MainWindow(Adw.ApplicationWindow):
         """The Layer rules Page, once built. The UI tier asserts against it."""
         return self._layer_rules_page
 
+    def declaration_page(self, kind: str) -> DeclarationsPage | None:
+        """One declarative Entity Page by kind, once built. The UI tier asserts against it.
+
+        A lookup rather than seven properties: the Pages are one class seven times, so
+        seven accessors would be seven chances for one of them to name the wrong kind.
+        """
+        return self._declaration_pages.get(kind)
+
+    @property
+    def declaration_pages(self) -> tuple[DeclarationsPage, ...]:
+        """Every declarative Page, in sidebar order."""
+        return tuple(self._declaration_pages.values())
+
     @property
     def monitors_page(self) -> MonitorsPage | None:
         """The Displays Page, once built. The UI tier asserts against it."""
@@ -579,6 +605,15 @@ class MainWindow(Adw.ApplicationWindow):
         # The app-open answer feeds the canvas *and* the Profile-match toast: one fetch,
         # riding the same helper-data lane hotplug refreshes use (ADR-0018).
         self._session.fetch_monitors(self._on_monitors_event)
+
+        # The seven declarative Entity Pages (#70): one class over a field catalogue, so
+        # this loop is the whole registration rather than seven blocks like the ones above.
+        self._declaration_pages = {}
+        for page_class in DECLARATION_PAGES:
+            page = page_class(self._session, actions=self._declaration_actions(page_class.kind))
+            self._declaration_pages[page_class.kind] = page
+            self._stack.add_named(_scrolled(page.page), page.section)
+            self._sidebar.append(_sidebar_row(page.section, page.title, len(page.entities)))
 
         self._select_section(selected or self._session.schema.section_names[0])
         self.sync()
@@ -740,6 +775,108 @@ class MainWindow(Adw.ApplicationWindow):
         page = self._rules_page(kind)
         if page is not None:
             page.refresh()
+        self.sync()
+
+    # --- declarative entities (#70) -------------------------------------------------------
+
+    def _declaration_actions(self, kind: str) -> DeclarationActions:
+        return DeclarationActions(
+            add=lambda: self._add_declaration(kind),
+            edit=lambda index: self._edit_declaration(kind, index),
+            remove=lambda index: self._remove_declaration(kind, index),
+        )
+
+    def _curve_names(self) -> tuple[str, ...]:
+        """The curves an animation may name -- what makes the dropdown truthful."""
+        return tuple(curve.name for curve in self._session.curves if curve.name)
+
+    def _add_declaration(self, kind: str) -> None:
+        def done(entity: Any) -> None:
+            if self._session.add_declaration(kind, entity):
+                self._refresh_declarations(kind)
+
+        DeclarationEditor(
+            kind=kind,
+            on_done=done,
+            curve_names=self._curve_names(),
+            taken=taken_identities(kind, self._session.declarations(kind)),
+        ).present(self)
+
+    def _edit_declaration(self, kind: str, index: int) -> None:
+        entities = self._session.declarations(kind)
+        if not 0 <= index < len(entities):
+            return
+
+        def done(entity: Any) -> None:
+            if self._session.replace_declaration(kind, index, entity):
+                self._refresh_declarations(kind)
+
+        DeclarationEditor(
+            kind=kind,
+            on_done=done,
+            entity=entities[index],
+            curve_names=self._curve_names(),
+            taken=taken_identities(kind, entities, skip=index),
+        ).present(self)
+
+    def _remove_declaration(self, kind: str, index: int) -> None:
+        """Delete one entity, warning first when other rows depend on it.
+
+        Only curves can be depended on: an animation that names a deleted curve stops
+        Hyprland from loading the whole animation Module, so this is the one delete on
+        these Pages that can break something the user is not looking at.
+        """
+        entities = self._session.declarations(kind)
+        if not 0 <= index < len(entities):
+            return
+
+        if kind == "curves":
+            users = curve_usage(self._session.model.entities, entities[index].name).leaves
+            if users:
+                self._confirm_curve_delete(index, entities[index].name, users)
+                return
+
+        if self._session.remove_declaration(kind, index):
+            self._refresh_declarations(kind)
+
+    def _confirm_curve_delete(self, index: int, name: str, users: tuple[str, ...]) -> None:
+        listed = ", ".join(users)
+        dialog = Adw.AlertDialog(
+            heading=f"Delete the curve “{name}”?",
+            body=(
+                f"{len(users)} animation(s) name it: {listed}. Without it Hyprland "
+                f"refuses them, and the whole animations file stops loading."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete anyway")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def answered(_dialog: Adw.AlertDialog, response: str) -> None:
+            if response == "delete" and self._session.remove_declaration("curves", index):
+                self._refresh_declarations("curves")
+                # The animations that named it now carry a dangling reference, so their
+                # Page has to be rebuilt too -- the finding lives on a row nobody touched.
+                self._refresh_declarations("animations")
+
+        dialog.connect("response", answered)
+        dialog.present(self)
+
+    def _refresh_declarations(self, kind: str) -> None:
+        page = self._declaration_pages.get(kind)
+        if page is not None:
+            page.refresh()
+        if kind == "curves":
+            animations = self._declaration_pages.get("animations")
+            if animations is not None:
+                animations.refresh()
+        if kind == "devices":
+            # A per-device override badges the Options it shadows, so the Option Pages are
+            # now out of date about themselves.
+            for page_ in self._pages:
+                page_.refresh()
         self.sync()
 
     # --- monitors -------------------------------------------------------------------------

@@ -301,6 +301,7 @@ def evaluate(
     env: dict[str, str] | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     basedir: Path | None = None,
+    run_handlers: bool = False,
 ) -> Recording:
     """Run `entry` under the recording stub and report what it did.
 
@@ -308,6 +309,11 @@ def evaluate(
     `LuaUnavailable` when there is no interpreter. Everything else -- a syntax error, a
     config that raises, one that loops until the timeout -- comes back as an `errors`
     entry, because a failed import still has to produce a report the wizard can show.
+
+    `run_handlers` enters `hl.on` handlers instead of only capturing them, bracketing what
+    they declare with `on_enter`/`on_leave` calls. Off for every foreign config -- ADR-0009
+    lifts whole handlers into `legacy.lua`, so entering one would double-count it -- and on
+    for the single caller that reads back a handler this app wrote (`autostart.lua`, #70).
     """
     if not consent.evaluate:
         raise ConsentRequired(f"importing {entry} would run it; no consent was given")
@@ -322,7 +328,15 @@ def evaluate(
 
     with tempfile.TemporaryDirectory(prefix="hyprtweaker-import-") as scratch:
         out_path = Path(scratch) / "record.json"
-        command = [interpreter, str(RUNNER), str(entry), str(root), str(out_path), str(policy)]
+        command = [
+            interpreter,
+            str(RUNNER),
+            str(entry),
+            str(root),
+            str(out_path),
+            str(policy),
+            "run" if run_handlers else "keep",
+        ]
         try:
             completed = subprocess.run(
                 command,

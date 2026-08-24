@@ -33,7 +33,7 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from hyprtweaker.engine import binds_analysis
 from hyprtweaker.engine.apply import (
@@ -53,6 +53,7 @@ from hyprtweaker.engine.apply import (
     plan,
     read_state,
 )
+from hyprtweaker.engine.entities_catalog import overridden_options
 from hyprtweaker.engine.ipc import (
     MONITOR_ADDED,
     MONITOR_REMOVED,
@@ -64,16 +65,29 @@ from hyprtweaker.engine.ipc import (
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.model.entities import (
+    Animation,
     Bind,
+    Curve,
+    Device,
+    EnvVar,
+    Gesture,
     LayerRule,
     MonitorRule,
+    Permission,
+    StartupCommand,
     WindowRule,
     WorkspaceRule,
 )
 from hyprtweaker.engine.paths import (
+    ANIMATIONS_MODULE,
+    AUTOSTART_MODULE,
     BINDS_MODULE,
+    DEVICES_MODULE,
+    ENV_MODULE,
+    GESTURES_MODULE,
     LAYER_RULES_MODULE,
     MONITORS_MODULE,
+    PERMISSIONS_MODULE,
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
@@ -92,6 +106,7 @@ from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
 from hyprtweaker.engine.writer.binds import parse_binds_module
+from hyprtweaker.engine.writer.declarations import parse_declarations_module
 from hyprtweaker.engine.writer.monitors import parse_monitors_module
 from hyprtweaker.engine.writer.rules import parse_rules_module
 
@@ -934,6 +949,159 @@ class Session:
 
         return self._commit_entity_edit("workspace rules", drop)
 
+    # --- declarative entities (#70) -----------------------------------------------------
+
+    DECLARATION_KINDS: tuple[str, ...] = (
+        "curves",
+        "animations",
+        "gestures",
+        "devices",
+        "env",
+        "permissions",
+        "startup",
+    )
+    """The Entity kinds the one generic list API below serves, named as `EntitySet` names.
+
+    One parameterised API rather than seven copies of `edit_rules`, for the reason
+    `rules(kind)` gives: every caller is already parameterised by kind, because the seven
+    Pages are one Page class seven times over a field catalogue. The names are `EntitySet`'s
+    own attribute names so this list and that dataclass cannot drift into disagreeing about
+    what a kind is called.
+    """
+
+    _KEYED_BY: ClassVar[dict[str, str]] = {
+        "curves": "name",
+        "animations": "leaf",
+        "devices": "name",
+        "env": "name",
+    }
+    """Which kinds have an identity field, and which attribute holds it.
+
+    The four Hyprland itself keys: a second `hl.curve("easy", ...)` overwrites the first, a
+    second `hl.animation{leaf="fade"}` wins, `hl.device` merges per name, and the last
+    `hl.env` for a name is the value the session gets. So two rows sharing one of these
+    identities is a list that says something the compositor will not do -- which is the
+    same reason ADR-0008 keys workspace rules by selector. Gestures, permissions and
+    startup commands have no identity: duplicates there are legal and meaningful.
+    """
+
+    def declarations(self, kind: str) -> list[Any]:
+        """The live list for one declarative Entity kind."""
+        if kind not in self.DECLARATION_KINDS:
+            raise ValueError(f"unknown declaration kind {kind!r}")
+        entities: list[Any] = getattr(self._model.entities, kind)
+        return entities
+
+    def edit_declarations(self, kind: str, mutate: Callable[[list[Any]], None]) -> bool:
+        """Change one declarative list and write it, returning whether it was accepted.
+
+        Shaped exactly like `edit_rules`, refusal and all, and like it deliberately not on
+        the undo stack -- the same Entity-undo leftover.
+        """
+        return self._commit_entity_edit(kind, lambda: mutate(self.declarations(kind)))
+
+    def identity_of(self, kind: str, entity: Any) -> str | None:
+        """The identity string of one entity, or `None` for a kind that has no identity."""
+        attribute = self._KEYED_BY.get(kind)
+        return None if attribute is None else str(getattr(entity, attribute))
+
+    def _identity_taken(self, kind: str, entity: Any, *, index: int | None) -> bool:
+        """Whether saving `entity` would give two rows the same identity."""
+        identity = self.identity_of(kind, entity)
+        if identity is None:
+            return False
+        return any(
+            position != index and self.identity_of(kind, existing) == identity
+            for position, existing in enumerate(self.declarations(kind))
+        )
+
+    def add_declaration(self, kind: str, entity: Any) -> bool:
+        """Append one entity, refusing an identity another row already holds.
+
+        Refused rather than merged: merging is what Hyprland would do, and doing it
+        silently would make the row the user just filled in vanish into one further up the
+        list. The Page's move is to focus the existing row, exactly as `save_workspace_rule`
+        expects of the Workspaces page.
+        """
+        if self._identity_taken(kind, entity, index=None):
+            return False
+        return self.edit_declarations(kind, lambda items: items.append(entity))
+
+    def replace_declaration(self, kind: str, index: int, entity: Any) -> bool:
+        """Replace the entity at `index`, keeping its position."""
+        if self._identity_taken(kind, entity, index=index):
+            return False
+
+        def swap(items: list[Any]) -> None:
+            if 0 <= index < len(items):
+                items[index] = entity
+
+        return self.edit_declarations(kind, swap)
+
+    def remove_declaration(self, kind: str, index: int) -> bool:
+        """Delete the entity at `index`."""
+
+        def drop(items: list[Any]) -> None:
+            if 0 <= index < len(items):
+                del items[index]
+
+        return self.edit_declarations(kind, drop)
+
+    @property
+    def curves(self) -> list[Curve]:
+        """The live curve list. Identity is the name (`hl.curve` overwrites by it)."""
+        return self._model.entities.curves
+
+    @property
+    def animations(self) -> list[Animation]:
+        """The live animation list, one entry per leaf of the animation tree."""
+        return self._model.entities.animations
+
+    @property
+    def gestures(self) -> list[Gesture]:
+        """The live gesture list. No identity: position is all a gesture has."""
+        return self._model.entities.gestures
+
+    @property
+    def devices(self) -> list[Device]:
+        """The live per-device override list. Identity is the device name."""
+        return self._model.entities.devices
+
+    @property
+    def env_vars(self) -> list[EnvVar]:
+        """The live environment variable list.
+
+        Named `env_vars` rather than `env` because `Session.env` would read as the app's
+        own environment, which this is emphatically not: these are variables the *config*
+        exports into the compositor's session.
+        """
+        return self._model.entities.env
+
+    @property
+    def permissions(self) -> list[Permission]:
+        """The live permission list. Applied on first launch only (ADR-0012 restart rule)."""
+        return self._model.entities.permissions
+
+    @property
+    def startup_commands(self) -> list[StartupCommand]:
+        """The live autostart list, in the order the file runs them."""
+        return self._model.entities.startup
+
+    @property
+    def device_overrides(self) -> dict[str, tuple[str, ...]]:
+        """Which Options a per-device override shadows, and the devices that shadow them.
+
+        The Row's `device-override` badge (ADR-0013, CONTEXT.md). Derived on each read
+        rather than cached because the devices list is short, the Schema is fixed for the
+        session, and a cache would need invalidating from every device edit -- a stale
+        badge here says "your setting is being overridden" about a device the user just
+        deleted, which is worse than recomputing a dictionary.
+        """
+        return overridden_options(
+            self._model.entities.devices,
+            (option.name for option in self._schema.options),
+        )
+
     # --- monitor profiles -------------------------------------------------------------------
 
     @property
@@ -1437,6 +1605,7 @@ class Session:
         self._reread_binds()
         self._reread_rules()
         self._reread_monitors()
+        self._reread_declarations()
         # The other half ADR-0016 asks for: somebody else's reload can break the config just
         # as thoroughly as the app's own, and it surfaces identically.
         await self._scan(client)
@@ -1521,6 +1690,29 @@ class Session:
         if changed:
             self._load_monitors()
 
+    def _reread_declarations(self) -> None:
+        """Adopt hand edits to the six declarative Modules, gated like the others.
+
+        One gate over all six and one load for all six, for `_reread_rules`'s reason:
+        `_load_declarations` splices misfiled entities to the kind they are, so re-reading
+        one file without the others would drop whatever it found belonging to a list the
+        other five own.
+        """
+        changed = False
+        for module in self.DECLARATION_MODULES:
+            path = self._paths.app_dir / module
+            if not path.is_file():
+                continue
+            try:
+                current = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            record = self._manifest().modules.get(module)
+            if record is None or record.sha256 != content_hash(current):
+                changed = True
+        if changed:
+            self._load_declarations()
+
     def _load_entities(self) -> None:
         """The startup read of every Entity Module, and the keeper of `entities_loaded`.
 
@@ -1530,7 +1722,12 @@ class Session:
         every load succeeded: marking it with `window_rules.lua` unread would let the next
         Option write prune a rules file the user merely broke.
         """
-        if self._load_binds() and self._load_rules() and self._load_monitors():
+        if (
+            self._load_binds()
+            and self._load_rules()
+            and self._load_monitors()
+            and self._load_declarations()
+        ):
             self._model.mark_entities_loaded()
 
     def _load_binds(self) -> bool:
@@ -1629,6 +1826,75 @@ class Session:
         )
         self._model.entities.monitors[:] = monitors
         self._model.entities.workspace_rules[:] = workspace
+        return True
+
+    DECLARATION_MODULES: tuple[str, ...] = (
+        ANIMATIONS_MODULE,
+        GESTURES_MODULE,
+        DEVICES_MODULE,
+        ENV_MODULE,
+        PERMISSIONS_MODULE,
+        AUTOSTART_MODULE,
+    )
+    """The six Modules `_load_declarations` reads, in Entrypoint order (#70)."""
+
+    def _load_declarations(self) -> bool:
+        """Read the six declarative Entity Modules into the model.
+
+        The same shape as `_load_rules` and `_load_monitors`, one tier wider: every file
+        feeds every list, so an entity someone hand-moved into the wrong Module comes back
+        as what it is rather than vanishing -- and vanishing is not cosmetic here, because a
+        list the model believes is empty is a Module the Writer prunes.
+
+        All six are adopted together or none is. Six files is where that rule starts to
+        look expensive, and it is exactly where it starts to matter: a single unparseable
+        `gestures.lua` must not license the Writer to delete a user's `env.lua`, which is
+        the one Module whose contents Hyprland will not restore on the next reload.
+        """
+        curves: list[Curve] = []
+        animations: list[Animation] = []
+        gestures: list[Gesture] = []
+        devices: list[Device] = []
+        env: list[EnvVar] = []
+        permissions: list[Permission] = []
+        startup: list[StartupCommand] = []
+
+        for module in self.DECLARATION_MODULES:
+            path = self._paths.app_dir / module
+            if not path.is_file():
+                continue
+            parsed = parse_declarations_module(path, module=module)
+            if not parsed.ok:
+                _log.warning(
+                    "%s would not evaluate, leaving it alone: %s", module, parsed.errors[0]
+                )
+                return False
+            curves.extend(parsed.curves)
+            animations.extend(parsed.animations)
+            gestures.extend(parsed.gestures)
+            devices.extend(parsed.devices)
+            env.extend(parsed.env)
+            permissions.extend(parsed.permissions)
+            startup.extend(parsed.startup)
+
+        _log.info(
+            "read %d curve(s), %d animation(s), %d gesture(s), %d device(s), "
+            "%d env var(s), %d permission(s), %d startup command(s)",
+            len(curves),
+            len(animations),
+            len(gestures),
+            len(devices),
+            len(env),
+            len(permissions),
+            len(startup),
+        )
+        self._model.entities.curves[:] = curves
+        self._model.entities.animations[:] = animations
+        self._model.entities.gestures[:] = gestures
+        self._model.entities.devices[:] = devices
+        self._model.entities.env[:] = env
+        self._model.entities.permissions[:] = permissions
+        self._model.entities.startup[:] = startup
         return True
 
     def _on_stream_lost(self) -> None:

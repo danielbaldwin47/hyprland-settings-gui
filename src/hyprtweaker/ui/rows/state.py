@@ -19,6 +19,7 @@ the one place that judgement is made, so no control can make it differently.
 from __future__ import annotations
 
 import enum
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
@@ -63,6 +64,7 @@ RESTART_PILL: Final = "Restart"
 PENDING_RESTART_PILL: Final = "Pending restart"
 UNAPPLIED_PILL: Final = "Didn't apply"
 OVERRIDDEN_PILL: Final = "Overridden"
+DEVICE_PILL: Final = "Per-device"
 
 _UNLABELLED_NULL: Final = "Not set"
 """What a nullable Option with no curated `null_label` falls back to.
@@ -340,6 +342,9 @@ class RowContext(Protocol):
     @property
     def overridden(self) -> frozenset[str]: ...
 
+    @property
+    def device_overrides(self) -> Mapping[str, tuple[str, ...]]: ...
+
     def value_of(self, option: ResolvedOption) -> OptionValue: ...
 
     def effective_value(self, option: ResolvedOption) -> Any: ...
@@ -461,6 +466,22 @@ def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:
                 # the file needs Ownership class, which the Banner has and a Row does not.
                 "Something loaded after the app's own settings sets this too, so its "
                 "value wins -- usually your user.lua.",
+            )
+        )
+
+    devices = context.device_overrides.get(option.name)
+    if devices:
+        # The `device-override` Row state (ADR-0013, CONTEXT.md). Distinct from
+        # "Overridden", which is about a *file* loaded after the app's own and is therefore
+        # the same story for every Option it touches: this one is scoped to particular
+        # hardware, so the Row still holds true for every other device and the pill has to
+        # say which. Not an error and not a failure to apply -- a per-device setting
+        # winning over the global one is `hl.device` working exactly as documented.
+        named = ", ".join(devices)
+        pills.append(
+            Pill(
+                DEVICE_PILL,
+                f"{named} has its own value for this, which wins for that device.",
             )
         )
 

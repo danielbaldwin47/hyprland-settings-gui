@@ -21,10 +21,16 @@ from typing import Any
 
 from ..model.values import lua_literal_for
 from ..paths import (
+    ANIMATIONS_MODULE,
+    AUTOSTART_MODULE,
     BINDS_MODULE,
+    DEVICES_MODULE,
+    ENV_MODULE,
+    GESTURES_MODULE,
     LAYER_RULES_MODULE,
     MONITORS_MODULE,
     OPTIONS_DIR,
+    PERMISSIONS_MODULE,
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
 )
@@ -68,14 +74,20 @@ ENTITY_MODULES: frozenset[str] = frozenset(
         LAYER_RULES_MODULE,
         MONITORS_MODULE,
         WORKSPACE_RULES_MODULE,
+        ANIMATIONS_MODULE,
+        GESTURES_MODULE,
+        DEVICES_MODULE,
+        ENV_MODULE,
+        PERMISSIONS_MODULE,
+        AUTOSTART_MODULE,
     }
 )
 """The App-dir-relative names of the Entity Modules the app generates.
 
-`binds.lua` (#64), the window and layer rule Modules (#67), and the monitor and
-workspace rule Modules (#68). Named as a set rather than inferred from "a `.lua` at the
-App dir root", because `legacy.lua` and `user.lua` live there too and the app must never
-touch those.
+`binds.lua` (#64), the window and layer rule Modules (#67), the monitor and workspace rule
+Modules (#68), and the six declarative Modules of #70. Named as a set rather than
+inferred from "a `.lua` at the App dir root", because `legacy.lua` and `user.lua` live
+there too and the app must never touch those.
 """
 
 
