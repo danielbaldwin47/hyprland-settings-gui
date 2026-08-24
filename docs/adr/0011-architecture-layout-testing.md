@@ -31,6 +31,7 @@ ADR-0001 fixed the stack (Python + GTK4 + libadwaita) and demanded a clean engin
   - `rows/` — widget-per-type Row factory
   - `pages/` — generated page factory + curated Tasks mapping
   - `dialogs/` — Capture, Migration wizard, confirm-or-revert
+  - **Two modules sit at the `ui/` root, added during #72** — not because a home was missing, but because both are used from more than one of the subpackages above and neither belongs to any single one: `search.py` (ADR-0017's index — ranking is a decision about text, imports no `gi`, and is unit-tested against a golden like `pages/plan.py`) and `flash.py` (the navigate-and-flash pulse, shared by the Binds page's conflict jump and a Search hit; it owns a display-scoped CSS provider, which is why it is a module rather than a function copied twice). A third module here would be a sign the subpackages are wrong, not that the root is a category
 
 **One module sits between them, amended during #56:** `src/hyprtweaker/session.py` — the Schema, model, Writer and live connection wired together for one run of the app. It is imported by `ui/` but imports no `gi`, so it belongs to neither subpackage: putting it under `ui/` would make the whole edit-to-compositor path reachable only from a machine with a display, and putting it under `engine/` would give the engine an opinion about application lifetime. It is the seam that lets `tests/unit` drive a real edit against a scripted socket and `tests/integration` drive the same object against a nested Hyprland.
 
@@ -66,7 +67,7 @@ pytest, three tiers; the engine carries the coverage, the UI stays thin:
 ### Build & conventions
 
 - **meson** is the canonical build now (GNOME convention; grows into desktop file/icons/gresource install later — distribution packaging itself remains an open map item). Dev loop: `meson devenv`.
-- `pyproject.toml` carries Python tooling: **ruff** (lint + format), **mypy** on `engine/` plus the toolkit-free modules above it (`session.py`, `ui/pages/plan.py`, `ui/rows/state.py`; amended during #56 and again during #57 — the exemption was earned by PyGObject's partial stubs and `gi`-dynamic code, neither of which applies to a module that never imports `gi`, so every UI module that decides rather than draws joins this list), pytest config.
+- `pyproject.toml` carries Python tooling: **ruff** (lint + format), **mypy** on `engine/` plus the toolkit-free modules above it (`session.py`, `ui/pages/plan.py`, `ui/rows/state.py`, `ui/search.py`; amended during #56, #57 and #72 — the exemption was earned by PyGObject's partial stubs and `gi`-dynamic code, neither of which applies to a module that never imports `gi`, so every UI module that decides rather than draws joins this list), pytest config.
 - GitHub Actions CI: ruff + mypy + unit tests + overlay completeness test.
 - Commit style unchanged.
 

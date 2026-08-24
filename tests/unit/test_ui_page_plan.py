@@ -8,6 +8,7 @@ GTK still assembles what this planned.
 
 from __future__ import annotations
 
+import pytest
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
 from hyprtweaker.engine.schema import Visibility, load_schema
@@ -138,3 +139,44 @@ def test_option_count_is_what_the_page_actually_shows() -> None:
 
     assert plan.option_count == len(all_options(plan))
     assert plan.option_count + plan.withheld == len(SCHEMA.section("input"))
+
+
+# --- the One-off reveal (ADR-0017) exempts the switch, never the View's tier rule ---------
+
+
+HIDDEN_OPTION = "debug:manual_crash"
+
+
+def test_a_reveal_shows_a_withheld_row_without_the_switch() -> None:
+    """What the One-off is for: search reaching a Row the Advanced switch is withholding."""
+    option = next(o for o in SCHEMA if o.visibility is Visibility.ADVANCED)
+
+    assert not is_visible(option, show_advanced=False)
+    assert is_visible(option, show_advanced=False, revealed=frozenset({option.name}))
+
+
+@pytest.mark.parametrize("revealed", [frozenset(), frozenset({HIDDEN_OPTION})])
+def test_a_reveal_never_puts_the_hidden_tier_in_tasks(revealed: frozenset[str]) -> None:
+    """ADR-0013 §5 is unconditional: `hidden` "never in Tasks", reveal or no reveal.
+
+    The regression this pins: with the reveal tested *before* the tier rule, switching back
+    to Tasks while a hidden-tier hit was still revealed rendered "Crash Hyprland" on a
+    curated Page with the Advanced switch off.
+    """
+    option = SCHEMA[HIDDEN_OPTION]
+    assert option.visibility is Visibility.HIDDEN
+
+    for show_advanced in (False, True):
+        assert not is_visible(
+            option, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
+        )
+
+
+def test_a_reveal_reaches_the_hidden_tier_in_config() -> None:
+    """The other half: in Config the tier is admissible, so the One-off applies there."""
+    option = SCHEMA[HIDDEN_OPTION]
+
+    assert not is_visible(option, show_advanced=False, view=View.CONFIG)
+    assert is_visible(
+        option, show_advanced=False, view=View.CONFIG, revealed=frozenset({option.name})
+    )

@@ -78,7 +78,7 @@ def _reset(window: Any) -> None:
     """
     from hyprtweaker.ui.pages.plan import View
 
-    window.search_bar.set_search_mode(False)
+    window.finder.close()
     window.set_view(View.CONFIG)
     window.sidebar.emit("row-activated", window.sidebar.get_row_at_index(0))
     settle()
@@ -119,7 +119,7 @@ def test_ctrl_f_focuses_the_finder(window: Any) -> None:
     # gets "fixed" into a broken one.
     focus = window.get_focus()
     assert focus is not None
-    assert focus is window.search_entry or focus.is_ancestor(window.search_entry), (
+    assert focus is window.finder.entry or focus.is_ancestor(window.finder.entry), (
         f"Ctrl+F left the focus on {type(focus).__name__}"
     )
 
@@ -131,7 +131,7 @@ def test_type_to_search_is_wired_to_the_window(window: Any) -> None:
     *is* the feature -- GTK already knows a keypress landing in a Row's entry or spin button
     is not the start of a search, and a hand-rolled handler would have to relearn that.
     """
-    assert window.search_bar.get_key_capture_widget() is window
+    assert window.finder.bar.get_key_capture_widget() is window
 
 
 # --- results replace the nav list ---------------------------------------------------------
@@ -146,7 +146,7 @@ def test_a_query_lists_results_and_clearing_restores_the_nav_list(window: Any) -
     assert window.hits, "a query matching the shipped Schema listed nothing"
     assert all(hit.name for hit in window.hits)
 
-    window.search_bar.set_search_mode(False)
+    window.finder.close()
     settle()
 
     assert window.sidebar_mode == "nav"

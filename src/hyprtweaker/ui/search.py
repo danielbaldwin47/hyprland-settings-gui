@@ -89,10 +89,10 @@ def match_kind(haystack: str, needle: str) -> Match | None:
 class Hit:
     """One Option a query found, and why -- enough to rank it and to render it.
 
-    Carries the Option itself rather than its name alone: every consumer needs the
-    visibility tier (to decide whether the reveal is a One-off) and the section (to decide
-    which Page to open), and re-reading them out of the Schema by name is a lookup the
-    index has already done.
+    Carries the Option itself rather than its name alone: ranking needs its declaration
+    order for the tie-break, and the window needs the visibility tier to decide whether
+    opening the hit costs a One-off reveal. Re-reading those out of the Schema by name is a
+    lookup the index has already done.
     """
 
     option: ResolvedOption
@@ -112,10 +112,6 @@ class Hit:
     @property
     def dotted_key(self) -> str:
         return self.option.dotted_key
-
-    @property
-    def section(self) -> str:
-        return self.option.section
 
     @property
     def rank(self) -> tuple[int, int, int]:

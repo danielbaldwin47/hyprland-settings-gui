@@ -80,18 +80,26 @@ def is_visible(
     Tasks Page. Search reaches every tier regardless and reveals its hit one-off (ADR-0017).
 
     `revealed` is that One-off: the Options a search hit has earned a place for on this
-    visit, exempt from the switch and from the tier rule alike. It is a parameter rather
-    than a flag on the Option because the exemption belongs to *this* rebuild -- an Option
-    that carried its own "revealed" bit would stay revealed until something thought to
-    clear it, which is the state ADR-0017 rejected temporary visibility modes to avoid.
+    visit. It is a parameter rather than a flag on the Option because the exemption belongs
+    to *this* rebuild -- an Option that carried its own "revealed" bit would stay revealed
+    until something thought to clear it, which is the state ADR-0017 rejected temporary
+    visibility modes to avoid.
+
+    A One-off exempts an Option from the **switch**, never from the **View's tier rule**,
+    and the order of the tests below is that distinction. ADR-0013 §5 is unconditional --
+    the `hidden` tier "appears only in the Config view ... never in Tasks" -- so a revealed
+    Option that is checked before the tier rule renders "Crash Hyprland" on a curated Page
+    the moment the user switches back to Tasks with the reveal still outstanding. The reveal
+    is how search reaches a withheld Row; it is not a licence to put one where the View says
+    it may never go.
     """
-    if option.name in revealed:
-        return True
     if option.visibility is Visibility.DEFAULT:
         return True
-    if not show_advanced:
+    if option.visibility is Visibility.HIDDEN and view is not View.CONFIG:
         return False
-    return option.visibility is not Visibility.HIDDEN or view is View.CONFIG
+    if option.name in revealed:
+        return True
+    return show_advanced
 
 
 @dataclass(frozen=True, slots=True)

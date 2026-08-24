@@ -141,6 +141,7 @@ package_sources = {
   ],
   'hyprtweaker/ui/shell': [
     '__init__.py',
+    'finder.py',
     'runtime.py',
     'window.py',
   ],
