@@ -32,7 +32,9 @@ BRIDGE_DIR = "bridge"
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"
 REPORTS_DIR = "reports"
+BACKUPS_DIR = "backups"
 JOURNAL_NAME = "journal.jsonl"
+SENTINEL_NAME = "migration-pending.json"
 
 
 def _xdg_dir(variable: str, fallback: str) -> Path:
@@ -112,6 +114,27 @@ class ConfigPaths:
         afterwards.
         """
         return self.state_dir / REPORTS_DIR
+
+    @property
+    def backups_dir(self) -> Path:
+        """Full copies of the hypr dir, one `<timestamp>/` per migration (ADR-0009).
+
+        In the state dir, not `~/.config/hypr.backup-*`: a backup is history, and the
+        design mockup's location would have put a full copy of a dotfile repo inside the
+        directory that repo tracks.
+        """
+        return self.state_dir / BACKUPS_DIR
+
+    @property
+    def sentinel(self) -> Path:
+        """The `migration-pending` marker written before the Entrypoint goes live.
+
+        Its presence at startup means a switch began and was never confirmed -- the app
+        died, or the session did -- so the switch is treated as failed and rollback is
+        offered (ADR-0009). Cleared by both Keep and roll back, which is what makes
+        "still here" mean "nobody answered".
+        """
+        return self.state_dir / SENTINEL_NAME
 
     @property
     def journal(self) -> Path:

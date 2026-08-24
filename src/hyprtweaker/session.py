@@ -419,6 +419,16 @@ class Session:
         return self._paths
 
     @property
+    def app_version(self) -> str:
+        """The running app's version, as it is stamped into generated files.
+
+        Exposed because the Migration wizard builds its own Writer and Manifest reader: it
+        runs before -- and sometimes instead of -- a live model, so it cannot take the one
+        this Session made.
+        """
+        return self._app_version
+
+    @property
     def recovery(self) -> Recovery:
         """The last reload's problems and what may be done about each (ADR-0016)."""
         return self._recovery

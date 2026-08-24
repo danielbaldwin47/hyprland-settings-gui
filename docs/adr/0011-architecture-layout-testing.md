@@ -25,6 +25,7 @@ ADR-0001 fixed the stack (Python + GTK4 + libadwaita) and demanded a clean engin
   - `importer/` — hyprlang Importer + Lua importer + Loss report (ADR-0009)
   - `ipc/` — socket/socket2 clients, `getoption`/`configerrors`/events; never spawns `hyprctl`
   - `state/` — Snapshots, Journal, Manifest (ADR-0005)
+  - `migration/` — first-run detection, backups, the crash-safety sentinel, Export, and the five-step wizard flow (ADR-0009). Added during #63: the wizard is a state machine over the importers rather than part of either, and keeping it here — not in the UI — is what lets its ordering guarantees (nothing written before the Loss report, backup before the first write, sentinel before the Entrypoint, silence rolls back) be tested headless, and lets a relaunched app finish a rollback the dialog never got to show
 - **`ui/`** —
   - `shell/` — window, sidebar, the two Views
   - `rows/` — widget-per-type Row factory

@@ -195,13 +195,29 @@ class CommandClient:
         parse, so the only honest confirmation is the `configreloaded` event plus a
         `configerrors` read (ADR-0010 step 5).
 
-        The `reload full-reset` variant -- which rebuilds the config manager and re-resolves
-        the config path, the one way to switch a live session from hyprlang to Lua -- is not
-        here. It is migration mechanics with session-wide side effects (`hyprland.start`
-        never re-fires), so it belongs with the wizard that needs it (ADR-0009) rather than
-        sitting next to the apply path as a flag.
+        The heavier `reload_full_reset` below is a separate method rather than a flag on
+        this one, so the destructive variant has to be asked for by name.
         """
         await self._request("reload", json_output=False)
+
+    async def reload_full_reset(self) -> None:
+        """Rebuild the config manager and re-resolve the config path (ADR-0009).
+
+        The one way to switch a live session from hyprlang to Lua: Hyprland caches which
+        config file it picked, so creating `hyprland.lua` on a `.conf` session does nothing
+        until this runs or the user logs in again (research #5 section 4).
+
+        Migration mechanics only, and deliberately not a keyword argument on `reload()` --
+        as a flag it was one wrong argument away from firing on a slider drag (#52 review).
+        The side effects are session-wide and not undone by reloading back: `hyprland.start`
+        never re-fires, so `hl.on("hyprland.start")` autostarts in the new config do not run
+        until a real restart. The wiki's own advice is that it "should not be used unless
+        really necessary", which is why the wizard says so before it runs one.
+
+        Returns nothing, for the same reason `reload()` does: the reply is `"ok"` even when
+        the new config failed to parse, so verification is a `configerrors` read afterwards.
+        """
+        await self._request("reload full-reset", json_output=False)
 
     # --- wire -----------------------------------------------------------------------------
 
