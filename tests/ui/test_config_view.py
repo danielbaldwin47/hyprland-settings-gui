@@ -20,12 +20,19 @@ APP_VERSION = "0.0.0-test"
 
 
 def build_window(tmp_path: Path) -> Any:
-    """A window over a read-only session rooted in a throwaway directory."""
+    """A window over a read-only session rooted in a throwaway directory.
+
+    Switched to the Config view explicitly: since #71 the app opens in the curated Tasks
+    view (#7), and every assertion in this file is about the *generated* arrangement -- one
+    Page per Section, in Hyprland's own order. Leaving the default here would quietly turn
+    this file into a second, worse test of the Tasks view.
+    """
     from gi.repository import Adw
 
     from hyprtweaker.engine.ipc import Instance, NoInstance
     from hyprtweaker.engine.paths import ConfigPaths
     from hyprtweaker.session import Session
+    from hyprtweaker.ui.pages.plan import View
     from hyprtweaker.ui.shell.window import MainWindow
 
     def no_compositor() -> Instance:
@@ -39,7 +46,9 @@ def build_window(tmp_path: Path) -> Any:
         connect=no_compositor,
     )
     app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
-    return session, MainWindow(session, application=app)
+    window = MainWindow(session, application=app)
+    window.set_view(View.CONFIG)
+    return session, window
 
 
 def test_every_section_builds_a_page(tmp_path: Path) -> None:

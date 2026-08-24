@@ -1,0 +1,243 @@
+"""UI smoke tier: the curated Tasks view assembles, and the View choice outlives the window.
+
+Deliberately shallow (spec #48). *Which* Options land on which curated Page is settled in
+`tests/unit/test_ui_tasks_view.py`, where it needs no display; what is left for this tier is
+whether GTK and libadwaita build the curated arrangement, and whether the two things that
+can only be observed across a real window boundary actually hold: that switching Views
+rebuilds the sidebar, and that a restart comes back where the user left off.
+
+The toolkit imports sit inside the test functions on purpose -- module-scope ``gi`` turns a
+machine without PyGObject into a collection error instead of the skip this tier wants.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+APP_VERSION = "0.0.0-test"
+
+
+def build_window(tmp_path: Path) -> Any:
+    """A window over a read-only session rooted in a throwaway directory.
+
+    No `set_view` here: this file is about the arrangement the app opens in by default.
+    """
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.ipc import Instance, NoInstance
+    from hyprtweaker.engine.paths import ConfigPaths
+    from hyprtweaker.session import Session
+    from hyprtweaker.ui.shell.window import MainWindow
+
+    def no_compositor() -> Instance:
+        raise NoInstance("no compositor in the UI smoke tier")
+
+    Adw.init()
+    session = Session(
+        spawn=lambda coro: coro.close(),
+        paths=ConfigPaths.rooted_at(tmp_path),
+        app_version=APP_VERSION,
+        connect=no_compositor,
+    )
+    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    return session, MainWindow(session, application=app)
+
+
+def sidebar_ids(window: Any) -> list[str]:
+    """Every navigable sidebar row, in order. Category headings have no name and drop out."""
+    ids: list[str] = []
+    index = 0
+    while (row := window._sidebar.get_row_at_index(index)) is not None:
+        name = row.get_name()
+        # An unnamed row is a category heading: no Page behind it, not selectable.
+        if name and row.get_selectable():
+            ids.append(name)
+        index += 1
+    return ids
+
+
+# --- the curated view assembles ---------------------------------------------------------------
+
+
+def test_the_app_opens_in_the_tasks_view(tmp_path: Path) -> None:
+    """Tasks is the default (#7): the curated arrangement is what the audience came for."""
+    from hyprtweaker.ui.pages.plan import View
+
+    _session, window = build_window(tmp_path)
+
+    assert window.view is View.TASKS
+    assert window.categories
+
+
+def test_every_curated_page_in_the_mapping_builds(tmp_path: Path) -> None:
+    """AC 1 of #71, asked of a real toolkit rather than of a tuple."""
+    from hyprtweaker.ui.pages.tasks import PageSpec, load_tasks_mapping
+
+    _session, window = build_window(tmp_path)
+
+    curated = [
+        page.id
+        for category in load_tasks_mapping().categories
+        for page in category.pages
+        if isinstance(page, PageSpec)
+    ]
+    built = [page.plan.section for page in window.pages]
+
+    assert built == curated
+    assert all(page.page.get_title() for page in window.pages)
+
+
+def test_the_four_categories_appear_as_headings(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path)
+
+    assert [category.title for category in window.categories] == [
+        "Look",
+        "Windows",
+        "Input",
+        "System",
+    ]
+
+
+def test_every_entity_page_is_reachable_from_the_curated_sidebar(tmp_path: Path) -> None:
+    """The curated view may rename and regroup, but it may not lose a destination (#7)."""
+    _session, window = build_window(tmp_path)
+
+    listed = set(sidebar_ids(window))
+    entities = {page.section for page in window.declaration_pages}
+
+    assert entities <= listed
+    assert {"binds", "monitors", "window_rules", "layer_rules"} <= listed
+
+
+def test_no_sidebar_row_points_at_a_page_that_was_not_built(tmp_path: Path) -> None:
+    """A row with no Page behind it selects into an empty content pane."""
+    _session, window = build_window(tmp_path)
+
+    for section in sidebar_ids(window):
+        assert window._stack.get_child_by_name(section) is not None
+
+
+def test_a_curated_heading_with_an_ampersand_is_not_swallowed_by_pango(
+    tmp_path: Path,
+) -> None:
+    """`Adw.PreferencesGroup` parses its title as markup, so a bare "&" renders as nothing.
+
+    The failure is silent -- an empty heading and a `Gtk-WARNING` nobody reads -- and it is
+    reachable from curated data alone, which is why it is pinned here rather than left to
+    whoever next writes an ampersand into `tasks.json`.
+    """
+    _session, window = build_window(tmp_path)
+
+    headings = [
+        group.get_title()
+        for page in window.pages
+        for group in _groups(page.page)
+        if group.get_title()
+    ]
+
+    assert "Splash &amp; wallpaper" in headings
+    assert "Splash & wallpaper" not in headings
+
+
+def _groups(page: Any) -> list[Any]:
+    """Every `PreferencesGroup` on a page, without assuming libadwaita's internal boxing."""
+    from gi.repository import Adw
+
+    found: list[Any] = []
+    stack = [page]
+    while stack:
+        widget = stack.pop()
+        child = widget.get_first_child()
+        while child is not None:
+            if isinstance(child, Adw.PreferencesGroup):
+                found.append(child)
+            else:
+                stack.append(child)
+            child = child.get_next_sibling()
+    return found
+
+
+# --- switching, and remembering --------------------------------------------------------------
+
+
+def test_switching_to_config_rebuilds_the_sidebar_as_one_page_per_section(
+    tmp_path: Path,
+) -> None:
+    from hyprtweaker.ui.pages.plan import View
+
+    session, window = build_window(tmp_path)
+    window.set_view(View.CONFIG)
+
+    assert [page.plan.section for page in window.pages] == list(session.schema.section_names)
+    assert window.categories == ()
+
+
+def test_switching_back_and_forth_leaves_the_curated_view_intact(tmp_path: Path) -> None:
+    """A rebuild that leaked state would show up as pages accumulating or vanishing."""
+    from hyprtweaker.ui.pages.plan import View
+
+    _session, window = build_window(tmp_path)
+    before = [page.plan.section for page in window.pages]
+
+    window.set_view(View.CONFIG)
+    window.set_view(View.TASKS)
+
+    assert [page.plan.section for page in window.pages] == before
+
+
+def test_the_view_choice_survives_a_restart(tmp_path: Path) -> None:
+    """AC 4 of #71, end to end: a second window over the same state dir opens in Config."""
+    from hyprtweaker.ui.pages.plan import View
+
+    _session, window = build_window(tmp_path)
+    window.set_view(View.CONFIG)
+
+    _again, reopened = build_window(tmp_path)
+
+    assert reopened.view is View.CONFIG
+
+
+def test_the_advanced_switch_is_remembered_too(tmp_path: Path) -> None:
+    """ADR-0019 names it alongside the View choice, and #56 left it session-scoped."""
+    from hyprtweaker.ui.shell.window import SHOW_ADVANCED_ACTION
+
+    _session, window = build_window(tmp_path)
+    # Through the action map rather than `activate_action`: widget-level activation walks a
+    # muxer that an unrooted window has not got, and silently does nothing.
+    window.lookup_action(SHOW_ADVANCED_ACTION).activate(None)
+    assert window.show_advanced
+
+    _again, reopened = build_window(tmp_path)
+
+    assert reopened.show_advanced
+
+
+def test_remembering_the_view_writes_only_to_the_state_dir(tmp_path: Path) -> None:
+    """The second half of AC 4: the Hyprland config model is not touched by a preference.
+
+    Prefs living beside the config would put app churn into the user's dotfile repo, which
+    is exactly what ADR-0005 and ADR-0019 place in `$XDG_STATE_HOME` to avoid.
+    """
+    from hyprtweaker.ui.pages.plan import View
+
+    session, window = build_window(tmp_path)
+    before = sorted(path.name for path in (tmp_path / "hypr").rglob("*"))
+
+    window.set_view(View.CONFIG)
+
+    assert sorted(path.name for path in (tmp_path / "hypr").rglob("*")) == before
+    assert (session.paths.state_dir / "prefs.json").is_file()
+
+
+def test_an_unreadable_prefs_file_still_opens_a_window(tmp_path: Path) -> None:
+    """A preference is never worth failing to start over (ADR-0019)."""
+    from hyprtweaker.ui.pages.plan import View
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "prefs.json").write_text("{ truncated", encoding="utf-8")
+
+    _session, window = build_window(tmp_path)
+
+    assert window.view is View.TASKS

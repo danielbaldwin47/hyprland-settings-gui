@@ -19,6 +19,7 @@ package_sources = {
     'entities_catalog.py',
     'monitors_catalog.py',
     'paths.py',
+    'prefs.py',
     'profiles.py',
     'rules_catalog.py',
     'triggers.py',
@@ -129,6 +130,7 @@ package_sources = {
     'monitors.py',
     'plan.py',
     'rules.py',
+    'tasks.py',
   ],
   'hyprtweaker/ui/rows': [
     '__init__.py',

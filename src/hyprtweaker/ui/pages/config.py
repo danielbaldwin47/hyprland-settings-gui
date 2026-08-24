@@ -13,7 +13,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw  # noqa: E402
+from gi.repository import Adw, GLib  # noqa: E402
 
 from hyprtweaker.ui.pages.plan import PagePlan  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
@@ -29,7 +29,7 @@ class ConfigPage:
 
         self._page = Adw.PreferencesPage(title=plan.title)
         for group_plan in plan.groups:
-            group = Adw.PreferencesGroup(title=group_plan.title)
+            group = Adw.PreferencesGroup(title=_escaped(group_plan.title))
             for option in group_plan.options:
                 row = factory.build(option)
                 self._rows.append(row)
@@ -84,6 +84,20 @@ class ConfigPage:
         """
         for row in self._rows:
             row.chrome.refresh()
+
+
+def _escaped(title: str) -> str:
+    """A Group heading, safe to hand to libadwaita.
+
+    `Adw.PreferencesGroup` parses its title as Pango markup, so a curated heading with an
+    ampersand in it -- "Splash & wallpaper" -- renders as *nothing at all*, with only a
+    `Gtk-WARNING` on stderr to say so. That is the same trap #56 hit with Row titles, and it
+    bites here the moment headings become curated data (#71's mapping, and #82's Overlay
+    `group`): a curator writing plain English has no reason to expect their heading to
+    vanish. Escaping here rather than in the data keeps the plan's titles plain text --
+    the sidebar and the tests read the same strings, and `&amp;` never leaks on screen.
+    """
+    return GLib.markup_escape_text(title)
 
 
 def _withheld_group(plan: PagePlan) -> Adw.PreferencesGroup:
