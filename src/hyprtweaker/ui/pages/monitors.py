@@ -35,6 +35,7 @@ from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     DISPLAY_BREAKING_FIELDS,
     SPECIAL_MODES,
     TRANSFORM_NAMES,
+    description_of,
     disconnected_rules,
     format_mode,
     format_position,
@@ -69,6 +70,8 @@ class MonitorActions:
 
     apply_breaking: Callable[[str, Mapping[str, Any]], None]
     apply_benign: Callable[[str, Mapping[str, Any]], None]
+    rename: Callable[[str, str], None]
+    """Change a rule's identity string -- the "Match by" toggle (ADR-0008)."""
     remove: Callable[[str], None]
 
 
@@ -273,8 +276,8 @@ class MonitorsPage:
         self._disconnected_group = Adw.PreferencesGroup(
             title="Not connected",
             description=(
-                "Rules for displays that are not plugged in right now -- a dock, a TV. "
-                "They apply the moment their display returns."
+                "Rules for displays that are not plugged in right now, such as a dock "
+                "or a TV. They apply the moment their display returns."
             ),
         )
         self._page.add(self._disconnected_group)
@@ -317,6 +320,26 @@ class MonitorsPage:
     @property
     def rules(self) -> list[MonitorRule]:
         return list(self._session.monitor_rules)
+
+    @property
+    def unruled_outputs(self) -> tuple[str, ...]:
+        """Connected outputs with no matching rule -- the hotplug hint's subjects.
+
+        What the "No rule yet" badge and the canvas's dashed outline both key on,
+        exposed so the smoke tier asserts the *condition* rather than walking suffix
+        widgets (probe-before-screenshot).
+        """
+        rules = self._session.monitor_rules
+        return tuple(
+            str(monitor.get("name", ""))
+            for monitor in self._connected or ()
+            if rule_for(
+                rules,
+                connector=str(monitor.get("name", "")),
+                description=str(monitor.get("description", "")),
+            )
+            is None
+        )
 
     def set_connected(self, monitors: tuple[Mapping[str, Any], ...] | None) -> None:
         """Fresh `hyprctl -j monitors` data, or `None` when nobody answered.
@@ -450,6 +473,31 @@ class MonitorsPage:
         output = rule.output if rule is not None else self.identity_for(monitor)
         fields: Mapping[str, Any] = rule.fields if rule is not None else {}
 
+        if rule is not None:
+            # The per-rule identity toggle (ADR-0008): the same rule addressed by what
+            # the display *is* or by where it is plugged in. Only offered once a rule
+            # exists -- before that, the first edit picks desc-when-unique on its own.
+            match_by = Adw.ComboRow(
+                title="Match by",
+                subtitle="A description survives replug; a port survives identical twins.",
+                model=Gtk.StringList.new(
+                    [
+                        f"This exact display ({description or 'no description'})",
+                        f"Port {connector}",
+                    ]
+                ),
+            )
+            match_by.set_selected(0 if description_of(rule.output) is not None else 1)
+            match_by.set_sensitive(editable and bool(description))
+            match_by.connect(
+                "notify::selected",
+                self._on_match_by_selected,
+                rule.output,
+                connector,
+                description,
+            )
+            row.add_row(match_by)
+
         enabled = Adw.SwitchRow(title="Enabled", active=not bool(fields.get("disabled")))
         enabled.set_sensitive(editable)
         enabled.connect(
@@ -491,6 +539,39 @@ class MonitorsPage:
         )
         row.add_row(rotation)
 
+        others = ["none"] + [
+            str(m.get("name", ""))
+            for m in self._connected or ()
+            if str(m.get("name", "")) != connector
+        ]
+        mirror_value = str(fields.get("mirror", "none")) or "none"
+        if mirror_value not in others:
+            others.append(mirror_value)
+        mirror = Adw.ComboRow(
+            title="Mirror",
+            subtitle="Show another display's picture instead of an extended desktop.",
+            model=Gtk.StringList.new(others),
+        )
+        mirror.set_selected(others.index(mirror_value))
+        mirror.set_sensitive(editable and len(others) > 1)
+        mirror.connect(
+            "notify::selected",
+            lambda combo, _p: self._apply(output, {"mirror": others[combo.get_selected()]}),
+        )
+        row.add_row(mirror)
+
+        ten_bit = Adw.SwitchRow(
+            title="10-bit color",
+            subtitle="Ask for 10 bits per channel; not every display honours it.",
+            active=_int_or(fields.get("bitdepth", 8), 8) == 10,
+        )
+        ten_bit.set_sensitive(editable)
+        ten_bit.connect(
+            "notify::active",
+            lambda sw, _p: self._apply(output, {"bitdepth": 10 if sw.get_active() else 8}),
+        )
+        row.add_row(ten_bit)
+
         vrr_labels = [label for label, _ in _VRR_CHOICES]
         vrr = Adw.ComboRow(title="Variable refresh rate", model=Gtk.StringList.new(vrr_labels))
         vrr_value = _int_or(fields.get("vrr", -1), -1)
@@ -507,6 +588,20 @@ class MonitorsPage:
         row.add_row(vrr)
 
         return row
+
+    def _on_match_by_selected(
+        self,
+        combo: Adw.ComboRow,
+        _param: Any,
+        current: str,
+        connector: str,
+        description: str,
+    ) -> None:
+        if self._building:
+            return
+        wanted = f"desc:{description}" if combo.get_selected() == 0 else connector
+        if wanted != current:
+            self._actions.rename(current, wanted)
 
     def _on_mode_selected(
         self, combo: Adw.ComboRow, _param: Any, output: str, modes: list[str]
@@ -564,7 +659,9 @@ class MonitorsPage:
             if value is not None:
                 widget.set_text(str(value))
             widget.set_sensitive(editable)
-            widget.connect("apply", lambda w: self._apply_text(lane, output, key, w.get_text()))
+            widget.connect(
+                "apply", lambda w: self._apply_text(output, key, w.get_text(), lane=lane)
+            )
             return widget
 
         row.add_row(entry("Mode", "mode"))
@@ -575,7 +672,7 @@ class MonitorsPage:
         enabled.set_sensitive(editable)
         enabled.connect(
             "notify::active",
-            lambda sw, _p: self._apply_via(lane, output, {"disabled": not sw.get_active()}),
+            lambda sw, _p: self._apply(output, {"disabled": not sw.get_active()}, lane=lane),
         )
         row.add_row(enabled)
 
@@ -592,13 +689,12 @@ class MonitorsPage:
 
     def _apply_text(
         self,
-        lane: Callable[[str, Mapping[str, Any]], None],
         output: str,
         key: str,
         text: str,
+        *,
+        lane: Callable[[str, Mapping[str, Any]], None],
     ) -> None:
-        if self._building:
-            return
         value: Any = text.strip()
         if not value:
             return
@@ -608,27 +704,31 @@ class MonitorsPage:
             except ValueError:
                 return
             value = int(number) if number.is_integer() else number
-        lane(output, {key: value})
+        self._apply(output, {key: value}, lane=lane)
 
-    # -- the apply seams --
+    # -- the apply seam --
 
-    def _apply(self, output: str, fields: Mapping[str, Any]) -> None:
-        """Route one edit to its lane: breaking fields to Confirm-or-revert (ADR-0008)."""
-        if self._building:
-            return
-        if any(key in DISPLAY_BREAKING_FIELDS for key in fields):
-            self._actions.apply_breaking(output, fields)
-        else:
-            self._actions.apply_benign(output, fields)
-
-    def _apply_via(
+    def _apply(
         self,
-        lane: Callable[[str, Mapping[str, Any]], None],
         output: str,
         fields: Mapping[str, Any],
+        *,
+        lane: Callable[[str, Mapping[str, Any]], None] | None = None,
     ) -> None:
+        """Route one edit to its lane: breaking fields to Confirm-or-revert (ADR-0008).
+
+        `lane` overrides the routing for the rows that know better than the field name --
+        a disconnected display's edits are all benign, because there is no picture its
+        absent display could break.
+        """
         if self._building:
             return
+        if lane is None:
+            lane = (
+                self._actions.apply_breaking
+                if any(key in DISPLAY_BREAKING_FIELDS for key in fields)
+                else self._actions.apply_benign
+            )
         lane(output, fields)
 
     def _on_display_moved(self, name: str, x: int, y: int) -> None:

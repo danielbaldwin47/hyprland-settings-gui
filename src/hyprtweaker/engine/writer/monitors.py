@@ -25,8 +25,7 @@ from ..model.entities import EntitySet, MonitorRule, WorkspaceRule
 from ..model.values import lua_string
 from ..paths import MONITORS_MODULE
 from .binds import lua_value
-from .lua import table_key
-from .rules import _render
+from .lua import render_entity_module, table_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +68,7 @@ def render_monitors_module(rules: list[MonitorRule], *, app_version: str) -> str
     `None` rather than an empty file so the writer prunes the Module -- absence is how
     this config model spells "no monitor rules", the same as for binds and rules.
     """
-    return _render(
+    return render_entity_module(
         [render_monitor_rule(rule) for rule in rules],
         comment='Monitor rules. One rule per output; "" is any other display.',
         app_version=app_version,
@@ -80,7 +79,7 @@ def render_workspace_rules_module(
     rules: list[WorkspaceRule], *, app_version: str
 ) -> str | None:
     """The whole `workspace_rules.lua`, or `None` when there is nothing to write."""
-    return _render(
+    return render_entity_module(
         [render_workspace_rule(rule) for rule in rules],
         comment="Workspace rules. One rule per selector; Hyprland merges duplicates.",
         app_version=app_version,

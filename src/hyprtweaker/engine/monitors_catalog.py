@@ -193,6 +193,16 @@ def preferred_identity(
     return connector
 
 
+def description_of(rule_output: str) -> str | None:
+    """The description a `desc:` identity names, or `None` for a connector identity.
+
+    The one place the `desc:` prefix is peeled, so no caller re-spells the literal.
+    """
+    if rule_output.startswith(_DESC_PREFIX):
+        return rule_output[len(_DESC_PREFIX) :].strip()
+    return None
+
+
 def rule_matches_output(rule_output: str, *, connector: str, description: str) -> bool:
     """Whether a rule's `output` string speaks for this connected display.
 
@@ -204,8 +214,8 @@ def rule_matches_output(rule_output: str, *, connector: str, description: str) -
     """
     if rule_output == CATCH_ALL_OUTPUT:
         return False
-    if rule_output.startswith(_DESC_PREFIX):
-        wanted = rule_output[len(_DESC_PREFIX) :].strip()
+    wanted = description_of(rule_output)
+    if wanted is not None:
         return bool(wanted) and description.strip().startswith(wanted)
     return rule_output == connector
 
@@ -266,6 +276,7 @@ __all__ = [
     "SPECIAL_MODES",
     "TRANSFORM_NAMES",
     "connected_rules",
+    "description_of",
     "disconnected_rules",
     "format_mode",
     "format_position",

@@ -33,7 +33,7 @@ from ..model.entities import EntitySet, LayerRule, WindowRule
 from ..model.values import lua_string
 from ..paths import WINDOW_RULES_MODULE
 from .binds import lua_value
-from .lua import GENERATED_BANNER, table_key
+from .lua import render_entity_module, table_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,29 +85,13 @@ def render_layer_rule(rule: LayerRule) -> str:
     return f"hl.layer_rule({_spec_table(rule)})"
 
 
-def _render(rules: list[str], *, comment: str, app_version: str) -> str | None:
-    """The shared module shell: banner, one comment line, one call per line.
-
-    `None` for an empty list so the writer prunes the Module -- absence is how this
-    config model spells "no rules", the same as for binds.
-    """
-    if not rules:
-        return None
-    header = (
-        f"{GENERATED_BANNER.format(version=app_version)}\n"
-        f"-- {comment}\n"
-        f"-- Edits here are read back into the app, not overwritten.\n"
-    )
-    return header + "\n" + "\n".join(rules) + "\n"
-
-
 def render_window_rules_module(rules: list[WindowRule], *, app_version: str) -> str | None:
     """The whole `window_rules.lua`, or `None` when there is nothing to write.
 
     `None` rather than an empty file so the writer prunes the Module -- absence is how
     this config model spells "no rules", the same as for binds.
     """
-    return _render(
+    return render_entity_module(
         [render_window_rule(rule) for rule in rules],
         comment="Window rules. Order is meaning: later rules win per effect.",
         app_version=app_version,
@@ -116,7 +100,7 @@ def render_window_rules_module(rules: list[WindowRule], *, app_version: str) -> 
 
 def render_layer_rules_module(rules: list[LayerRule], *, app_version: str) -> str | None:
     """The whole `layer_rules.lua`, or `None` when there is nothing to write."""
-    return _render(
+    return render_entity_module(
         [render_layer_rule(rule) for rule in rules],
         comment="Layer rules. Order is meaning: later rules win per effect.",
         app_version=app_version,

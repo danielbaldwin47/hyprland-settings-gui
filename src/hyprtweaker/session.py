@@ -757,23 +757,32 @@ class Session:
 
     # --- monitor rules ----------------------------------------------------------------------
 
+    def _commit_entity_edit(self, what: str, mutate: Callable[[], None]) -> bool:
+        """The write gate every monitor and workspace rule edit shares.
+
+        Refuse on a read-only session (leaving the model alone, `_refuse`), run the
+        mutation, commit one entity transaction. Extracted so the keyed edits below --
+        which address rules by identity string rather than through a list -- do not each
+        hand-copy the refuse/commit envelope. Like the bind and rule edits, deliberately
+        not on the undo stack (the same Entity-undo leftover); undo matters least here,
+        because display-breaking edits ride Confirm-or-revert, its own take-back.
+        """
+        if self._refuse(what):
+            return False
+        mutate()
+        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
+        return True
+
     @property
     def monitor_rules(self) -> list[MonitorRule]:
         """The live monitor rule list. Identity is the `output` string (ADR-0008)."""
         return self._model.entities.monitors
 
     def edit_monitor_rules(self, mutate: Callable[[list[MonitorRule]], None]) -> bool:
-        """Change the monitor rule list and write it, returning whether it was accepted.
-
-        Shaped like `edit_rules`, refusal and all -- and like it deliberately not on the
-        undo stack (the same Entity-undo leftover). Undo matters less here than anywhere:
-        display-breaking edits ride Confirm-or-revert, which is its own take-back.
-        """
-        if self._refuse("monitor rules"):
-            return False
-        mutate(self._model.entities.monitors)
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        return True
+        """Change the monitor rule list and write it, returning whether it was accepted."""
+        return self._commit_entity_edit(
+            "monitor rules", lambda: mutate(self._model.entities.monitors)
+        )
 
     def patch_monitor_rule(self, output: str, fields: Mapping[str, Any]) -> bool:
         """Merge `fields` into the rule for `output`, creating it if it has none.
@@ -782,22 +791,43 @@ class Session:
         the per-monitor rows each own one field, and a row that replaced the whole rule
         would erase every sibling's value on each toggle.
         """
-
-        def merge(rules: list[MonitorRule]) -> None:
-            del rules  # the adder addresses the same live list by identity
-            self._model.entities.add_monitor_rule(
+        return self._commit_entity_edit(
+            "monitor rules",
+            lambda: self._model.entities.add_monitor_rule(
                 MonitorRule(output=output, fields=dict(fields)), merge=True
-            )
+            ),
+        )
 
-        return self.edit_monitor_rules(merge)
+    def rename_monitor_rule(self, output: str, to: str) -> bool:
+        """Change a rule's identity string, keeping its fields and position.
+
+        The "Match by" toggle (ADR-0008): the same rule addressed as `desc:<description>`
+        or as the port. Refused when `to` already names a rule -- silently fusing two
+        rules the user meant as distinct would discard one of them -- and a no-op rename
+        is accepted without a write.
+        """
+        if output == to:
+            return True
+        rules = self._model.entities.monitors
+        if any(rule.output == to for rule in rules):
+            return False
+        index = next((i for i, rule in enumerate(rules) if rule.output == output), None)
+        if index is None:
+            return False
+
+        def rename() -> None:
+            rules[index] = replace(rules[index], output=to)
+
+        return self._commit_entity_edit("monitor rules", rename)
 
     def remove_monitor_rule(self, output: str) -> bool:
         """Delete the rule whose identity is `output`."""
 
-        def drop(rules: list[MonitorRule]) -> None:
+        def drop() -> None:
+            rules = self._model.entities.monitors
             rules[:] = [rule for rule in rules if rule.output != output]
 
-        return self.edit_monitor_rules(drop)
+        return self._commit_entity_edit("monitor rules", drop)
 
     def monitor_snapshot(self) -> tuple[MonitorRule, ...]:
         """The monitor rule list as it stands -- what Confirm-or-revert restores to.
@@ -853,54 +883,43 @@ class Session:
 
     def edit_workspace_rules(self, mutate: Callable[[list[WorkspaceRule]], None]) -> bool:
         """Change the workspace rule list and write it. Shaped like `edit_monitor_rules`."""
-        if self._refuse("workspace rules"):
-            return False
-        mutate(self._model.entities.workspace_rules)
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        return True
+        return self._commit_entity_edit(
+            "workspace rules", lambda: mutate(self._model.entities.workspace_rules)
+        )
 
     def save_workspace_rule(self, rule: WorkspaceRule, *, original: str | None = None) -> bool:
         """Add a workspace rule, or replace the one whose selector was `original`.
 
         One rule per selector, enforced here rather than trusted to the UI (ADR-0008:
-        Hyprland merges duplicates, so a second row would be a lie). Adding an existing
-        selector merges field-wise -- exactly what the compositor would have done --
-        while *renaming* onto a taken selector is refused, because silently fusing two
-        rules the user meant as distinct discards one of them.
+        Hyprland merges duplicates, so a second row would be a lie). Saving onto a
+        selector another rule already holds is refused -- the UI's move is to focus the
+        existing row (ADR-0008), and silently fusing two rules would discard one. The
+        session seam for the Workspaces page (its own ticket); the writer-level merge is
+        gated separately by the golden tests.
         """
-        if self._refuse("workspace rules"):
+        rules = self._model.entities.workspace_rules
+        if rule.workspace != original and any(
+            existing.workspace == rule.workspace for existing in rules
+        ):
             return False
 
-        entities = self._model.entities
-        if original is None or original == rule.workspace:
-            replaced = False
-            if original is not None:
-                for index, existing in enumerate(entities.workspace_rules):
-                    if existing.workspace == original:
-                        entities.workspace_rules[index] = rule
-                        replaced = True
-                        break
-            if not replaced:
-                entities.add_workspace_rule(rule)
-        else:
-            if any(r.workspace == rule.workspace for r in entities.workspace_rules):
-                return False
-            for index, existing in enumerate(entities.workspace_rules):
+        def save() -> None:
+            for index, existing in enumerate(rules):
                 if existing.workspace == original:
-                    entities.workspace_rules[index] = rule
-                    break
-            else:
-                entities.add_workspace_rule(rule)
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        return True
+                    rules[index] = rule
+                    return
+            rules.append(rule)
+
+        return self._commit_entity_edit("workspace rules", save)
 
     def remove_workspace_rule(self, selector: str) -> bool:
         """Delete the rule whose identity is `selector`."""
 
-        def drop(rules: list[WorkspaceRule]) -> None:
+        def drop() -> None:
+            rules = self._model.entities.workspace_rules
             rules[:] = [rule for rule in rules if rule.workspace != selector]
 
-        return self.edit_workspace_rules(drop)
+        return self._commit_entity_edit("workspace rules", drop)
 
     # --- helper data ------------------------------------------------------------------------
 

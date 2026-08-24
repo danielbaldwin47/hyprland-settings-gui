@@ -81,6 +81,7 @@ class Recorder:
     def __init__(self) -> None:
         self.breaking: list[tuple[str, dict[str, Any]]] = []
         self.benign: list[tuple[str, dict[str, Any]]] = []
+        self.renamed: list[tuple[str, str]] = []
         self.removed: list[str] = []
 
 
@@ -96,6 +97,7 @@ def build_page(rules: list[Any]) -> tuple[Any, Recorder]:
         actions=MonitorActions(
             apply_breaking=lambda o, f: recorder.breaking.append((o, dict(f))),
             apply_benign=lambda o, f: recorder.benign.append((o, dict(f))),
+            rename=lambda o, t: recorder.renamed.append((o, t)),
             remove=recorder.removed.append,
         ),
     )
@@ -221,9 +223,52 @@ def test_disconnected_rule_edits_use_the_instant_lane() -> None:
 
     row = page.disconnected_rows[0]
     assert row is not None
-    # Its display is absent, so a field edit cannot break the picture: benign lane.
-    page._apply_via(page._actions.apply_benign, "DP-9", {"position": "0x0"})
+    # Its display is absent, so a field edit cannot break the picture: the row pins the
+    # benign lane even for a field the router would otherwise treat as breaking.
+    page._apply("DP-9", {"position": "0x0"}, lane=page._actions.apply_benign)
     assert recorder.benign == [("DP-9", {"position": "0x0"})]
+    assert recorder.breaking == []
+
+
+def test_unruled_outputs_is_the_hotplug_hints_condition() -> None:
+    page, _recorder = build_page([monitor_rule("desc:BOE 0x0791", scale=1.5)])
+    page.set_connected(MONITORS)
+
+    assert page.unruled_outputs == ("DP-3",)
+
+
+def test_match_by_toggle_renames_the_rule() -> None:
+    page, recorder = build_page([monitor_rule("desc:BOE 0x0791", scale=1.5)])
+    page.set_connected(MONITORS)
+
+    page._on_match_by_selected(_FakeCombo(1), None, "desc:BOE 0x0791", "eDP-1", "BOE 0x0791")
+    assert recorder.renamed == [("desc:BOE 0x0791", "eDP-1")]
+
+    # Re-selecting the form the rule already has is a no-op, not a churn write.
+    page._on_match_by_selected(_FakeCombo(0), None, "desc:BOE 0x0791", "eDP-1", "BOE 0x0791")
+    assert recorder.renamed == [("desc:BOE 0x0791", "eDP-1")]
+
+
+class _FakeCombo:
+    def __init__(self, selected: int) -> None:
+        self._selected = selected
+
+    def get_selected(self) -> int:
+        return self._selected
+
+
+def test_mirror_and_bitdepth_route_to_the_confirm_lane() -> None:
+    page, recorder = build_page([])
+    page.set_connected(MONITORS)
+
+    page._apply("desc:BOE 0x0791", {"mirror": "DP-3"})
+    page._apply("desc:BOE 0x0791", {"bitdepth": 10})
+
+    assert [fields for _, fields in recorder.breaking] == [
+        {"mirror": "DP-3"},
+        {"bitdepth": 10},
+    ]
+    assert recorder.benign == []
 
 
 def test_confirm_revert_dialog_defaults_to_revert() -> None:
@@ -238,8 +283,10 @@ def test_confirm_revert_dialog_defaults_to_revert() -> None:
     )
 
     # Every way out that is not the Keep button reverts: Esc and the window closing
-    # share the close response, and the countdown ends in close().
+    # share the close response, the countdown ends in close(), and a blind Enter on a
+    # black screen must not lock in the settings that blackened it.
     assert dialog.get_close_response() == "revert"
+    assert dialog.get_default_response() == "revert"
 
     assert dialog.tick() is True
     assert dialog.remaining == 2

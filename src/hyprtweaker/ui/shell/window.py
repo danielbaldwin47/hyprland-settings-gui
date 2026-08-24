@@ -547,6 +547,7 @@ class MainWindow(Adw.ApplicationWindow):
             actions=MonitorActions(
                 apply_breaking=self._apply_monitor_breaking,
                 apply_benign=self._apply_monitor_benign,
+                rename=self._rename_monitor_rule,
                 remove=self._remove_monitor_rule,
             ),
         )
@@ -747,6 +748,11 @@ class MainWindow(Adw.ApplicationWindow):
         if self._session.patch_monitor_rule(output, fields):
             self._refresh_monitors()
 
+    def _rename_monitor_rule(self, output: str, to: str) -> None:
+        """The "Match by" toggle: same rule, other identity string (ADR-0008)."""
+        if self._session.rename_monitor_rule(output, to):
+            self._refresh_monitors()
+
     def _remove_monitor_rule(self, output: str) -> None:
         if self._session.remove_monitor_rule(output):
             self._refresh_monitors()
@@ -756,9 +762,15 @@ class MainWindow(Adw.ApplicationWindow):
         self._refresh_monitors()
 
     def _refresh_monitors(self) -> None:
+        """Re-fetch the connected outputs; the answer rebuilds the page.
+
+        One rebuild, not two: `fetch_monitors` always answers -- synchronously with
+        `None` when nobody is listening, asynchronously with data when Hyprland is --
+        and `set_connected` rebuilds on either, so refreshing here first would pay for
+        every edit twice.
+        """
         if self._monitors_page is None:
             return
-        self._monitors_page.refresh()
         self._session.fetch_monitors(self._monitors_page.set_connected)
         self.sync()
 

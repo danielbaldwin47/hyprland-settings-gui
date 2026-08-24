@@ -49,7 +49,10 @@ class ConfirmRevertDialog(Adw.AlertDialog):
         self.add_response("revert", "Revert")
         self.add_response("keep", "Keep changes")
         self.set_response_appearance("keep", Adw.ResponseAppearance.SUGGESTED)
-        self.set_default_response("keep")
+        # Enter reverts too: on a display the change just broke, the keyboard is the
+        # only input the user can still aim, and a blind Enter must not lock in the
+        # very settings that blinded them. Keep keeps the *visual* emphasis instead.
+        self.set_default_response("revert")
         # Esc, the window closing, the countdown -- every way out that is not the Keep
         # button is a revert. On a broken display they are the only ways out there are.
         self.set_close_response("revert")
@@ -98,6 +101,6 @@ class ConfirmRevertDialog(Adw.AlertDialog):
 
 def _body(remaining: int) -> str:
     return (
-        "The new settings are applied. If this display no longer looks right -- or no "
-        f"longer shows anything -- the previous settings come back in {remaining} s."
+        "The new settings are applied. If this display no longer looks right, or no "
+        f"longer shows anything, the previous settings come back in {remaining} s."
     )
