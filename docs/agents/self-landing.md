@@ -4,11 +4,14 @@ Agents merge their own PRs in this repo — background agents included. Putting 
 
 ## Gates
 
-All three must hold before merging:
+All four must hold before merging:
 
 1. **Tests green** on the branch: the PR's CI checks all pass (`gh pr checks <n>` — the workflow runs ruff, mypy, and the meson test suite). Locally, `meson test -C build` covers the same suite.
-2. **Review clean** — `/code-review` has run and the PR body carries `Review: clean`. Findings held → write `Review: findings held` instead and leave the PR for a human.
-3. **Base is `main`.** A PR stacked on an unmerged branch waits: once its base lands, retarget to `main`, rebase, and re-check these gates.
+2. **Review verdict, cross-checked.** `/code-review` has run and each review subagent has posted its own verdict as a PR comment — first line `Verdict: clean` / `Verdict: findings-<n>` / `Verdict: held`, one line per finding, a contemporaneous record written at review time. When findings were fixed, the fix batch carries a delta re-review comment of its own. The PR body line matches: `Review: clean` (no findings), `Review: fixed-<n>` (findings fixed, delta comment clean), or `Review: findings held`. The body line alone authorizes nothing — the gate counts findings in the comments against the line. Held, disagreeing, or missing comments → the PR stays for a human.
+3. **Base is `main`.** A PR stacked on an unmerged branch waits: once its base lands, retarget to `main`, rebase, and re-check these gates. A dispatcher may perform that retarget/rebase/land mid-run the moment the base clears — base-gate holds only; review-held PRs always wait for the human.
+4. **Acceptance evidence is citable.** CI green is necessary, not sufficient: when a ticket's acceptance proof lives outside CI — the nested-compositor integration tier, or the UI verification CLAUDE.md requires for UI-facing work — the PR body cites the local run: command, pass count, HEAD SHA it ran against. No citation, no merge. After any rebase, the citation is stale: re-run the tier before landing.
+
+A PR whose diff touches `.github/workflows/`, `tests/golden/`, or `docs/adr/` is modifying its own gate inputs: it declares them in the body under `Self-gate changes:`. The gate check greps the diff for those paths — present but undeclared holds the PR.
 
 ## Merge
 
@@ -34,4 +37,4 @@ Last act because removing the worktree you stand in leaves the shell in a delete
 
 ## Held PRs
 
-A PR held by any gate stays open with a comment naming the gate. Close the ticket anyway, linking the PR — the ticket tracks the work existing, not the merge.
+A PR held by any gate stays open — **marked ready, never left in draft** — with a comment naming the gate. Close the ticket anyway, linking the PR — the ticket tracks the work existing, not the merge. During a dispatch run, the dispatcher lands base-gate holds as their bases clear, per gate 3.

@@ -40,7 +40,7 @@ Shared venv at `.venv` (system-site-packages: `gi` importable; ruff, mypy, pytes
 
 ### Orientation
 
-Read `CONTEXT.md` (95 lines) first; delegate anything broader to a read-only subagent (`cavecrew-investigator` / Explore) and take targeted-range reads only — whole-file surveys of this repo have cost sessions 90k+ context. Map:
+Read `CONTEXT.md` first; delegate anything broader to a read-only subagent (`cavecrew-investigator` / Explore) and take targeted-range reads only — whole-file surveys of this repo have cost sessions 90k+ context. Map:
 
 - `src/hyprtweaker/engine/` — config engine: `importer/` (hyprlang → model), `schema/` (option schema: sources/resolve/infer), `model/` (options, values), `writer/` (Lua emit), `apply/` (transaction pipeline), `ipc/` (hyprctl commands/events), `state/` (manifest)
 - `src/hyprtweaker/session.py` — session layer bridging engine and UI
@@ -51,10 +51,14 @@ Read `CONTEXT.md` (95 lines) first; delegate anything broader to a read-only sub
 
 Probe widget state programmatically (properties, adjustments) before any screenshot loop — a scroll bug once burned 10 screenshot cycles that two probes settled. When a screenshot is warranted, crop to the app window, not the full output.
 
+A ticket whose deliverable is UI-facing (a page, dialog, or widget the user sees) requires at least one verification beyond the headless test tiers — a programmatic widget probe of the running app or a cropped screenshot — stated in the PR body. One leg rewrote the entire Binds page and never once looked at it; green smoke tests are assembly proof, not appearance or interaction proof.
+
 ### Live probes
 
 Hyprland is installed; settle spec/behavior disputes with `hyprctl` (`-j` for JSON) against the running compositor rather than by reading docs harder.
 
+Probes that *mutate* the running compositor (`hyprctl keyword`, `hyprctl reload`, temporary binds) snapshot the touched state first and restore + verify it after — this is the human's live session, not a fixture. Count what you changed (e.g. bind count before/after) and say so in the transcript.
+
 ### Ticket sizing (`/to-tickets` sessions)
 
-Budget one implementing session ≈ 120k context per ticket: one package or subsystem, its tests included. Heavy UI-visual verification splits into its own ticket. Every ticket of one audited 7-ticket run overshot this 1.4–3.5x — err small.
+Budget one implementing session ≈ 120k context per ticket: one package or subsystem, its tests included. Heavy UI-visual verification splits into its own ticket. Every ticket of one audited 7-ticket run overshot this 1.4–3.5x — err small. Every blocking edge names the artifact it waits for ("needs class X from #N's diff") — topic adjacency is not an edge: one wrong edge cost a leg 173 idle minutes, and one audited edge ran backwards.

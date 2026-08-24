@@ -14,4 +14,6 @@ When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the 
 
 Applying `ready-for-human` also files an inbox item ("Implement yourself: <title> → #<n>") per `docs/agents/needs-from-you.md` — the label alone leaves the ticket invisible to the human, who reads the inbox, not label queries.
 
+**Agent-filed tickets get `needs-triage`, never `ready-for-agent`.** Promotion to agent-ready is the human's act — it is the approval the self-landing grant rests on, and an agent applying it to its own follow-up launders that approval away (one run shipped seven self-approved tickets this way).
+
 Edit the right-hand column to match whatever vocabulary you actually use.
