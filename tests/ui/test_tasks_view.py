@@ -135,38 +135,35 @@ def test_a_curated_heading_with_an_ampersand_is_not_swallowed_by_pango(
     """`Adw.PreferencesGroup` parses its title as markup, so a bare "&" renders as nothing.
 
     The failure is silent -- an empty heading and a `Gtk-WARNING` nobody reads -- and it is
-    reachable from curated data alone, which is why it is pinned here rather than left to
-    whoever next writes an ampersand into `tasks.json`.
+    reachable from curated data alone, which is why it is pinned rather than left to whoever
+    next writes an ampersand into `tasks.json`.
+
+    Asserted against Pango rather than against `Adw.PreferencesGroup.get_title()`, because
+    that getter is not the same window on every libadwaita: 1.9 hands back the escaped
+    string it was given, while the version on CI hands back the *parsed* text. Both are
+    consistent with a correct app, so an assertion about the getter tests the toolkit's
+    accessor rather than our escaping. What actually has to hold is version-independent --
+    the string we give libadwaita is markup that parses, and parses to the heading the
+    curator wrote.
     """
+    from gi.repository import Pango
+
+    from hyprtweaker.ui.pages.config import _escaped
+
     _session, window = build_window(tmp_path)
 
-    headings = [
-        group.get_title()
-        for page in window.pages
-        for group in _groups(page.page)
-        if group.get_title()
+    # Reaching for a private helper is deliberate: the claim is about the exact string
+    # handed to the toolkit, and no public surface reports that consistently across
+    # libadwaita versions.
+    curated = [
+        group.title for page in window.pages for group in page.plan.groups if "&" in group.title
     ]
 
-    assert "Splash &amp; wallpaper" in headings
-    assert "Splash & wallpaper" not in headings
+    assert curated, "no curated heading has an ampersand -- this test now guards nothing"
 
-
-def _groups(page: Any) -> list[Any]:
-    """Every `PreferencesGroup` on a page, without assuming libadwaita's internal boxing."""
-    from gi.repository import Adw
-
-    found: list[Any] = []
-    stack = [page]
-    while stack:
-        widget = stack.pop()
-        child = widget.get_first_child()
-        while child is not None:
-            if isinstance(child, Adw.PreferencesGroup):
-                found.append(child)
-            else:
-                stack.append(child)
-            child = child.get_next_sibling()
-    return found
+    for title in curated:
+        _ok, _attrs, text, _accel = Pango.parse_markup(_escaped(title), -1, "\0")
+        assert text == title
 
 
 # --- switching, and remembering --------------------------------------------------------------
