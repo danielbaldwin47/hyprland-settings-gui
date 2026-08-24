@@ -278,7 +278,14 @@ class BindEditor(Adw.Dialog):
         return values, ()
 
     def _in_submap(self) -> bool:
-        return bool(self._submap)
+        """Whether `catchall` is a legal Trigger for this bind.
+
+        `submap_universal` counts: a universal bind fires inside submaps, which is where
+        `catchall` lives -- and the Capture launched from the conflict popover's rebind
+        already treats it that way, so this form must agree with it.
+        """
+        universal = self._flag_switches.get("submap_universal")
+        return bool(self._submap) or bool(universal is not None and universal.get_active())
 
     def _capture(self) -> None:
         """Open Capture, prefilled with whatever is typed, and take back what it records."""

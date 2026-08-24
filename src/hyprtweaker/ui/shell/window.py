@@ -72,7 +72,7 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     migration_dialog,
 )
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
-from hyprtweaker.ui.pages.binds import BindsPage  # noqa: E402
+from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
 from hyprtweaker.ui.pages.plan import plan_config_view  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
@@ -479,13 +479,15 @@ class MainWindow(Adw.ApplicationWindow):
         # is no Option behind a Bind to plan against (CONTEXT.md, ADR-0007).
         self._binds_page = BindsPage(
             self._session,
-            on_add=self._add_bind,
-            on_edit=self._edit_bind,
-            on_remove=self._remove_bind,
-            on_enable=self._set_bind_enabled,
-            on_rebind=self._rebind_bind,
-            on_swap=self._swap_binds,
-            on_edit_submap=self._edit_submap,
+            actions=BindActions(
+                add=self._add_bind,
+                edit=self._edit_bind,
+                remove=self._remove_bind,
+                enable=self._set_bind_enabled,
+                rebind=self._rebind_bind,
+                swap=self._swap_binds,
+                edit_submap=self._edit_submap,
+            ),
         )
         self._stack.add_named(_scrolled(self._binds_page.page), BindsPage.section)
         self._sidebar.append(

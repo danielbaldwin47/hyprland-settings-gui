@@ -17,10 +17,11 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gtk  # noqa: E402
 
-RESET = "reset"
-"""`submap("reset")` is the exit gesture, so a submap *named* "reset" could never be
-entered by name -- the dispatcher call that should enter it exits instead. Blocked here,
-at the only place a name is chosen."""
+from hyprtweaker.engine.binds_analysis import RESET  # noqa: E402
+
+# `submap("reset")` is the exit gesture (`binds_analysis.RESET`), so a submap *named*
+# "reset" could never be entered by name -- the dispatcher call that should enter it
+# exits instead. Blocked here, at the only place a name is chosen.
 
 NAME_HELP = "The name binds enter it by, as in: switch to a submap → {name}"
 RESET_HELP = (

@@ -131,6 +131,28 @@ def test_same_trigger_in_different_submaps_is_not_a_conflict(tmp_path: Path) -> 
     assert all(row.conflict_badge is None for row in window.binds_page.rows)
 
 
+def test_a_universal_conflict_across_submaps_is_badged_without_order(tmp_path: Path) -> None:
+    """Cross-submap rivals never share a firing sequence, so no 1st-of-N is claimed."""
+    from hyprtweaker.engine.model.entities import BindOptions
+
+    session, window = build_window(tmp_path)
+
+    session.model.entities.binds.extend(
+        [
+            exec_bind("SUPER + Q", "everywhere", options=BindOptions(submap_universal=True)),
+            exec_bind("SUPER + Q", "resize-only", submap="resize"),
+        ]
+    )
+    window.binds_page.refresh()
+
+    rows = window.binds_page.rows
+    assert rows[0].conflict is not None and rows[1].conflict is not None
+    assert not rows[0].conflict.ordered
+    assert not rows[1].conflict.ordered
+    assert "fires" not in rows[0].conflict.badge_text
+    assert rows[0].conflict.rivals[0].same_submap is False
+
+
 def test_a_disabled_bind_is_badged_and_does_not_conflict(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
 

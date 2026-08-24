@@ -210,6 +210,23 @@ class TestUnreachable:
         assert entities.binds[1].dispatcher.positional == ("move",)
         assert entities.binds[2].submap == "move"
 
+    def test_creating_an_already_declared_name_merges_not_duplicates(self) -> None:
+        # Hyprland has one submap per name; a second declaration would emit twice.
+        entities = EntitySet(submaps=[Submap(name="resize", reset_target="old")])
+        save_submap(entities, original=None, name="resize", reset_target="new")
+        assert [(s.name, s.reset_target) for s in entities.submaps] == [("resize", "new")]
+
+    def test_renaming_onto_a_declared_name_merges_and_still_cascades(self) -> None:
+        entities = EntitySet(
+            submaps=[Submap(name="resize"), Submap(name="grow")],
+            binds=[submap_bind("SUPER + R", "resize"), exec_bind("right", submap="resize")],
+        )
+        save_submap(entities, original="resize", name="grow", reset_target="")
+        assert [s.name for s in entities.submaps] == ["grow"]
+        assert entities.binds[0].dispatcher is not None
+        assert entities.binds[0].dispatcher.positional == ("grow",)
+        assert entities.binds[1].submap == "grow"
+
     def test_a_universal_bind_enters_from_anywhere(self) -> None:
         # `submap_universal` fires in every submap, so its entry works even though the
         # submap that owns it is itself unreachable.

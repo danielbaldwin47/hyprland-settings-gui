@@ -110,6 +110,15 @@ class TestConflictText:
     def test_the_badge_states_fire_order(self) -> None:
         conflict = RowConflict(order=1, total=2, rivals=())
         assert "fires 1st of 2" in conflict.badge_text
+        assert conflict.short_text == "1st of 2"
+
+    def test_a_cross_submap_conflict_claims_no_order(self) -> None:
+        # A universal bind and a submap bind never share a firing sequence -- the writer
+        # emits root binds before any submap block, so list order is not file order there.
+        conflict = RowConflict(order=1, total=1, rivals=())
+        assert "fires" not in conflict.badge_text
+        assert "another submap" in conflict.badge_text
+        assert conflict.short_text == "duplicate"
 
     def test_a_rival_line_says_what_and_where(self) -> None:
         line = rival_label(exec_bind(command="kitty"), order=2)
@@ -120,3 +129,8 @@ class TestConflictText:
     def test_a_rival_in_a_submap_names_it(self) -> None:
         line = rival_label(exec_bind(command="grow", submap="resize"), order=1)
         assert "submap resize" in line
+
+    def test_a_cross_submap_rival_gets_no_number(self) -> None:
+        line = rival_label(exec_bind(command="grow", submap="resize"), order=None)
+        assert "1st" not in line
+        assert line.startswith("grow")

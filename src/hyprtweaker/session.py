@@ -34,6 +34,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from hyprtweaker.engine import binds_analysis
 from hyprtweaker.engine.apply import (
     Action,
     Applier,
@@ -648,8 +649,6 @@ class Session:
         """
         if self._refuse("submaps"):
             return False
-
-        from hyprtweaker.engine import binds_analysis
 
         binds_analysis.save_submap(
             self._model.entities, original=original, name=name, reset_target=reset_target

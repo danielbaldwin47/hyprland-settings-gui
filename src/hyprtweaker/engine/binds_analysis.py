@@ -1,4 +1,4 @@
-"""Conflict detection and Submap reachability, as pure functions over the model (#66).
+"""Conflict detection, Submap reachability, and the Submap save/rename operation (#66).
 
 **Conflict** (ADR-0007): same (submap, modmask, trigger) among enabled Binds, with
 `submap_universal` conflicting against all submaps. Duplicates are legal Hyprland
@@ -11,13 +11,17 @@ binds and `submap_universal` binds are always live, a submap is reachable when a
 enabled bind dispatches into it, and a reachable submap's reset target is reachable too
 (leaving it lands there).
 
-Engine, not UI: both questions are about what the compositor would do with the config,
-and both are answerable headless, which is where they are tested.
+Engine, not UI: the two analyses are about what the compositor would do with the config,
+and `save_submap` is model surgery whose cascade the analyses define -- all answerable
+headless, which is where they are tested. The one write operation lives beside the
+analyses rather than in `model/` because the cascade's meaning (what "enters" a submap)
+is this module's vocabulary.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
+from dataclasses import replace
 
 from .model.entities import Bind, EntitySet, Submap
 from .triggers import parse_trigger
@@ -115,11 +119,6 @@ def submap_target(bind: Bind) -> str | None:
     return target if target and target != RESET else None
 
 
-def entry_target(bind: Bind) -> str | None:
-    """The submap this bind actually enters, or `None` -- disabled binds enter nothing."""
-    return submap_target(bind) if bind.enabled else None
-
-
 def unreachable_submaps(entities: EntitySet) -> set[str]:
     """The Submaps that can never be active -- ADR-0007's unreachable badge.
 
@@ -130,8 +129,11 @@ def unreachable_submaps(entities: EntitySet) -> set[str]:
     names = set(submap_names(entities))
     reachable: set[str] = set()
 
+    # Disabled binds enter nothing -- a commented-out line does not fire.
     entries = [
-        (bind, target) for bind in entities.binds if (target := entry_target(bind)) is not None
+        (bind, target)
+        for bind in entities.binds
+        if bind.enabled and (target := submap_target(bind)) is not None
     ]
     resets = {s.name: s.reset_target for s in entities.submaps if s.reset_target}
 
@@ -166,15 +168,29 @@ def save_submap(
 
     An edit of an *implied* submap (named by binds, never declared) declares it: the
     moment a user touches one it has state of its own to keep.
-    """
-    from dataclasses import replace
 
+    Saving onto a name that is already declared *merges* into that declaration instead of
+    appending a second one -- Hyprland has one submap per name, so two `Submap` entries
+    would be a lie the writer then emits twice. The UI blocks the collision up front
+    (`SubmapEditor`); this guard is for every other caller.
+    """
     declared = {submap.name: position for position, submap in enumerate(entities.submaps)}
 
     if original is not None and original in declared:
         position = declared[original]
-        entities.submaps[position] = replace(
-            entities.submaps[position], name=name, reset_target=reset_target
+        if name != original and name in declared:
+            survivor = declared[name]
+            entities.submaps[survivor] = replace(
+                entities.submaps[survivor], reset_target=reset_target
+            )
+            del entities.submaps[position]
+        else:
+            entities.submaps[position] = replace(
+                entities.submaps[position], name=name, reset_target=reset_target
+            )
+    elif name in declared:
+        entities.submaps[declared[name]] = replace(
+            entities.submaps[declared[name]], reset_target=reset_target
         )
     else:
         entities.submaps.append(Submap(name=name, reset_target=reset_target))
@@ -203,15 +219,8 @@ def save_submap(
             entities.unbinds[position] = replace(unbind, submap=name)
 
 
-def fire_order(group: Iterable[int], index: int) -> int:
-    """1-based position of `index` in its conflict group -- the number the badge shows."""
-    return list(group).index(index) + 1
-
-
 __all__ = [
-    "entry_target",
     "find_conflicts",
-    "fire_order",
     "save_submap",
     "submap_names",
     "submap_target",
