@@ -153,6 +153,23 @@ def test_a_live_keysym_bind_is_imported_enabled(imported) -> None:  # type: igno
     assert "L3" not in codes(result)
 
 
+@pytest.mark.parametrize("mod", ["CONTROL", "WIN", "MOD1", "META", "LOGO", "CTRL", "ALT"])
+def test_alias_modifier_spellings_are_not_mistaken_for_dead_keysyms(mod, imported) -> None:  # type: ignore[no-untyped-def]
+    """A foreign file writes whichever modifier spelling its author chose, and the key
+    string reaches this importer verbatim -- there is no `canonical_mods` pass in front of
+    it as there is on the hyprlang side.
+
+    Every one of these verifies as `config ok` against 0.56.2 and none is an xkb keysym, so
+    a validator that asked xkb about them would silently disable working binds.
+    """
+    if not validator_available():
+        pytest.skip("libxkbcommon is not loadable here")
+    result = imported(f'hl.bind("{mod} + Q", hl.dsp.window.close())\n')
+
+    assert result.entities.binds[0].enabled is True, f"{mod} was taken for a dead keysym"
+    assert "L3" not in codes(result)
+
+
 def test_binds_inside_a_submap_belong_to_it(imported) -> None:  # type: ignore[no-untyped-def]
     """`define_submap` runs its body, so submap membership is a fact of the run rather
     than something the mapper has to infer from position."""

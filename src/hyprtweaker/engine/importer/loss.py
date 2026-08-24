@@ -34,19 +34,18 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from os import PathLike
-from pathlib import Path, PurePath
+from pathlib import Path
 from typing import Any
 
 from ..paths import ConfigPaths
 
 __all__ = [
+    "BACKUP_NAME",
     "FORMAT_VERSION",
     "LOSS_CODES",
     "RESCUE_COMMAND_CONF",
     "RESCUE_COMMAND_LUA",
     "RESCUE_LINE_CONF",
-    "RESCUE_LINE_LUA",
     "RESCUE_LINE_UNKNOWN",
     "LossClass",
     "LossCode",
@@ -66,51 +65,64 @@ RESCUE_COMMAND_CONF = "rm ~/.config/hypr/hyprland.lua"
 """The legacy path's rescue: the generated Entrypoint is the *new* file, and removing it
 hands the session back to the `hyprland.conf` that is still sitting there untouched."""
 
-RESCUE_COMMAND_LUA = "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua"
-"""The Lua path's rescue, and the reason this is a function of the source rather than one
-constant (#131).
+BACKUP_NAME = "hyprland.lua.bak"
+"""The name a displaced `hyprland.lua` is normally renamed to.
+
+Normally, because a second migration finds the name already taken and stamps the new one
+(`hyprland.lua.bak.<stamp>`) rather than overwrite what may be the user's only copy of an
+older config. The rescue then has to name *that* file: restoring the plain `.bak` would
+hand back a config two migrations old, which is not the one the user just lost (#131)."""
+
+
+def rescue_command(restore_backup: bool | None, *, backup: str = BACKUP_NAME) -> str:
+    """The bare shell command, for surfaces that show a command rather than prose.
+
+    An unknown answer takes the restoring command: it is the one that cannot destroy a
+    config by being wrong.
+    """
+    if restore_backup is False:
+        return RESCUE_COMMAND_CONF
+    return f"mv ~/.config/hypr/{backup} ~/.config/hypr/hyprland.lua"
+
+
+RESCUE_COMMAND_LUA = rescue_command(True)
+"""The Lua path's rescue, and the reason this is a function rather than one constant (#131).
 
 On the Lua path `hyprland.lua` *is* the user's config; the generated Entrypoint contests
-its name, so the original was renamed aside as `hyprland.lua.bak` before the switch
-(ADR-0009). Printing the legacy `rm` line here would delete the only copy the user has --
-under the heading that says it restores it."""
+its name, so the original was renamed aside before the switch (ADR-0009). Printing the
+legacy `rm` line here would delete the only copy the user has -- under the heading that
+says it restores it."""
 
 RESCUE_LINE_CONF = f"{_RESCUE_PREFIX}run `{RESCUE_COMMAND_CONF}` to go back to `hyprland.conf`."
-
-RESCUE_LINE_LUA = f"{_RESCUE_PREFIX}run `{RESCUE_COMMAND_LUA}` to restore your previous config."
 
 RESCUE_LINE_UNKNOWN = (
     f"{_RESCUE_PREFIX}restore your previous config: run `{RESCUE_COMMAND_LUA}` if that "
     f"backup exists, otherwise `{RESCUE_COMMAND_CONF}`."
 )
-"""When the source was not recorded. Leads with the restore, because the two guesses are not
-symmetrically wrong: a needless `mv` fails harmlessly, a wrong `rm` is unrecoverable."""
+"""When it is not yet known which way the migration goes. Leads with the restore, because
+the two guesses are not symmetrically wrong: a needless `mv` fails harmlessly, a wrong `rm`
+is unrecoverable."""
 
 
-def rescue_command(source: str | PathLike[str] | None = None) -> str:
-    """The bare shell command, for surfaces that show a command rather than prose.
+def rescue_line(restore_backup: bool | None, *, backup: str = BACKUP_NAME) -> str:
+    """The TTY escape hatch, for a migration that did or did not displace a `hyprland.lua`.
 
-    An unrecorded source takes the restoring command: it is the one that cannot destroy a
-    config by being wrong.
-    """
-    suffix = PurePath(str(source)).suffix.lower() if source else ""
-    return RESCUE_COMMAND_CONF if suffix == ".conf" else RESCUE_COMMAND_LUA
-
-
-def rescue_line(source: str | PathLike[str] | None = None) -> str:
-    """The TTY escape hatch for the import path `source` came in on (ADR-0009).
+    `restore_backup` is *not* read off the imported file's extension, because the two do not
+    always agree: importing a `.conf` while a foreign `hyprland.lua` is in place still
+    renames that file aside, and the rescue has to restore it. The one question that decides
+    the answer is whether a backup was made (#131) -- `None` where that is not yet known.
 
     Printed in **every** report, including a clean one: the reader who needs it is the one
     who cannot open the app to look it up, and a report that only carries the escape hatch
     when the Importer predicted trouble is missing exactly the case where the prediction
     was wrong.
     """
-    suffix = PurePath(str(source)).suffix.lower() if source else ""
-    if suffix == ".lua":
-        return RESCUE_LINE_LUA
-    if suffix == ".conf":
+    if restore_backup is None:
+        return RESCUE_LINE_UNKNOWN
+    if not restore_backup:
         return RESCUE_LINE_CONF
-    return RESCUE_LINE_UNKNOWN
+    command = rescue_command(True, backup=backup)
+    return f"{_RESCUE_PREFIX}run `{command}` to restore your previous config."
 
 
 class LossClass(StrEnum):
@@ -378,6 +390,14 @@ class LossReport:
     source: str = ""
     created: str = ""
 
+    restore_backup: bool | None = None
+    """Whether the migration this report belongs to displaced an existing `hyprland.lua`,
+    which is the one thing that decides the rescue line (#131).
+
+    Set by the wizard, which is the only layer that knows: the Importer is handed a file to
+    read and never learns what will be renamed around it. `None` until then, and an unset
+    report renders the rescue that cannot destroy anything by being wrong."""
+
     def add(
         self,
         code: LossCode,
@@ -446,6 +466,7 @@ class LossReport:
             "format": FORMAT_VERSION,
             "created": self.created or _timestamp(),
             "source": self.source,
+            "restore_backup": self.restore_backup,
             "counts": {str(k): v for k, v in self.counts().items()},
             "items": [item.as_json() for item in self.items],
         }
@@ -459,12 +480,13 @@ class LossReport:
             items=[LossItem.from_json(item) for item in record.get("items", ())],
             source=record.get("source", ""),
             created=record.get("created", ""),
+            restore_backup=record.get("restore_backup"),
         )
 
     @property
     def rescue_line(self) -> str:
-        """The escape hatch for the path this report's `source` came in on (#131)."""
-        return rescue_line(self.source)
+        """The escape hatch for the migration this report belongs to (#131)."""
+        return rescue_line(self.restore_backup)
 
     def render(self) -> str:
         """The Markdown copy: a summary line, the rescue line, then a section per class."""

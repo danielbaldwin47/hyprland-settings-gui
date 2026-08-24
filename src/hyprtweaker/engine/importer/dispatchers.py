@@ -20,8 +20,11 @@ Unknown or dead names do not raise: they return `None` with a Loss finding, beca
 config with one bad bind should still import. The same holds one level down -- *every*
 `None` a grammar returns carries a finding, arguments it could not read included, since a
 silent `None` drops the user's whole bind with nothing in the report to find it by (#131).
-`_reject` is how a grammar spells that, and `TestDispatcherRejections` sweeps for the ones
-that forget.
+`_reject` is how a grammar spells that directly; the shared parsers (`_resize_params`) note
+and return an empty result their callers turn into `None`. Both routes are enforced:
+`TestDispatcherRejections` sweeps the table by behaviour, and `test_no_silent_dispatcher_
+drop.py` walks this module's AST so a rejection no probe happens to reach cannot slip
+through note-free.
 """
 
 from __future__ import annotations
@@ -70,8 +73,13 @@ def _reject(ctx: _Ctx, why: str) -> DispatcherCall | None:
     to find it by, which contradicts this Importer's "nothing is lost" contract (#131).
 
     Returns `None` so a grammar can `return _reject(...)` and the two halves cannot drift.
+
+    Filed as `DEAD_DISPATCHER` (L11, "dispatcher, *or one of its arguments*, is dropped"),
+    not `UNSUPPORTED_KEYWORD`, whose spec says the keyword "was kept aside" -- nothing is
+    kept aside here, and a finding whose code contradicts its own text is one a user cannot
+    act on.
     """
-    ctx.note(LossCode.UNSUPPORTED_KEYWORD, why)
+    ctx.note(LossCode.DEAD_DISPATCHER, why)
     return None
 
 
@@ -164,10 +172,7 @@ def _resize_params(text: str, ctx: _Ctx) -> dict[str, object]:
         relative = False
         tokens = tokens[1:]
     if len(tokens) < 2:
-        ctx.note(
-            LossCode.UNSUPPORTED_KEYWORD,
-            "a resize/move dispatcher needs an x and a y",
-        )
+        ctx.note(LossCode.DEAD_DISPATCHER, "a resize/move dispatcher needs an x and a y")
         return {}
     if any("%" in token for token in tokens):
         ctx.note(
@@ -180,7 +185,7 @@ def _resize_params(text: str, ctx: _Ctx) -> dict[str, object]:
     y = _number(tokens[1])
     if x is None or y is None:
         ctx.note(
-            LossCode.UNSUPPORTED_KEYWORD,
+            LossCode.DEAD_DISPATCHER,
             f"a resize/move dispatcher needs numeric arguments, not {text.strip()!r}",
         )
         return {}

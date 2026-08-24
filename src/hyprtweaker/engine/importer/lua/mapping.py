@@ -49,7 +49,7 @@ from ...model.options import ConfigModel
 from ...model.values import parse_lua
 from ...schema.resolve import Schema
 from ...schema.types import ResolvedOption
-from ..binds import dead_keysyms
+from ..binds import dead_keysyms, note_dead_keysyms
 from ..loss import LossClass, LossCode, LossContext, LossReport
 from ..mapping import ImportResult
 from .sandbox import DEFAULT_TIMEOUT, Call, Consent, Policy, Recording, evaluate
@@ -471,11 +471,10 @@ class _Mapper:
             # xkb does not know fails the whole config at bind time. The recording stub is
             # not the real `hl.bind` and validates nothing, so a foreign file that never
             # loaded imports cleanly and would fail the static gate on the way back out.
-            self.report.add(
-                LossCode.UNKNOWN_KEYSYM,
-                f"{', '.join(repr(name) for name in dead)} is not a key name xkb knows, "
-                "so this bind is imported commented out",
-                origin=call.origin,
+            note_dead_keysyms(
+                LossContext(report=self.report, origin=call.origin),
+                dead,
+                disabled=True,
             )
         self.entities.binds.append(
             Bind(

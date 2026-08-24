@@ -453,6 +453,9 @@ class TestDispatcherRejections:
 
     @pytest.mark.parametrize("name", sorted(LEGACY_DISPATCHERS))
     def test_a_rejected_dispatcher_always_leaves_a_note(self, name: str) -> None:
+        """Every probe is reported, not just the first: a bare `assert` inside the loop
+        stops at one and hides how many other shapes the same grammar drops silently."""
+        silent = []
         for probe in self.PROBES:
             report = LossReport()
             call = translate_dispatcher(
@@ -462,24 +465,30 @@ class TestDispatcherRejections:
                 report=report,
                 source=f"bind = SUPER, Q, {name}, {probe}",
             )
-            if call is None:
-                assert len(report) > 0, (
-                    f"{name!r} rejected {probe!r} silently: the bind is dropped and the "
-                    "Loss report says nothing about it"
-                )
+            if call is None and not len(report):
+                silent.append(probe)
+
+        assert not silent, (
+            f"{name!r} rejected {silent!r} silently: the bind is dropped and the Loss "
+            "report says nothing about it"
+        )
 
     @pytest.mark.parametrize("name", sorted(LEGACY_DISPATCHERS))
     def test_a_note_names_the_line_it_came_from(self, name: str) -> None:
         """A finding with no origin is one the user cannot act on -- see `LossContext`."""
+        unplaced = []
         for probe in self.PROBES:
             report = LossReport()
             source = f"bind = SUPER, Q, {name}, {probe}"
             call = translate_dispatcher(
                 name, probe, origin="hyprland.conf:9", report=report, source=source
             )
-            if call is None:
-                assert all(item.origin == "hyprland.conf:9" for item in report), name
-                assert all(item.source == source for item in report), name
+            if call is None and not all(
+                item.origin == "hyprland.conf:9" and item.source == source for item in report
+            ):
+                unplaced.append(probe)
+
+        assert not unplaced, f"{name!r} filed a finding with no line for {unplaced!r}"
 
     def test_the_sweep_actually_rejects_something(self) -> None:
         """Guards the two above: a sweep where nothing returns None asserts nothing."""

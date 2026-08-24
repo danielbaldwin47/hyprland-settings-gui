@@ -34,6 +34,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+from hyprtweaker.engine.importer import import_config  # noqa: E402
+from hyprtweaker.engine.importer.mapping import ImportResult  # noqa: E402
 from hyprtweaker.engine.model import ConfigModel  # noqa: E402
 from hyprtweaker.engine.paths import ConfigPaths  # noqa: E402
 from hyprtweaker.engine.schema import load_schema  # noqa: E402
@@ -235,10 +237,10 @@ def test_the_entity_modules_were_actually_written(tmp_path: Path) -> None:
     } <= written
 
 
-def write_imported_conf(root: Path, version: str, conf: str) -> tuple[ConfigPaths, object]:
+def write_imported_conf(
+    root: Path, version: str, conf: str
+) -> tuple[ConfigPaths, ImportResult]:
     """Import one `hyprland.conf` and write what came out, exactly as the wizard would."""
-    from hyprtweaker.engine.importer import import_config
-
     paths = ConfigPaths.rooted_at(root)
     paths.hypr_dir.mkdir(parents=True, exist_ok=True)
     legacy = root / "source" / "hyprland.conf"
