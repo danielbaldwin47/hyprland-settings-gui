@@ -28,6 +28,8 @@ Leftovers for the human — tasks or decisions surfacing during ticket work — 
 
 `/code-review` in this repo always means `mattpocock-skills:code-review` — the two-axis (Standards / Spec) review.
 
+Fix review findings in a fresh subagent handed the findings list and the branch; the main thread takes back only the fix diff summary and verdicts. One #131 session fixed in-thread and grew 97k after its implementation was already green.
+
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
@@ -40,7 +42,7 @@ Shared venv at `.venv` (system-site-packages: `gi` importable; ruff, mypy, pytes
 
 ### Orientation
 
-Read `CONTEXT.md` first; delegate anything broader to a read-only subagent (`cavecrew-investigator` / Explore) and take targeted-range reads only — whole-file surveys of this repo have cost sessions 90k+ context. Map:
+Read `CONTEXT.md` first; delegate anything broader to a read-only subagent (`cavecrew-investigator` / Explore) and take targeted-range reads only — whole-file surveys of this repo have cost sessions 90k+ context. Build on the investigator's returned map — the #131 leg re-derived it with its own reads and greps and spent 78k before its first edit. Map:
 
 - `src/hyprtweaker/engine/` — config engine: `importer/` (hyprlang → model), `schema/` (option schema: sources/resolve/infer), `model/` (options, values), `writer/` (Lua emit), `apply/` (transaction pipeline), `ipc/` (hyprctl commands/events), `state/` (manifest)
 - `src/hyprtweaker/session.py` — session layer bridging engine and UI
@@ -58,6 +60,10 @@ A ticket whose deliverable is UI-facing (a page, dialog, or widget the user sees
 Hyprland is installed; settle spec/behavior disputes with `hyprctl` (`-j` for JSON) against the running compositor rather than by reading docs harder.
 
 Probes that *mutate* the running compositor (`hyprctl keyword`, `hyprctl reload`, temporary binds) snapshot the touched state first and restore + verify it after — this is the human's live session, not a fixture. Count what you changed (e.g. bind count before/after) and say so in the transcript.
+
+### Session budget (implementing sessions)
+
+Implementation green is the halfway mark — #131's fixes were green at 150k context and the session peaked at 327k on verification and review aftermath. Verification matches ticket scope: an engine ticket proves itself in its unit/static tiers, and out-of-scope polish (UI probes for an importer ticket, sweep hardening, mutation-proofs of a test gate) becomes a follow-up ticket — #131 spent ~45k on both kinds. While reviews or CI run, arm one Monitor and hold; hand-polling added ~15k of wait turns to #131.
 
 ### Ticket sizing (`/to-tickets` sessions)
 
