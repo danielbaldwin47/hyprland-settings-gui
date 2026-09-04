@@ -28,9 +28,10 @@ from hyprtweaker.engine.importer import (
     translate_dispatcher,
 )
 from hyprtweaker.engine.importer.binds import _KEY_RENAMES
-from hyprtweaker.engine.importer.dispatchers import MAX_SCRIPT_BYTES
+from hyprtweaker.engine.importer.dispatchers import LEGACY_DISPATCHERS, MAX_SCRIPT_BYTES
 from hyprtweaker.engine.importer.keysyms import known_keysym, validator_available
 from hyprtweaker.engine.schema import load_schema
+from hyprtweaker.engine.writer.binds import DISABLED_PREFIX, render_bind
 
 SCHEMA_VERSION = "0.56.2"
 
@@ -353,6 +354,61 @@ class TestBinds:
         assert bind.keys == "catchall"
         assert LossCode.UNKNOWN_KEYSYM in {item.code for item in report}
 
+    def test_a_dead_keysym_bind_is_imported_disabled(self, report: LossReport) -> None:
+        """One live bind on a name xkb does not know fails the *whole* Lua config, so the
+        bind arrives commented out rather than enabled (ADR-0009, #131). The invariant #108
+        is gated on."""
+        if not validator_available():
+            pytest.skip("libxkbcommon is not loadable here")
+        bind = map_bind("", "SUPER, notakey, killactive", origin="x:1", report=report)
+        assert bind is not None
+        assert bind.enabled is False
+        assert LossCode.UNKNOWN_KEYSYM in {item.code for item in report}
+
+    def test_a_live_keysym_bind_stays_enabled(self, report: LossReport) -> None:
+        bind = map_bind("", "SUPER, XF86AudioPlay, killactive", origin="x:1", report=report)
+        assert bind is not None
+        assert bind.enabled is True
+
+    def test_a_renamed_key_stays_enabled_because_the_rename_makes_it_live(
+        self, report: LossReport
+    ) -> None:
+        bind = map_bind("", "SUPER, Enter, exec, kitty", origin="x:1", report=report)
+        assert bind is not None
+        assert bind.keys == "SUPER + Return"
+        assert bind.enabled is True
+
+    @pytest.mark.parametrize("key", ["catchall", "mouse:272", "code:42", "switch:on:Lid"])
+    def test_special_syms_are_not_mistaken_for_dead_keysyms(
+        self, key: str, report: LossReport
+    ) -> None:
+        """None of these are xkb names at all, so asking xkb about them would disable every
+        one of them."""
+        bind = map_bind("", f"SUPER, {key}, killactive", origin="x:1", report=report)
+        assert bind is not None
+        assert bind.enabled is True
+
+    def test_a_multikey_bind_with_one_dead_key_is_disabled(self, report: LossReport) -> None:
+        if not validator_available():
+            pytest.skip("libxkbcommon is not loadable here")
+        bind = map_bind("s", "SUPER, Q&notakey, killactive", origin="x:1", report=report)
+        assert bind is not None
+        assert bind.enabled is False
+
+    def test_a_disabled_dead_keysym_bind_round_trips_as_a_comment(
+        self, report: LossReport
+    ) -> None:
+        """The writer's spelling of "disabled" is the one thing that keeps the config
+        loadable, so the two halves are asserted together rather than apart."""
+        if not validator_available():
+            pytest.skip("libxkbcommon is not loadable here")
+        bind = map_bind("", "SUPER, notakey, exec, kitty", origin="x:1", report=report)
+        assert bind is not None
+        rendered = render_bind(bind)
+        assert rendered is not None
+        assert rendered.startswith(DISABLED_PREFIX)
+        assert 'hl.bind("SUPER + notakey"' in rendered
+
     def test_unbind_canonicalises_the_key_string(self, report: LossReport) -> None:
         unbind = map_unbind("SUPER_SHIFT, Q", origin="x:1", report=report)
         assert unbind.keys == "SHIFT + SUPER + Q"
@@ -361,6 +417,97 @@ class TestBinds:
     def test_unbind_all(self, report: LossReport) -> None:
         unbind = map_unbind("all", origin="x:1", report=report)
         assert unbind.all is True
+
+
+class TestDispatcherRejections:
+    """Every rejection is a *reported* rejection (#131).
+
+    `map_bind` drops the whole bind when its dispatcher will not translate, which is the
+    right call -- a bind with no action is worse than none. What made it wrong was silence:
+    a grammar that returned `None` without a note took the user's bind out of the config
+    and left nothing in the Loss report to find it by, contradicting this module's own
+    "nothing is lost" contract.
+
+    Driven through `translate_dispatcher` rather than the grammars directly, because that
+    is the door `map_bind` uses and the notes have to survive the trip through it.
+    """
+
+    #: Argument shapes chosen to reach the *rejecting* branch of every grammar: too few
+    #: fields, non-numeric where a number is required, and the percentage form that has no
+    #: Lua field at all.
+    PROBES = (
+        "",
+        " ",
+        "x",
+        "1",
+        ",",
+        "a,b",
+        "a b",
+        "a b c",
+        "1 2 3",
+        "20% 30%",
+        "exact",
+        "exact a b",
+        "-1",
+    )
+
+    @pytest.mark.parametrize("name", sorted(LEGACY_DISPATCHERS))
+    def test_a_rejected_dispatcher_always_leaves_a_note(self, name: str) -> None:
+        """Every probe is reported, not just the first: a bare `assert` inside the loop
+        stops at one and hides how many other shapes the same grammar drops silently."""
+        silent = []
+        for probe in self.PROBES:
+            report = LossReport()
+            call = translate_dispatcher(
+                name,
+                probe,
+                origin="x:1",
+                report=report,
+                source=f"bind = SUPER, Q, {name}, {probe}",
+            )
+            if call is None and not len(report):
+                silent.append(probe)
+
+        assert not silent, (
+            f"{name!r} rejected {silent!r} silently: the bind is dropped and the Loss "
+            "report says nothing about it"
+        )
+
+    @pytest.mark.parametrize("name", sorted(LEGACY_DISPATCHERS))
+    def test_a_note_names_the_line_it_came_from(self, name: str) -> None:
+        """A finding with no origin is one the user cannot act on -- see `LossContext`."""
+        unplaced = []
+        for probe in self.PROBES:
+            report = LossReport()
+            source = f"bind = SUPER, Q, {name}, {probe}"
+            call = translate_dispatcher(
+                name, probe, origin="hyprland.conf:9", report=report, source=source
+            )
+            if call is None and not all(
+                item.origin == "hyprland.conf:9" and item.source == source for item in report
+            ):
+                unplaced.append(probe)
+
+        assert not unplaced, f"{name!r} filed a finding with no line for {unplaced!r}"
+
+    def test_the_sweep_actually_rejects_something(self) -> None:
+        """Guards the two above: a sweep where nothing returns None asserts nothing."""
+        rejected = 0
+        for name in LEGACY_DISPATCHERS:
+            for probe in self.PROBES:
+                report = LossReport()
+                if translate_dispatcher(name, probe, origin="x:1", report=report) is None:
+                    rejected += 1
+        assert rejected > 20, f"only {rejected} rejections reached -- the probes have rotted"
+
+    def test_a_dropped_bind_is_findable_in_the_report(self, report: LossReport) -> None:
+        """The end-to-end shape of the contract: no Bind, but a finding naming the line."""
+        bind = map_bind(
+            "", "SUPER, Q, movecursor, a b", origin="hyprland.conf:3", report=report
+        )
+        assert bind is None
+        assert len(report) > 0
+        assert report.items[0].origin == "hyprland.conf:3"
 
 
 class TestSubmaps:

@@ -32,7 +32,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from ..importer.loss import RESCUE_LINE, LossReport
+from ..importer.loss import BACKUP_NAME, LossReport, rescue_command, rescue_line
 from ..importer.lua.mapping import import_lua
 from ..importer.lua.sandbox import Consent
 from ..importer.mapping import ImportResult, import_config
@@ -57,6 +57,19 @@ working, and five minutes of that is a user reaching for the power button.
 
 VERIFY_TIMEOUT_SECONDS = 180.0
 BACKUP_SUFFIX = ".bak"
+
+
+def _displaces_entrypoint(detection: Detection) -> bool:
+    """Whether this migration renames an existing `hyprland.lua` aside to make room.
+
+    The single fact two otherwise-distant decisions both turn on: whether `back_up` makes a
+    `hyprland.lua.bak`, and whether the rescue line restores one or deletes the Entrypoint.
+    Keyed on the detected *kind* rather than the imported file's extension, because
+    `build_preview(source=...)` replaces only the source -- importing a `.conf` while a
+    foreign `hyprland.lua` is in place still displaces that file (#131).
+    """
+    return detection.kind is ConfigKind.FOREIGN_LUA
+
 
 RELOAD_SETTLE_SECONDS = 0.25
 """How long to let a `reload full-reset` land before believing what the compositor says.
@@ -215,6 +228,9 @@ class MigrationFlow:
     preview: Preview | None = None
     backup: backups.Backup | None = None
     report_path: Path | None = None
+    _restore: Path | None = field(default=None, repr=False)
+    """Where a displaced `hyprland.lua` was renamed to, once the switch has renamed it --
+    the file the rescue line has to name (#131)."""
     _answer: asyncio.Event | None = field(default=None, repr=False)
     _decision: Decision | None = field(default=None, repr=False)
 
@@ -263,6 +279,10 @@ class MigrationFlow:
             result = import_config(path, self.schema)
 
         preview = Preview(detection=replace(detection, source=path), result=result)
+        # The Importer is handed a file to read and never learns what will be renamed
+        # around it, so the wizard stamps the answer on before the report is saved -- a
+        # report read back months later still carries the rescue that fits it (#131).
+        result.loss.restore_backup = _displaces_entrypoint(preview.detection)
         self.preview = preview
         self.step = Step.BACK_UP
         return preview
@@ -360,6 +380,7 @@ class MigrationFlow:
             )
 
         restore = self._preserve_foreign_entrypoint(preview)
+        self._restore = restore
         sentinels.write(
             self.paths,
             kind=preview.detection.kind.value,
@@ -513,8 +534,48 @@ class MigrationFlow:
 
     @property
     def rescue_line(self) -> str:
-        """The TTY escape hatch, printed in every report (ADR-0009)."""
-        return RESCUE_LINE
+        """The TTY escape hatch, printed in every report (ADR-0009).
+
+        Path-specific, because the two paths rescue in opposite directions: the legacy path
+        removes the Entrypoint this app generated, the Lua path restores the backup it
+        renamed the user's own file into. Read off the file being imported rather than the
+        detected kind, so an Import... of a `.conf` while a foreign `hyprland.lua` is in
+        place gets the line for the file it is actually replacing (#131).
+        """
+        return rescue_line(self._restores_backup(), backup=self._backup_name())
+
+    @property
+    def rescue_command(self) -> str:
+        """The same escape hatch as a bare command, for the wizard's own rescue rows.
+
+        The dialog puts this in a Row where the report's Markdown would render as literal
+        asterisks and backticks, and a rescue instruction the user has to mentally strip
+        punctuation out of is one they can mistype at the worst possible moment.
+        """
+        return rescue_command(self._restores_backup(), backup=self._backup_name())
+
+    def _backup_name(self) -> str:
+        """The file the rescue restores *from*, exact once the switch has renamed it.
+
+        A second migration finds `hyprland.lua.bak` already taken and stamps the new one, so
+        naming the plain `.bak` after that would restore a config two migrations old. Before
+        the switch there is nothing renamed and nothing to be locked out of, so the generic
+        name is the honest answer there (#131).
+        """
+        return self._restore.name if self._restore is not None else BACKUP_NAME
+
+    def _restores_backup(self) -> bool | None:
+        """Whether rolling back means restoring `hyprland.lua.bak` rather than deleting.
+
+        The same predicate `_preserve_foreign_entrypoint` renames by, deliberately: the
+        rescue is the manual spelling of that rollback, so reading it off anything else --
+        the imported file's extension, say -- lets the two disagree about a file the user
+        only has one copy of (#131).
+        """
+        detection = self.preview.detection if self.preview is not None else self.detection
+        if detection is None:
+            return None
+        return _displaces_entrypoint(detection)
 
     def _require_preview(self) -> Preview:
         if self.preview is None:
@@ -527,7 +588,7 @@ class MigrationFlow:
         A rename, never a delete (ADR-0009), and it happens before the sentinel records it
         so the marker can never name a backup that was not made.
         """
-        if preview.detection.kind is not ConfigKind.FOREIGN_LUA:
+        if not _displaces_entrypoint(preview.detection):
             return None
         entrypoint = self.paths.entrypoint
         if not entrypoint.is_file():

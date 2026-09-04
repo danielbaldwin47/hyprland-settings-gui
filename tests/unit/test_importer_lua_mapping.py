@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
+from hyprtweaker.engine.importer.keysyms import validator_available
 from hyprtweaker.engine.importer.lua import Consent, import_lua, lua_binary
 from hyprtweaker.engine.model.values import Color, CssGaps, Gradient, Vec2
 from hyprtweaker.engine.schema import load_schema
@@ -131,6 +132,42 @@ def test_a_dispatcher_keeps_its_arguments(imported) -> None:  # type: ignore[no-
     assert dispatcher is not None
     assert dispatcher.path == "exec_cmd"
     assert dispatcher.positional == ("kitty",)
+
+
+def test_a_dead_keysym_bind_is_imported_commented_out(imported) -> None:  # type: ignore[no-untyped-def]
+    """The recording stub is not the real `hl.bind` and validates nothing, so a foreign
+    file that never actually loaded imports cleanly here -- and would take the generated
+    config down at the static gate on the way back out (#131)."""
+    if not validator_available():
+        pytest.skip("libxkbcommon is not loadable here")
+    result = imported('hl.bind("SUPER + notakey", hl.dsp.window.close())\n')
+
+    assert result.entities.binds[0].enabled is False
+    assert "L3" in codes(result)
+
+
+def test_a_live_keysym_bind_is_imported_enabled(imported) -> None:  # type: ignore[no-untyped-def]
+    result = imported('hl.bind("SUPER + Q", hl.dsp.window.close())\n')
+
+    assert result.entities.binds[0].enabled is True
+    assert "L3" not in codes(result)
+
+
+@pytest.mark.parametrize("mod", ["CONTROL", "WIN", "MOD1", "META", "LOGO", "CTRL", "ALT"])
+def test_alias_modifier_spellings_are_not_mistaken_for_dead_keysyms(mod, imported) -> None:  # type: ignore[no-untyped-def]
+    """A foreign file writes whichever modifier spelling its author chose, and the key
+    string reaches this importer verbatim -- there is no `canonical_mods` pass in front of
+    it as there is on the hyprlang side.
+
+    Every one of these verifies as `config ok` against 0.56.2 and none is an xkb keysym, so
+    a validator that asked xkb about them would silently disable working binds.
+    """
+    if not validator_available():
+        pytest.skip("libxkbcommon is not loadable here")
+    result = imported(f'hl.bind("{mod} + Q", hl.dsp.window.close())\n')
+
+    assert result.entities.binds[0].enabled is True, f"{mod} was taken for a dead keysym"
+    assert "L3" not in codes(result)
 
 
 def test_binds_inside_a_submap_belong_to_it(imported) -> None:  # type: ignore[no-untyped-def]

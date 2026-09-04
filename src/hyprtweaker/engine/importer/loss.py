@@ -40,28 +40,89 @@ from typing import Any
 from ..paths import ConfigPaths
 
 __all__ = [
+    "BACKUP_NAME",
     "FORMAT_VERSION",
     "LOSS_CODES",
+    "RESCUE_COMMAND_CONF",
+    "RESCUE_COMMAND_LUA",
+    "RESCUE_LINE_CONF",
+    "RESCUE_LINE_UNKNOWN",
     "LossClass",
     "LossCode",
     "LossContext",
     "LossItem",
     "LossReport",
     "describe",
+    "rescue_command",
+    "rescue_line",
 ]
 
 FORMAT_VERSION = 1
 
-RESCUE_LINE = (
-    "> **If Hyprland will not start:** from a TTY, run "
-    "`rm ~/.config/hypr/hyprland.lua` to go back to the previous config."
-)
-"""Printed in **every** report, including a clean one (ADR-0009).
+_RESCUE_PREFIX = "> **If Hyprland will not start:** from a TTY, "
 
-Every report, because the reader who needs it is the one who cannot open the app to look
-it up -- and a report that only carries the escape hatch when the Importer predicted
-trouble is missing exactly the case where the prediction was wrong.
-"""
+RESCUE_COMMAND_CONF = "rm ~/.config/hypr/hyprland.lua"
+"""The legacy path's rescue: the generated Entrypoint is the *new* file, and removing it
+hands the session back to the `hyprland.conf` that is still sitting there untouched."""
+
+BACKUP_NAME = "hyprland.lua.bak"
+"""The name a displaced `hyprland.lua` is normally renamed to.
+
+Normally, because a second migration finds the name already taken and stamps the new one
+(`hyprland.lua.bak.<stamp>`) rather than overwrite what may be the user's only copy of an
+older config. The rescue then has to name *that* file: restoring the plain `.bak` would
+hand back a config two migrations old, which is not the one the user just lost (#131)."""
+
+
+def rescue_command(restore_backup: bool | None, *, backup: str = BACKUP_NAME) -> str:
+    """The bare shell command, for surfaces that show a command rather than prose.
+
+    An unknown answer takes the restoring command: it is the one that cannot destroy a
+    config by being wrong.
+    """
+    if restore_backup is False:
+        return RESCUE_COMMAND_CONF
+    return f"mv ~/.config/hypr/{backup} ~/.config/hypr/hyprland.lua"
+
+
+RESCUE_COMMAND_LUA = rescue_command(True)
+"""The Lua path's rescue, and the reason this is a function rather than one constant (#131).
+
+On the Lua path `hyprland.lua` *is* the user's config; the generated Entrypoint contests
+its name, so the original was renamed aside before the switch (ADR-0009). Printing the
+legacy `rm` line here would delete the only copy the user has -- under the heading that
+says it restores it."""
+
+RESCUE_LINE_CONF = f"{_RESCUE_PREFIX}run `{RESCUE_COMMAND_CONF}` to go back to `hyprland.conf`."
+
+RESCUE_LINE_UNKNOWN = (
+    f"{_RESCUE_PREFIX}restore your previous config: run `{RESCUE_COMMAND_LUA}` if that "
+    f"backup exists, otherwise `{RESCUE_COMMAND_CONF}`."
+)
+"""When it is not yet known which way the migration goes. Leads with the restore, because
+the two guesses are not symmetrically wrong: a needless `mv` fails harmlessly, a wrong `rm`
+is unrecoverable."""
+
+
+def rescue_line(restore_backup: bool | None, *, backup: str = BACKUP_NAME) -> str:
+    """The TTY escape hatch, for a migration that did or did not displace a `hyprland.lua`.
+
+    `restore_backup` is *not* read off the imported file's extension, because the two do not
+    always agree: importing a `.conf` while a foreign `hyprland.lua` is in place still
+    renames that file aside, and the rescue has to restore it. The one question that decides
+    the answer is whether a backup was made (#131) -- `None` where that is not yet known.
+
+    Printed in **every** report, including a clean one: the reader who needs it is the one
+    who cannot open the app to look it up, and a report that only carries the escape hatch
+    when the Importer predicted trouble is missing exactly the case where the prediction
+    was wrong.
+    """
+    if restore_backup is None:
+        return RESCUE_LINE_UNKNOWN
+    if not restore_backup:
+        return RESCUE_LINE_CONF
+    command = rescue_command(True, backup=backup)
+    return f"{_RESCUE_PREFIX}run `{command}` to restore your previous config."
 
 
 class LossClass(StrEnum):
@@ -329,6 +390,14 @@ class LossReport:
     source: str = ""
     created: str = ""
 
+    restore_backup: bool | None = None
+    """Whether the migration this report belongs to displaced an existing `hyprland.lua`,
+    which is the one thing that decides the rescue line (#131).
+
+    Set by the wizard, which is the only layer that knows: the Importer is handed a file to
+    read and never learns what will be renamed around it. `None` until then, and an unset
+    report renders the rescue that cannot destroy anything by being wrong."""
+
     def add(
         self,
         code: LossCode,
@@ -397,6 +466,7 @@ class LossReport:
             "format": FORMAT_VERSION,
             "created": self.created or _timestamp(),
             "source": self.source,
+            "restore_backup": self.restore_backup,
             "counts": {str(k): v for k, v in self.counts().items()},
             "items": [item.as_json() for item in self.items],
         }
@@ -410,7 +480,13 @@ class LossReport:
             items=[LossItem.from_json(item) for item in record.get("items", ())],
             source=record.get("source", ""),
             created=record.get("created", ""),
+            restore_backup=record.get("restore_backup"),
         )
+
+    @property
+    def rescue_line(self) -> str:
+        """The escape hatch for the migration this report belongs to (#131)."""
+        return rescue_line(self.restore_backup)
 
     def render(self) -> str:
         """The Markdown copy: a summary line, the rescue line, then a section per class."""
@@ -422,7 +498,7 @@ class LossReport:
         lines.append("")
         summary = ", ".join(f"{counts[c]} {CLASS_TITLES[c].lower()}" for c in CLASS_ORDER)
         lines.append(f"{len(self.items)} findings -- {summary}.")
-        lines.extend(["", RESCUE_LINE])
+        lines.extend(["", self.rescue_line])
         if not self.items:
             lines.append("")
             lines.append("Nothing was lost in conversion.")

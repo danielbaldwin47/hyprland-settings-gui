@@ -17,7 +17,14 @@ Two things make it more than a rename table:
   conversion is the one that says `"off"` where the user said nothing.
 
 Unknown or dead names do not raise: they return `None` with a Loss finding, because a
-config with one bad bind should still import.
+config with one bad bind should still import. The same holds one level down -- *every*
+`None` a grammar returns carries a finding, arguments it could not read included, since a
+silent `None` drops the user's whole bind with nothing in the report to find it by (#131).
+`_reject` is how a grammar spells that directly; the shared parsers (`_resize_params`) note
+and return an empty result their callers turn into `None`. Both routes are enforced:
+`TestDispatcherRejections` sweeps the table by behaviour, and `test_no_silent_dispatcher_
+drop.py` walks this module's AST so a rejection no probe happens to reach cannot slip
+through note-free.
 """
 
 from __future__ import annotations
@@ -55,6 +62,26 @@ class _Ctx(LossContext):
 
 
 Grammar = Callable[[str, _Ctx], DispatcherCall | None]
+
+
+def _reject(ctx: _Ctx, why: str) -> DispatcherCall | None:
+    """Refuse a dispatcher's arguments, on the record.
+
+    A grammar that cannot read its arguments returns `None`, and `map_bind` drops the whole
+    bind -- the right call, since a bind with no action is worse than no bind. What makes it
+    safe is the note: without one the bind leaves the config and the Loss report has nothing
+    to find it by, which contradicts this Importer's "nothing is lost" contract (#131).
+
+    Returns `None` so a grammar can `return _reject(...)` and the two halves cannot drift.
+
+    Filed as `DEAD_DISPATCHER` (L11, "dispatcher, *or one of its arguments*, is dropped"),
+    not `UNSUPPORTED_KEYWORD`, whose spec says the keyword "was kept aside" -- nothing is
+    kept aside here, and a finding whose code contradicts its own text is one a user cannot
+    act on.
+    """
+    ctx.note(LossCode.DEAD_DISPATCHER, why)
+    return None
+
 
 #: Dispatchers that exist in neither engine at 0.56.2 -- the legacy line was already an
 #: error before conversion, so there is nothing to translate (L11).
@@ -145,6 +172,7 @@ def _resize_params(text: str, ctx: _Ctx) -> dict[str, object]:
         relative = False
         tokens = tokens[1:]
     if len(tokens) < 2:
+        ctx.note(LossCode.DEAD_DISPATCHER, "a resize/move dispatcher needs an x and a y")
         return {}
     if any("%" in token for token in tokens):
         ctx.note(
@@ -156,6 +184,10 @@ def _resize_params(text: str, ctx: _Ctx) -> dict[str, object]:
     x = _number(tokens[0])
     y = _number(tokens[1])
     if x is None or y is None:
+        ctx.note(
+            LossCode.DEAD_DISPATCHER,
+            f"a resize/move dispatcher needs numeric arguments, not {text.strip()!r}",
+        )
         return {}
     return {"x": x, "y": y, "relative": relative}
 
@@ -215,7 +247,7 @@ def _exec(args: str, ctx: _Ctx) -> DispatcherCall | None:
 def _exec_raw(args: str, ctx: _Ctx) -> DispatcherCall | None:
     command = args.strip()
     if not command:
-        return None
+        return _reject(ctx, "execr with an empty command is an error in Lua")
     _check_legacy_dispatch(command, ctx)
     return DispatcherCall("exec_raw", positional=(command,))
 
@@ -379,18 +411,18 @@ def _check_legacy_dispatch(command: str, ctx: _Ctx) -> None:
     )
 
 
-def _signal_window(args: str, __: _Ctx) -> DispatcherCall | None:
+def _signal_window(args: str, ctx: _Ctx) -> DispatcherCall | None:
     window, _, signal = args.partition(",")
     number = _number(signal)
     if number is None:
-        return None
+        return _reject(ctx, "signalwindow needs 'window, signal' with a numeric signal")
     return DispatcherCall("window.signal", {"signal": number, **_window(window)})
 
 
-def _signal(args: str, __: _Ctx) -> DispatcherCall | None:
+def _signal(args: str, ctx: _Ctx) -> DispatcherCall | None:
     number = _number(args)
     if number is None:
-        return None
+        return _reject(ctx, "signal needs a numeric signal number")
     return DispatcherCall("window.signal", {"signal": number})
 
 
@@ -442,7 +474,7 @@ def _fullscreen(args: str, __: _Ctx) -> DispatcherCall:
 def _fullscreen_state(args: str, ctx: _Ctx) -> DispatcherCall | None:
     tokens = args.split()
     if not tokens:
-        return None
+        return _reject(ctx, "fullscreenstate needs an internal and a client state")
     if any(token == "-1" for token in tokens[:2]):
         ctx.note(
             LossCode.FULLSCREEN_STATE,
@@ -529,20 +561,20 @@ def _focus_monitor(args: str, __: _Ctx) -> DispatcherCall:
     return DispatcherCall("focus", {"monitor": args.strip()})
 
 
-def _cursor_corner(args: str, __: _Ctx) -> DispatcherCall | None:
+def _cursor_corner(args: str, ctx: _Ctx) -> DispatcherCall | None:
     corner = _number(args)
     if corner is None:
-        return None
+        return _reject(ctx, "movecursortocorner needs a corner number")
     return DispatcherCall("cursor.move_to_corner", {"corner": corner})
 
 
-def _move_cursor(args: str, __: _Ctx) -> DispatcherCall | None:
+def _move_cursor(args: str, ctx: _Ctx) -> DispatcherCall | None:
     tokens = args.split()
     if len(tokens) < 2:
-        return None
+        return _reject(ctx, "movecursor needs an x and a y")
     x, y = _number(tokens[0]), _number(tokens[1])
     if x is None or y is None:
-        return None
+        return _reject(ctx, "movecursor needs numeric x and y")
     return DispatcherCall("cursor.move", {"x": x, "y": y})
 
 
@@ -613,20 +645,20 @@ def _tag_window(args: str, __: _Ctx) -> DispatcherCall:
     return DispatcherCall("window.tag", {"tag": tag, **_window(window)})
 
 
-def _send_shortcut(args: str, __: _Ctx) -> DispatcherCall | None:
+def _send_shortcut(args: str, ctx: _Ctx) -> DispatcherCall | None:
     parts = args.split(",")
     if len(parts) < 2:
-        return None
+        return _reject(ctx, "sendshortcut needs 'MODS, key[, window]'")
     fields: dict[str, object] = {"mods": parts[0].strip(), "key": parts[1].strip()}
     if len(parts) > 2:
         fields.update(_window(parts[2]))
     return DispatcherCall("send_shortcut", fields)
 
 
-def _send_key_state(args: str, __: _Ctx) -> DispatcherCall | None:
+def _send_key_state(args: str, ctx: _Ctx) -> DispatcherCall | None:
     parts = args.split(",")
     if len(parts) < 3:
-        return None
+        return _reject(ctx, "sendkeystate needs 'MODS, key, state'")
     fields: dict[str, object] = {
         "mods": parts[0].strip(),
         "key": parts[1].strip(),
@@ -667,10 +699,10 @@ def _swap_next(args: str, __: _Ctx) -> DispatcherCall:
     return DispatcherCall("window.swap", {"next": True})
 
 
-def _swap_active_workspaces(args: str, __: _Ctx) -> DispatcherCall | None:
+def _swap_active_workspaces(args: str, ctx: _Ctx) -> DispatcherCall | None:
     tokens = args.split()
     if len(tokens) < 2:
-        return None
+        return _reject(ctx, "swapactiveworkspaces needs two monitors")
     return DispatcherCall(
         "workspace.swap_monitors", {"monitor1": tokens[0], "monitor2": tokens[1]}
     )
@@ -722,18 +754,18 @@ def _deny_from_group(args: str, ctx: _Ctx) -> DispatcherCall:
     )
 
 
-def _set_prop(args: str, __: _Ctx) -> DispatcherCall | None:
+def _set_prop(args: str, ctx: _Ctx) -> DispatcherCall | None:
     tokens = args.strip().split(None, 2)
     if len(tokens) < 3:
-        return None
+        return _reject(ctx, "setprop needs 'window prop value'")
     window, prop, value = tokens
     return DispatcherCall("window.set_prop", {"prop": prop, "value": value, **_window(window)})
 
 
-def _force_idle(args: str, __: _Ctx) -> DispatcherCall | None:
+def _force_idle(args: str, ctx: _Ctx) -> DispatcherCall | None:
     seconds = _number(args)
     if seconds is None:
-        return None
+        return _reject(ctx, "forceidle needs a number of seconds")
     return DispatcherCall("force_idle", positional=(seconds,))
 
 
@@ -752,7 +784,7 @@ def _mouse(args: str, ctx: _Ctx) -> DispatcherCall | None:
     """`bindm`'s internal dispatcher: `movewindow` / `resizewindow [1|2]` (L5)."""
     tokens = args.split()
     if not tokens:
-        return None
+        return _reject(ctx, "a mouse bind needs movewindow or resizewindow")
     what = tokens[0].lower()
     if what == "movewindow":
         return DispatcherCall("window.drag")

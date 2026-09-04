@@ -440,6 +440,88 @@ class TestForeignLuaPath:
         assert not paths.entrypoint.with_name("hyprland.lua.bak").exists()
 
 
+class TestTheRescueLine:
+    """The line a locked-out user types from a TTY has to match the path they came in on.
+
+    One constant served both, and it deleted `hyprland.lua` -- which is the generated file
+    on the legacy path and the user's only config on the Lua path (#131, ADR-0009).
+    """
+
+    def test_the_legacy_path_removes_the_generated_entrypoint(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        flow = flow_for(legacy, schema)
+        flow.detect()
+        assert "rm ~/.config/hypr/hyprland.lua" in flow.rescue_line
+
+    def test_the_lua_path_restores_the_backup(self, paths: ConfigPaths, schema: Schema) -> None:
+        paths.entrypoint.write_text("hl.config({})\n", encoding="utf-8")
+        flow = flow_for(paths, schema)
+        detection = flow.detect()
+
+        assert detection.kind is ConfigKind.FOREIGN_LUA
+        assert "hyprland.lua.bak" in flow.rescue_line
+        assert "rm " not in flow.rescue_line
+
+    def test_importing_a_conf_that_still_displaces_a_lua_restores_the_backup(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """The case that makes this a property of the *migration*, not of the file read.
+
+        `build_preview(source=...)` overrides only the source, so importing a `.conf` while
+        a foreign `hyprland.lua` is in place still renames that file aside -- and a rescue
+        keyed off the imported file's extension would print `rm` for it, deleting the
+        Entrypoint and never restoring the backup the switch just made.
+        """
+        paths.entrypoint.write_text("hl.config({ general = {} })\n", encoding="utf-8")
+        elsewhere = paths.hypr_dir / "other.conf"
+        elsewhere.write_text(CONF, encoding="utf-8")
+
+        flow = flow_for(paths, schema)
+        flow.detect()
+        flow.build_preview(source=elsewhere)
+
+        assert flow.preview is not None
+        assert flow.preview.detection.source == elsewhere
+        assert "hyprland.lua.bak" in flow.rescue_command
+        assert "rm " not in flow.rescue_command
+
+    def test_the_rescue_names_the_stamped_backup_a_second_migration_made(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """`.bak` is only free once. After that the switch stamps the new backup, and a
+        rescue still naming the plain `.bak` restores a config two migrations old."""
+        paths.entrypoint.write_text("hl.config({ general = {} })\n", encoding="utf-8")
+        paths.entrypoint.with_name("hyprland.lua.bak").write_text("old\n", encoding="utf-8")
+
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(consent=Consent(evaluate=True))
+        flow.back_up()
+        run(flow.switch())
+
+        stamped = [
+            path.name
+            for path in paths.hypr_dir.iterdir()
+            if path.name.startswith("hyprland.lua.bak.")
+        ]
+        assert len(stamped) == 1, f"expected one stamped backup, found {stamped}"
+        assert stamped[0] in flow.rescue_command
+        assert paths.entrypoint.with_name("hyprland.lua.bak").read_text() == "old\n"
+
+    def test_the_report_carries_the_same_line_the_wizard_shows(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """The report outlives the dialog, so a disagreement between the two is a rescue
+        instruction the user reads after the wizard is gone."""
+        paths.entrypoint.write_text("hl.config({})\n", encoding="utf-8")
+        flow = flow_for(paths, schema)
+        flow.detect()
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.result.loss.rescue_line == flow.rescue_line
+
+
 class TestFreshStart:
     def test_a_fresh_user_gets_a_working_entrypoint_and_nothing_set(
         self, paths: ConfigPaths, schema: Schema

@@ -49,6 +49,7 @@ from ...model.options import ConfigModel
 from ...model.values import parse_lua
 from ...schema.resolve import Schema
 from ...schema.types import ResolvedOption
+from ..binds import dead_keysyms, note_dead_keysyms
 from ..loss import LossClass, LossCode, LossContext, LossReport
 from ..mapping import ImportResult
 from .sandbox import DEFAULT_TIMEOUT, Call, Consent, Policy, Recording, evaluate
@@ -464,12 +465,24 @@ class _Mapper:
             return
         dispatcher = self._dispatcher(args[1] if len(args) > 1 else None)
         options = self._bind_options(args[2] if len(args) > 2 else None)
+        dead = dead_keysyms(args[0])
+        if dead:
+            # The same invariant the hyprlang path holds (#131): one live bind on a name
+            # xkb does not know fails the whole config at bind time. The recording stub is
+            # not the real `hl.bind` and validates nothing, so a foreign file that never
+            # loaded imports cleanly and would fail the static gate on the way back out.
+            note_dead_keysyms(
+                LossContext(report=self.report, origin=call.origin),
+                dead,
+                disabled=True,
+            )
         self.entities.binds.append(
             Bind(
                 keys=args[0],
                 dispatcher=dispatcher,
                 options=options,
                 submap=call.submap,
+                enabled=not dead,
                 origin=call.origin,
             )
         )

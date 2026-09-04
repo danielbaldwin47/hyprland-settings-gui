@@ -22,6 +22,8 @@ from hyprtweaker.engine.importer.loss import (
     LossItem,
     LossReport,
     describe,
+    rescue_command,
+    rescue_line,
 )
 from hyprtweaker.engine.importer.scalars import bool_prefix, direction, number, truthy
 from hyprtweaker.engine.paths import ConfigPaths
@@ -238,3 +240,71 @@ class TestPersistence:
         report.add(LossCode.RULE_VALUE_TYPE, "out of range", loss_class=LossClass.BREAKAGE)
         reloaded = LossReport.load(report.save(paths))
         assert reloaded.items[0].severity is LossClass.BREAKAGE
+
+
+class TestRescueLine:
+    """The TTY escape hatch has to match the migration it is printed on (ADR-0009, #131).
+
+    One constant served both importers, and it said `rm ~/.config/hypr/hyprland.lua`. On the
+    legacy path that removes the file the app just generated and leaves `hyprland.conf` in
+    charge -- the intended rescue. On the Lua path `hyprland.lua` *is* the user's only
+    config, renamed aside and contested by the generated one, so the same line deletes the
+    config and tells the user it restored it.
+    """
+
+    def test_a_migration_that_displaced_nothing_removes_the_generated_entrypoint(self) -> None:
+        line = rescue_line(False)
+        assert "rm ~/.config/hypr/hyprland.lua" in line
+        assert ".bak" not in line
+
+    def test_a_migration_that_displaced_a_lua_restores_it_instead_of_deleting(self) -> None:
+        line = rescue_line(True)
+        assert "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua" in line
+        assert "rm " not in line
+
+    def test_an_undecided_migration_never_offers_a_bare_delete(self) -> None:
+        """A report whose migration is not yet known still gets a line, and it leads with
+        the restore -- guessing wrong towards `rm` is the failure this class is about."""
+        line = rescue_line(None)
+        assert "hyprland.lua.bak" in line
+        assert line.index("mv ") < line.index("rm ")
+
+    def test_the_rescue_names_the_backup_that_was_actually_made(self) -> None:
+        """A second migration finds `.bak` taken and stamps the new one. Naming the plain
+        `.bak` then restores a config two migrations old -- not the one just displaced."""
+        stamped = "hyprland.lua.bak.20260824-120000"
+        assert rescue_command(True, backup=stamped) == (
+            f"mv ~/.config/hypr/{stamped} ~/.config/hypr/hyprland.lua"
+        )
+        assert stamped in rescue_line(True, backup=stamped)
+
+    def test_the_command_form_carries_no_markdown(self) -> None:
+        """It goes in a GTK Row, which renders backticks and asterisks literally."""
+        for answer in (True, False, None):
+            command = rescue_command(answer)
+            assert "`" not in command
+            assert "*" not in command
+
+    def test_a_displacing_report_renders_the_restoring_line(self) -> None:
+        report = LossReport(source="/home/tester/.config/hypr/hyprland.lua")
+        report.restore_backup = True
+        rendered = report.render()
+        assert "hyprland.lua.bak" in rendered
+        assert "rm ~/.config/hypr/hyprland.lua" not in rendered
+
+    def test_a_legacy_report_renders_the_removing_line(self) -> None:
+        report = LossReport(source="/home/tester/.config/hypr/hyprland.conf")
+        report.restore_backup = False
+        assert "rm ~/.config/hypr/hyprland.lua" in report.render()
+
+    def test_every_report_carries_one_even_when_nothing_was_lost(self) -> None:
+        assert "If Hyprland will not start" in LossReport().render()
+
+    def test_the_rescue_survives_the_round_trip_to_disk(self, paths: ConfigPaths) -> None:
+        """The report outlives the app that wrote it, and a rescue that reloads as the
+        *other* path's is worse than none -- it is read by someone already locked out."""
+        report = LossReport(source="/x/hyprland.lua")
+        report.restore_backup = True
+        reloaded = LossReport.load(report.save(paths))
+        assert reloaded.restore_backup is True
+        assert reloaded.rescue_line == report.rescue_line

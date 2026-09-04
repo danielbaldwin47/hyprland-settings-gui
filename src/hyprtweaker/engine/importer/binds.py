@@ -17,10 +17,16 @@ Three separate translations happen here, and each is lossy in its own way:
 `unbind` is the one that cannot be made exact: hyprlang removed a bind by modifier *mask*,
 Lua removes it by comparing key *strings*. Canonicalising both sides identically is what
 makes the common case work, and the case it cannot cover is reported (L6).
+
+A key name xkb does not know is the one case where a *reported* conversion is not enough: a
+dead keysym was inert under hyprlang and is fatal under Lua, taking the whole config with
+it. Such a Bind is imported **disabled**, which is a comment in the written file -- kept,
+positioned, findable, and unable to break anything (ADR-0009, #131).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -33,9 +39,11 @@ __all__ = [
     "FLAG_OPTIONS",
     "canonical_key",
     "canonical_mods",
+    "dead_keysyms",
     "map_bind",
     "map_submap",
     "map_unbind",
+    "note_dead_keysyms",
 ]
 
 #: Modifier bits as hyprlang matched them: canonical Lua name -> the substrings that meant
@@ -79,6 +87,16 @@ _KEY_RENAMES: dict[str, str] = {
     "enter": "Return",
     "esc": "Escape",
 }
+
+#: Every token that names a modifier rather than a key, canonical spellings and aliases
+#: alike. Both halves matter: a foreign `hyprland.lua` writes whichever spelling its author
+#: chose, and `hl.bind` takes them all -- `CONTROL + Q`, `WIN + W` and `MOD1 + E` each
+#: verify as `config ok` on 0.56.2 while xkb knows none of the three as a keysym. Asking
+#: xkb about them would condemn working binds as dead (#131).
+_MOD_TOKENS: frozenset[str] = frozenset(
+    {name for name, _ in _MOD_ALIASES}
+    | {alias for _, aliases in _MOD_ALIASES for alias in aliases}
+)
 
 #: Keys passed through untouched -- "special syms" that are not xkb names at all.
 _SPECIAL_PREFIXES: tuple[str, ...] = ("mouse:", "switch:", "code:")
@@ -142,16 +160,52 @@ def canonical_key(key: str, ctx: LossContext | None = None) -> str:
                 replacement=renamed,
             )
         return renamed
-    if ctx is not None and known_keysym(stripped) is False:
-        # hyprlang resolved key names at press time and silently never matched an unknown
-        # one; Lua resolves at bind time and refuses the config. A bind that quietly did
-        # nothing becomes a config that will not load, so it has to be said out loud.
-        ctx.note(
-            LossCode.UNKNOWN_KEYSYM,
-            f"{stripped!r} is not a key name xkb knows, so this bind never fired in "
-            "hyprlang -- and Lua rejects the whole config rather than ignoring it",
-        )
+    # A name xkb does not know is *not* reported here: the consequence differs per keyword
+    # -- a Bind is imported disabled, an unbind merely may not match -- and the callers are
+    # the ones that know which. `dead_keysyms` asks the same question of the finished key
+    # string.
     return stripped
+
+
+def dead_keysyms(keys: str) -> tuple[str, ...]:
+    """The tokens of a canonical key string that xkb does not know.
+
+    Asked of the *finished* string rather than tracked through the translation, so that
+    every route to a key -- rename table, multi-key join, plain pass-through -- is judged
+    by the same question the compositor will ask.
+
+    Modifiers and the special syms are skipped: none of them are xkb names, so asking would
+    condemn `catchall`, `mouse:272` and `SUPER` alike. An unloadable validator returns
+    nothing, matching `known_keysym`'s refusal to guess.
+    """
+    dead = []
+    for token in keys.split("+"):
+        name = token.strip()
+        lowered = name.lower()
+        if not name or name.upper() in _MOD_TOKENS:
+            continue
+        if lowered in _SPECIAL_EXACT or lowered.startswith(_SPECIAL_PREFIXES):
+            continue
+        if known_keysym(name) is False:
+            dead.append(name)
+    return tuple(dead)
+
+
+def note_dead_keysyms(ctx: LossContext, dead: Sequence[str], *, disabled: bool) -> None:
+    """File the one L3 finding for a keyword whose key string named something xkb rejects.
+
+    One function for all three callers -- both importers' binds and `unbind` -- because the
+    fact is identical and only the consequence differs, and three copies of the sentence is
+    three chances for one of them to describe a fate the code no longer gives it.
+    """
+    names = ", ".join(repr(name) for name in dead)
+    consequence = (
+        "so this bind never fired in hyprlang and is imported commented out -- enabled, it "
+        "would fail the whole config at bind time rather than be ignored"
+        if disabled
+        else "so this unbind names a bind that never fired"
+    )
+    ctx.note(LossCode.UNKNOWN_KEYSYM, f"{names} is not a key name xkb knows, {consequence}")
 
 
 def _key_string(mods_field: str, key_field: str, ctx: LossContext, *, multikey: bool) -> str:
@@ -307,7 +361,22 @@ def map_bind(
     )
     if call is None:
         return None
-    return Bind(keys=keys, dispatcher=call, options=options, submap=submap, origin=origin)
+
+    dead = dead_keysyms(keys)
+    if dead:
+        # One live bind on a name xkb does not know takes the *whole* Lua config down at
+        # bind time, so importing it enabled would trade one inert bind for a config that
+        # will not load. Disabled keeps the line -- and its position, which is a bind's
+        # identity (ADR-0007) -- visible and one edit away from working.
+        note_dead_keysyms(ctx, dead, disabled=True)
+    return Bind(
+        keys=keys,
+        dispatcher=call,
+        options=options,
+        submap=submap,
+        enabled=not dead,
+        origin=origin,
+    )
 
 
 def map_unbind(
@@ -330,6 +399,10 @@ def map_unbind(
     mods_field = fields[0] if fields else ""
     key_field = fields[1] if len(fields) > 1 else ""
     keys = _key_string(mods_field, key_field, ctx, multikey=False)
+    if dead := dead_keysyms(keys):
+        # An unbind is not disabled for this: it names a bind that, dead keysym and all,
+        # may still exist in the source config, and removing the unbind would resurrect it.
+        note_dead_keysyms(ctx, dead, disabled=False)
     ctx.note(
         LossCode.UNBIND_BY_STRING,
         "unbind matched by modifier mask in hyprlang but matches the key string in Lua; "

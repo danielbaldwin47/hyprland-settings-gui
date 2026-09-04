@@ -34,6 +34,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+from hyprtweaker.engine.importer import import_config  # noqa: E402
+from hyprtweaker.engine.importer.mapping import ImportResult  # noqa: E402
 from hyprtweaker.engine.model import ConfigModel  # noqa: E402
 from hyprtweaker.engine.paths import ConfigPaths  # noqa: E402
 from hyprtweaker.engine.schema import load_schema  # noqa: E402
@@ -233,3 +235,70 @@ def test_the_entity_modules_were_actually_written(tmp_path: Path) -> None:
         "permissions.lua",
         "autostart.lua",
     } <= written
+
+
+def write_imported_conf(
+    root: Path, version: str, conf: str
+) -> tuple[ConfigPaths, ImportResult]:
+    """Import one `hyprland.conf` and write what came out, exactly as the wizard would."""
+    paths = ConfigPaths.rooted_at(root)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    legacy = root / "source" / "hyprland.conf"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(conf, encoding="utf-8")
+
+    result = import_config(legacy, load_schema(version, SCHEMA_DIR))
+    result.model.adopt_entities(result.entities)
+    Writer(paths, app_version="0.0.0-test").write(result.model)
+    return paths, result
+
+
+DEAD_KEYSYM_CONF = """
+bind = SUPER, Q, killactive
+bind = SUPER, notakey, exec, kitty
+bind = SUPER, alsonotakey, killactive
+"""
+
+
+def test_a_dead_keysym_bind_does_not_take_the_imported_config_down(tmp_path: Path) -> None:
+    """The invariant #108 is gated on, proved where it actually bites (#131).
+
+    hyprlang resolved key names at press time and let a typo sit inert for years; Lua
+    resolves at bind time and refuses the *whole* config. So one imported dead keysym is
+    not one dead bind -- it is a config that will not load, which is exactly what this tier
+    exists to catch. The Importer disables such binds, and this asserts the disabling is
+    the spelling Hyprland actually accepts rather than one that merely looks inert.
+    """
+    paths, result = write_imported_conf(tmp_path, "0.56.2", DEAD_KEYSYM_CONF)
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    binds = result.entities.binds
+    assert [bind.enabled for bind in binds] == [True, False, False], (
+        "the fixture no longer exercises a dead keysym; xkb knows these names now"
+    )
+
+    verified = verify(paths.entrypoint, runtime_dir)
+
+    assert verified.returncode == 0, (
+        f"Hyprland rejected a config with an imported dead-keysym bind:"
+        f"\n{verified.stdout}\n{verified.stderr}"
+    )
+    assert "config ok" in verified.stdout
+
+
+def test_the_dead_keysym_binds_reached_the_file_as_comments(tmp_path: Path) -> None:
+    """Guards the test above: "accepted" must not come from having dropped the binds.
+
+    A dropped bind would also verify, and would lose the user's line -- the failure the
+    Loss report exists to prevent.
+    """
+    paths, _ = write_imported_conf(tmp_path, "0.56.2", DEAD_KEYSYM_CONF)
+
+    written = (paths.app_dir / "binds.lua").read_text(encoding="utf-8")
+
+    assert "notakey" in written
+    assert "alsonotakey" in written
+    for line in written.splitlines():
+        if "notakey" in line:
+            assert line.strip().startswith("--"), line

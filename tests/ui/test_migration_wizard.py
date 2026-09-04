@@ -123,6 +123,70 @@ class TestTheWizardBuilds:
         assert not paths.entrypoint.exists()
 
 
+class TestTheRescueRow:
+    """The one instruction a locked-out user types from a TTY, as the dialog renders it.
+
+    Asserted here rather than only in the engine tier because both failure modes are things
+    only the real widget shows: a line meant for the *other* import path, and the report's
+    Markdown arriving in a Row that renders backticks and asterisks literally (#131).
+    """
+
+    def test_the_legacy_path_offers_the_command_that_removes_the_generated_file(
+        self, tmp_path: Path
+    ) -> None:
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+
+        shown = _text_under(dialog)
+        assert "rm ~/.config/hypr/hyprland.lua" in shown
+        assert ".bak" not in shown
+
+    def test_the_lua_path_offers_the_command_that_restores_the_backup(
+        self, tmp_path: Path
+    ) -> None:
+        """Built from the widget rather than driven through the dialog: the Lua path's
+        preview needs an evaluation consent this tier has no compositor to ask for, and the
+        thing under test is what the group renders, not how the user reaches it."""
+        from hyprtweaker.engine.paths import ConfigPaths
+        from hyprtweaker.ui.dialogs.migration import _rescue_group
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.entrypoint.write_text("hl.config({ general = {} })\n", encoding="utf-8")
+
+        window, _ = build_window(tmp_path)
+        flow = window.migration_flow()
+        flow.detect()
+
+        shown = _text_under(_rescue_group(flow.rescue_command))
+        assert "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua" in shown
+        assert "rm ~/.config/hypr/hyprland.lua" not in shown
+
+    def test_the_row_shows_a_command_rather_than_the_report_markdown(
+        self, tmp_path: Path
+    ) -> None:
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+
+        shown = _text_under(dialog)
+        assert "**If Hyprland will not start:**" not in shown
+        assert "`rm" not in shown
+
+
 class TestExport:
     def test_the_menu_offers_import_and_export(self, tmp_path: Path) -> None:
         window, _ = build_window(tmp_path)
