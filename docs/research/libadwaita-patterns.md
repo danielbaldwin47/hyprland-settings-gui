@@ -1,6 +1,6 @@
 # Research: libadwaita settings-app patterns, prior art, packaging
 
-Resolves GitHub issue #6 (part of #1). Date: 2026-08-19.
+Read by the agent building a Page or dialog, when a ticket names a section here. Resolves GitHub issue #6 (part of #1). Date: 2026-08-19.
 
 **Verified environment (this box):** libadwaita **1.9.3**, GTK **4.22.4**, python-gobject 3.56.3, meson 1.12.0, Hyprland 0.56.2 (`pacman -Q`, `Adw.get_*_version()`, `hyprctl version`). `blueprint-compiler` and `flatpak` are **not** installed (`pacman -Q` → not found); `blueprint-compiler` 0.22.2 is in `[extra]`. Every Adw/GTK class named below was confirmed present in `/usr/share/gir-1.0/Adw-1.gir` / `Gtk-4.0.gir` and instantiated once from Python (`Adw.SwitchRow`, `SpinRow`, `ComboRow`, `EntryRow`, `ExpanderRow`, `ButtonRow`, `ShortcutLabel`, `ShortcutsDialog`, `WrapBox`, `ToggleGroup`, `NavigationSplitView`, `ToolbarView`, `ToastOverlay`, `Banner`, `StatusPage`, `PreferencesDialog`, `AlertDialog`, `Gtk.ColorDialogButton`, `ListView`, `DragSource`, `DropTarget`, `EventControllerKey`, `DrawingArea`, `Fixed`, `SearchEntry`, `GestureDrag`, `Scale`) without error.
 

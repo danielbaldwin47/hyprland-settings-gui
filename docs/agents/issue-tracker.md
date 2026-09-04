@@ -1,5 +1,7 @@
 # Issue tracker: GitHub
 
+Read by any agent or skill about to read, create, label or close a ticket, before its first `gh` call.
+
 Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
 ## Conventions

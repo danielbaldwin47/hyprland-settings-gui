@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change config model & file layout (hyprtweaker), before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 ADR-0002 decided app-managed generated Lua modules + `user.lua` escape hatch, leaving the concrete model and on-disk layout open. Constraints from research/prototypes:

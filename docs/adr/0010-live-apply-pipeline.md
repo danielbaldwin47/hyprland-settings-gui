@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change live-apply pipeline, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 ADR-0003 decided instant apply and deferred the pipeline design to research. The facts are now in:

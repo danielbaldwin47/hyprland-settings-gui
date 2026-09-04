@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# tools/gate: what must be true before work lands, in one command.
+# `check` runs STEPS in order, keeps each step's output in target/gate/<step>.log,
+# prints one line per step and the failing step's log above its last line, and
+# ends in `gate check: pass` or `gate check: fail (<step>)`. `--help` names the
+# subcommands dispatched below; the `usage` step holds it and docs/agents/gate.md
+# to that list, and `cite` holds every path CLAUDE.md and docs/agents/ name to a
+# file on disk, so a doc that drifts from its tool is a failing step.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+# One entry per step: "<name>|<command>"; cite and usage stay last.
+# The venv is the one CLAUDE.md names (system-site-packages, so `gi` resolves);
+# the REQUIRE flags turn a missing luac or a dead GTK into a failure instead of
+# a skip, which is what CI's skip ceiling exists for.
+STEPS=(
+    "fmt|.venv/bin/ruff format --check ."
+    "lint|.venv/bin/ruff check ."
+    "types|.venv/bin/mypy"
+    "unit|HYPRTWEAKER_REQUIRE_LUAC=1 .venv/bin/pytest -q tests/unit tests/static"
+    "ui|HYPRTWEAKER_REQUIRE_UI=1 .venv/bin/pytest -q tests/ui"
+    "cite|$0 cite"
+    "usage|$0 usage"
+)
+
+usage() {
+    cat <<'HELP'
+usage: tools/gate <command>
+
+  check   Every step in order, stopping at the first failure; each step's
+          output in target/gate/<step>.log, printed only for the step that
+          fails. Ends in `gate check: pass` or `gate check: fail (<step>)`.
+  cite    Every path in backticks in CLAUDE.md and docs/agents/*.md that names
+          a file resolves. Ends in `gate cite: pass` or `gate cite: fail (<path>)`.
+  usage   Every subcommand dispatched here is named in this help and in
+          docs/agents/gate.md. Ends in `gate usage: pass` or `gate usage: fail (<name>)`.
+HELP
+}
+
+check() {
+    mkdir -p target/gate
+    for entry in "${STEPS[@]}"; do
+        name=${entry%%|*}
+        cmd=${entry#*|}
+        if bash -c "$cmd" > "target/gate/$name.log" 2>&1; then
+            echo "gate check: $name ok"
+        else
+            cat "target/gate/$name.log"
+            echo "gate check: fail ($name)"
+            return 1
+        fi
+    done
+    echo "gate check: pass"
+}
+
+cite() {
+    local fail=""
+    for f in CLAUDE.md docs/agents/*.md; do
+        [ -f "$f" ] || continue
+        # A backticked token holding a slash or ending in .md is a path; a
+        # trailing `/` names a directory; `<...>` is a placeholder, skipped,
+        # as are globs (`*`, `[`) and skill names (`/code-review`: one leading
+        # slash, no other).
+        grep -o '`[^`<> ]*`' "$f" | tr -d '`' | grep -E '/|\.md$' | grep -vE '[*[]|^/[^/]*$' | sort -u | while read -r p; do
+            p=${p%%:*}; p=${p%% *}
+            [ -e "$p" ] || { echo "$f names $p"; }
+        done
+    done | tee target/gate/cite.txt
+    if [ -s target/gate/cite.txt ]; then
+        echo "gate cite: fail ($(head -1 target/gate/cite.txt | awk '{print $NF}'))"; return 1
+    fi
+    echo "gate cite: pass"
+}
+
+usage_check() {
+    local names
+    names=$(grep -oE '^\s+(check|cite|usage)\)' "$0" | tr -d ' )' | sort -u)
+    for n in $names; do
+        usage | grep -qE "^  $n\b" || { echo "gate usage: fail ($n missing from --help)"; return 1; }
+        grep -q "\`tools/gate $n\`\|\`$n\`" docs/agents/gate.md 2> /dev/null || { echo "gate usage: fail ($n missing from docs/agents/gate.md)"; return 1; }
+    done
+    echo "gate usage: pass"
+}
+
+mkdir -p target/gate
+case "${1:-}" in
+    check) check ;;
+    cite) cite ;;
+    usage) usage_check ;;
+    -h | --help | "") usage ;;
+    *) echo "gate: unknown command '$1'"; usage; exit 3 ;;
+esac

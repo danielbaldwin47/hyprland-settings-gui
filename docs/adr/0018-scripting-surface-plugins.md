@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-22
 
+Read by the agent about to change scripting surface & plugin scope, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 Hyprland's Lua config has a scripting half the GUI cannot own: `hl.on` (32 events), `hl.timer`, `hl.layout.register`, function-valued bind/gesture actions, and the `hl.get_*`/`hl.dispatch` runtime queries. All of it is cleared and replayed on every reload and lives only inside the compositor's VM — no IPC query enumerates registered handlers or timers, so the app cannot read them back at runtime. Both importers park whole `hl.on` handlers and closure-valued actions in `legacy.lua` (#9, #30), and `user.lua` is the escape hatch that overrides the GUI (ADR-0005).

@@ -1,6 +1,6 @@
 # Research: option schema sources and type inference
 
-Resolves issue #3 (part of #1). Question: how completely can the 353 `hyprctl -j descriptions`
+Read by the agent working in `engine/schema` or the Overlay, when a ticket names a section here. Resolves issue #3 (part of #1). Question: how completely can the 353 `hyprctl -j descriptions`
 entries be turned into a typed, documented, grouped schema for auto-generated settings pages, and
 where must the schema be hand-curated?
 

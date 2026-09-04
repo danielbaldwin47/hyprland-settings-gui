@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-22
 
+Read by the agent about to change theming module — dual backends, color source, presets, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 ADR-0006 left a thread hanging: the "set by matugen" badge must lead somewhere actionable, not read as a lockout. Issue #25 asked what that somewhere is — a theming layer on top of the pure settings: GUI control over wallpaper-driven color generation (matugen, wallust) plus named presets. The structural tension: those tools write Bridge modules, and Bridge modules override GUI-set options (ADR-0006), so a preset applying colors through normal GUI writes would silently lose while a wallpaper pipeline is active. Someone has to own colors at any given moment.

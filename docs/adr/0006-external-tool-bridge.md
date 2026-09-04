@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change external tool bridge — no transpiler, tools emit lua, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 ADR-0002 promised that external `.conf`-emitting tools keep working after migration to Lua. The original assumption (issue #11) was a `.conf`→Lua transpile layer — a watcher daemon or one-shot import. Facts gathered while resolving #11:

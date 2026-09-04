@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change keybinds editor model, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 Binds are the largest Entity class in every corpus rice (89–197 per config) and the riskiest to edit blind. Constraints from research/prototypes:

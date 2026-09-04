@@ -1,5 +1,7 @@
 # Self-landing PRs
 
+Read by the agent whose PR is green and reviewed, before `gh pr merge`.
+
 Agents merge their own PRs in this repo — background agents included. Putting `ready-for-agent` on a ticket is the approval; no human reviews the PR afterward, so the gates below are the whole safety review.
 
 ## Gates

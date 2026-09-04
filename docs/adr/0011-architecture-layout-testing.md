@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change architecture, project layout, testing, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 ADR-0001 fixed the stack (Python + GTK4 + libadwaita) and demanded a clean engine/UI seam; ADRs 0005–0010 defined what the engine must do (config model, importers, bridge, apply pipeline). What's left is where the code lives, how the seam is enforced, how the schema layer tracks Hyprland releases, and how any of it is tested. The relevant facts are in:

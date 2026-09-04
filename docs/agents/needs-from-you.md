@@ -1,5 +1,7 @@
 # Needs from you
 
+Read by the agent closing a ticket that has leftovers for the human, and by the dispatcher at run end.
+
 Leftovers for the human accumulate in one **inbox**: the open issue labeled `needs-from-you` (`gh issue list --label needs-from-you --state open`). Its body is the human's one-stop list; its comments are the append-only journal. A leftover with a defensible default never blocks a ticket — **default-and-log**: pick the default, ship, log the leftover here. Reserve blocking (`needs input:`, ticket left open) for leftovers where any default risks junk work: irreversible actions, ambiguous spec, credentials.
 
 ## When closing a ticket with leftovers

@@ -1,6 +1,6 @@
 # Research: Lua config API surface (`hl.*`) — Hyprland 0.56.2
 
-Resolves GitHub issue #2. Catalogue of every entry point of the `hl` global as exposed by Hyprland v0.56.2 (the version installed on this machine: `hyprctl version` → `Hyprland 0.56.2 … Tag: v0.56.2`), with exact table shapes, examples, repeat-call semantics and a *declarative vs scripting* tag.
+Read by the agent working in the Writer or the Lua importer, when a ticket names a section here. Resolves GitHub issue #2. Catalogue of every entry point of the `hl` global as exposed by Hyprland v0.56.2 (the version installed on this machine: `hyprctl version` → `Hyprland 0.56.2 … Tag: v0.56.2`), with exact table shapes, examples, repeat-call semantics and a *declarative vs scripting* tag.
 
 ## Sources (all primary)
 

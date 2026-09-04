@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-22
 
+Read by the agent about to change settings search, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 Search was fixed early as view-independent and all-indexing: it sees every Option including the hidden tier, and navigating to a hit reveals the Row one-off (ADR-0013); the dotted key lives in the search index and Help popover, not the subtitle. The IA prototype (#7) shipped a `Search.dc.html` mock: search entry in the sidebar header, grouped results replacing the nav list, the content pane live-previewing the selected hit. Open were the surface (palette vs sidebar), index scope, matching, the navigation target when both Views hold the Option, and how the index is built.

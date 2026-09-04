@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-22
 
+Read by the agent about to change row conventions for generated option rows, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 Prototype #8 generated all 353 option Rows from the Schema and surfaced a set of presentation questions the spec needs settled (ticket #19):

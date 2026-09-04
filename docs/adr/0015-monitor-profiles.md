@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-22
 
+Read by the agent about to change monitor profiles & hotplug behaviour, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 The #7 IA mockup shows a "Profile: docked" label on the Displays page; ADR-0008 settled the monitors editor and deliberately spun profiles off. Constraints:

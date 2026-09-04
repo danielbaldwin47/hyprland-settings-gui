@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-22
 
+Read by the agent about to change error surfacing & recovery after bad writes, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 ADR-0010 fixed the mechanics: every Apply transaction returns a structured ApplyResult (ok / config errors / read-back mismatch / timeout), snapshots the pre-write bytes of every dirty Module into the Journal, and provides restore-last-good as a mechanism. This ADR owns the policy — when recovery fires automatically and what the user sees. Facts that shape it (`docs/research/live-apply.md`):

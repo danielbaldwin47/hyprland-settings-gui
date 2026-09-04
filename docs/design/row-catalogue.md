@@ -1,5 +1,7 @@
 # Row catalogue
 
+Read by the agent building or changing a Row, before the first edit in `ui/rows`.
+
 The presentation vocabulary for generated option Rows, decided in ADR-0013 (ticket #19). Screenshots are from the re-prototyped #8 codebase running in a nested Hyprland with the real Schema + Overlay; they show the conventions, not final visual design.
 
 ## Anatomy of a Row

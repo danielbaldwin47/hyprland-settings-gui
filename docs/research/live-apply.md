@@ -1,6 +1,6 @@
 # Live-apply mechanics and reload semantics (Hyprland v0.56.2)
 
-Resolves issue #5. Sources are Hyprland tag `v0.56.2` (paths below are relative to the
+Read by the agent working in `engine/apply` or `engine/ipc`, when a ticket names a section here. Resolves issue #5. Sources are Hyprland tag `v0.56.2` (paths below are relative to the
 Hyprland repo, `file:line`), the Hyprland wiki checkout at commit `2e15371` (2026-08-18,
 paths relative to `content/`), the installed stubs `/usr/share/hypr/stubs/hl.meta.lua`, and
 a few read-only experiments on this box (Hyprland 0.56.2, still running the **hyprlang**

@@ -1,6 +1,6 @@
 # hyprlang grammar and legacy → Lua keyword mapping (Hyprland 0.54 `.conf` → 0.56.2 `hl.*`)
 
-**Issue:** #4 (part of #1). **Date:** 2026-08-19. **Status:** research complete; no code.
+Read by the agent working in the Importer or on a Loss code, when a ticket names a section here. **Issue:** #4 (part of #1). **Date:** 2026-08-19. **Status:** research complete; no code.
 
 **Question.** What does a faithful hyprlang→Lua importer need to handle, and does an official converter already exist?
 

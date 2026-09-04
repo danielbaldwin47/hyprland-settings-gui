@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-22
 
+Read by the agent about to change packaging, install & app theming, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 ADR-0011 made meson the canonical build but left distribution "an open map item". Research #6 §6 collected the facts: the GNOME Builder Python template layout (modules under `pkgdatadir`, generated launcher, desktop/metainfo validation in `meson test`), a ready PKGBUILD sketch, and a Flatpak manifest sketch with the sandbox caveats (`--filesystem=xdg-run/hypr` is valid; host-tool launches need `flatpak-spawn --host`). ADR-0004 is me-first, publishable later; the dev machine is Arch-based (CachyOS). Open were the install story, whether Flatpak ships, app identity (id, desktop entry, icon), the license, schema shipping at package time, and whether the app exposes its own light/dark preference — plus where app preferences live at all (the ADR-0013 Advanced switch and the #7 View choice were "an app preference" with no home).

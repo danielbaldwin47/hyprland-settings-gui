@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change hyprland release drift protocol, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 `hyprctl -j descriptions` changes every Hyprland release, and the Tasks view's Page ↔ Section mapping, the Overlay, and the engine's typed dispatcher/rule tables are curated by hand (#7, #8, ADR-0011). Without a standing protocol they rot silently — the Config view regenerates itself, the curated layers do not. ADR-0011 fixed the schema layer (per-version Generated schema + version-independent Overlay + CI completeness test) but left open who reacts to a release, what the reaction covers, what the app does on versions it has never seen, and what happens to options a release removes.

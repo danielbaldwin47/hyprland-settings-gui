@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change rules & monitors editors model, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 Rules are the second-largest Entity class in the corpus (window rules 3–332 per rice, layer rules up to 74; workspace rules are rare). Monitors run 1–11 per rice. Constraints from research/prototypes:

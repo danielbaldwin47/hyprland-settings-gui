@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change migration & first-run flow, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 ADR-0002 made the migration wizard a headline feature; ADR-0005 fixed the file layout and

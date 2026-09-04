@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change python + gtk4 + libadwaita for the whole app (no rust rewrite), before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 Options weighed: GTK4/libadwaita in Python or Rust, Qt6/QML, hyprtoolkit. The user asked whether to prototype in Python and rewrite in Rust for distribution.

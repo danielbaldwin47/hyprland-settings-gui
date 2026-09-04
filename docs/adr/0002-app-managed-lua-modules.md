@@ -2,6 +2,8 @@
 
 **Status:** accepted — 2026-08-19
 
+Read by the agent about to change app-managed lua modules + importer + external-tool bridge, before the first edit; the Status line says what is on `main` now.
+
 ## Context
 
 Hyprland ≥ 0.55 deprecates hyprlang; ≥ 0.56 loads `hyprland.lua` if it exists, else legacy `hyprland.conf` — never both (see `src/config/ConfigManager.cpp`). The user's box runs hyprlang with several tools emitting `.conf` snippets (matugen, wallust, noctalia, dms, shell-switch, HyprMod).
