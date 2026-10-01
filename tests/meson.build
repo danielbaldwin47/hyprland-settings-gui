@@ -25,7 +25,7 @@ else
   # meson's default is 30s per test, which is a per-*suite* budget here rather than a
   # per-case one -- each of these runs a whole tier in one pytest process. The unit tier
   # sits just under 30s already, and ui-smoke takes over a minute on a developer box,
-  # where it actually runs instead of skipping for want of a display. A tier that grows
+  # where it actually runs instead of skipping for want of Xvfb. A tier that grows
   # one test past the default would fail as a TIMEOUT, which reads as a broken suite
   # rather than a slow one.
   suite_timeout = 600

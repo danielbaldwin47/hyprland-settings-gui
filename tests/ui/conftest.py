@@ -19,11 +19,23 @@ So the gate marks collected items as skipped. Living in conftest means each new
 Set ``HYPRTWEAKER_REQUIRE_UI=1`` to turn the skip into a hard failure. CI sets it
 on the job that installs GTK, so a broken install surfaces as a red build rather
 than a green one that quietly skipped everything.
+
+The tier draws on an Xvfb display of its own, one per pytest process, never on the
+desktop session it was started from: its windows would map there, and Hyprland
+would show its "Application Not Responding" dialog over the developer's work
+(#146). ``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose,
+for example to watch it. The display opens in ``pytest_configure``, before
+collection: importing ``Gtk`` initialises GTK, and three ``tests/unit`` modules
+import UI pages at collection time.
 """
 
 from __future__ import annotations
 
+import ctypes
 import os
+import shutil
+import signal
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -47,6 +59,35 @@ def sandboxed_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HYPRLAND_INSTANCE_SIGNATURE", raising=False)
 
 
+HOST_DISPLAY_OPT_IN = "HYPRTWEAKER_UI_HOST_DISPLAY"
+
+_libc = ctypes.CDLL(None, use_errno=True)
+_PR_SET_PDEATHSIG = 1
+
+
+def start_xvfb(xvfb: str) -> str | None:
+    """Start a headless X server and return its display name, or None if it failed.
+
+    It dies with this process (PR_SET_PDEATHSIG), including a `timeout` kill that runs no
+    cleanup. Nothing stops it earlier on purpose: GTK keeps the connection until exit, and
+    GDK exits the process when its X server goes away under it.
+    """
+    read_fd, write_fd = os.pipe()
+    subprocess.Popen(
+        [xvfb, "-displayfd", str(write_fd), "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
+        pass_fds=(write_fd,),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        preexec_fn=lambda: _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM),
+    )
+    os.close(write_fd)
+    # Xvfb writes the number once it accepts connections; EOF means it exited first.
+    with os.fdopen(read_fd) as pipe:
+        number = pipe.readline().strip()
+    return f":{number}" if number else None
+
+
 def ui_unavailable() -> str | None:
     """Return why this tier cannot run here, or None when it can."""
     try:
@@ -61,6 +102,35 @@ def ui_unavailable() -> str | None:
     except ValueError as exc:
         return f"GTK4 / libadwaita typelibs unavailable: {exc}"
 
+    if os.environ.get(HOST_DISPLAY_OPT_IN) == "1":
+        return open_display()
+
+    xvfb = shutil.which("Xvfb")
+    if xvfb is None:
+        return f"Xvfb is not installed; set {HOST_DISPLAY_OPT_IN}=1 to use the host display"
+    display = start_xvfb(xvfb)
+    if display is None:
+        return "Xvfb exited before opening a display"
+
+    # GDK reads these only while it opens its display, and the Harness tier reads the host
+    # session from them at test time when both tiers share a process, so restore them.
+    saved = {
+        name: os.environ.get(name) for name in ("DISPLAY", "GDK_BACKEND", "WAYLAND_DISPLAY")
+    }
+    os.environ.update(DISPLAY=display, GDK_BACKEND="x11")
+    os.environ.pop("WAYLAND_DISPLAY", None)
+    try:
+        return open_display()
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def open_display() -> str | None:
+    """Open GTK's default display from the current environment; say why not if it fails."""
     from gi.repository import Gdk, Gtk
 
     # Gtk.init_check() alone is not enough: on GTK4 it can report success while
@@ -70,6 +140,13 @@ def ui_unavailable() -> str | None:
         return "no usable display"
 
     return None
+
+
+_UNAVAILABLE = pytest.StashKey[str | None]()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.stash[_UNAVAILABLE] = ui_unavailable()
 
 
 # trylast: pytest applies -k/-m deselection in its own copy of this hook, so
@@ -86,13 +163,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         item for item in items if item.path is not None and UI_TESTS_DIR in item.path.parents
     ]
 
-    # Selecting no UI test at all is not a failure, whatever REQUIRE_UI says --
-    # and returning here also keeps `ui_unavailable()` from opening a display
-    # during collection for runs that never touch the UI.
+    # Selecting no UI test at all is not a failure, whatever REQUIRE_UI says.
     if not ui_items:
         return
 
-    reason = ui_unavailable()
+    reason = config.stash[_UNAVAILABLE]
     if reason is None:
         return
 

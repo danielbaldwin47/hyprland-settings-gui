@@ -54,7 +54,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pytest
+      - run: pip install pytest pytest-xdist
       # `luac` is the Writer's syntax gate (ADR-0010). It is not a runtime
       # dependency -- the gate degrades to a no-op without it -- so this job
       # installs it deliberately: a skipped gate would let a Module that does
@@ -74,7 +74,7 @@ jobs:
           SKIP_CEILING: '15'
         run: |
           set -o pipefail
-          pytest tests/unit -v 2>&1 | tee pytest-out.log
+          pytest tests/unit -n auto -v 2>&1 | tee pytest-out.log
           test -s pytest-out.log
           SKIPPED=$(grep -oE '[0-9]+ skipped' pytest-out.log | tail -1 | grep -oE '[0-9]+' || echo 0)
           echo "skipped: $SKIPPED (ceiling $SKIP_CEILING)"
@@ -95,10 +95,9 @@ jobs:
       - name: Create venv with system gi visible
         run: |
           python3 -m venv --system-site-packages .venv
-          .venv/bin/pip install pytest
+          .venv/bin/pip install pytest pytest-xdist
       - name: Boot the app headless
         env:
-          GDK_BACKEND: x11
           # This job installed GTK on purpose, so a skipped UI tier here means
           # the install regressed -- fail instead of going green on zero tests.
           HYPRTWEAKER_REQUIRE_UI: '1'
@@ -107,9 +106,11 @@ jobs:
         # doing work rather than passing because gi was absent anyway.
         # Same skip ceiling: the UI tier itself must contribute zero skips
         # (HYPRTWEAKER_REQUIRE_UI hard-fails a dead GTK env).
+        # No xvfb-run: the UI tier starts an Xvfb of its own in each worker
+        # (tests/ui/conftest.py), the same path a developer's desktop run takes.
         run: |
           set -o pipefail
-          xvfb-run -a .venv/bin/python -m pytest tests/ui tests/unit -v 2>&1 | tee pytest-out.log
+          .venv/bin/python -m pytest tests/ui tests/unit -n auto -v 2>&1 | tee pytest-out.log
           test -s pytest-out.log
           SKIPPED=$(grep -oE '[0-9]+ skipped' pytest-out.log | tail -1 | grep -oE '[0-9]+' || echo 0)
           echo "skipped: $SKIPPED (ceiling $SKIP_CEILING)"
@@ -138,7 +139,7 @@ jobs:
       - run: meson compile -C build
       - name: meson test
         # Exercises the wiring a PKGBUILD check() will use (ADR-0019). The UI
-        # tier skips here -- no display on this job, and no HYPRTWEAKER_REQUIRE_UI.
+        # tier skips here -- no Xvfb on this job, and no HYPRTWEAKER_REQUIRE_UI.
         # No skip ceiling here: this job wraps the same suites the two pytest
         # jobs already guard, and its UI-tier skip is intentional.
         run: meson test -C build --print-errorlogs
