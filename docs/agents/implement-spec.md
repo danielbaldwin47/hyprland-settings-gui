@@ -4,6 +4,8 @@ Overrides for the `implement-spec` skill in this repo; where a line here and the
 
 An **effort** is the set of specs the owner reviews and merges together: one branch `effort/<slug>` off `main`, one draft PR to `main`. Specs merge into the effort branch. With one spec in the effort, its spec branch is the effort branch: it comes off `main` and carries the PR.
 
+An effort handed to `/implement-spec` as an issue labelled `effort` is read from that issue: its sub-issues are its specs, built in the order it lists them, and its body names the slug and any spec-level edges. A spec starts once every spec it waits on has merged into the effort branch; a ticket blocked by a ticket of another spec waits for that merge too. The PR's `Closes` lines include the effort issue itself.
+
 ## Branches
 
 | Branch | Off | Only writer | Merged into |
