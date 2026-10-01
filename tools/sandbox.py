@@ -12,9 +12,9 @@ Harness tier's `NestedHyprland`, so its isolation is the one `test_harness_neste
     .venv/bin/python tools/sandbox.py --shot out.png        # screenshot after --wait, then exit
     .venv/bin/python tools/sandbox.py --home DIR            # keep state across runs
 
-On Hyprland 0.56.2 the nested compositor opens as a window on the host (`WAYLAND-1`): the
-harness's headless-only switch is gone from that release. Click around in it as in any
-window; closing the app ends the run.
+On Hyprland 0.56.x the nested compositor opens as a window on the host (`WAYLAND-1`); the
+headless-only switch is gone. Click around in it as in any window; closing the app ends the
+run.
 """
 
 from __future__ import annotations

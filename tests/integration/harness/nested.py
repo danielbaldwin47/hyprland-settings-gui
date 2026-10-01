@@ -23,14 +23,20 @@ Three isolation rules, each of which has a way of going wrong:
    and probe-window call made through `env` carries both that and the new signature, so no
    command in this package can be delivered to the host by accident.
 
-**A host Wayland session is required.** `HYPRLAND_HEADLESS_ONLY=1` on its own is not enough:
-without a host compositor to nest into, backend creation fails outright
-(`CBackend::create() failed!`) even when a render node is handed to it explicitly, because
-the DRM backend wants a seat that the developer's own session already owns. So this tier
-runs *nested*, and `unavailable_reason` reports the missing session as a skip rather than
-letting the launch fail deep inside a test. The headless *output* created inside the nested
-compositor (see `visual.py`) is what makes rendering independent of the host's screen size --
-that part needs no seat.
+**A host Wayland session is required.** Without a host compositor to nest into, backend
+creation fails outright (`CBackend::create() failed!`) even when a render node is handed to it
+explicitly, because the DRM backend wants a seat that the developer's own session already
+owns. So this tier runs *nested*, and `unavailable_reason` reports the missing session as a
+skip rather than letting the launch fail deep inside a test. The headless *output* created
+inside the nested compositor (see `visual.py`) is what makes rendering independent of the
+host's screen size -- that part needs no seat.
+
+**On 0.56.2 a nested Hyprland always shows a host window** (`WAYLAND-1`):
+`HYPRLAND_HEADLESS_ONLY` is gone from the binary. Its headless output allocates on the
+host's GPU, which NVIDIA cannot do (#144), so `Canvas` skips there unless
+`HARNESS_DRM_CARD=/dev/dri/cardN` hands the child a different card -- inside a `bwrap`, on a
+no-op seat. The account and the opt-in are in `docs/agents/local-checks.md` § Harness tier;
+`drm_card_problem` lists what it refuses.
 """
 
 from __future__ import annotations
@@ -87,6 +93,13 @@ def hyprland_binary() -> str | None:
     return shutil.which("Hyprland")
 
 
+#: Opt-in: a `/dev/dri/cardN` the nested Hyprland may take over (see the module docstring).
+#: Never auto-detected: the nested instance becomes that card's DRM master, which is not
+#: something to do to a developer's GPU unasked.
+DRM_CARD_VARIABLE = "HARNESS_DRM_CARD"
+SYS_DRM = Path("/sys/class/drm")
+
+
 def unavailable_reason() -> str | None:
     """Why the Harness cannot run here, or `None` if it can.
 
@@ -107,7 +120,76 @@ def unavailable_reason() -> str | None:
         )
     if not os.environ.get("XDG_RUNTIME_DIR"):
         return "XDG_RUNTIME_DIR unset: no directory for the nested instance's sockets"
+    card = drm_card()
+    if card is not None:
+        problem = drm_card_problem(card)
+        if problem is not None:
+            return f"{DRM_CARD_VARIABLE}={card}: {problem}"
     return None
+
+
+def drm_card() -> Path | None:
+    """The opted-in card with symlinks resolved (`by-path/...` and `cardN` both work)."""
+    value = os.environ.get(DRM_CARD_VARIABLE)
+    return Path(value).resolve() if value else None
+
+
+def render_node_of(card: Path, sys_drm: Path = SYS_DRM) -> Path | None:
+    """The render node of the same GPU as `card`, or `None` if it has none."""
+    nodes = sorted((sys_drm / card.name / "device" / "drm").glob("renderD*"))
+    return Path("/dev/dri") / nodes[0].name if nodes else None
+
+
+def drm_card_problem(card: Path, sys_drm: Path = SYS_DRM) -> str | None:
+    """Why `card` must not be handed to the nested Hyprland, or `None` if it may be."""
+    if shutil.which("bwrap") is None:
+        return "no bwrap binary: the card is only handed over inside one"
+    if not card.exists():
+        return "no such device"
+    if (sys_drm / card.name / "device" / "driver").resolve().name == "nvidia":
+        return "an NVIDIA card cannot allocate the headless output (#144)"
+    if render_node_of(card, sys_drm) is None:
+        return "the card has no render node"
+    connected = [
+        connector.parent.name
+        for connector in sys_drm.glob(f"{card.name}-*/status")
+        if connector.read_text().strip() == "connected"
+    ]
+    if connected:
+        return (
+            f"{', '.join(connected)} is connected: the nested Hyprland would take over "
+            "a monitor the desktop is using"
+        )
+    return None
+
+
+def drm_wrapped(
+    argv: Sequence[str],
+    environment: Mapping[str, str],
+    card: Path,
+    sys_drm: Path = SYS_DRM,
+) -> tuple[list[str], dict[str, str]]:
+    """`argv` and `environment` moved onto `card`: the sandbox and the no-op seat, together.
+
+    One function for both halves because `LIBSEAT_BACKEND=noop` is only safe inside the
+    sandbox. The no-op seat opens every device node it can see, and the developer is in the
+    `input` group: unmasked, the nested Hyprland would read the real keyboard and run the
+    host's keystrokes against its own binds.
+    """
+    render = render_node_of(card, sys_drm)
+    if render is None:
+        raise HarnessUnavailable(f"{card} has no render node")
+    wrapped = [
+        "bwrap",
+        "--dev-bind", "/", "/",
+        "--tmpfs", "/dev/dri",
+        "--dev-bind", str(card), str(card),
+        "--dev-bind", str(render), str(render),
+        "--tmpfs", "/dev/input",
+        "--die-with-parent",
+        *argv,
+    ]  # fmt: skip
+    return wrapped, {**environment, "LIBSEAT_BACKEND": "noop", "AQ_DRM_DEVICES": str(card)}
 
 
 def live_instances(env: Mapping[str, str]) -> dict[str, dict[str, Any]]:
@@ -206,7 +288,6 @@ class NestedHyprland:
         """
         environment = home_environment(self.home)
         environment.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
-        environment["HYPRLAND_HEADLESS_ONLY"] = "1"
         return environment
 
     @property
@@ -246,7 +327,11 @@ class NestedHyprland:
             raise NestedHyprlandError("already started")
 
         make_home(self.home)
+        command = [str(hyprland_binary()), "-c", str(self.config)]
         launch_environment = self.launch_environment
+        card = drm_card()
+        if card is not None:
+            command, launch_environment = drm_wrapped(command, launch_environment, card)
         before = set(live_instances(launch_environment))
 
         if self.log is not None:
@@ -255,7 +340,7 @@ class NestedHyprland:
         stdout: Any = self._log_handle if self._log_handle else subprocess.DEVNULL
 
         self._process = subprocess.Popen(
-            [str(hyprland_binary()), "-c", str(self.config)],
+            command,
             env=launch_environment,
             stdout=stdout,
             stderr=subprocess.STDOUT,

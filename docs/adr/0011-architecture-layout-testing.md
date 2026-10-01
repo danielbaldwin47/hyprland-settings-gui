@@ -64,6 +64,8 @@ pytest, three tiers; the engine carries the coverage, the UI stays thin:
 
    **"nightly" dropped, amended during #55.** A nested Hyprland needs a **host Wayland session**: `HYPRLAND_HEADLESS_ONLY=1` is not sufficient on its own — backend creation fails with `CBackend::create() failed!` even when a DRM render node is passed explicitly, because the DRM backend wants a *seat*, and on a developer box the login session already owns it. A stock GitHub `ubuntu-latest` runner has neither, so a nightly job would skip 100% of the compositor tests and report green — worse than no job, because it would read as coverage. The tier therefore runs on demand, and `HYPRTWEAKER_REQUIRE_HARNESS=1` turns the skip into a hard failure for any environment that is *supposed* to be able to host it. Nightly remains desirable and is blocked on a virtual seat in CI (`seatd` + `vkms`, or nesting inside a headless sway/cage); until that spike lands, on-demand is the honest cadence.
 
+   **`HYPRLAND_HEADLESS_ONLY` gone, amended during #144.** Hyprland 0.56.2 has no such switch: the nested instance always shows a `WAYLAND-1` window on the host, and its headless output allocates on the host GPU, which NVIDIA cannot do. The harness runs on a non-NVIDIA card through the opt-in `HARNESS_DRM_CARD`; see `docs/agents/local-checks.md` § Harness tier.
+
 ### Build & conventions
 
 - **meson** is the canonical build now (GNOME convention; grows into desktop file/icons/gresource install later — distribution packaging itself remains an open map item). Dev loop: `meson devenv`.

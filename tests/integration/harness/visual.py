@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .nested import HarnessUnavailable, NestedHyprland
+from .nested import DRM_CARD_VARIABLE, HarnessUnavailable, NestedHyprland
 
 HEADLESS_OUTPUT = "HEADLESS-1"
 HEADLESS_MODE = "1920x1080@60"
@@ -215,6 +215,14 @@ class Canvas:
             if fallback is None:
                 raise AssertionError(f"no headless output was created; monitors={names}")
             self.output = fallback
+
+        width = next((m.get("width") for m in monitors if m.get("name") == self.output), None)
+        if not width:
+            raise HarnessUnavailable(
+                f"{self.output} has no size, so there is nothing to photograph. Seen on an "
+                f"NVIDIA host (#144): set {DRM_CARD_VARIABLE} as docs/agents/local-checks.md "
+                "§ Harness tier describes"
+            )
 
         self.sweep()
         self.focus_output()
