@@ -43,6 +43,7 @@ timeout 900 .venv/bin/pytest tests/integration -m hyprland
 
 The nested-compositor tier (ADR-0011): each test gets its own Hyprland, `$HOME` and signature, and asserts it cannot reach the host. It needs a host Wayland session, `Hyprland`, `hyprctl` and `grim`; CI has none of them, so a local run is the only one.
 
-- On 0.56.2 a nested Hyprland opens as a window on the host (output `WAYLAND-1`): the harness's `HYPRLAND_HEADLESS_ONLY=1` no longer appears in the 0.56.2 binary. Expect windows to flash on the desktop during a run.
-- For the same reason two self-tests fail on `main`: `test_the_headless_canvas_is_a_fixed_size_whatever_the_host_screen_is` and `test_the_output_name_the_preamble_pins_is_the_one_we_shoot` (`HEADLESS-1` reports width 0). Pixel-comparing tests built on `Canvas` inherit it until the harness is fixed.
+- On 0.56.2 a nested Hyprland opens as a window on the host (output `WAYLAND-1`); `HYPRLAND_HEADLESS_ONLY` is gone from the binary. Expect a window to flash on the desktop during a run.
+- The headless output needs a GPU that allocates linear buffers. On an NVIDIA host `HEADLESS-1` stays 0x0 and every `Canvas` test skips with that reason (#144; `HYPRTWEAKER_REQUIRE_HARNESS=1` makes the skip a failure): aquamarine's headless output asks for linear buffers only, and NVIDIA's GBM refuses them.
+- To run the `Canvas` tests on such a host, set `HARNESS_DRM_CARD=/dev/dri/cardN` to a non-NVIDIA card with no monitor connected (the owner's machine: the Intel iGPU, `/dev/dri/card0`). The child then runs in a `bwrap` that shows it only that card and no input devices, on a no-op seat, and is that card's DRM master for the run. The harness reports which check a card fails: NVIDIA, a connected monitor, no render node, no `bwrap`.
 - Count host instances before and after a run (`hyprctl instances -j | jq length`): an escaped nested compositor shows up there.

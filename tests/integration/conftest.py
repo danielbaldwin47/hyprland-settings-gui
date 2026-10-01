@@ -91,11 +91,14 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
 
     Only `HarnessUnavailable`. Every other exception propagates untouched, so a real failure
     can never be laundered into a skip -- which would be the one way this hook could hide a
-    broken harness instead of explaining an unsuitable machine.
+    broken harness instead of explaining an unsuitable machine. Under
+    `HYPRTWEAKER_REQUIRE_HARNESS=1` it propagates too, like the collection-time skip.
     """
     try:
         yield
     except HarnessUnavailable as unavailable:
+        if os.environ.get(REQUIRE_VARIABLE) == "1":
+            raise
         pytest.skip(f"Harness tier: {unavailable}")
 
 
