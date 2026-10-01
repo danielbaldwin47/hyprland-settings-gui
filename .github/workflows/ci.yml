@@ -1,9 +1,15 @@
 name: CI
 
+# The done checks on main and on a pull request out of draft. An effort branch
+# (docs/agents/implement-spec.md) is checked once when its PR leaves draft, then
+# on each push after that, so a green check means everything on the PR has been
+# addressed.
 on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -24,6 +30,7 @@ env:
 jobs:
   lint:
     name: ruff + mypy (engine)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +47,7 @@ jobs:
 
   unit:
     name: unit tier (engine, headless)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,6 +82,7 @@ jobs:
 
   ui-smoke:
     name: UI smoke tier (GTK4 + libadwaita)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -108,6 +117,7 @@ jobs:
 
   build:
     name: meson build + install
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
