@@ -25,7 +25,7 @@ desktop session it was started from: its windows would map there, and Hyprland
 would show its "Application Not Responding" dialog over the developer's work
 (#146). ``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose,
 for example to watch it. The display opens in ``pytest_configure``, before
-collection: importing ``Gtk`` initialises GTK, and three ``tests/unit`` modules
+collection: importing ``Gtk`` initialises GTK, and some ``tests/unit`` modules
 import UI pages at collection time.
 """
 
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import select
 import shutil
 import signal
 import subprocess
@@ -73,19 +74,38 @@ def start_xvfb(xvfb: str) -> str | None:
     GDK exits the process when its X server goes away under it.
     """
     read_fd, write_fd = os.pipe()
-    subprocess.Popen(
-        [xvfb, "-displayfd", str(write_fd), "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
-        pass_fds=(write_fd,),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        preexec_fn=lambda: _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM),
-    )
-    os.close(write_fd)
-    # Xvfb writes the number once it accepts connections; EOF means it exited first.
+    try:
+        xvfb_process = subprocess.Popen(
+            [
+                xvfb,
+                "-displayfd",
+                str(write_fd),
+                "-screen",
+                "0",
+                "1280x1024x24",
+                "-nolisten",
+                "tcp",
+            ],
+            pass_fds=(write_fd,),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=lambda: _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM),
+        )
+    except OSError:
+        os.close(read_fd)
+        return None
+    finally:
+        os.close(write_fd)
+    # Xvfb writes the number once it accepts connections; EOF means it exited first. CI
+    # jobs have no timeout of their own, so a wedged Xvfb must not hang the run.
     with os.fdopen(read_fd) as pipe:
-        number = pipe.readline().strip()
-    return f":{number}" if number else None
+        ready, _, _ = select.select([pipe], [], [], 10)
+        number = pipe.readline().strip() if ready else ""
+    if not number:
+        xvfb_process.kill()
+        return None
+    return f":{number}"
 
 
 def ui_unavailable() -> str | None:
@@ -110,7 +130,7 @@ def ui_unavailable() -> str | None:
         return f"Xvfb is not installed; set {HOST_DISPLAY_OPT_IN}=1 to use the host display"
     display = start_xvfb(xvfb)
     if display is None:
-        return "Xvfb exited before opening a display"
+        return "Xvfb did not open a display within 10 s"
 
     # GDK reads these only while it opens its display, and the Harness tier reads the host
     # session from them at test time when both tiers share a process, so restore them.
@@ -142,11 +162,11 @@ def open_display() -> str | None:
     return None
 
 
-_UNAVAILABLE = pytest.StashKey[str | None]()
+_UI_SKIP_REASON = pytest.StashKey[str | None]()
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    config.stash[_UNAVAILABLE] = ui_unavailable()
+    config.stash[_UI_SKIP_REASON] = ui_unavailable()
 
 
 # trylast: pytest applies -k/-m deselection in its own copy of this hook, so
@@ -167,7 +187,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if not ui_items:
         return
 
-    reason = config.stash[_UNAVAILABLE]
+    reason = config.stash[_UI_SKIP_REASON]
     if reason is None:
         return
 

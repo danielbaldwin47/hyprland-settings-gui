@@ -139,9 +139,14 @@ jobs:
       - run: meson compile -C build
       - name: meson test
         # Exercises the wiring a PKGBUILD check() will use (ADR-0019). The UI
-        # tier skips here -- no Xvfb on this job, and no HYPRTWEAKER_REQUIRE_UI.
+        # tier skips here: the runner image ships Xvfb, so the host-display
+        # opt-in points the tier at this job's display, which it has none of.
+        # Run serially under apt's pytest it would make this the slowest job,
+        # and the ui-smoke job already runs it.
         # No skip ceiling here: this job wraps the same suites the two pytest
         # jobs already guard, and its UI-tier skip is intentional.
+        env:
+          HYPRTWEAKER_UI_HOST_DISPLAY: '1'
         run: meson test -C build --print-errorlogs
       - run: DESTDIR="$PWD/_install" meson install -C build
       - name: The installed launcher runs, and the install is complete

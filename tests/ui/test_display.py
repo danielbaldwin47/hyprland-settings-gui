@@ -12,7 +12,7 @@ from pathlib import Path
 
 from _display_probe import ABSENT_WAYLAND_DISPLAY
 
-REPO = Path(__file__).parents[2]
+ROOT = Path(__file__).resolve().parents[2]
 PROBE_RUN = [sys.executable, "-m", "pytest", "tests/ui/_display_probe.py", "-q", "-rs"]
 
 
@@ -28,7 +28,7 @@ def run_probe(**env: str) -> subprocess.CompletedProcess[str]:
     child_env.update(env)
     return subprocess.run(
         [*PROBE_RUN, "--color=no", "-p", "no:cacheprovider"],
-        cwd=REPO,
+        cwd=ROOT,
         env=child_env,
         capture_output=True,
         text=True,

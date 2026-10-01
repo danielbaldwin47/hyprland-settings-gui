@@ -51,7 +51,7 @@ else
     timeout: suite_timeout,
   )
 
-  # Skips itself when GTK, libadwaita or a display is missing; set
+  # Skips itself when GTK, libadwaita or Xvfb is missing; set
   # HYPRTWEAKER_REQUIRE_UI=1 to make that a failure instead (tests/ui/conftest.py).
   test(
     'ui-smoke',
