@@ -36,6 +36,7 @@ files = [
     "src/hyprtweaker/ui/rows/gesture.py",
     "src/hyprtweaker/ui/rows/state.py",
     "src/hyprtweaker/ui/search.py",
+    "tools/release_watch.py",
 ]
 mypy_path = "src"
 python_version = "3.11"
