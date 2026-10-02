@@ -464,6 +464,18 @@ def refusal(editor: Any) -> str:
     return str(editor._error.get_text()) if editor._error.get_visible() else ""
 
 
+def test_the_auto_consuming_switch_says_what_the_flag_does() -> None:
+    """Hyprland 0.56.2 `KeybindManager.cpp`: an auto-consuming bind keeps the key from the
+    app only when its dispatcher succeeds (#151 review, finding 31)."""
+    editor, _ = open_editor(term_bind())
+    row = editor._flag_switches["auto_consuming"]
+
+    assert (row.get_title(), row.get_subtitle()) == (
+        "Lets the key through if the action fails",
+        "The app gets the key when the action could not run",
+    )
+
+
 @pytest.mark.parametrize("name", ["click", "drag", "auto_consuming"])
 def test_each_new_flag_has_a_switch_and_reaches_the_saved_bind(name: str) -> None:
     editor, saved = saved_options(term_bind(), name)

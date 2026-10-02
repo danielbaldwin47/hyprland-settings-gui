@@ -387,14 +387,25 @@ class FullscreenStateRow(GrammarRow[FullscreenState]):
 
 # --- suppress_event -----------------------------------------------------------------------
 
-_EVENT_TITLES = {
-    "fullscreen": "Fullscreen",
-    "maximize": "Maximize",
-    "activate": "Activate",
-    "activatefocus": "Activate and focus",
-    "fullscreenoutput": "Fullscreen on an output",
-    "x11configurerequest": "X11 configure request",
+_EVENT_WORDS = {
+    "fullscreen": ("Fullscreen requests", "The window cannot make itself fullscreen"),
+    "maximize": ("Maximize requests", "The window cannot maximize itself"),
+    "activate": ("Activation requests", "The window cannot bring itself to the front"),
+    "activatefocus": (
+        "Focus on activation",
+        "The window can ask for attention but not take focus",
+    ),
+    "fullscreenoutput": (
+        "Fullscreen monitor choice",
+        "The window goes fullscreen where it is, not on the monitor it asks for",
+    ),
+    "x11configurerequest": (
+        "X11 move and resize requests",
+        "A floating X11 window cannot move or resize itself",
+    ),
 }
+"""Each event's title and what suppressing it does, read from Hyprland 0.56.2's
+`Window.cpp`. The keys themselves are one toggle away, in Edit as text."""
 
 
 class SuppressEventRow(GrammarRow[tuple[str, ...]]):
@@ -411,7 +422,8 @@ class SuppressEventRow(GrammarRow[tuple[str, ...]]):
     def _build(self) -> list[Gtk.Widget]:
         self.switches: dict[str, Adw.SwitchRow] = {}
         for event in SUPPRESS_EVENTS:
-            switch = Adw.SwitchRow(title=_EVENT_TITLES[event], subtitle=event, use_markup=False)
+            title, subtitle = _EVENT_WORDS[event]
+            switch = Adw.SwitchRow(title=title, subtitle=subtitle, use_markup=False)
             switch.connect("notify::active", self._changed)
             self.switches[event] = switch
         return list(self.switches.values())

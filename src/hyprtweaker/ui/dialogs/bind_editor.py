@@ -56,7 +56,11 @@ FLAGS: tuple[tuple[str, str, str], ...] = (
     ("drag", "Fires on a drag", "Mouse button held while the pointer moves"),
     ("repeating", "Repeats while held", ""),
     ("non_consuming", "Lets the key through to the app", ""),
-    ("auto_consuming", "Consumes the key automatically", "Hyprland's auto-consuming flag"),
+    (
+        "auto_consuming",
+        "Lets the key through if the action fails",
+        "The app gets the key when the action could not run",
+    ),
     ("transparent", "Does not block other binds", ""),
     ("ignore_mods", "Ignores extra modifiers", ""),
     ("long_press", "Fires on a long press", ""),
@@ -68,7 +72,8 @@ FLAGS: tuple[tuple[str, str, str], ...] = (
 
 `click` and `drag` imply `release` and exclude each other (ADR-0007): the editor sets
 `release` for the user while either is on (`_sync_release`) and refuses the pairs in
-`INCOMPATIBLE`.
+`INCOMPATIBLE`. `auto_consuming`'s words are Hyprland 0.56.2's `KeybindManager.cpp`: the
+bind keeps the key from the app only when its dispatcher succeeds.
 """
 
 INCOMPATIBLE: tuple[tuple[str, str, str], ...] = (
