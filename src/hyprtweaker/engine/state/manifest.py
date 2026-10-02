@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -299,6 +299,10 @@ class Manifest:
     def with_quarantine(self, requires: Sequence[str]) -> Manifest:
         """The Manifest with exactly `requires` quarantined. Sorted, so writes are stable."""
         return replace(self, quarantined=tuple(sorted(set(requires))))
+
+    def with_retired(self, retired: Mapping[str, RetiredValue]) -> Manifest:
+        """The Manifest keeping exactly `retired` (ADR-0012; `state/retirement.py`)."""
+        return replace(self, retired=dict(retired))
 
     def path_for(self, name: str, paths: ConfigPaths) -> Path:
         """Where a recorded name lives -- the Entrypoint is the one outside the App dir."""

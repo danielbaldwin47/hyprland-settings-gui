@@ -94,6 +94,7 @@ package_sources = {
     '__init__.py',
     'journal.py',
     'manifest.py',
+    'retirement.py',
   ],
   'hyprtweaker/engine/writer': [
     '__init__.py',
