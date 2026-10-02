@@ -34,6 +34,7 @@ import logging
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -47,6 +48,7 @@ from hyprtweaker.engine.apply import (
     EntityEdit,
     EntityStep,
     Mismatch,
+    PresetStep,
     Problem,
     Recovery,
     ReRead,
@@ -59,6 +61,7 @@ from hyprtweaker.engine.apply import (
     plan,
     read_state,
 )
+from hyprtweaker.engine.apply.result import UNREADABLE, live_value
 from hyprtweaker.engine.entities_catalog import (
     IDENTITY_FIELD,
     device_field_bounds,
@@ -73,6 +76,7 @@ from hyprtweaker.engine.ipc import (
     IpcError,
     LiveHyprland,
     NoInstance,
+    NoSuchOption,
     fetch_live_hyprland,
     read_live_hyprland,
 )
@@ -94,6 +98,7 @@ from hyprtweaker.engine.model.entities import (
     WorkspaceRule,
     entity_title,
 )
+from hyprtweaker.engine.model.values import parse_value
 from hyprtweaker.engine.paths import (
     ANIMATIONS_MODULE,
     AUTOSTART_MODULE,
@@ -108,6 +113,20 @@ from hyprtweaker.engine.paths import (
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
+)
+from hyprtweaker.engine.presets import (
+    CaptureScope,
+    Preset,
+    PresetApplied,
+    PresetApplyResult,
+    PresetNameTaken,
+    PresetNotApplied,
+    PresetNotSaved,
+    PresetSaved,
+    PresetSaveResult,
+    PresetStore,
+    scoped_options,
+    stored_value,
 )
 from hyprtweaker.engine.profiles import (
     MonitorProfile,
@@ -350,6 +369,14 @@ A reason rather than a fourth state: the Rows are genuinely not editable yet, an
 that says why is better than one that appears a moment later."""
 
 
+@dataclass(frozen=True, slots=True)
+class _AppliedPreset:
+    """A Preset whose Options are queued: its name, and each Option's value before it."""
+
+    name: str
+    before: dict[str, OptionValue]
+
+
 class Session:
     """The app's state for one run, from schema load to a clean shutdown."""
 
@@ -466,6 +493,10 @@ class Session:
 
         self._profiles: ProfileStore | None = None
         """The Monitor-profile store, built lazily over `monitor-profiles/` (#69)."""
+        self._presets: PresetStore | None = None
+        """The Preset store, built lazily over `presets/` (ADR-0014)."""
+        self._applying_preset: _AppliedPreset | None = None
+        """The Preset whose Options are queued and not yet reported (`apply_preset`)."""
 
         self._undo = UndoStack()
         self._open_gestures: dict[str, OptionValue] = {}
@@ -1559,6 +1590,191 @@ class Session:
             snapshot.monitors, snapshot.workspace_rules, snapshot.active
         )
 
+    # --- presets ----------------------------------------------------------------------------
+
+    @property
+    def _preset_store(self) -> PresetStore:
+        store = self._presets
+        if store is None:
+            store = self._presets = PresetStore(self._paths.presets_dir)
+        return store
+
+    def presets(self) -> tuple[tuple[str, Preset], ...]:
+        """Every saved Preset as `(slug, preset)`, sorted by name (ADR-0014)."""
+        return self._preset_store.list()
+
+    @property
+    def presets_revision(self) -> int:
+        """Moves whenever a Preset is saved, replaced or deleted. Presets are files, not
+        model state, so nothing else announces it: a reader pulls this when it lists."""
+        return self._preset_store.revision
+
+    def scope_size(self, scope: CaptureScope) -> int:
+        """How many Options `scope` captures in the loaded Schema: the checklist's count."""
+        return len(scoped_options(self._schema, scope))
+
+    def delete_preset(self, slug: str) -> None:
+        """Remove a Preset's file. Allowed on a read-only session, as saving is."""
+        self._preset_store.delete(slug)
+
+    def save_preset(
+        self,
+        name: str,
+        scopes: Collection[CaptureScope],
+        *,
+        replace: bool = False,
+        done: Callable[[PresetSaveResult], None],
+    ) -> None:
+        """Capture the chosen scopes as a Preset named `name`, and report through `done`.
+
+        Live, each scoped Option is read off the compositor (ADR-0014: colours are frozen to
+        the values live at capture, whatever generated them -- a Bridge module sets colours
+        the model never holds), so `done` runs once the reads are back. Not live, the model's
+        set values are saved and `done` runs before this returns. Either way an Option that
+        nothing sets is never saved: a Preset holds values, and applying one never unsets.
+
+        Allowed on a read-only session: a Preset is a file in the App dir, not a config
+        write. An existing name's slug answers `PresetNameTaken` unless `replace`.
+        """
+        name = name.strip()
+        if not name:
+            done(PresetNotSaved("Give the preset a name."))
+            return
+        chosen = frozenset(scopes)
+        if not chosen:
+            done(PresetNotSaved("Choose at least one thing to save."))
+            return
+        options = tuple(
+            option
+            for scope in CaptureScope
+            if scope in chosen
+            for option in scoped_options(self._schema, scope)
+            if option.name not in self._retired
+        )
+        client = self._client
+        if not self.live or client is None:
+            values = {
+                option.name: stored_value(value)
+                for option in options
+                if (value := self._model.get(option.name)) is not UNSET
+            }
+            done(self._write_preset(name, chosen, values, replace=replace))
+            return
+
+        async def capture() -> None:
+            try:
+                values = await self._live_values(client, options)
+            except IpcError as error:
+                _log.warning("preset capture failed: %s", error)
+                done(PresetNotSaved("Hyprland stopped answering, so nothing was saved."))
+                return
+            done(self._write_preset(name, chosen, values, replace=replace))
+
+        self._spawn(capture())
+
+    async def _live_values(
+        self, client: CommandClient, options: Sequence[ResolvedOption]
+    ) -> dict[str, Any]:
+        """What the compositor shows for each of `options`, as the Preset file holds it.
+
+        An Option the running config does not set is skipped unless the model sets it: that
+        is "at Hyprland's default", and saving it would freeze a default as a choice. The
+        model's explicit null is its own statement, as in `read_state`.
+        """
+        values: dict[str, Any] = {}
+        for option in options:
+            model = self._model.get(option.name)
+            try:
+                reply = await client.getoption(option.name)
+            except NoSuchOption:
+                continue
+            if model is None:
+                values[option.name] = None
+                continue
+            if reply.set_by_user:
+                live = live_value(option, dict(reply.payload))
+                if live is not UNREADABLE:
+                    values[option.name] = stored_value(live)
+                    continue
+            if model is not UNSET:
+                values[option.name] = stored_value(model)
+        return values
+
+    def _write_preset(
+        self,
+        name: str,
+        scopes: frozenset[CaptureScope],
+        values: Mapping[str, Any],
+        *,
+        replace: bool,
+    ) -> PresetSaveResult:
+        if not values:
+            return PresetNotSaved(
+                "Nothing to save: everything you chose is at Hyprland's default."
+            )
+        store = self._preset_store
+        slug = store.slug_for(name)
+        if not replace and store.exists(slug):
+            existing = store.load(slug)
+            return PresetNameTaken(slug, existing.name if existing is not None else slug)
+        live = self._live_hyprland
+        preset = Preset(
+            name=name,
+            created=datetime.now(UTC),
+            scopes=scopes,
+            options=values,
+            app_version=self._app_version,
+            hyprland_version=live.version
+            if live is not None
+            else self._schema.hyprland_version,
+        )
+        try:
+            store.write(slug, preset)
+        except OSError as error:
+            _log.warning("could not write preset %s: %s", slug, error)
+            return PresetNotSaved(f"The preset could not be saved: {error.strerror or error}.")
+        return PresetSaved(slug, preset)
+
+    def apply_preset(self, slug: str) -> PresetApplyResult:
+        """Set every Option the Preset holds, as one gesture: one Apply transaction, one step.
+
+        One gesture because the edits are made in one synchronous burst: the queue's worker
+        runs on this loop, so it takes every key in one batch, and the step it records is a
+        `PresetStep` that one Ctrl+Z takes back whole. A Preset holds set values only, so
+        applying never unsets an Option the Preset does not name.
+
+        What this session cannot set is skipped and named in the result, never fatal (ADR-0014
+        §Sharing). Refused, with the Banner's reason, on a read-only session.
+        """
+        if not self.live or self._applier is None:
+            return PresetNotApplied(self._offline_reason or "Hyprland is not connected.")
+        preset = self._preset_store.load(slug)
+        if preset is None:
+            return PresetNotApplied("This preset could not be read. It may have been deleted.")
+        values: dict[str, Any] = {}
+        skipped: list[str] = []
+        for name, raw in preset.options.items():
+            option = self._schema.get(name)
+            if option is None or name in self._retired or self.unknown_to_version(option):
+                skipped.append(name)
+                continue
+            if raw is None and not option.nullable:
+                skipped.append(name)
+                continue
+            try:
+                values[name] = None if raw is None else parse_value(option.type, raw)
+            except (ValueError, TypeError):
+                skipped.append(name)
+        if skipped:
+            _log.warning("preset %s: skipped %s", slug, ", ".join(skipped))
+        if values:
+            self._applying_preset = _AppliedPreset(
+                preset.name, {name: self._model.get(name) for name in values}
+            )
+            for name, value in values.items():
+                self.set_option(name, value)
+        return PresetApplied(tuple(values), tuple(skipped))
+
     # --- helper data ------------------------------------------------------------------------
 
     def fetch_clients(
@@ -1705,8 +1921,9 @@ class Session:
         if isinstance(step, EntityStep):
             return self._undo_entities(step)
 
-        self._restore({edit.name: edit.before for edit in step.edits})
-        self._applier.commit(*step.names)
+        options = step.options if isinstance(step, PresetStep) else step
+        self._restore({edit.name: edit.before for edit in options.edits})
+        self._applier.commit(*options.names)
         self._changed()
         return True
 
@@ -2083,6 +2300,7 @@ class Session:
         # spanning somebody else's reload. Entity steps over a list the re-read changes are
         # dropped there (`_reread_after_foreign_reload`).
         self._open_gestures.clear()
+        self._applying_preset = None
         self._spawn(self._reread_after_foreign_reload())
 
     async def _reread_after_foreign_reload(self) -> None:
@@ -2438,13 +2656,21 @@ class Session:
             return
 
         delta = self._close(result.keys)
+        preset = self._carried_preset(result.keys)
+        if preset is not None:
+            # From the Preset's own snapshot: an Option it set while an earlier edit of it
+            # was in flight had its gesture closed by that edit's transaction.
+            delta = {**delta, **preset.before}
         stands = self._stands(result)
         entity_steps, failed = self._settle_entities(result, stands=stands)
         if not stands:
             self._fell(result, delta, self._lists_before(failed))
             return
 
-        step = self._step(delta)
+        option_step = self._step(delta)
+        step: Step | None = (
+            option_step if preset is None else PresetStep.of(preset.name, option_step)
+        )
         self._undo.record(step)
         for entity_step in entity_steps:
             self._undo.record(entity_step)
@@ -2460,6 +2686,18 @@ class Session:
             # transaction that stands with a failure (a timeout, a `user.lua` error) has its
             # failure to say. One toast per transaction, naming the newest gesture it carried.
             self.on_recorded(newest)
+
+    def _carried_preset(self, keys: Sequence[str]) -> _AppliedPreset | None:
+        """The applied Preset this transaction carries, taken: every key of it is in `keys`.
+
+        All or none, because `apply_preset` commits its keys in one synchronous burst and the
+        queue takes a batch whole.
+        """
+        preset = self._applying_preset
+        if preset is None or not preset.before.keys() <= set(keys):
+            return None
+        self._applying_preset = None
+        return preset
 
     def _stands(self, result: ApplyResult) -> bool:
         """Whether this transaction's edits are kept: in the model, and on the undo stack.

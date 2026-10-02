@@ -43,6 +43,7 @@ from hyprtweaker.engine.apply import (  # noqa: E402
     ApplyOutcome,
     ApplyResult,
     EntityStep,
+    PresetStep,
     Problem,
     Step,
     UndoGroup,
@@ -2259,10 +2260,12 @@ class MainWindow(Adw.ApplicationWindow):
         A gesture spanning several Options is counted rather than listed: the css-gaps editor
         writes four sides at once, and "Gaps in, Gaps in, Gaps in, Gaps in" is not a sentence.
         An Entity step carries its own title ("Bind removed"): only the session knew which
-        of add, remove or reorder the gesture was.
+        of add, remove or reorder the gesture was. A Preset step names the Preset.
         """
         if isinstance(step, EntityStep):
             return step.title
+        if isinstance(step, PresetStep):
+            return f"Applied {step.name}. Press Ctrl+Z to undo."
         titles = [self._session.schema[name].title for name in step.names]
         if len(titles) == 1:
             return f"{titles[0]} changed"

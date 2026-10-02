@@ -234,3 +234,57 @@ def _from_json(data: Any) -> Preset | None:
 
 def _text(value: Any) -> str | None:
     return value if isinstance(value, str) else None
+
+
+# --- what the Session answers -------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class PresetSaved:
+    """The Preset was written as `presets/<slug>.json`."""
+
+    slug: str
+    preset: Preset
+
+
+@dataclass(frozen=True, slots=True)
+class PresetNameTaken:
+    """A Preset already has this name's slug; nothing was written. Saving again with
+    `replace=True` overwrites it (the dialog's "Replace <name>?")."""
+
+    slug: str
+    name: str
+    """The existing Preset's name, as its row shows it."""
+
+
+@dataclass(frozen=True, slots=True)
+class PresetNotSaved:
+    """Nothing was written, for `reason`: a sentence the dialog can show as it is."""
+
+    reason: str
+
+
+PresetSaveResult = PresetSaved | PresetNameTaken | PresetNotSaved
+
+
+@dataclass(frozen=True, slots=True)
+class PresetApplied:
+    """The Preset's Options went into the model as one gesture, and are being applied.
+
+    `skipped` names what the file holds that this session will not set: an Option the
+    loaded Schema lacks, one the running Hyprland lacks, a Retired one, or a value that does
+    not parse as the Option's type (ADR-0014 §Sharing: warn and skip, never fail).
+    """
+
+    applied: tuple[str, ...]
+    skipped: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PresetNotApplied:
+    """Nothing was applied, for `reason`: the session is read-only, or the file is gone."""
+
+    reason: str
+
+
+PresetApplyResult = PresetApplied | PresetNotApplied
