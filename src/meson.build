@@ -25,6 +25,7 @@ package_sources = {
     'rule_grammars.py',
     'rule_matching.py',
     'rules_catalog.py',
+    'scripting.py',
     'triggers.py',
     'workspace_catalog.py',
     'workspace_selector.py',
