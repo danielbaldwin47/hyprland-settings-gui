@@ -29,8 +29,10 @@ from __future__ import annotations
 from .generated import GeneratedSchema
 from .overlay import Overlay
 from .resolve import (
+    MINIMUM_HYPRLAND,
     Schema,
     available_versions,
+    below_lua_floor,
     derive_section_title,
     derive_title,
     humanise,
@@ -57,6 +59,7 @@ from .types import (
 )
 
 __all__ = [
+    "MINIMUM_HYPRLAND",
     "CurationFlag",
     "Dependency",
     "GeneratedOption",
@@ -75,6 +78,7 @@ __all__ = [
     "Visibility",
     "Widget",
     "available_versions",
+    "below_lua_floor",
     "derive_section_title",
     "derive_title",
     "humanise",

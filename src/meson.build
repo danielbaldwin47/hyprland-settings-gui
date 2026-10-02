@@ -66,6 +66,7 @@ package_sources = {
     'errors.py',
     'events.py',
     'instance.py',
+    'live.py',
   ],
   'hyprtweaker/engine/migration': [
     '__init__.py',
@@ -94,6 +95,7 @@ package_sources = {
     '__init__.py',
     'journal.py',
     'manifest.py',
+    'retirement.py',
   ],
   'hyprtweaker/engine/writer': [
     '__init__.py',
