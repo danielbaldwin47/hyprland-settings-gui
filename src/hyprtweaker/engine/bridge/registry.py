@@ -40,20 +40,6 @@ class Mechanism(enum.StrEnum):
     """The app installs a template and a config stanza: matugen, wallust, shell-switch."""
 
 
-class Contract(enum.StrEnum):
-    """What requiring the module does (#167 Cross-cutting 2). Informational: the line an
-    entry stores already accounts for it."""
-
-    DATA = "data"
-    """Returns a table and sets nothing (matugen's official template)."""
-
-    APPLY = "apply"
-    """Returns a table whose `apply_theme()` sets Options (noctalia 5)."""
-
-    EFFECT = "effect"
-    """Sets Options when loaded (DMS, every app-owned template)."""
-
-
 class VersionState(enum.StrEnum):
     """Whether the installed version of a tool emits Lua this app can load (S5)."""
 
@@ -182,7 +168,6 @@ class ToolSpec:
     """The name the user sees."""
 
     mechanism: Mechanism
-    contract: Contract
     modules: tuple[BridgeModule, ...]
 
     owned_keys: tuple[str, ...]
@@ -384,7 +369,6 @@ MATUGEN = ToolSpec(
     tool="matugen",
     title="matugen",
     mechanism=Mechanism.TEMPLATE_PACK,
-    contract=Contract.EFFECT,
     modules=(
         BridgeModule(
             module="hyprtweaker/bridge/matugen",
@@ -439,7 +423,6 @@ WALLUST = ToolSpec(
     tool="wallust",
     title="wallust",
     mechanism=Mechanism.TEMPLATE_PACK,
-    contract=Contract.EFFECT,
     modules=(
         BridgeModule(
             module="hyprtweaker/bridge/wallust",
@@ -476,7 +459,6 @@ NOCTALIA = ToolSpec(
     tool="noctalia",
     title="noctalia",
     mechanism=Mechanism.ADOPT,
-    contract=Contract.APPLY,
     # Its own spelling and native path. The Entrypoint carrying this line, commented or
     # not, is also what stops noctalia's `apply.sh` appending it after `user` (#167 C4).
     modules=(
@@ -520,7 +502,6 @@ DMS = ToolSpec(
     tool="dms",
     title="DMS",
     mechanism=Mechanism.ADOPT,
-    contract=Contract.EFFECT,
     # `colors.lua` only in v1; DMS's layout, cursor and bind files stay DMS's (S5).
     modules=(
         BridgeModule(module="dms.colors", line='require("dms.colors")', file="dms/colors.lua"),
@@ -550,7 +531,6 @@ SHELL_SWITCH = ToolSpec(
     tool="shell-switch",
     title="shell-switch",
     mechanism=Mechanism.TEMPLATE_PACK,
-    contract=Contract.EFFECT,
     modules=(
         BridgeModule(
             module="shell-switcher-startup",

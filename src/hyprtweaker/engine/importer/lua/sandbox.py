@@ -199,11 +199,6 @@ class Recording:
         """Nothing went wrong while running it."""
         return not self.errors
 
-    @property
-    def side_effects(self) -> bool:
-        """The config tried to change something outside itself."""
-        return bool(self.shell or self.writes)
-
     def script(self, script_id: int) -> Script | None:
         for script in self.scripts:
             if script.id == script_id:
