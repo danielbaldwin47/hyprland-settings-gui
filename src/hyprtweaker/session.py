@@ -3109,6 +3109,12 @@ class Session:
             return
         self._observe_foreign(errors, binds)
 
+    async def _rescan_drift(self, client: CommandClient) -> None:
+        """A drift scan on its own, then the Rows told: the callers of `_scan_drift` that
+        already end in `_changed` need no second refresh."""
+        await self._scan_drift(client)
+        self._changed()
+
     async def _scan_drift(self, client: CommandClient, *, keep: Collection[str] = ()) -> None:
         """ADR-0005's drift badge for every key the app's Modules set (`overrides.py`, #191).
 
@@ -3661,7 +3667,7 @@ class Session:
             # Which files load changed -- a Preset gated a Bridge off (F4), or the write's
             # new Entrypoint loads a file it did not, such as a new user.lua -- so what
             # overrides what may have changed too.
-            self._spawn(self._scan_drift(self._client))
+            self._spawn(self._rescan_drift(self._client))
         steps = self._preset_steps(presets, delta)
         for recorded in steps:
             self._undo.record(recorded)
