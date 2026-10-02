@@ -81,7 +81,8 @@
           "sections": ["group", "misc"]
         },
         { "entity": "entity:window_rules" },
-        { "entity": "entity:layer_rules" }
+        { "entity": "entity:layer_rules" },
+        { "entity": "entity:workspace_rules" }
       ]
     },
     {

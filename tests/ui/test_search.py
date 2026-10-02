@@ -26,6 +26,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import main_loop
 import pytest
 
 APP_VERSION = "0.0.0-test"
@@ -100,11 +101,7 @@ def settle() -> None:
     (`MainWindow.reveal_option`). Without draining the loop this tier would assert against
     the state one turn *before* the thing it is testing happens.
     """
-    from gi.repository import GLib
-
-    context = GLib.MainContext.default()
-    while context.pending():
-        context.iteration(False)
+    main_loop.settle("the shared window's reveal and reset to finish")
 
 
 # --- reaching the finder ------------------------------------------------------------------

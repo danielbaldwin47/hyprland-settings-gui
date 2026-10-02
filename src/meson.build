@@ -125,6 +125,7 @@ package_sources = {
     'notices.py',
     'rule_editor.py',
     'submap_editor.py',
+    'workspace_rule_editor.py',
   ],
   'hyprtweaker/ui/pages': [
     '__init__.py',
@@ -137,6 +138,7 @@ package_sources = {
     'plan.py',
     'rules.py',
     'tasks.py',
+    'workspace_rules.py',
   ],
   'hyprtweaker/ui/rows': [
     '__init__.py',
