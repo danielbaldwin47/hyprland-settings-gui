@@ -314,7 +314,7 @@ def hint_rows(window: Any, section: str) -> list[tuple[str, str, bool]]:
 
 
 def uncurate(window: Any, section: str) -> None:
-    """Drop one Section's home from the window's mapping and rebuild: a release nobody curated."""
+    """Drop one Section's home from the window's mapping and rebuild: an uncurated release."""
     from dataclasses import replace
 
     from hyprtweaker.ui.pages.tasks import PageSpec
