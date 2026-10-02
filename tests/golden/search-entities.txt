@@ -1,4 +1,4 @@
-# search index -- the Keybinds, rules & displays group
+# search index -- the Keybinds, rules, displays & presets group
 
 ## query: super (8 hits)
 field | match | kind | title | subtitle | badge
@@ -27,19 +27,31 @@ description | word-prefix | bind | SUPER + key code 10 | kitty --class scratch |
 field | match | kind | title | subtitle | badge
 title | word-prefix | monitor_rule | Any other display | mode preferred | -
 
-## query: d (10 hits)
+## query: d (13 hits)
 field | match | kind | title | subtitle | badge
 title | prefix | monitor_rule | DP-1 | mode 2560x1440@144 | -
 title | prefix | monitor_rule | desc:Dell Inc. DELL U2720Q | scale 1.5 | -
 title | prefix | monitor_profile | Desk | 1 display rule | -
+title | prefix | preset | Desk dark | Colors, Gaps & layout · saved 14 Sep 2026 | -
 title | word-prefix | monitor_rule | Any other display | mode preferred | -
 title | substring | bind | SUPER + key code 10 | kitty --class scratch | -
+title | substring | preset | Nord | Colors · saved 14 Sep 2026 | -
 key | substring | bind | SUPER + Q | Close the window | -
 key | substring | bind | SUPER + Return | kitty | -
 key | substring | bind | SUPER + notakey | firefox | Unknown key "notakey"
 key | substring | bind | SUPER + A&B | rofi -show drun | Multi-key: Hyprland can't load it
 key | substring | bind | SUPER + E | nautilus | Disabled
+description | word-prefix | workspace_rule | w[tv1] | monitor DP-1, decorate off | -
 
-## query: desk (1 hits)
+## query: desk (2 hits)
 field | match | kind | title | subtitle | badge
 title | prefix | monitor_profile | Desk | 1 display rule | -
+title | prefix | preset | Desk dark | Colors, Gaps & layout · saved 14 Sep 2026 | -
+
+## query: special (1 hits)
+field | match | kind | title | subtitle | badge
+title | prefix | workspace_rule | special:scratch | gaps_out 20 | -
+
+## query: nord (1 hits)
+field | match | kind | title | subtitle | badge
+title | prefix | preset | Nord | Colors · saved 14 Sep 2026 | -

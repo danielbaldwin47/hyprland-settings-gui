@@ -70,6 +70,7 @@ from hyprtweaker.ui.dialogs.preset_save import (  # noqa: E402
 )
 from hyprtweaker.ui.dialogs.theme_import import ThemeImportDialog  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import preset_summary  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
 
 TITLE = "Presets"
@@ -153,9 +154,7 @@ def _row(title: str, subtitle: str) -> Adw.ActionRow:
 
 def subtitle_of(preset: Preset, wallpaper_note: str | None) -> str:
     """What a row says about a Preset: what it keeps, when, and what its wallpaper will do."""
-    kept = [scope.label for scope in CaptureScope if scope in preset.scopes]
-    made = preset.created
-    lines = [f"{', '.join(kept) or 'Settings'} · saved {made.day} {made:%b %Y}"]
+    lines = [preset_summary(preset)]
     if wallpaper_note is not None:
         lines.append(wallpaper_note)
     return "\n".join(lines)

@@ -1,6 +1,6 @@
 """What an Entity row says, in words, with no display (ADR-0011, #220).
 
-The Binds, Rules and Monitors Pages each describe their Entity in one place; the search
+The Binds, Rules, Workspaces and Monitors Pages and the Presets group each describe their Entity in one place; the search
 entries (#75) describe the same Entity in the same words, so those functions live here, in
 a module that imports no `gi`, and the Pages and the finder both read them. A bind or a
 rule is therefore worded alike wherever it turns up, and strict mypy covers the words.
@@ -14,10 +14,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from hyprtweaker.engine.binds_analysis import submap_target
 from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup
 from hyprtweaker.engine.model.entities import Bind, LayerRule, MonitorRule, WindowRule
+from hyprtweaker.engine.presets import CaptureScope, Preset
 from hyprtweaker.engine.profiles import MonitorProfile
 from hyprtweaker.engine.rule_filter import value_text
 from hyprtweaker.engine.rules_catalog import is_negated, strip_negation
@@ -276,3 +278,27 @@ def profile_summary(profile: MonitorProfile) -> str:
     if pins:
         summary += f" · {pins} workspace {'pin' if pins == 1 else 'pins'}"
     return summary
+
+
+NO_FIELDS = "Nothing set yet"
+"""A workspace rule's subtitle while it has no fields: a new rule, until its fields are set."""
+
+
+def fields_summary(fields: Mapping[str, Any]) -> str:
+    """A workspace rule's row subtitle: `monitor DP-1, default, decorate off`."""
+    parts = []
+    for name, value in fields.items():
+        if value is True:
+            parts.append(name)
+        elif value is False:
+            parts.append(f"{name} off")
+        else:
+            parts.append(f"{name} {value_text(value)}")
+    return ", ".join(parts) or NO_FIELDS
+
+
+def preset_summary(preset: Preset) -> str:
+    """A Preset row's first subtitle line: what it keeps and when, `Colors · saved 14 Sep 2026`."""
+    kept = [scope.label for scope in CaptureScope if scope in preset.scopes]
+    made = preset.created
+    return f"{', '.join(kept) or 'Settings'} · saved {made.day} {made:%b %Y}"
