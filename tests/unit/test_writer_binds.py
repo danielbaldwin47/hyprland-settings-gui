@@ -311,6 +311,35 @@ class TestDisabled:
             ("right", "resize", False)
         ]
 
+    def test_an_edited_dead_keysym_bind_stays_commented_out_golden(self) -> None:
+        """The gate #108 relaxes the editor's Save block on: an imported dead-keysym bind
+        whose description and flags were edited, trigger untouched, is written commented
+        out and reads back disabled. One live dead keysym fails the whole Lua config."""
+        from pathlib import Path
+
+        from _golden import assert_matches_golden
+
+        imported = exec_bind(
+            "SUPER + notakey", "kitty", enabled=False, origin="hyprland.conf:2"
+        )
+        edited = Bind(
+            keys=imported.keys,
+            dispatcher=imported.dispatcher,
+            options=BindOptions(description="open a terminal", repeating=True),
+            enabled=imported.enabled,
+            origin=imported.origin,
+        )
+        text = render(EntitySet(binds=[exec_bind("SUPER + Q", "a"), edited]))
+        golden = Path(__file__).parent.parent / "golden" / "writer" / "binds-dead-keysym.lua"
+        assert_matches_golden(text, golden, "the edited dead-keysym binds.lua")
+
+        # Checked apart from the golden, so regenerating it cannot bless a promoted bind.
+        parsed = parse_binds_module(text)
+        assert [(b.keys, b.enabled, b.options.description) for b in parsed.binds] == [
+            ("SUPER + Q", True, ""),
+            ("SUPER + notakey", False, "open a terminal"),
+        ]
+
     def test_a_hand_written_comment_is_not_a_disabled_bind(self) -> None:
         parsed = parse_binds_module(
             '-- hl.bind("SUPER + Q", hl.dsp.exec_cmd{ command = "old" })\n'

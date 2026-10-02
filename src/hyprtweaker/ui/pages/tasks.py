@@ -24,7 +24,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from hyprtweaker.engine.schema import ResolvedOption, Schema
+from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility
 from hyprtweaker.engine.schema.resolve import schema_dir
 
 from .plan import (
@@ -393,27 +393,37 @@ def _with_fallbacks(
     for section in schema.section_names:
         if section in homed:
             continue
-        visible = [
-            option
-            for option in schema.section(section)
-            if option.name not in placed and is_visible(option, disclosure)
-        ]
-        if not visible:
-            # Every Option here is either curated elsewhere by name or is the hidden tier,
-            # which has no Tasks home at any switch setting (ADR-0013 §5). Nothing to show.
+        unplaced = [option for option in schema.section(section) if option.name not in placed]
+        visible = [option for option in unplaced if is_visible(option, disclosure)]
+        # Only the advanced tier is withheld: the switch can reveal it. The hidden tier has no
+        # Tasks home at any switch setting (ADR-0013 §5), so counting it would hint at a
+        # setting the switch cannot bring here.
+        withheld = sum(
+            1
+            for option in unplaced
+            if option.visibility is Visibility.ADVANCED and option not in visible
+        )
+        if not visible and not withheld:
+            # Every Option here is either curated elsewhere by name or is the hidden tier.
+            # Nothing to show, and nothing the user could turn on to see.
             continue
+        groups = (
+            (
+                GroupPlan(
+                    title=new_in_group_title(schema.hyprland_version),
+                    options=tuple(visible),
+                    description=NEW_IN_GROUP_DESCRIPTION,
+                ),
+            )
+            if visible
+            else ()
+        )
         fallbacks.append(
             PagePlan(
                 section=f"tasks.new.{section}",
                 title=schema.section_title(section),
-                groups=(
-                    GroupPlan(
-                        title=new_in_group_title(schema.hyprland_version),
-                        options=tuple(visible),
-                        description=NEW_IN_GROUP_DESCRIPTION,
-                    ),
-                ),
-                withheld=0,
+                groups=groups,
+                withheld=withheld,
             )
         )
 

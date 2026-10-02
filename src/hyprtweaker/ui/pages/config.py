@@ -40,7 +40,7 @@ class ConfigPage:
                 group.add(row.widget)
             self._page.add(group)
 
-        if not plan.groups:
+        if not plan.groups or plan.withheld:
             self._page.add(_withheld_group(plan))
 
     @property
@@ -104,17 +104,19 @@ def escaped(text: str) -> str:
 
 
 def _withheld_group(plan: PagePlan) -> Adw.PreferencesGroup:
-    """What a Section shows when the Advanced switch has emptied it.
+    """What a Page says about the Options the Advanced switch is withholding.
 
     Five Sections are entirely `advanced` or `hidden` -- `debug`, `quirks`, `experimental`,
     `input-capture`, `opengl`. Their Pages still exist, because the sidebar is the map of
     the config surface, and a Page that renders nothing at all reads as a broken app rather
-    than as a deliberately quiet one.
+    than as a deliberately quiet one. A Page that shows some Options and withholds others
+    carries the same row after its Groups (#136): someone who can see 20 cursor settings
+    should learn the other 2 exist, not discover them by flipping the switch blind.
     """
     group = Adw.PreferencesGroup()
     if plan.withheld:
         row = Adw.ActionRow(
-            title=f"{plan.withheld} advanced settings",
+            title=f"{plan.withheld} advanced setting{'s' if plan.withheld != 1 else ''}",
             subtitle="Turn on “Show advanced settings” in the main menu to see them.",
         )
     else:
