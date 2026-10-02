@@ -349,3 +349,59 @@ class PresetNotApplied:
 
 
 PresetApplyResult = PresetApplied | PresetNotApplied
+
+
+@dataclass(frozen=True, slots=True)
+class PresetChange:
+    """One Option a Preset would change: what it is now, and what the Preset sets.
+
+    Both are model values, typed by the Option: `before` is the set value or Hyprland's
+    default, and `None` when there is none (a nullable Option at "Device default").
+    """
+
+    option: ResolvedOption
+    before: Any
+    after: Any
+
+
+@dataclass(frozen=True, slots=True)
+class PresetSection:
+    """The changes within one Section, in the Schema's order, under its title."""
+
+    name: str
+    title: str
+    changes: tuple[PresetChange, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PresetPreview:
+    """What applying a Preset would do, before anything is done (ADR-0014 §Sharing).
+
+    `sections` holds only real changes. `unchanged` names the Options already at the
+    Preset's value. `unknown` names what this session cannot set: an Option the loaded
+    Schema or the running Hyprland lacks, or a Retired one. `invalid` names a value that
+    does not parse as its Option's type. Applying skips both, as `PresetApplied.skipped`.
+    """
+
+    sections: tuple[PresetSection, ...]
+    unchanged: tuple[str, ...]
+    unknown: tuple[str, ...]
+    invalid: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PresetImported:
+    """A Theme archive's Preset is in the store as `slug`; nothing has been applied."""
+
+    slug: str
+    preset: Preset
+
+
+@dataclass(frozen=True, slots=True)
+class PresetNotImported:
+    """Nothing was written, for `reason`."""
+
+    reason: str
+
+
+PresetImportResult = PresetImported | PresetNotImported

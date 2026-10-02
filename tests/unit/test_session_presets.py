@@ -8,6 +8,8 @@ model and the Module on disk -- never off a stub that only records calls.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,18 +25,23 @@ from _support import (
 from hyprtweaker.engine.apply import PresetStep
 from hyprtweaker.engine.ipc import Instance, NoInstance
 from hyprtweaker.engine.model import UNSET, Bind, CssGaps, DispatcherCall
-from hyprtweaker.engine.model.values import parse_value
+from hyprtweaker.engine.model.values import display_text, parse_value
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.presets import (
     CaptureScope,
+    Preset,
     PresetApplied,
+    PresetImported,
     PresetNameTaken,
     PresetNotApplied,
+    PresetNotImported,
     PresetNotSaved,
+    PresetPreview,
     PresetSaved,
     PresetSaveResult,
     scoped_options,
 )
+from hyprtweaker.engine.presets_archive import ThemeArchive, Wallpaper
 from hyprtweaker.session import Session
 
 BORDER_SIZE = "general:border_size"
@@ -401,3 +408,139 @@ def test_a_read_only_session_refuses_to_apply_with_the_banners_reason(tmp_path: 
     assert isinstance(result, PresetNotApplied)
     assert result.reason == session.offline_reason
     assert session.model.get(BORDER_SIZE) is UNSET
+
+
+# --- importing a Theme archive (#169) ---------------------------------------------------------
+
+ARCHIVE_OPTIONS = {
+    BORDER_SIZE: 3,
+    GAPS_IN: "5 10 5 10",
+    ROUNDING: 0,
+    ACTIVE_BORDER: "ee33ccff 45deg",
+    GROUPBAR_FONT: "Inter",
+    "general:sparkle": 1,
+    "decoration:active_opacity": "lots",
+    "decoration:dim_inactive": None,
+}
+
+
+def archived(name: str = "Nord", **options: Any) -> ThemeArchive:
+    return ThemeArchive(
+        preset=Preset(
+            name=name,
+            created=datetime(2026, 10, 2, 9, 30, tzinfo=UTC),
+            scopes=frozenset({CaptureScope.GAPS_LAYOUT, CaptureScope.COLORS}),
+            options=options or ARCHIVE_OPTIONS,
+            app_version="0.1.0",
+            hyprland_version="0.56.2",
+        ),
+        wallpaper=Wallpaper("png", b"\x89PNG\r\n\x1a\n not decoded here"),
+        newer_format=False,
+        dropped=(),
+    )
+
+
+def shown(preview: PresetPreview) -> list[tuple[str, str, str, str]]:
+    """The preview as the dialog lists it: Section title, Option, before, after."""
+    return [
+        (
+            section.title,
+            change.option.name,
+            display_text(change.before),
+            display_text(change.after),
+        )
+        for section in preview.sections
+        for change in section.changes
+    ]
+
+
+def test_the_preview_lists_each_change_by_section_and_what_is_left_out(tmp_path: Path) -> None:
+    session = offline_session(tmp_path)
+    session.model.set(BORDER_SIZE, 2)
+    before = tree(tmp_path)
+
+    preview = session.preview_preset(archived().preset)
+
+    assert shown(preview) == [
+        ("General", BORDER_SIZE, "2", "3"),
+        ("General", GAPS_IN, "5 5 5 5", "5 10 5 10"),
+        ("General", ACTIVE_BORDER, "ffffffff 0deg", "ee33ccff 45deg"),
+        ("Groups", GROUPBAR_FONT, "None", "Inter"),  # None: the Row shows its null label
+    ]
+    assert preview.unchanged == (ROUNDING,)
+    assert preview.unknown == ("general:sparkle",)
+    assert preview.invalid == ("decoration:active_opacity", "decoration:dim_inactive")
+    assert tree(tmp_path) == before  # a preview writes nothing
+
+
+def tree(root: Path) -> dict[str, bytes | None]:
+    return {
+        str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+        for path in sorted(root.rglob("*"))
+    }
+
+
+def test_an_imported_theme_applies_as_one_transaction_one_ctrl_z_takes_back(
+    tmp_path: Path,
+) -> None:
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        reloads = fake.requests.count("reload")
+
+        imported = session.import_preset(archived(**NORD))
+        assert isinstance(imported, PresetImported)
+        fake.conversation.update(conversation(**NORD_LIVE))
+        result = session.apply_preset(imported.slug)
+        await settle(session, runner)
+
+        assert result == PresetApplied(applied=(BORDER_SIZE, GAPS_IN, ROUNDING), skipped=())
+        assert fake.requests.count("reload") == reloads + 1
+        step = session.last_gesture
+        assert isinstance(step, PresetStep) and step.name == "Nord"
+        image = tmp_path / "hypr" / "hyprtweaker" / "presets" / "wallpapers" / "nord.png"
+        assert image.read_bytes() == b"\x89PNG\r\n\x1a\n not decoded here"
+        assert preset_file(tmp_path, "nord")["wallpaper"] == str(image)
+
+        fake.conversation.update(conversation())
+        assert session.undo()
+        await settle(session, runner)
+        assert session.model.get(BORDER_SIZE) is UNSET
+        assert session.model.get(ROUNDING) is UNSET
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_importing_a_name_already_taken_keeps_both(tmp_path: Path) -> None:
+    session = offline_session(tmp_path)
+    write_preset(tmp_path, "nord", "Nord", NORD)
+    revision = session.presets_revision
+
+    theme = archived(**{BORDER_SIZE: 5})
+
+    imported = session.import_preset(theme)
+
+    image = tmp_path / "hypr" / "hyprtweaker" / "presets" / "wallpapers" / "nord-2.png"
+    assert imported == PresetImported(
+        "nord-2", replace(theme.preset, name="Nord 2", wallpaper=str(image))
+    )
+    assert [(slug, preset.name) for slug, preset in session.presets()] == [
+        ("nord", "Nord"),
+        ("nord-2", "Nord 2"),
+    ]
+    assert preset_file(tmp_path, "nord")["options"] == NORD
+    assert session.presets_revision != revision
+
+
+def test_an_import_that_cannot_be_written_says_why_and_leaves_nothing(tmp_path: Path) -> None:
+    session = offline_session(tmp_path)
+    presets = tmp_path / "hypr" / "hyprtweaker" / "presets"
+    presets.parent.mkdir(parents=True)
+    presets.write_text("a file where the presets folder goes")
+    before = tree(tmp_path)
+
+    imported = session.import_preset(archived())
+
+    assert isinstance(imported, PresetNotImported)
+    assert imported.reason.startswith("The theme could not be added to your presets: ")
+    assert tree(tmp_path) == before

@@ -130,15 +130,22 @@ from hyprtweaker.engine.presets import (
     Preset,
     PresetApplied,
     PresetApplyResult,
+    PresetChange,
+    PresetImported,
+    PresetImportResult,
     PresetNameTaken,
     PresetNotApplied,
+    PresetNotImported,
     PresetNotSaved,
+    PresetPreview,
     PresetSaved,
     PresetSaveResult,
+    PresetSection,
     PresetStore,
     scoped_options,
     stored_value,
 )
+from hyprtweaker.engine.presets_archive import ThemeArchive
 from hyprtweaker.engine.profiles import (
     MonitorProfile,
     MonitorStateSnapshot,
@@ -387,6 +394,16 @@ class _AppliedPreset:
 
     name: str
     before: dict[str, OptionValue]
+
+
+def _typed(option: ResolvedOption, value: Any) -> Any:
+    """`value` as the model types it: a Schema default is display text, a set value is not."""
+    if value is None:
+        return None
+    try:
+        return parse_value(option.type, value)
+    except (ValueError, TypeError):
+        return value
 
 
 class Session:
@@ -1878,20 +1895,8 @@ class Session:
         preset = self._preset_store.load(slug)
         if preset is None:
             return PresetNotApplied("This preset could not be read. It may have been deleted.")
-        values: dict[str, Any] = {}
-        skipped: list[str] = []
-        for name, raw in preset.options.items():
-            option = self._schema.get(name)
-            if option is None or name in self._retired or self.unknown_to_version(option):
-                skipped.append(name)
-                continue
-            if raw is None and not option.nullable:
-                skipped.append(name)
-                continue
-            try:
-                values[name] = None if raw is None else parse_value(option.type, raw)
-            except (ValueError, TypeError):
-                skipped.append(name)
+        values, _unknown, _invalid = self._preset_values(preset)
+        skipped = [name for name in preset.options if name not in values]
         if skipped:
             _log.warning("preset %s: skipped %s", slug, ", ".join(skipped))
         if values:
@@ -1901,6 +1906,82 @@ class Session:
             for name, value in values.items():
                 self.set_option(name, value)
         return PresetApplied(tuple(values), tuple(skipped))
+
+    def _preset_values(
+        self, preset: Preset
+    ) -> tuple[dict[str, Any], tuple[str, ...], tuple[str, ...]]:
+        """The Preset's values this session can set, parsed; then the names it cannot set
+        (`unknown`) and the values that do not parse (`invalid`), each in file order.
+
+        The one place a stored value is read, so the preview and the apply cannot disagree
+        about what a Preset does. Every value enters through `parse_value`: a Preset may
+        come from another machine (#169), and its strings reach the Writer's Lua.
+        """
+        values: dict[str, Any] = {}
+        unknown: list[str] = []
+        invalid: list[str] = []
+        for name, raw in preset.options.items():
+            option = self._schema.get(name)
+            if option is None or name in self._retired or self.unknown_to_version(option):
+                unknown.append(name)
+            elif raw is None and not option.nullable:
+                invalid.append(name)
+            else:
+                try:
+                    values[name] = None if raw is None else parse_value(option.type, raw)
+                except (ValueError, TypeError):
+                    invalid.append(name)
+        return values, tuple(unknown), tuple(invalid)
+
+    def preview_preset(self, preset: Preset) -> PresetPreview:
+        """What applying `preset` would change, Option by Option, grouped by Section.
+
+        Reads only: nothing is written and nothing is queued, so a Theme archive can be
+        shown before the user has agreed to anything (#169). `before` is what the Row
+        shows today, the model's value or Hyprland's default, and it is compared typed,
+        so a colour spelled two ways is not a change.
+        """
+        values, unknown, invalid = self._preset_values(preset)
+        changed: dict[str, list[PresetChange]] = {}
+        unchanged: list[str] = []
+        for name, after in values.items():
+            option = self._schema[name]
+            before = _typed(option, self.effective_value(option))
+            if before == after:
+                unchanged.append(name)
+            else:
+                changed.setdefault(option.section, []).append(
+                    PresetChange(option, before, after)
+                )
+        sections = tuple(
+            PresetSection(
+                section,
+                self._schema.section_title(section),
+                tuple(sorted(changed[section], key=lambda change: change.option.order)),
+            )
+            for section in self._schema.section_names
+            if section in changed
+        )
+        return PresetPreview(sections, tuple(unchanged), unknown, invalid)
+
+    def import_preset(self, archive: ThemeArchive) -> PresetImportResult:
+        """Add a Theme archive's Preset to the store, its wallpaper beside it. Applies nothing.
+
+        Never an overwrite: a taken name is kept, and the import becomes "<name> 2"
+        (`PresetStore.add`). Allowed on a read-only session, as saving is. The caller asks
+        first (`ui/dialogs/theme_import.py`), then applies with `apply_preset(slug)`.
+        """
+        image = archive.wallpaper
+        try:
+            slug, preset = self._preset_store.add(
+                archive.preset, None if image is None else (image.extension, image.data)
+            )
+        except OSError as error:
+            _log.warning("could not import preset %s: %s", archive.preset.name, error)
+            return PresetNotImported(
+                f"The theme could not be added to your presets: {error.strerror or error}."
+            )
+        return PresetImported(slug, preset)
 
     # --- helper data ------------------------------------------------------------------------
 
