@@ -49,7 +49,12 @@ from .events import (
     Unsubscribe,
 )
 from .instance import Instance
-from .live import LIVE_READ_TIMEOUT_SECONDS, LiveHyprland, read_live_hyprland
+from .live import (
+    LIVE_READ_TIMEOUT_SECONDS,
+    LiveHyprland,
+    fetch_live_hyprland,
+    read_live_hyprland,
+)
 
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
@@ -74,5 +79,6 @@ __all__ = [
     "SocketUnavailable",
     "Subscriber",
     "Unsubscribe",
+    "fetch_live_hyprland",
     "read_live_hyprland",
 ]

@@ -76,6 +76,12 @@ down with it. `env.lua` and `permissions.lua` in particular are the two kinds Hy
 does *not* reset on reload (`lua-api-surface.md` §13, §15), so a user reading the App dir
 to find out what is still set from last boot has one file per question.
 """
+PLUGINS_MODULE = "plugins.lua"
+"""The ordered plugin load list (ADR-0018 §Plugins, #174): one `hl.plugin.load` per entry.
+
+Its own file for the blast-radius reason the others split for: a hand edit that breaks the
+list must not take the binds or the display layout down with it.
+"""
 BRIDGE_DIR = "bridge"
 MONITOR_PROFILES_DIR = "monitor-profiles"
 """Monitor profiles, one `<slug>.json` each, in the App dir (ADR-0015).

@@ -14,13 +14,16 @@ from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall
 pytest.importorskip("gi", reason="the Binds Page imports gi at module scope")
 
 from hyprtweaker.ui.pages.binds import (
-    BadgeKind,
     RowConflict,
-    action_text,
-    bind_badge,
     flag_text,
     ordinal,
     rival_label,
+    row_verb,
+)
+from hyprtweaker.ui.pages.entity_text import (
+    BadgeKind,
+    action_text,
+    bind_badge,
     trigger_text,
 )
 
@@ -64,6 +67,18 @@ class TestAction:
     def test_a_known_dispatcher_shows_its_label(self) -> None:
         bind = Bind(keys="A", dispatcher=DispatcherCall(path="window.close"))
         assert action_text(bind) == "Close the window"
+
+    @pytest.mark.parametrize(
+        ("path", "shown"),
+        [
+            ("group.lock", "Lock all groups"),
+            ("window.deny_from_group", "Keep the window out of groups"),
+            ("group.move_window", "Move the window forwards or back in its group"),
+        ],
+    )
+    def test_the_group_dispatchers_read_in_plain_words(self, path: str, shown: str) -> None:
+        """Spec #152 review finding 16: "Deny the window from groups" and the like."""
+        assert action_text(Bind(keys="A", dispatcher=DispatcherCall(path=path))) == shown
 
     def test_arguments_are_appended(self) -> None:
         bind = Bind(keys="A", dispatcher=DispatcherCall(path="window.tag", args={"tag": "x"}))
@@ -160,7 +175,7 @@ class TestBindBadge:
     def test_the_empty_submap_badge_leaves_the_bind_editable_and_removable(self) -> None:
         """The bind is fine; the submap is what is missing a bind, so nothing is taken away."""
         kind = BadgeKind.EMPTY_SUBMAP
-        assert (kind.editable, kind.removable, kind.verb) == (True, True, None)
+        assert (kind.editable, kind.removable, row_verb(kind)) == (True, True, None)
 
     def test_a_bind_entering_another_submap_has_no_badge(self) -> None:
         badge = bind_badge(

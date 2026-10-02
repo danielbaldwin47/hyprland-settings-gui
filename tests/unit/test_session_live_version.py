@@ -179,7 +179,9 @@ def test_a_newer_hyprland_adds_its_new_options_and_keeps_the_shipped_schema_vers
 
         assert {option.name for option in session.schema} - {
             option.name for option in sample_schema()
-        } == {"general:new_size", "general:snap_new"}
+        } == {"general:new_size", "general:snap_new", "plugin:hyprbars:bar_height"}
+        # The plugin's setting joins as a plugin's (#175), never as new in this release.
+        assert session.schema["plugin:hyprbars:bar_height"].added_in is None
         session.set_option("general:new_size", 7)
         await session.aclose()
 
@@ -209,8 +211,8 @@ def test_at_or_below_the_newest_shipped_schema_nothing_is_added(
         FakeHyprland(), tmp_path, Runner(), live_hyprland=_described_with_extras(version)
     )
 
-    assert "general:new_size" not in session.schema
-    assert len(session.schema) == len(sample_schema())
+    added = {option.name for option in session.schema} - {o.name for o in sample_schema()}
+    assert added == {"plugin:hyprbars:bar_height"}  # a loaded plugin's joins at any version
 
 
 def _described_without(missing: str) -> LiveHyprland:

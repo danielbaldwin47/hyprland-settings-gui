@@ -24,7 +24,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from hyprtweaker.engine.schema import ResolvedOption, Schema
+from hyprtweaker.engine.schema import ResolvedOption, Schema, SupplementKind
 from hyprtweaker.engine.schema.resolve import schema_dir, version_key
 
 from .plan import (
@@ -83,6 +83,23 @@ class PageSpec:
     title: str
     sections: tuple[str, ...] = ()
     groups: tuple[GroupSpec, ...] = ()
+
+
+ENTITY_PAGE_PREFIX = "entity:"
+
+
+def entity_page_id(kind: str) -> str:
+    """The sidebar id (and stack name) of the Entity Page for `kind`.
+
+    The one place that spells the `entity:` prefix. It exists because Hyprland has Sections
+    and Entity kinds of the same name (`binds`, `animations`, `gestures`), and the Config
+    view stacks one page per Section beside one per Entity kind: a bare `binds` is two pages
+    under one name, and GTK keeps the first and drops the second (#70, #120).
+
+    `kind` is the id suffix, not the `EntitySet` attribute name: the startup commands are
+    `entity_page_id("autostart")`, though `EntitySet` calls them `startup`.
+    """
+    return f"{ENTITY_PAGE_PREFIX}{kind}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,7 +200,7 @@ def _destination(entry: Any, path: Path) -> Destination:
     if not isinstance(entry, dict):
         raise ValueError(f"{path}: a destination must be an object")
     if "entity" in entry:
-        return EntitySpec(section=str(entry["entity"]))
+        return EntitySpec(section=entity_page_id(str(entry["entity"])))
     return PageSpec(
         id=str(entry["id"]),
         title=str(entry["title"]),
@@ -358,6 +375,10 @@ def _section_group_title(
     return f"{section_title} · {derived}" if derived else section_title
 
 
+PLUGIN_GROUP_TITLE = "Plugin options"
+"""The fallback Group of a loaded plugin's settings: no release added them (#175)."""
+
+
 def _with_fallbacks(
     planned: list[CategoryPlan],
     schema: Schema,
@@ -390,9 +411,18 @@ def _with_fallbacks(
         # Titled with the release that added each Option where it is known (`added_in`,
         # which a runtime-supplemented Option carries too), so a Section only the running
         # Hyprland has is not announced as new in the shipped one.
+        # A loaded plugin's setting has no release at all (#175): it is never "new in" one.
         by_version: dict[str, list[ResolvedOption]] = {}
+        plugins: list[ResolvedOption] = []
         for option in visible:
-            by_version.setdefault(option.added_in or schema.hyprland_version, []).append(option)
+            if (
+                option.supplement is not None
+                and option.supplement.kind is SupplementKind.PLUGIN
+            ):
+                plugins.append(option)
+            else:
+                version = option.added_in or schema.hyprland_version
+                by_version.setdefault(version, []).append(option)
         groups = tuple(
             GroupPlan(
                 title=new_in_group_title(version),
@@ -402,7 +432,7 @@ def _with_fallbacks(
             for version, members in sorted(
                 by_version.items(), key=lambda item: version_key(item[0])
             )
-        )
+        ) + ((GroupPlan(title=PLUGIN_GROUP_TITLE, options=tuple(plugins)),) if plugins else ())
         fallbacks.append(
             PagePlan(
                 section=f"tasks.new.{section}",

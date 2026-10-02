@@ -33,6 +33,7 @@ files = [
     "src/hyprtweaker/ui/pages/plan.py",
     "src/hyprtweaker/ui/pages/tasks.py",
     "src/hyprtweaker/ui/pages/declaration_kinds.py",
+    "src/hyprtweaker/ui/pages/entity_text.py",
     "src/hyprtweaker/ui/rows/gesture.py",
     "src/hyprtweaker/ui/rows/state.py",
     "src/hyprtweaker/ui/search.py",

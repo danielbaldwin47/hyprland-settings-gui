@@ -35,7 +35,7 @@ from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from hyprtweaker.engine import binds_analysis
 from hyprtweaker.engine.apply import (
@@ -46,10 +46,12 @@ from hyprtweaker.engine.apply import (
     Edit,
     EntityEdit,
     EntityStep,
+    EntrypointTransaction,
     Mismatch,
     Problem,
     Recovery,
     ReRead,
+    RestoreTransaction,
     Step,
     UndoGroup,
     UndoStack,
@@ -73,6 +75,7 @@ from hyprtweaker.engine.ipc import (
     IpcError,
     LiveHyprland,
     NoInstance,
+    fetch_live_hyprland,
     read_live_hyprland,
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
@@ -87,6 +90,7 @@ from hyprtweaker.engine.model.entities import (
     LayerRule,
     MonitorRule,
     Permission,
+    PluginLoad,
     StartupCommand,
     WindowRule,
     WorkspaceRule,
@@ -102,6 +106,7 @@ from hyprtweaker.engine.paths import (
     LAYER_RULES_MODULE,
     MONITORS_MODULE,
     PERMISSIONS_MODULE,
+    PLUGINS_MODULE,
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
@@ -120,6 +125,7 @@ from hyprtweaker.engine.schema import (
     MINIMUM_HYPRLAND,
     ResolvedOption,
     Schema,
+    SupplementKind,
     below_lua_floor,
     load_schema,
     newer_than_shipped,
@@ -133,13 +139,21 @@ from hyprtweaker.engine.state.retirement import (
     UnkeptNotice,
 )
 from hyprtweaker.engine.triggers import trigger_load_problem
-from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
+from hyprtweaker.engine.writer import (
+    BeforeReplace,
+    LuaSyntaxError,
+    ModuleSet,
+    Writer,
+)
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
 from hyprtweaker.engine.writer.monitors import parse_monitors_module
 from hyprtweaker.engine.writer.rules import parse_rules_module
 
 _log = logging.getLogger(__name__)
+
+_Answer = TypeVar("_Answer")
+"""What one helper-data query answers: a tuple of mappings, or of names."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,6 +395,12 @@ class Session:
             # ADR-0012 §Pinning: what a newer compositor added beyond every shipped schema
             # still gets a Row, inferred from its own description and flagged as such.
             schema = supplement(schema, live.descriptions, version=live.version)
+        if live is not None:
+            # ADR-0018 §Plugins: a loaded plugin's settings, whatever the version, flagged as
+            # a plugin's. Only a plugin loaded at this read adds any (no rebuild mid-session).
+            schema = supplement(
+                schema, live.descriptions, version=live.version, kind=SupplementKind.PLUGIN
+            )
         self._schema = schema
         self._paths = paths if paths is not None else ConfigPaths.default()
         self._app_version = app_version
@@ -472,6 +492,9 @@ class Session:
         there; without one the session undoes it itself."""
 
         self._reverting = False
+        self._recoveries: list[EntrypointTransaction | RestoreTransaction] = []
+        """Restore last good and Entrypoint rewrites in flight. Each one's result is its own
+        caller's to observe and report, once, not `_applied`'s: it carries no gesture."""
         self._recovery_halted = False
         self._recovery = Recovery()
         """What the last reload said was wrong, attributed. The Banner is a view of this.
@@ -544,11 +567,15 @@ class Session:
 
     @property
     def live_hyprland(self) -> LiveHyprland | None:
-        """The running compositor's version and option descriptions, read once at startup.
+        """The running compositor's version and option descriptions, read at startup, or on
+        connect when that missed.
 
-        `None` when there was no compositor, it did not answer, or its version is not a
-        release number. Not the same fact as `live`: a compositor can be described here and
-        still refuse every edit (one too old for a Lua config, or a socket that died later).
+        `None` when there was no compositor, it did not answer either time, or its version
+        is not a release number. A read on connect does not rebuild the Schema (#217): an
+        Option only its supplement would add has no Row until the next start.
+
+        Not the same fact as `live`: a compositor can be described here and still refuse
+        every edit (one too old for a Lua config, or a socket that died later).
         The Schema it selected is `schema.hyprland_version`, which can be older (ADR-0012
         degradation).
         """
@@ -709,10 +736,12 @@ class Session:
         """The release that retired this Option while the user set it, if it is Retired.
 
         ADR-0012's "the Row is badged": the app keeps the value and has stopped writing it.
-        Only a Retired Option the loaded Schema still describes has a Row to badge.
+        Only a Retired Option the loaded Schema still describes has a Row to badge, and only
+        one a release removed: a value kept for a quiet reason belongs to an Option the
+        user's Hyprland still has.
         """
         entry = self._retired.get(option.name)
-        return entry.retired_in if entry is not None else None
+        return entry.retired_in if entry is not None and entry.reason.announced else None
 
     def notice_seen(self, notice: Notice) -> None:
         """The user has dismissed `notice`: a Retired one is not shown again (ADR-0012).
@@ -1213,6 +1242,7 @@ class Session:
         "env",
         "permissions",
         "startup",
+        "plugins",
     )
     """The Entity kinds the one generic list API below serves, named as `EntitySet` names.
 
@@ -1220,7 +1250,8 @@ class Session:
     `rules(kind)` gives: every caller is already parameterised by kind, because the seven
     Pages are one Page class seven times over a field catalogue. The names are `EntitySet`'s
     own attribute names so this list and that dataclass cannot drift into disagreeing about
-    what a kind is called.
+    what a kind is called. `plugins` is the eighth (#174): its editor is a group on the
+    Scripting Page rather than a Page of its own, but its list is edited the same way.
     """
 
     def declarations(self, kind: str) -> list[Any]:
@@ -1289,6 +1320,21 @@ class Session:
 
         return self.edit_declarations(kind, drop, title=entity_title(kind, "removed"))
 
+    def move_declaration(self, kind: str, index: int, to: int) -> bool:
+        """Move the entity at `index` to position `to`: the plugin list's reorder (#174).
+
+        A move, as `move_rule` is, because that is what a drag is; a move off either end
+        or onto itself changes nothing and so records nothing.
+        """
+
+        def shift(items: list[Any]) -> None:
+            if 0 <= index < len(items) and 0 <= to < len(items) and index != to:
+                items.insert(to, items.pop(index))
+
+        return self.edit_declarations(
+            kind, shift, title=entity_title(kind, "reordered", plural=True)
+        )
+
     @property
     def curves(self) -> list[Curve]:
         """The live curve list. Identity is the name (`hl.curve` overwrites by it).
@@ -1349,6 +1395,11 @@ class Session:
     def monitor_profiles(self) -> tuple[tuple[str, MonitorProfile], ...]:
         """Every saved profile as `(slug, profile)`, sorted by name (ADR-0015)."""
         return self._profile_store.list()
+
+    @property
+    def monitor_profiles_revision(self) -> int:
+        """Moves whenever a profile is saved, updated or deleted: the finder re-lists on it."""
+        return self._profile_store.revision
 
     def save_monitor_profile(
         self, name: str, connected: Sequence[Mapping[str, Any]] = ()
@@ -1549,11 +1600,23 @@ class Session:
         """
         self._fetch_helper_data("switches", lambda client: client.switches(), done)
 
+    def fetch_loaded_plugins(self, done: Callable[[tuple[str, ...] | None], None]) -> None:
+        """The names of the plugins Hyprland has loaded right now, or `None` if unanswerable.
+
+        Asked every time and never cached: a reload loads and unloads plugins, so the only
+        current answer is a fresh one. `hyprctl plugin list` rather than the `eval` of
+        `hl.get_loaded_plugins()` ADR-0018 first named: on 0.56.2 `eval` answers `ok`
+        whatever the Lua prints or returns, and `eval` clears `configerrors` on entry, while
+        `plugin list` is a plain read that is safe between a reload and its read-back
+        (probed on a nested instance, #174).
+        """
+        self._fetch_helper_data("plugins", lambda client: client.loaded_plugins(), done)
+
     def _fetch_helper_data(
         self,
         what: str,
-        query: Callable[[CommandClient], Coroutine[Any, Any, tuple[Mapping[str, Any], ...]]],
-        done: Callable[[tuple[Mapping[str, Any], ...] | None], None],
+        query: Callable[[CommandClient], Coroutine[Any, Any, _Answer]],
+        done: Callable[[_Answer | None], None],
     ) -> None:
         """The shared shape of a fire-and-callback helper query, failure spelled `None`."""
         client = self._client
@@ -1813,6 +1876,12 @@ class Session:
             self.set_read_only(f"{instance.command_socket} is not answering: {error}")
             return
 
+        if self._live_hyprland is None:
+            # The startup read missed (#214), so the Schema lacks what a supplement would
+            # have added. Asked before the Applier exists, so nothing writes in between, and
+            # before retirement, which tells "removed" from "not in this schema" by it.
+            self._live_hyprland = await fetch_live_hyprland(client)
+
         self._events = events
         events.subscribe(self._on_monitor_hotplug, MONITOR_ADDED, MONITOR_REMOVED)
         self._client = client
@@ -1854,10 +1923,12 @@ class Session:
         if found or restored:
             self._spawn(self._write_retirement(applier, restored))
 
-        notices: list[Notice] = list(retirement.unannounced(remaining))
-        for extra in (UnkeptNotice.of(found, values), RenamedNotice.of(restored)):
-            if extra is not None:
-                notices.append(extra)
+        notices: list[Notice] = [
+            *retirement.unannounced(remaining),
+            *UnkeptNotice.of(found, values),
+        ]
+        if (renamed := RenamedNotice.of(restored)) is not None:
+            notices.append(renamed)
         for notice in notices:
             if self.on_notice is not None:
                 self.on_notice(notice)
@@ -2131,12 +2202,12 @@ class Session:
             self._load_monitors()
 
     def _reread_declarations(self) -> None:
-        """Adopt hand edits to the six declarative Modules, gated like the others.
+        """Adopt hand edits to the seven declarative Modules, gated like the others.
 
-        One gate over all six and one load for all six, for `_reread_rules`'s reason:
+        One gate over all seven and one load for all seven, for `_reread_rules`'s reason:
         `_load_declarations` splices misfiled entities to the kind they are, so re-reading
         one file without the others would drop whatever it found belonging to a list the
-        other five own.
+        other six own.
         """
         changed = False
         for module in self.DECLARATION_MODULES:
@@ -2275,18 +2346,19 @@ class Session:
         ENV_MODULE,
         PERMISSIONS_MODULE,
         AUTOSTART_MODULE,
+        PLUGINS_MODULE,
     )
-    """The six Modules `_load_declarations` reads, in Entrypoint order (#70)."""
+    """The seven Modules `_load_declarations` reads: the six of #70 and `plugins.lua` (#174)."""
 
     def _load_declarations(self) -> bool:
-        """Read the six declarative Entity Modules into the model.
+        """Read the seven declarative Entity Modules into the model.
 
         The same shape as `_load_rules` and `_load_monitors`, one tier wider: every file
         feeds every list, so an entity someone hand-moved into the wrong Module comes back
         as what it is rather than vanishing -- and vanishing is not cosmetic here, because a
         list the model believes is empty is a Module the Writer prunes.
 
-        All six are adopted together or none is. Six files is where that rule starts to
+        All seven are adopted together or none is. Seven files is where that rule starts to
         look expensive, and it is exactly where it starts to matter: a single unparseable
         `gestures.lua` must not license the Writer to delete a user's `env.lua`, which is
         the one Module whose contents Hyprland will not restore on the next reload.
@@ -2298,6 +2370,7 @@ class Session:
         env: list[EnvVar] = []
         permissions: list[Permission] = []
         startup: list[StartupCommand] = []
+        plugins: list[PluginLoad] = []
 
         for module in self.DECLARATION_MODULES:
             path = self._paths.app_dir / module
@@ -2316,10 +2389,11 @@ class Session:
             env.extend(parsed.env)
             permissions.extend(parsed.permissions)
             startup.extend(parsed.startup)
+            plugins.extend(parsed.plugins)
 
         _log.info(
             "read %d curve(s), %d animation(s), %d gesture(s), %d device(s), "
-            "%d env var(s), %d permission(s), %d startup command(s)",
+            "%d env var(s), %d permission(s), %d startup command(s), %d plugin(s)",
             len(curves),
             len(animations),
             len(gestures),
@@ -2327,6 +2401,7 @@ class Session:
             len(env),
             len(permissions),
             len(startup),
+            len(plugins),
         )
         self._model.entities.curves[:] = curves
         self._model.entities.animations[:] = animations
@@ -2335,6 +2410,7 @@ class Session:
         self._model.entities.env[:] = env
         self._model.entities.permissions[:] = permissions
         self._model.entities.startup[:] = startup
+        self._model.entities.plugins[:] = plugins
         return True
 
     def _on_stream_lost(self) -> None:
@@ -2350,6 +2426,8 @@ class Session:
         should be able to take it back). A gesture can never be both, which is why the failed
         one is never pushed rather than pushed and popped.
         """
+        if any(result is recovery.result for recovery in self._recoveries):
+            return
         if self._reverting:
             # The restore transaction's own result. It carries no gesture of the user's, and
             # a second auto-revert on top of a failed one is the loop ADR-0016 forbids.
@@ -2497,8 +2575,11 @@ class Session:
 
         Every finished reload lands here, clean ones included -- a clean reload is how a
         Banner *clears*, and a recovery that only ever raised one would leave the user
-        looking at a problem they had already fixed.
+        looking at a problem they had already fixed. A result that ran no reload learnt
+        nothing about the config, so the Banner stays as it is.
         """
+        if not result.reloaded:
+            return
         self._note(
             result.errors,
             written=result.written,
@@ -2631,8 +2712,10 @@ class Session:
             return
 
         self._restoring = True
+        restore = applier.restore(restores)
+        self._recoveries.append(restore)
         try:
-            result = await applier.restore_now(applier.restore(restores))
+            result = await applier.restore_now(restore)
         except (IpcError, RuntimeError) as error:
             _log.error("the restore transaction failed: %s", error)
             self._recovery_halted = True
@@ -2643,6 +2726,7 @@ class Session:
             return
         finally:
             self._restoring = False
+            self._recoveries.remove(restore)
 
         if not result.ok:
             # A restore that did not land is exactly the escalation ADR-0016 names: stop
@@ -2653,6 +2737,7 @@ class Session:
         # The restore re-read the model itself, so the Rows have moved; and its own reload's
         # errors are the current truth about the config, replacing the ones it was answering.
         self._observe(result)
+        self._repoll_if_timed_out(result)
         # After the observation, which clears the field: this notice is about what the
         # restore just did, so it has to survive the restore's own reload and nothing later.
         self._rescued, self._pending_rescue = self._pending_rescue, ()
@@ -2716,17 +2801,29 @@ class Session:
         which requires are quarantined, so there is nothing in it a regeneration could lose.
         """
         return self._recovery_write(
-            lambda: self._writer.regenerate_entrypoint(self._model),
+            lambda before: self._writer.regenerate_entrypoint(
+                self._model, before_replace=before
+            ),
+            self.quarantined,
             "regenerate the Entrypoint",
         )
 
     def _set_quarantine(self, requires: set[str]) -> bool:
+        ordered = sorted(requires)
         return self._recovery_write(
-            lambda: self._writer.set_quarantine(self._model, sorted(requires)),
+            lambda before: self._writer.set_quarantine(
+                self._model, ordered, before_replace=before
+            ),
+            ordered,
             "change the Quarantine",
         )
 
-    def _recovery_write(self, write: Callable[[], object], what: str) -> bool:
+    def _recovery_write(
+        self,
+        write: Callable[[BeforeReplace | None], bool],
+        quarantined: Sequence[str],
+        what: str,
+    ) -> bool:
         """Rewrite the Entrypoint out of band, then reload. `False` if it could not be done.
 
         One body for the two recoveries that work by changing which files are required, since
@@ -2734,23 +2831,30 @@ class Session:
         live session to reload into, a write that may fail without taking the app down, and a
         reload that is *not* an apply -- an apply would render the model over the App dir and
         reload with the require list it would have generated rather than the one just written.
+
+        The Entrypoint `quarantined` would produce is rendered and syntax-gated here, so a
+        recovery the gate refuses answers `False` and leaves the Banner as it is. The write
+        itself runs queued (`EntrypointTransaction`): its Journal draft stays open until the
+        reload answers, and nothing else may open one meanwhile.
         """
         if not self.live or self._applier is None:
             return False
         try:
-            write()
-        except (LuaSyntaxError, ProtectedFile, OSError, ValueError) as error:
+            self._writer.entrypoint_text(self._model, quarantined)
+        except (LuaSyntaxError, ValueError) as error:
             _log.error("could not %s: %s", what, error)
             return False
-        self._spawn(self._reload_after_recovery())
+        self._spawn(self._recover_entrypoint(write, what))
         return True
 
-    async def _reload_after_recovery(self) -> None:
-        """Make an Entrypoint rewrite take effect, and re-read what the config now says.
+    async def _recover_entrypoint(
+        self, write: Callable[[BeforeReplace | None], bool], what: str
+    ) -> None:
+        """Rewrite the Entrypoint, reload, and re-read what the config now says.
 
         A plain apply would do the wrong thing here: it renders the model over the App dir,
-        and the file that just changed is the one file the model does not describe. So this
-        restores nothing and writes nothing -- it reloads, and finds out what happened.
+        and the file that changes is the one file the model does not describe. So this
+        renders nothing -- it rewrites one file, reloads, and finds out what happened.
         """
         applier = self._applier
         if applier is None:
@@ -2759,13 +2863,20 @@ class Session:
         # everything that file was overriding, and the app cannot know which those were
         # without asking about all of them.
         wanted = tuple(option.name for option in self._owned())
+        recovery = applier.recover_entrypoint(write, wanted)
+        self._recoveries.append(recovery)
         try:
-            result = await applier.restore_now(applier.reload_only(wanted))
+            result = await applier.restore_now(recovery)
         except (IpcError, RuntimeError) as error:
             _log.error("could not reload after a recovery: %s", error)
             self._changed()
             return
+        finally:
+            self._recoveries.remove(recovery)
+        if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+            _log.error("could not %s: %s", what, result.detail)
         self._observe(result)
+        self._repoll_if_timed_out(result)
         self._report(result)
         self._changed()
 

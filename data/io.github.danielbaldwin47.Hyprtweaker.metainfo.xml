@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata (ADR-0019). Validated by `meson test` (appstreamcli validate). -->
+<component type="desktop-application">
+  <id>io.github.danielbaldwin47.Hyprtweaker</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Hyprtweaker</name>
+  <summary>Change Hyprland settings without editing config files</summary>
+  <developer id="io.github.danielbaldwin47">
+    <name>Daniel Baldwin</name>
+  </developer>
+
+  <description>
+    <p>
+      Hyprtweaker shows Hyprland's options, binds, rules and monitors as settings you
+      can change. A change applies to the running compositor and is written to your Lua
+      config, and you can undo it.
+    </p>
+    <p>Hyprtweaker needs Hyprland 0.56 or later.</p>
+  </description>
+
+  <launchable type="desktop-id">io.github.danielbaldwin47.Hyprtweaker.desktop</launchable>
+  <provides>
+    <binary>hyprtweaker</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/danielbaldwin47/hyprland-settings-gui</url>
+  <url type="bugtracker">https://github.com/danielbaldwin47/hyprland-settings-gui/issues</url>
+
+  <categories>
+    <category>Settings</category>
+  </categories>
+  <keywords>
+    <keyword>Hyprland</keyword>
+    <keyword>Wayland</keyword>
+    <keyword>compositor</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-10-02"/>
+  </releases>
+</component>

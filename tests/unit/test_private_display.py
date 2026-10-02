@@ -27,6 +27,9 @@ def private_display(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleTy
     spec = importlib.util.spec_from_file_location("private_display_under_test", MODULE)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # Registered before it runs: its dataclasses (`PrivateBus`, #212) resolve their
+    # string annotations through `sys.modules`.
+    monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, "_SOCKET", f"{tmp_path}/X{{}}")
     monkeypatch.setattr(module, "_LOCK", f"{tmp_path}/.X{{}}-lock")

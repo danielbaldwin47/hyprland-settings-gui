@@ -2,9 +2,10 @@
 
 Two stores exist and confusing them is the mistake this module is shaped to prevent. The
 **config model** is the user's Hyprland configuration: versioned, journalled, exported, and
-theirs. **Prefs** is which sidebar arrangement they last used and whether the Advanced switch
-was on -- state that describes *this app*, is worthless in a dotfile repo, and must never
-travel with the config. So Prefs lives in `$XDG_STATE_HOME/hyprtweaker/prefs.json`, beside
+theirs. **Prefs** is which sidebar arrangement they last used, whether the Advanced switch
+was on, which colour scheme they forced and which dialog answers they asked to keep -- state
+that describes *this app*, is worthless in a dotfile repo, and must never travel with the
+config. So Prefs lives in `$XDG_STATE_HOME/hyprtweaker/prefs.json`, beside
 the Snapshots and the Journal, and nothing here ever touches `ConfigModel`.
 
 Plain JSON, never GSettings (ADR-0019): GSettings drags in a dconf daemon, and without that
@@ -21,7 +22,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,8 @@ FORMAT_VERSION = 1
 
 VIEW_KEY = "view"
 SHOW_ADVANCED_KEY = "show_advanced"
+THEME_KEY = "theme"
+REMEMBERED_KEY = "remembered"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,11 +64,42 @@ class Prefs:
     the curated view pointless before it is seen.
     """
 
+    theme: str = "system"
+    """The Theme override: `system`, `light` or `dark` (ADR-0019). System by default.
+
+    A `str` for the reason `view` is one: which names mean something is the window's
+    question (`ui.shell.window._theme_from`), and an unknown one degrades to System there.
+    """
+
+    remembered: Mapping[str, str] = field(default_factory=dict, hash=False)
+    """"Remember my choice" answers, by dialog id (ADR-0014). Empty by default.
+
+    Flat on purpose: a dialog that learns to remember adds a key, never a field, so this
+    file's shape does not move each time one does (#170 is the first). Read-only, and
+    replaced rather than mutated by every `with_`/`without_`, so a `Prefs` the window still
+    holds cannot change under it. Read an answer with `prefs.remembered.get(dialog_id)`.
+    """
+
     def with_view(self, view: str) -> Prefs:
         return replace(self, view=view)
 
     def with_show_advanced(self, show_advanced: bool) -> Prefs:
         return replace(self, show_advanced=show_advanced)
+
+    def with_theme(self, theme: str) -> Prefs:
+        return replace(self, theme=theme)
+
+    def with_remembered(self, dialog_id: str, choice: str) -> Prefs:
+        return replace(self, remembered={**self.remembered, dialog_id: choice})
+
+    def without_remembered(self, dialog_id: str) -> Prefs:
+        """Forget one dialog's answer, so it asks again. Absent already: an equal `Prefs`."""
+        kept = {key: value for key, value in self.remembered.items() if key != dialog_id}
+        return replace(self, remembered=kept)
+
+    def without_any_remembered(self) -> Prefs:
+        """Forget every dialog's answer: the "Forget remembered choices" menu item."""
+        return replace(self, remembered={})
 
 
 class PrefsStore:
@@ -99,11 +134,14 @@ class PrefsStore:
         defaults = Prefs()
         view = payload.get(VIEW_KEY)
         show_advanced = payload.get(SHOW_ADVANCED_KEY)
+        theme = payload.get(THEME_KEY)
         return Prefs(
             view=view if isinstance(view, str) else defaults.view,
             show_advanced=(
                 show_advanced if isinstance(show_advanced, bool) else defaults.show_advanced
             ),
+            theme=theme if isinstance(theme, str) else defaults.theme,
+            remembered=_remembered_from(payload.get(REMEMBERED_KEY)),
         )
 
     def save(self, prefs: Prefs) -> bool:
@@ -117,6 +155,8 @@ class PrefsStore:
             "format_version": FORMAT_VERSION,
             VIEW_KEY: prefs.view,
             SHOW_ADVANCED_KEY: prefs.show_advanced,
+            THEME_KEY: prefs.theme,
+            REMEMBERED_KEY: dict(prefs.remembered),
         }
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,3 +189,15 @@ class PrefsStore:
         if payload.get("format_version") != FORMAT_VERSION:
             return None
         return payload
+
+
+def _remembered_from(value: object) -> dict[str, str]:
+    """The stored dialog answers, keeping each one that is a string.
+
+    Anything but an object is no answers at all. Inside one, an answer that is not a string
+    is dropped on its own: the dialog asks again, and the other answers the user gave stay.
+    JSON object keys are always strings, so only the values need checking.
+    """
+    if not isinstance(value, dict):
+        return {}
+    return {key: choice for key, choice in value.items() if isinstance(choice, str)}

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
 from typing import TYPE_CHECKING
 
 import gi
@@ -33,59 +32,22 @@ from hyprtweaker.engine.binds_analysis import (  # noqa: E402
     empty_submaps,
     find_conflicts,
     submap_names,
-    submap_target,
     unreachable_submaps,
 )
-from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind  # noqa: E402
-from hyprtweaker.engine.triggers import (  # noqa: E402
-    AmpMultiKey,
-    Blocked,
-    DeadKeys,
-    trigger_load_problem,
-)
 from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import (  # noqa: E402
+    EMPTY_SUBMAP,
+    BadgeKind,
+    action_text,
+    bind_badge,
+    trigger_text,
+)
+from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
-
-
-def trigger_text(bind: Bind) -> str:
-    """The Trigger as the list shows it.
-
-    `code:N` gets spelled out rather than left as jargon: it is the one Trigger a user
-    cannot recognise from its own text, and the one the compositor will not help identify.
-    """
-    parts = []
-    for token in bind.keys.split("+"):
-        token = token.strip()
-        if token.startswith("code:"):
-            parts.append(f"key code {token[5:]}")
-        else:
-            parts.append(token)
-    return " + ".join(part for part in parts if part)
-
-
-def action_text(bind: Bind) -> str:
-    """The Action as one line of prose, falling back to the raw call.
-
-    An unknown path is rendered, not hidden: a config written for a newer Hyprland or a
-    plugin dispatcher is something this build cannot know about, and showing the call is
-    more use than showing nothing (ADR-0012's contract for unknown keys).
-    """
-    if bind.dispatcher is None:
-        return "Runs a Lua function"
-    call = bind.dispatcher
-    if call.path == EXEC_PATH:
-        command = call.args.get("command") or (call.positional[0] if call.positional else "")
-        return str(command) or "Run a command"
-    entry = lookup(call.path)
-    label = entry.label if entry else f"hl.dsp.{call.path}"
-    detail = ", ".join(f"{key}: {value}" for key, value in call.args.items())
-    if not detail and call.positional:
-        detail = ", ".join(str(arg) for arg in call.positional)
-    return f"{label} ({detail})" if detail else label
 
 
 def flag_text(bind: Bind) -> str:
@@ -109,13 +71,6 @@ UNREACHABLE = "Nothing switches to this submap, so its keybinds can never fire."
 than hidden in a tooltip: the person most likely to hit this just made the submap and has
 not yet bound a key to enter it, and a sentence in place is the difference between a
 puzzle and a to-do."""
-
-EMPTY_SUBMAP = (
-    "Hyprland cannot enter a submap with no enabled keybinds. Add or enable a keybind in it."
-)
-"""The empty-submap flag's sentence (#208). A group description and the tooltip of the badge
-on each bind that enters the submap carry it alike. It leads the unreachable sentence: a
-submap with neither gets the bind first, then the way in."""
 
 
 def ordinal(number: int) -> str:
@@ -179,145 +134,6 @@ def rival_label(bind: Bind, order: int | None) -> str:
     place = "root keybinds" if bind.submap is None else f"submap {bind.submap}"
     prefix = f"{ordinal(order)}: " if order is not None else ""
     return f"{prefix}{action_text(bind)} ({place})"
-
-
-class BadgeKind(Enum):
-    """Why a Bind row carries a badge: the one vocabulary for disabled and read-only binds.
-
-    The Binds Page row reads this through `bind_badge`; the search entries #75 adds should
-    read it the same way, so a bind is described alike wherever it turns up. Each kind fixes
-    what the row offers and how it looks, not only what it says:
-
-    - `ERROR`: commented out with a Trigger Hyprland cannot load, most often a key xkb
-      does not know, which the Importer disables (ADR-0007). Enabled as it stands, Hyprland
-      would refuse the *whole* config and the Session refuses the enable (#199), so the row
-      offers re-capture in place of Enable. Edit and Remove stay.
-    - `MULTI_KEY`: an `A&B` Trigger, which Hyprland (0.56.2, ADR-0007) cannot load.
-      Nothing in the app can make it valid, so no edit and no Enable; Remove is offered.
-    - `LUA_FUNCTION`: the action is a Lua function in `user.lua`, which the app does not
-      write. Badge only: no edit, no Enable, and no Remove of a line it cannot see.
-    - `DISABLED`: commented out by the user. One-click Enable, edit and Remove.
-    - `EMPTY_SUBMAP`: an enabled bind that enters a submap with no live bind (#208), which
-      Hyprland never registers, so the bind fires and then errors. The bind itself is fine,
-      so nothing is taken away: Edit and Remove stay, and the fix is a bind in the submap.
-    """
-
-    ERROR = "error"
-    MULTI_KEY = "multi-key"
-    LUA_FUNCTION = "lua-function"
-    DISABLED = "disabled"
-    EMPTY_SUBMAP = "empty-submap"
-
-    @property
-    def editable(self) -> bool:
-        """Whether the row offers the bind editor."""
-        return self in (BadgeKind.ERROR, BadgeKind.DISABLED, BadgeKind.EMPTY_SUBMAP)
-
-    @property
-    def removable(self) -> bool:
-        """Whether the row offers Remove."""
-        return self is not BadgeKind.LUA_FUNCTION
-
-    @property
-    def style(self) -> str:
-        """The badge label's style class: loud where the badge asks the user to act."""
-        return {
-            BadgeKind.ERROR: "error",
-            BadgeKind.MULTI_KEY: "warning",
-            BadgeKind.EMPTY_SUBMAP: "warning",
-        }.get(self, "dim-label")
-
-    @property
-    def dims_row(self) -> bool:
-        """Whether a disabled bind's row is dimmed.
-
-        Not when the badge asks the user to act: row opacity reaches the badge too, and that
-        badge is the one line saying this bind needs them.
-        """
-        return self not in (BadgeKind.ERROR, BadgeKind.MULTI_KEY)
-
-    @property
-    def verb(self) -> RowVerb | None:
-        """The button the row offers to turn the bind on, if any."""
-        return _VERBS.get(self)
-
-
-@dataclass(frozen=True, slots=True)
-class BindBadge:
-    """What one badged row shows: its kind, the badge's words, and the tooltip's reason."""
-
-    kind: BadgeKind
-    text: str
-    tooltip: str
-
-
-def bind_badge(bind: Bind, *, empty_submaps: frozenset[str] = frozenset()) -> BindBadge | None:
-    """The badge this Bind's row carries, or `None` for an enabled, editable bind.
-
-    Recomputed from the Bind rather than carried on the model: the Trigger already says
-    everything, and a stored flag could disagree with it after an edit.
-
-    A function action wins first, since nothing on the row is the app's to change. The
-    rest reads `trigger_load_problem`, the one definition of a Trigger Hyprland can load,
-    which the Session enforces: a disabled bind it would refuse to enable offers re-capture.
-
-    The dead-keysym answer is the same oracle the Importer used to disable the bind. Where
-    libxkbcommon will not load it answers nothing, so a bind reads as plain disabled -- but
-    on such a machine the Importer could not have found the dead key either, so the row
-    never claims more than the import knew.
-
-    `empty_submaps` is `binds_analysis.empty_submaps` of the whole model, which one Bind
-    cannot know. It is read last: a bind that cannot load, or is off, has a reason that
-    comes before it, and only an enabled bind that would fire can fail on entering one.
-    """
-    if bind.dispatcher is None:
-        return BindBadge(
-            BadgeKind.LUA_FUNCTION,
-            "Defined by a Lua function in user.lua",
-            "This keybind's action is a Lua function in user.lua. Edit it there.",
-        )
-    problem = trigger_load_problem(bind.keys)
-    if isinstance(problem, AmpMultiKey):
-        return BindBadge(
-            BadgeKind.MULTI_KEY,
-            "Multi-key: Hyprland can't load it",
-            f"Hyprland rejects multi-key triggers like {trigger_text(bind)}: enabled, "
-            "this keybind would stop your whole config from loading. It stays commented "
-            "out; remove it, or add a keybind with a single key instead.",
-        )
-    if bind.enabled:
-        if (target := submap_target(bind)) is not None and target in empty_submaps:
-            return BindBadge(
-                BadgeKind.EMPTY_SUBMAP,
-                "Submap has no enabled keybinds",
-                f"This keybind enters the submap {target}. {EMPTY_SUBMAP} "
-                "Or remove this keybind.",
-            )
-        return None
-    match problem:
-        case DeadKeys(names=dead):
-            names = ", ".join(f'"{name}"' for name in dead)
-            noun = "key" if len(dead) == 1 else "keys"
-            return BindBadge(
-                BadgeKind.ERROR,
-                f"Unknown {noun} {names}",
-                f"Hyprland has no {noun} named {names}, so this keybind was imported "
-                "commented out: enabled, it would stop your whole config from loading. "
-                "Record a new trigger to use it.",
-            )
-        case Blocked():
-            return BindBadge(
-                BadgeKind.ERROR,
-                "Trigger can't load",
-                f"{problem.message} Hyprland can't load this trigger, so this keybind stays "
-                "commented out. Record a new trigger to use it.",
-            )
-        case None:
-            return BindBadge(
-                BadgeKind.DISABLED,
-                "Disabled",
-                "Kept in place but commented out in binds.lua; it does not fire.",
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,6 +214,11 @@ _VERBS = {
         lambda actions, index: actions.recapture(index),
     ),
 }
+
+
+def row_verb(kind: BadgeKind) -> RowVerb | None:
+    """The button a row with this badge offers to turn its bind on, if any."""
+    return _VERBS.get(kind)
 
 
 class BindRow:
@@ -488,7 +309,7 @@ class BindRow:
                 actions, drag or BindDrag(), neighbours, movable=kind is None or kind.editable
             )
 
-        if kind is not None and (verb := kind.verb) is not None:
+        if kind is not None and (verb := row_verb(kind)) is not None:
             self.enable_button = Gtk.Button(label=verb.label, valign=Gtk.Align.CENTER)
             self.enable_button.set_tooltip_text(verb.tooltip)
             self.enable_button.set_sensitive(editable)
@@ -710,7 +531,7 @@ class BindsPage:
     re-derive them all anyway, and a stale index is an edit landing on the wrong bind.
     """
 
-    section = "entity:binds"
+    section = entity_page_id("binds")
     """The stack name, namespaced `entity:` because Hyprland also has a `binds` Section
     (see `DeclarationKind.section`, #120)."""
 
@@ -854,18 +675,21 @@ class BindsPage:
                     )
                 )
 
-    def reveal(self, index: int) -> None:
-        """Bring the Row for the bind at `index` into view -- the conflict jump.
+    def reveal(self, index: int) -> Gtk.Widget | None:
+        """Bring the Row for the bind at `index` into view -- the conflict jump, a search hit.
 
         Navigate + flash (ADR-0007): grabbing focus makes every ancestor scroll the row
         into view, and a short background pulse marks which row that was for a reader
-        whose eyes were on the popover, not the focus ring.
+        whose eyes were on the popover, not the focus ring. Returns the row, so a caller
+        whose row may be insensitive (a read-only session) can scroll it explicitly; `None`
+        when no row has that index.
         """
         for row in self._rows:
             if row.index == index:
                 row.widget.grab_focus()
                 flash(row.widget)
-                return
+                return row.widget
+        return None
 
     @property
     def groups(self) -> tuple[Adw.PreferencesGroup, ...]:

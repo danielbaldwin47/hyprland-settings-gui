@@ -6,7 +6,7 @@
 
 Hyprland's Lua config has a scripting half the GUI cannot own: `hl.on` (32 events), `hl.timer`, `hl.layout.register`, function-valued bind/gesture actions, and the `hl.get_*`/`hl.dispatch` runtime queries. All of it is cleared and replayed on every reload and lives only inside the compositor's VM — no IPC query enumerates registered handlers or timers, so the app cannot read them back at runtime. Both importers park whole `hl.on` handlers and closure-valued actions in `legacy.lua` (#9, #30), and `user.lua` is the escape hatch that overrides the GUI (ADR-0005).
 
-Distinct from that: `hl.plugin.load(path)` is declarative (a plain path list Hyprland diffs on reload), `hl.get_loaded_plugins` provides read-back, and plugin config values (`plugin:*`) appear in `descriptions` only once the plugin is loaded. The lua-api-surface research concluded custom layouts should be selectable, never authored.
+Distinct from that: `hl.plugin.load(path)` is declarative (a plain path list Hyprland diffs on reload), `hyprctl -j plugin list` provides read-back, and plugin config values (`plugin:*`) do not appear in `hyprctl descriptions` on Hyprland 0.56.2, loaded or not (probed on a nested 0.56.2 in #175 with a plugin registering its settings through both `addConfigValueV2` and `addConfigValue`). The lua-api-surface research concluded custom layouts should be selectable, never authored.
 
 ADR-0015 deferred two monitor-profile features to this decision: auto-activation on the connected-output set, and a passive "matches profile" toast.
 
@@ -18,7 +18,7 @@ No editor for event handlers, timers, or custom layouts in v1. Scripting belongs
 
 ### Read-only Scripting inventory
 
-One **Scripting** Page (System category in the Tasks view; its own Page in Config view) listing what the escape hatch contains: a best-effort **static scan** of `user.lua` and `legacy.lua` for `hl.on(`, `hl.timer(`, `hl.layout.register(`, and `hl.plugin.load(` calls. Each hit shows its event/name, `file:line`, and an open-in-editor button. The scan never executes or evaluates user Lua, and the page is labelled best-effort — arbitrary code can hide calls behind loops or locals, and a miss costs nothing (the inventory is informational, never state the writer depends on).
+One **Scripting** Page (System category in the Tasks view; its own Page in Config view) listing what the escape hatch contains: a best-effort **static scan** of `user.lua` and `legacy.lua` for `hl.on(`, `hl.timer(`, `hl.layout.register(`, and `hl.plugin.load(` calls. Each hit shows its event/name, `file:line`, and an open-in-editor button. The scan never executes or evaluates user Lua, and the page is labelled best-effort — arbitrary code can hide calls behind loops or locals, and a miss costs nothing (the inventory is informational, never state the writer depends on). Only those two files are read: each `require`, `dofile` or `loadfile` in them is listed as a line whose loaded file's calls are not listed, and a file the scanner fails on is listed as not searched, never raised (spec #152 review).
 
 ### Custom layouts: select, not author
 
@@ -26,7 +26,7 @@ One **Scripting** Page (System category in the Tasks view; its own Page in Confi
 
 ### Plugins: editable load list; no hyprpm
 
-A **Plugins** group on the Scripting page edits the ordered `hl.plugin.load` path list — add, remove, enable-toggle — rendered into a canonical `plugins.lua` Module like any entity list. Loaded state is read back via `hl.get_loaded_plugins`. Plugin config options (`plugin:*`) surface through ADR-0012's runtime-supplement pattern: raw generated rows in the Config view, flagged as unschematised. hyprpm — installing, building, updating plugins — is out of scope for v1; the load list points at `.so` paths that already exist.
+A **Plugins** group on the Scripting page edits the ordered `hl.plugin.load` path list — add, remove, enable-toggle — rendered into a canonical `plugins.lua` Module like any entity list. Loaded state is read back via `hyprctl -j plugin list` (amended in #174: on 0.56.2 `eval` answers `ok` whatever `hl.get_loaded_plugins()` returns or prints, so the Lua call cannot be read over IPC; `plugin list` gives the same names, and as a plain read it never clears `configerrors` the way `eval` does). A loaded plugin is reported by its own name, not its path, so a row matches on the file's lower-cased stem with `lib` dropped, and loaded names no entry matches are listed on one line. A path whose file does not exist is not a config error (probed on a nested 0.56.2): Hyprland skips it and the row says "File not found". Plugin config options (`plugin:*`) get no rows on Hyprland 0.56.2: its `hyprctl descriptions` omits plugin settings, probed with `addConfigValueV2` and `addConfigValue`. The Plugins group says so in plain words ("This version of Hyprland does not report the settings a plugin adds, so they are not shown here. Set them in your user.lua.") and makes no promise that they appear after a restart. The supplement path stays for a Hyprland that lists them: ADR-0012's runtime-supplement pattern gives each a raw generated row in the Config view, flagged as a plugin's, and the sentence hides once any such row exists. hyprpm — installing, building, updating plugins — is out of scope for v1; the load list points at `.so` paths that already exist.
 
 ### ADR-0015 deferrals resolved
 
@@ -37,7 +37,7 @@ A **Plugins** group on the Scripting page edits the ordered `hl.plugin.load` pat
 
 - The static scanner is a small engine component (regex/token level, no Lua execution) shared by the inventory, the layout combo, and nothing else — its misses must never affect writes.
 - `plugins.lua` joins the canonical Module set: Entrypoint require list, Manifest hash, Journal snapshots, drift badge on hand edits.
-- Runtime-supplemented `plugin:*` rows reuse the ADR-0012 flagged-row mechanism; no Overlay curation is owed for plugin options.
+- On Hyprland 0.56.2 `hyprctl descriptions` omits plugin settings, so no `plugin:*` row appears and the Plugins group points the user at `user.lua`. The supplement path serves a Hyprland that lists them: those rows reuse the ADR-0012 flagged-row mechanism, and no Overlay curation is owed for plugin options.
 - The profile-match toast subscribes to the same monitor events as the canvas — no new listener, no background process.
 - The importers' behaviour is unchanged: handlers and closures still land in `legacy.lua`; the inventory simply makes that file visible.
 

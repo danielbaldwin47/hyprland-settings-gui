@@ -384,3 +384,51 @@ def test_turning_the_switch_on_shows_the_options_and_drops_the_hint(tmp_path: Pa
     page = next(page for page in window.pages if page.plan.section == "tasks.new.opengl")
     assert len(page.rows) == 1
     assert hint_rows(window, "tasks.new.opengl") == []
+
+
+# --- sidebar counts follow the lists ----------------------------------------------------------
+
+
+def badges(window: Any) -> dict[str, str]:
+    """Each navigable sidebar row's count, as the user reads it, by section id."""
+    from gi.repository import Gtk
+
+    shown: dict[str, str] = {}
+    index = 0
+    while (row := window.sidebar.get_row_at_index(index)) is not None:
+        box = row.get_child()
+        if row.get_name() and isinstance(box, Gtk.Box):
+            shown[row.get_name()] = box.get_last_child().get_label()
+        index += 1
+    return shown
+
+
+def test_an_entity_pages_count_follows_its_list_without_moving_the_selection(
+    tmp_path: Path,
+) -> None:
+    """Spec #152 review addendum 22: counts were read once at build, so a new keybind or
+    plugin left its Page's count wrong until the next View switch. The Scripting count is
+    the calls found plus the plugin load list."""
+    from _live_window import live_entity_window
+
+    from hyprtweaker.engine.model.entities import Bind, DispatcherCall, PluginLoad
+    from hyprtweaker.ui.pages.tasks import entity_page_id
+
+    session, window, applier = live_entity_window(tmp_path)
+    binds, scripting = entity_page_id("binds"), entity_page_id("scripting")
+    before = badges(window)
+    selected = window.sidebar.get_selected_row().get_name()
+
+    assert session.add_bind(
+        Bind(keys="SUPER + T", dispatcher=DispatcherCall(path="window.float"))
+    )
+    applier.settle()
+    window.sync()
+    assert session.add_declaration("plugins", PluginLoad("/usr/lib/libhyprbars.so"))
+    applier.settle()
+    window.sync()
+
+    after = badges(window)
+    assert int(after[binds]) == int(before[binds]) + 1
+    assert int(after[scripting]) == int(before[scripting]) + 1
+    assert window.sidebar.get_selected_row().get_name() == selected

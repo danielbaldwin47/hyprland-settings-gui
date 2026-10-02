@@ -13,6 +13,7 @@ before any value" are both statements about that list.
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,7 @@ from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult, ApplyTransaction
 from hyprtweaker.engine.ipc import CommandClient, EventStream
 from hyprtweaker.engine.model import UNSET, ConfigModel
 from hyprtweaker.engine.paths import ConfigPaths
-from hyprtweaker.engine.schema import load_schema
+from hyprtweaker.engine.schema import load_schema, supplement
 from hyprtweaker.engine.writer import Writer, syntax
 
 RELOAD = "reload"
@@ -84,6 +85,28 @@ def run_apply(
             return await transaction.run(keys)
 
     return run_with_fake(scenario, compositor), compositor
+
+
+COLOUR = "misc:background_color"
+RECORDED_COLOUR_REPLY = '{"int": 3996372223, "option": "misc:background_color", "set": true}'
+"""`hyprctl -j getoption misc:background_color` on a nested 0.56.2 after each of
+`"rgba(33ccffee)"`, `"0xee33ccff"`, `"#33ccffee"` and `0xee33ccff` loaded (#213's probe)."""
+
+
+def supplemented_colour_model(text: str) -> ConfigModel:
+    """A model holding `text` for a colour the shipped schema lacks, so the runtime
+    supplement types it from its recorded `descriptions` record alone (ADR-0012)."""
+    shipped = load_schema(SAMPLE_VERSION, SCHEMA_DIR)
+    without = replace(shipped, options=tuple(o for o in shipped.options if o.name != COLOUR))
+    record = {
+        "current": "ff111111",
+        "default": "ff111111",
+        "description": "change the background color.",
+        "name": COLOUR,
+    }
+    model = ConfigModel(supplement(without, (record,), version="0.58.0"))
+    model.set(COLOUR, text)
+    return model
 
 
 def app_dir(tmp_path: Path) -> Path:
@@ -460,6 +483,42 @@ class TestConfirmed:
         result, _ = run_apply(tmp_path, model, option.name, fake=fake)
 
         assert not result.confirmed
+
+    @pytest.mark.parametrize("text", ["rgba(33ccffee)", "0xee33ccff", "#33ccffee"])
+    def test_a_supplemented_colour_written_as_text_confirms_against_its_int_reply(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        """#213: a colour the app knows only from `descriptions` types as STRING, but
+        `getoption` answers it under `int`. Each of these forms loaded on a nested 0.56.2
+        and read back as this exact payload; an accepted write must not read Unconfirmed."""
+        model = supplemented_colour_model(text)
+        fake = FakeHyprland(
+            model_conversation(model, **{getoption(COLOUR): RECORDED_COLOUR_REPLY}),
+            reload_emits_event=True,
+        )
+        result, _ = run_apply(tmp_path, model, COLOUR, fake=fake)
+
+        assert (result.outcome, result.unconfirmed, result.confirmed) == (
+            ApplyOutcome.OK,
+            (),
+            True,
+        )
+
+    def test_a_supplemented_colour_the_live_config_overrides_is_a_mismatch(
+        self, tmp_path: Path
+    ) -> None:
+        model = supplemented_colour_model("rgba(00ff99ee)")
+        fake = FakeHyprland(
+            model_conversation(model, **{getoption(COLOUR): RECORDED_COLOUR_REPLY}),
+            reload_emits_event=True,
+        )
+        result, _ = run_apply(tmp_path, model, COLOUR, fake=fake)
+
+        assert result.outcome is ApplyOutcome.READ_BACK_MISMATCH
+        assert (result.mismatches[0].expected, result.mismatches[0].actual) == (
+            "rgba(00ff99ee)",
+            "rgba(33ccffee)",
+        )
 
     def test_restart_flagged_keys_do_not_block_confirmation(self, tmp_path: Path) -> None:
         """They are skipped by design, not by failure. Counting them against it would leave

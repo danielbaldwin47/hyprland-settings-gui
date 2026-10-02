@@ -22,10 +22,15 @@ anything. That is a strong oracle for some things and silent on others:
   nested compositor, fire the dispatcher and read the compositor's state back (`clients`,
   `monitors`, `workspaces`, `activewindow`).
 
-A key neither route confirms stays out of the record, and a catalog entry that names one, or
-omits one the record holds, is a disagreement (`check_entry`). That is the rule that keeps a
-curated entry from losing a key a saved bind carries: the editor rebuilds a call only from the
-keys the entry lists.
+Group-only keys (`forward`, the `action` of the lock and deny dispatchers) are fired at a
+group of two or three windows and read back from the group's member order and from whether a
+fourth window can join (a locked or denying group refuses it). A key neither route confirms
+stays out of the record, and a catalog entry that names one, or omits one the record holds, is a
+disagreement (`check_entry`). The keys that were fired and did nothing (`window` on the group
+dispatchers, `layout_aware` on the fullscreen ones) are not in the record, which holds only
+what acted; `probe_unseen` fires them again and `test_the_unseen_keys_still_do_nothing` fails
+the day one starts to act, which is the day the catalog can give it a row. The editor keeps
+the saved copy of a key without a row, so a curated entry lists what acted and loses nothing.
 
 Everything here goes through the `NestedHyprland` it is handed, never `hyprctl` on its own
 and never the session's compositor: `nested.hyprctl_text` and `nested.dispatch` run with the
@@ -235,6 +240,16 @@ class EffectResult:
     path: str
     key: str
     confirmed: bool
+    observed: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class Verdict:
+    """A key that was fired and read back, and whether anything changed. Not in the record."""
+
+    path: str
+    key: str
+    acted: bool
     observed: dict[str, Any]
 
 
@@ -598,6 +613,187 @@ def _cycle_next(bench: Bench) -> list[EffectResult]:
     return results
 
 
+# --- the group probes ------------------------------------------------------------------
+
+
+def _client_names(bench: Bench) -> dict[str, str]:
+    return {str(c["address"]): str(c["class"]) for c in bench.nested.hyprctl("clients") or []}
+
+
+def _group_order(bench: Bench, name: str) -> list[str]:
+    """The class names of `name`'s group, in the order the compositor lists them."""
+    names = _client_names(bench)
+    return [names.get(a, a) for a in bench.client(name)["grouped"]]
+
+
+def _group_two(bench: Bench) -> None:
+    """`pa` and `pb` in one group, `pc` outside it, `pb` focused."""
+    bench.open("pa", "pb", "pc")
+    bench.focus("pa")
+    bench.fire("hl.dsp.group.toggle{}")
+    bench.focus("pb")
+    bench.fire("hl.dsp.window.move{ into_group = 'left' }")
+
+
+def _group_three(bench: Bench) -> None:
+    """`pa`, `pb`, `pc` in one group, in that order, `pb` focused: the middle one."""
+    bench.open("pa", "pb", "pc")
+    bench.focus("pa")
+    bench.fire("hl.dsp.group.toggle{}")
+    for name in ("pb", "pc"):
+        bench.focus(name)
+        bench.fire("hl.dsp.window.move{ into_group = 'left' }")
+    bench.focus("pb")
+
+
+def _tries_to_join(bench: Bench) -> bool:
+    """Whether `pc` can be moved into the group `pa` is in; if it joined, it is put back out.
+
+    A locked group refuses a new member, and so does one whose active window is denied from
+    groups, which is how those two dispatchers' `action` shows.
+    """
+    bench.focus("pc")
+    bench.fire("hl.dsp.window.move{ into_group = 'left' }")
+    joined = bool(bench.client("pc")["grouped"])
+    if joined:
+        bench.fire("hl.dsp.window.move{ out_of_group = true }")
+    return joined
+
+
+def _group_gate_action(bench: Bench, path: str) -> EffectResult:
+    """`action` on a dispatcher that opens or closes a group to newcomers.
+
+    Fired at `pa`, a member, then `pc` tries to join: `enable` twice and `disable` twice show a
+    parsed action (refused, refused, joined, joined; a toggle would alternate).
+    """
+    _group_two(bench)
+    seen = []
+    for action in ("enable", "enable", "disable", "disable"):
+        bench.focus("pa")
+        bench.fire(f"hl.dsp.{path}{{ action = '{action}' }}")
+        seen.append(not _tries_to_join(bench))
+    bench.close_all()
+    return EffectResult(path, "action", seen == [True, True, False, False], {"refused": seen})
+
+
+def _move_window_order(bench: Bench, fields: str) -> list[str]:
+    """`pb`'s group order after one `group.move_window` with `fields`, from a fresh group."""
+    _group_three(bench)
+    bench.fire(f"hl.dsp.group.move_window{{ {fields} }}")
+    order = _group_order(bench, "pb")
+    bench.close_all()
+    return order
+
+
+def _move_window_forward(bench: Bench) -> EffectResult:
+    """From a fresh `pa pb pc` with `pb` focused: no key and `forward = true` move `pb` one
+    way, `forward = false` the other."""
+    default = _move_window_order(bench, "")
+    forwards = _move_window_order(bench, "forward = true")
+    backwards = _move_window_order(bench, "forward = false")
+    return EffectResult(
+        "group.move_window",
+        "forward",
+        backwards != default and forwards == default,
+        {"default": default, "forward_true": forwards, "forward_false": backwards},
+    )
+
+
+def _gate_window(bench: Bench, path: str) -> Verdict:
+    """Fired at `pa` with `window = 'class:pc'`: if the key aimed it, `pc` was locked or
+    denied instead of the group, and it could still join."""
+    _group_two(bench)
+    bench.focus("pa")
+    bench.fire(f"hl.dsp.{path}{{ action = 'enable', window = 'class:pc' }}")
+    joined = _tries_to_join(bench)
+    bench.focus("pa")
+    bench.fire(f"hl.dsp.{path}{{ action = 'disable' }}")
+    bench.close_all()
+    return Verdict(path, "window", joined, {"pc_joined": joined})
+
+
+def _group_lock_window(bench: Bench) -> Verdict:
+    """`group.lock` locks every group: fired from `pc`, outside, naming `pa`'s window or not,
+    `pa`'s group is locked either way."""
+    _group_two(bench)
+    seen = []
+    for fields in ("action = 'enable'", "action = 'enable', window = 'class:pa'"):
+        bench.focus("pc")
+        bench.fire(f"hl.dsp.group.lock{{ {fields} }}")
+        seen.append(_tries_to_join(bench))
+        bench.fire("hl.dsp.group.lock{ action = 'disable' }")
+    bench.close_all()
+    return Verdict("group.lock", "window", seen[0] != seen[1], {"pc_joined": seen})
+
+
+def _move_window_window(bench: Bench) -> Verdict:
+    """`group.move_window` with `window = 'class:pc'` while `pb` is focused moves whom?"""
+    default = _move_window_order(bench, "")
+    named = _move_window_order(bench, "window = 'class:pc'")
+    return Verdict(
+        "group.move_window",
+        "window",
+        named != default,
+        {"default": default, "window_pc": named},
+    )
+
+
+def _fullscreen_snapshot(bench: Bench) -> list[Any]:
+    clients = bench.nested.hyprctl("clients") or []
+    return sorted(
+        [c["class"], c["fullscreen"], c["fullscreenClient"], c["at"], c["size"]]
+        for c in clients
+    )
+
+
+def _layout_aware(bench: Bench) -> list[Verdict]:
+    """`layout_aware` on both fullscreen dispatchers, at a grouped window and at a free one,
+    in both modes, each against the same call without the key."""
+    _group_two(bench)
+    results: list[Verdict] = []
+    calls = {
+        "window.fullscreen": ("", "mode = 'maximized'"),
+        "window.fullscreen_state": ("internal = 1, client = 1", "internal = 2, client = 0"),
+    }
+    for path, bases in calls.items():
+        seen: dict[str, Any] = {}
+        acted = False
+        for target in ("pb", "pc"):
+            for base in bases:
+                snapshots = []
+                for extra in ("", "layout_aware = true", "layout_aware = false"):
+                    bench.focus(target)
+                    fields = ", ".join(f for f in (base, extra) if f)
+                    bench.fire(f"hl.dsp.{path}{{ {fields} }}")
+                    snapshots.append(_fullscreen_snapshot(bench))
+                    bench.fire("hl.dsp.window.fullscreen_state{ internal = 0, client = 0 }")
+                acted = acted or snapshots[0] != snapshots[1] or snapshots[0] != snapshots[2]
+                seen[f"{target}: {base or 'no fields'}"] = snapshots[0]
+        results.append(Verdict(path, "layout_aware", acted, seen))
+    bench.close_all()
+    return results
+
+
+def probe_unseen(nested: NestedHyprland) -> tuple[list[Verdict], str]:
+    """The keys the group and fullscreen dispatchers take without any effect to read back.
+
+    One verdict per key: `acted` is False while the compositor ignores it. They stay out of the
+    record (it holds what acted); a catalog entry that gives one a row must first make this
+    return `acted`, and `test_the_unseen_keys_still_do_nothing` says when that happened.
+    """
+    if shutil.which("foot") is None:
+        return [], "foot is not installed, so no window could be opened to fire at"
+    bench = Bench(nested)
+    verdicts = [
+        _gate_window(bench, "group.lock_active"),
+        _gate_window(bench, "window.deny_from_group"),
+        _group_lock_window(bench),
+        _move_window_window(bench),
+        *_layout_aware(bench),
+    ]
+    return verdicts, ""
+
+
 def probe_effects(nested: NestedHyprland) -> tuple[list[EffectResult], str]:
     """The keys only a fired dispatcher shows. `("", reason)` when `foot` is missing."""
     if shutil.which("foot") is None:
@@ -611,6 +807,10 @@ def probe_effects(nested: NestedHyprland) -> tuple[list[EffectResult], str]:
         _rename_name(bench),
         _toggle_special_positional(bench),
         *_cycle_next(bench),
+        _group_gate_action(bench, "group.lock"),
+        _group_gate_action(bench, "group.lock_active"),
+        _group_gate_action(bench, "window.deny_from_group"),
+        _move_window_forward(bench),
     ]
     return results, ""
 

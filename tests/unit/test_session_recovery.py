@@ -15,14 +15,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from _fake_hyprland import NO_BINDS, FakeHyprland, run_with_fake
 from _support import Runner, drain_events, section_conversation, session_for
 
 from hyprtweaker.engine.apply import Action, Ownership
 from hyprtweaker.engine.ipc import IpcError
 from hyprtweaker.engine.model import UNSET
-from hyprtweaker.engine.paths import ConfigPaths
+from hyprtweaker.engine.paths import ENTRYPOINT_NAME, ConfigPaths
 from hyprtweaker.engine.state import Manifest
+from hyprtweaker.engine.writer import LuaSyntaxError, Writer, syntax
 from hyprtweaker.session import Session
 
 BORDER_SIZE = "general:border_size"
@@ -735,6 +737,50 @@ def test_an_active_quarantine_keeps_the_banner_up(tmp_path: Path) -> None:
     )
 
 
+def entrypoint_before(session: Session) -> bytes | None:
+    """The Entrypoint bytes the newest Journal entry says it replaced."""
+    newest = session.journal.entries()[-1]
+    change = newest.change(ENTRYPOINT_NAME)
+    assert change is not None, "the newest entry has to be about the Entrypoint"
+    return session.journal.snapshot(change.before)
+
+
+def test_quarantine_and_its_release_each_journal_the_entrypoint_they_replaced(
+    tmp_path: Path,
+) -> None:
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        user_lua = tmp_path / "hypr" / "user.lua"
+        user_lua.parent.mkdir(parents=True, exist_ok=True)
+        user_lua.write_text("-- broken }\n")
+
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        requiring = (tmp_path / "hypr" / "hyprland.lua").read_bytes()
+        entries = len(session.journal.entries())
+
+        assert session.quarantine("user")
+        await settle(session, runner)
+        assert len(session.journal.entries()) == entries + 1
+        assert entrypoint_before(session) == requiring
+        quarantining = (tmp_path / "hypr" / "hyprland.lua").read_bytes()
+
+        assert session.release_quarantine("user")
+        await settle(session, runner)
+        assert len(session.journal.entries()) == entries + 2
+        assert entrypoint_before(session) == quarantining
+
+        # Releasing what is not quarantined moves no byte, so it journals nothing.
+        assert session.release_quarantine("user")
+        await settle(session, runner)
+        assert len(session.journal.entries()) == entries + 2
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
 def test_the_quarantine_target_is_the_require_the_entrypoint_emits(tmp_path: Path) -> None:
     """Matched against the generated require list, never derived from the printed path --
     which may have come through a symlink and would leave the Banner lying."""
@@ -791,6 +837,251 @@ def test_regenerate_rewrites_a_hand_edited_entrypoint(tmp_path: Path) -> None:
 
     run_with_fake(
         scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_regenerate_keeps_the_hand_edit_it_overwrote_in_the_journal(tmp_path: Path) -> None:
+    """ADR-0010 §Rollback: the Entrypoint Fix snapshots the bytes it replaces, and a clean
+    reload confirms its own."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        hand_edit = b"this is not lua {\n"
+        (tmp_path / "hypr" / "hyprland.lua").write_bytes(hand_edit)
+
+        assert session.regenerate_entrypoint()
+        await settle(session, runner)
+
+        newest = session.journal.entries()[-1]
+        assert [change.module for change in newest.changes] == [ENTRYPOINT_NAME]
+        assert session.journal.snapshot(newest.changes[0].before) == hand_edit
+        assert newest.confirmed
+        good = session.journal.last_known_good(ENTRYPOINT_NAME)
+        assert good is not None and good.data == entrypoint(tmp_path).encode()
+        assert not ConfigPaths.rooted_at(tmp_path).journal_pending.exists()
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_a_regenerate_whose_reload_fails_is_journalled_unconfirmed(tmp_path: Path) -> None:
+    """ADR-0016 §Last known good: a still-broken Entrypoint never becomes the thing a later
+    Restore last good puts back."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        good_before = session.journal.last_known_good(ENTRYPOINT_NAME)
+        assert good_before is not None, "the precondition: a confirmed Entrypoint"
+        hand_edit = b"this is not lua {\n"
+        (tmp_path / "hypr" / "hyprland.lua").write_bytes(hand_edit)
+        fake.conversation["j/configerrors"] = ENTRYPOINT_ERROR
+
+        assert session.regenerate_entrypoint()
+        await settle(session, runner)
+
+        newest = session.journal.entries()[-1]
+        assert entrypoint_before(session) == hand_edit
+        assert newest.outcome == "config-errors"
+        assert not newest.confirmed
+        assert session.journal.last_known_good(ENTRYPOINT_NAME) == good_before
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_a_regenerate_the_syntax_gate_refuses_journals_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refused before a byte moves: no entry, no pending record, and the Banner stays up."""
+
+    def refuse_the_entrypoint(text: str, name: str) -> None:
+        if name == ENTRYPOINT_NAME:
+            raise LuaSyntaxError(name, "refused for the test")
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        fake.conversation["j/configerrors"] = ENTRYPOINT_ERROR
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        entries = session.journal.entries()
+        hand_edit = b"this is not lua {\n"
+        (tmp_path / "hypr" / "hyprland.lua").write_bytes(hand_edit)
+        monkeypatch.setattr(syntax, "gate", refuse_the_entrypoint)
+
+        assert not session.regenerate_entrypoint()
+        await settle(session, runner)
+
+        assert session.journal.entries() == entries
+        assert not ConfigPaths.rooted_at(tmp_path).journal_pending.exists()
+        assert (tmp_path / "hypr" / "hyprland.lua").read_bytes() == hand_edit
+        assert session.health.unhealthy
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_a_regenerate_whose_write_fails_keeps_the_banner_and_reports_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No reload ran, so nothing was learnt about the config: the Banner that was up stays
+    up. Before this, the failed write was observed as a clean reload and cleared it."""
+
+    def read_only(self: Writer, model: object, *, before_replace: object = None) -> bool:
+        raise OSError(30, "Read-only file system")
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        fake.conversation["j/configerrors"] = ENTRYPOINT_ERROR
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        entries = session.journal.entries()
+        reports: list[str] = []
+        session.on_applied = lambda result: reports.append(str(result.outcome))
+        monkeypatch.setattr(Writer, "regenerate_entrypoint", read_only)
+
+        assert session.regenerate_entrypoint()
+        await settle(session, runner)
+
+        assert session.health.unhealthy
+        assert reports == ["write-failed"]
+        assert session.journal.entries() == entries
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_an_apply_whose_write_fails_keeps_the_banner_and_reports_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec #152 review addendum 21: a write the filesystem refused ran no reload, so it
+    says nothing about the config. The Banner that was up stays up."""
+
+    def read_only(*_args: object, **_kwargs: object) -> object:
+        raise OSError(30, "Read-only file system")
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        fake.conversation["j/configerrors"] = USER_ERROR
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        reports: list[str] = []
+        session.on_applied = lambda result: reports.append(str(result.outcome))
+        monkeypatch.setattr(Writer, "write", read_only)
+
+        session.set_option(ROUNDING, 14)
+        await settle(session, runner)
+
+        assert session.health.unhealthy
+        assert reports == ["write-failed"]
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_an_apply_with_nothing_to_write_leaves_the_banner_as_it_was(tmp_path: Path) -> None:
+    """No bytes moved and no reload ran: the errors on screen are still the current ones."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        fake.conversation["j/configerrors"] = USER_ERROR
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        reports: list[str] = []
+        session.on_applied = lambda result: reports.append(str(result.outcome))
+
+        session.set_option(ROUNDING, 14)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+
+        assert reports == ["nothing-to-do"], "the precondition: a result that wrote nothing"
+        assert session.health.unhealthy
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_a_restore_whose_write_fails_keeps_the_banner_and_reports_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def read_only(*_args: object, **_kwargs: object) -> object:
+        raise OSError(30, "Read-only file system")
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        fake.conversation["j/configerrors"] = USER_ERROR
+        await foreign_reload(fake, session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        reports: list[str] = []
+        session.on_applied = lambda result: reports.append(str(result.outcome))
+        monkeypatch.setattr(Writer, "restore", read_only)
+
+        assert session.restore_last_good(GENERAL_MODULE)
+        await settle(session, runner)
+
+        assert session.health.unhealthy
+        assert reports == ["write-failed"]
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_an_edit_committed_during_a_recovery_waits_for_its_journal_entry(
+    tmp_path: Path,
+) -> None:
+    """One pending record: an Apply that began while the recovery's draft was open would
+    journal the recovery as `interrupted`. The queue's lock keeps the two apart."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        entries = len(session.journal.entries())
+        (tmp_path / "hypr" / "hyprland.lua").write_text("this is not lua {\n")
+
+        def edit_mid_reload(request: str, _seen: int) -> None:
+            if request == "reload" and fake.on_request is edit_mid_reload:
+                fake.on_request = None
+                session.set_option(BORDER_SIZE, 3)
+
+        fake.on_request = edit_mid_reload
+        assert session.regenerate_entrypoint()
+        await settle(session, runner)
+        assert fake.on_request is None, "the precondition: the edit landed mid-reload"
+
+        new = session.journal.entries()[entries:]
+        assert [entry.outcome for entry in new] == ["ok", "ok"]
+        recovery, edit = new
+        assert [change.module for change in recovery.changes] == [ENTRYPOINT_NAME]
+        assert edit.change(GENERAL_MODULE) is not None
+
+    run_with_fake(
+        scenario,
+        FakeHyprland(conversation(**{ROUNDING: 12, BORDER_SIZE: 3}), reload_emits_event=True),
     )
 
 

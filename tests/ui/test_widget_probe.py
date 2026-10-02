@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -44,6 +46,8 @@ def dead_session(tmp_path: Path) -> dict[str, str | None]:
         "WAYLAND_DISPLAY": "wayland-absent",
         "DISPLAY": DEAD_DISPLAY,
         "XDG_RUNTIME_DIR": str(runtime),
+        # Where the owner's session bus lives, named but with nothing behind it.
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime}/bus",
     }
 
 
@@ -62,29 +66,72 @@ import widget_probe
 
 import json
 import os
+import sys
+import time
 from pathlib import Path
 
 import pytest
+from gi.repository import Gio, GLib  # Gio opens no display; the probe never imports Gtk
 
-children = []
+children = {}
 for stat in Path("/proc").glob("[0-9]*/stat"):
     try:
         name, rest = stat.read_text().split(" (", 1)[1].rsplit(") ", 1)
     except (OSError, ValueError):
         continue
     if int(rest.split()[1]) == os.getpid():
-        children.append(name)
+        children[name] = int(stat.parent.name)
 display = os.environ.get("DISPLAY") or ""
+address = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or ""
+
+# Only the address this route gave the probe is ever connected to.
+activatable = refusal = None
+if "dbus-daemon" in children:
+    connection = Gio.DBusConnection.new_for_address_sync(
+        address,
+        Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
+        | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
+        None,
+        None,
+    )
+
+    def call(name, path, interface, method):
+        return connection.call_sync(
+            name, path, interface, method, None, None, Gio.DBusCallFlags.NONE, 5000, None
+        )
+
+    activatable = call(
+        "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+        "ListActivatableNames",
+    ).unpack()[0]
+    try:
+        call(
+            "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+            "org.freedesktop.DBus.Peer", "Ping",
+        )
+    except GLib.Error as error:
+        refusal = error.message
+    daemon_environ = Path(f"/proc/{children['dbus-daemon']}/environ").read_bytes()
+    daemon_has_session_address = b"DBUS_SESSION_BUS_ADDRESS" in daemon_environ
+socket_path = address.split("unix:path=")[-1].split(",")[0]
 print(json.dumps({
     "environ": {name: os.environ.get(name) for name in (
         "DISPLAY", "GDK_BACKEND", "WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE",
-        "GDK_SCALE", "GTK_A11Y", "HYPRTWEAKER_NON_UNIQUE",
+        "GDK_SCALE", "GTK_A11Y", "HYPRTWEAKER_NON_UNIQUE", "DBUS_SESSION_BUS_ADDRESS",
+        "GSETTINGS_BACKEND", "ADW_DISABLE_PORTAL",
     )},
     "config": os.environ["XDG_CONFIG_HOME"],
     "state": os.environ["XDG_STATE_HOME"],
     "served": Path(f"/tmp/.X11-unix/X{display[1:]}").is_socket(),
     "children": children,
-}))
+    "socket": socket_path,
+    "socket_inode": os.stat(socket_path).st_ino,
+    "activatable": activatable,
+    "refusal": refusal,
+    "daemon_has_session_address": daemon_has_session_address,
+}), flush=True)
+if sys.argv[1:] == ["hold"]:
+    time.sleep(60)
 """
 
 
@@ -95,14 +142,18 @@ def test_the_route_gives_the_probe_a_private_xvfb_and_no_desktop_session(
     probe = tmp_path / "probe.py"
     probe.write_text(ENVIRONMENT_PROBE)
 
-    result = run([*ROUTE, str(probe)], tmp_path, **DESKTOP_SESSION, GTK_A11Y=None)
+    session = dead_session(tmp_path)
+    result = run([*ROUTE, str(probe)], tmp_path, **session, GTK_A11Y=None)
 
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
     display = seen["environ"]["DISPLAY"]
+    bus = seen["environ"]["DBUS_SESSION_BUS_ADDRESS"]
     # GDK_SCALE halved the screen on the owner's HiDPI desktop; GTK_A11Y keeps the widgets
     # off the desktop's screen reader; non-unique keeps an app the probe runs from handing
-    # its launch to the owner's open window over the session bus.
+    # its launch to the owner's open window over the session bus. The session bus is the
+    # route's own, with GSettings in memory and no settings portal, so a render does not
+    # depend on the owner's colour scheme.
     assert seen["environ"] == {
         "DISPLAY": display,
         "GDK_BACKEND": "x11",
@@ -111,6 +162,9 @@ def test_the_route_gives_the_probe_a_private_xvfb_and_no_desktop_session(
         "GDK_SCALE": None,
         "GTK_A11Y": "none",
         "HYPRTWEAKER_NON_UNIQUE": "1",
+        "DBUS_SESSION_BUS_ADDRESS": bus,
+        "GSETTINGS_BACKEND": "memory",
+        "ADW_DISABLE_PORTAL": "1",
     }
     # The config and state dirs are a throwaway pair, not the owner's.
     config, state = Path(seen["config"]), Path(seen["state"])
@@ -120,9 +174,85 @@ def test_the_route_gives_the_probe_a_private_xvfb_and_no_desktop_session(
     assert not config.parent.exists()  # removed when the probe ended
     assert display != ":0"
     assert display.startswith(":")
-    # An X server answers on it, and the only process the route started is that Xvfb.
+    # An X server answers on it, and the only processes the route started are that Xvfb and
+    # the bus daemon.
     assert seen["served"] is True
-    assert seen["children"] == ["Xvfb"]
+    assert sorted(seen["children"]) == ["Xvfb", "dbus-daemon"]
+
+
+def test_the_probe_runs_on_a_session_bus_that_is_not_the_owners_and_activates_nothing(
+    tmp_path: Path,
+) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(ENVIRONMENT_PROBE)
+    session = dead_session(tmp_path)
+
+    result = run([*ROUTE, str(probe)], tmp_path, **session)
+
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout)
+    bus = seen["environ"]["DBUS_SESSION_BUS_ADDRESS"]
+    # Not the address the route was started with, and not the owner's socket: compared by
+    # string and by inode, never by connecting to either.
+    assert bus != session["DBUS_SESSION_BUS_ADDRESS"]
+    owner_socket = Path(f"/run/user/{os.getuid()}/bus")
+    assert seen["socket"] != str(owner_socket)
+    if owner_socket.exists():
+        assert seen["socket_inode"] != owner_socket.stat().st_ino
+    # Nothing on it can be activated: no service directory, so the settings portal, dconf
+    # and the accessibility bus answer ServiceUnknown instead of starting.
+    assert seen["activatable"] == ["org.freedesktop.DBus"]
+    assert "ServiceUnknown" in seen["refusal"] or "not activatable" in seen["refusal"]
+    assert seen["daemon_has_session_address"] is False
+
+
+def readable_environs_naming(needle: str) -> list[str]:
+    """The pids of processes this user can read whose environment contains `needle`."""
+    found = []
+    for environ in Path("/proc").glob("[0-9]*/environ"):
+        try:
+            if needle.encode() in environ.read_bytes():
+                found.append(environ.parent.name)
+        except OSError:
+            continue
+    return found
+
+
+def wait_gone(pids: list[int], seconds: float = 5) -> list[int]:
+    """The pids still in /proc after `seconds`."""
+    deadline = time.monotonic() + seconds
+    alive = [pid for pid in pids if Path(f"/proc/{pid}").exists()]
+    while alive and time.monotonic() < deadline:
+        time.sleep(0.02)
+        alive = [pid for pid in alive if Path(f"/proc/{pid}").exists()]
+    return alive
+
+
+@pytest.mark.parametrize("ending", ["exits", "killed by timeout"])
+def test_no_bus_daemon_or_activated_helper_outlives_the_route(
+    tmp_path: Path, ending: str
+) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(ENVIRONMENT_PROBE)
+    command = [*ROUTE, str(probe)]
+    if ending != "exits":
+        # A kill no cleanup runs in: the daemon and the Xvfb must go with their parent.
+        command = ["timeout", "8", *command, "hold"]
+
+    result = run(command, tmp_path, **dead_session(tmp_path))
+
+    assert result.returncode == (0 if ending == "exits" else 124), result.stderr
+    seen = json.loads(result.stdout)
+    children = list(seen["children"].values())
+    assert wait_gone(children) == []
+    # Whatever a name request on the bus had started would carry its address in its
+    # environment: nothing does, and the directory that held the socket is gone.
+    directory = str(Path(seen["socket"]).parent)
+    assert readable_environs_naming(directory) == []
+    assert (not Path(directory).exists()) if ending == "exits" else True
+    leftovers = list(Path(directory).glob("*")) if Path(directory).exists() else []
+    shutil.rmtree(directory, ignore_errors=True)
+    assert leftovers == []
 
 
 GTK_PROBE = """\
@@ -145,6 +275,16 @@ from gi.repository import Gtk
             {"WAYLAND_DISPLAY": None, "GDK_BACKEND": "x11"},
             "DISPLAY=:4095 is not an Xvfb this route started",
             id="foreign-display",
+        ),
+        pytest.param(
+            {"WAYLAND_DISPLAY": None, "GDK_BACKEND": "x11"},
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=",
+            id="the-sessions-bus",
+        ),
+        pytest.param(
+            {"WAYLAND_DISPLAY": None, "GDK_BACKEND": "x11", "DBUS_SESSION_BUS_ADDRESS": None},
+            "DBUS_SESSION_BUS_ADDRESS is unset, so GTK falls back to the desktop's bus",
+            id="no-bus-address",
         ),
     ],
 )
@@ -323,3 +463,41 @@ def test_a_widget_partly_scrolled_out_of_view_is_refused_not_shot(tmp_path: Path
         "RuntimeError: shoot: 100 of the widget's 200 px rows are scrolled out of view; "
         "scroll it into view or make the window larger first"
     )
+
+
+SHADOWED_PROBE = """\
+import widget_probe
+
+import sys
+
+from gi.repository import Adw, Gdk, GdkPixbuf, Gtk
+
+Adw.init()
+css = Gtk.CssProvider()
+css.load_from_string(".probe-red { background: #ff0000; }")
+Gtk.StyleContext.add_provider_for_display(
+    Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_USER
+)
+red = Gtk.Box(width_request=120, height_request=60, css_classes=["probe-red"],
+              halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+window = Adw.Window(default_width=600, default_height=400, content=red)
+widget_probe.shoot(red, sys.argv[1], margin=1)
+pixbuf = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1])
+pixels, stride, step = pixbuf.get_pixels(), pixbuf.get_rowstride(), pixbuf.get_n_channels()
+middle = stride * (pixbuf.get_height() // 2)
+red = [tuple(pixels[middle + step * x :][:3]) == (255, 0, 0) for x in range(pixbuf.get_width())]
+print(*red)
+"""
+
+
+def test_a_window_with_a_shadow_is_shot_at_one_to_one(tmp_path: Path) -> None:
+    # The #183 swatch shots came out scaled by 0.98 x 0.95 and blurred: the window paintable
+    # of a window with a shadow is larger than the window, and was squeezed into its size.
+    probe = tmp_path / "probe.py"
+    probe.write_text(SHADOWED_PROBE)
+    shot = tmp_path / "red.png"
+
+    result = run([*ROUTE, str(probe), str(shot)], tmp_path, **dead_session(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["False", *["True"] * 120, "False"]

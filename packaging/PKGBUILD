@@ -1,0 +1,54 @@
+# Maintainer: Daniel Baldwin <danielbaldwin47@gmail.com>
+#
+# Repo-local package (ADR-0019): `makepkg -si` from this directory builds the latest
+# commit of the default branch. For a local checkout or another branch, override the
+# source, e.g.
+#   HYPRTWEAKER_SRC="git+file://$HOME/repos/hyprland-settings-gui#branch=main" makepkg -si
+
+pkgname=hyprtweaker
+_repo=hyprland-settings-gui
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Change Hyprland settings without editing config files (GTK4/libadwaita)"
+arch=(any)
+url="https://github.com/danielbaldwin47/hyprland-settings-gui"
+license=(GPL-3.0-or-later)
+# python-gobject>=3.50 is the floor meson.build checks by capability (`import gi.events`)
+# and MINIMUM_PYGOBJECT states (tests/unit/test_packaging.py keeps the three equal).
+# zstd: Theme archive compression falls back to the `zstd` binary below Python 3.14.
+# lua: the app runs `lua` to read its own Modules back, and `luac` (same package) gates
+# every write's syntax.
+depends=(python 'python-gobject>=3.50' gtk4 libadwaita glib2 hicolor-icon-theme zstd lua)
+makedepends=(git meson)
+checkdepends=(python-pytest desktop-file-utils appstream)
+optdepends=('hyprland: the compositor being configured')
+source=("$_repo::${HYPRTWEAKER_SRC:-git+$url.git}")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_repo"
+  # No release tags yet: the version meson.build declares, plus the commit count and
+  # hash. Once tags exist this is `git describe`-shaped either way.
+  local version
+  version=$(sed -n "s/^  version: '\([^']*\)',$/\1/p" meson.build)
+  printf '%s.r%s.g%s' "$version" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  # Tests are switched on in check(), so `makepkg --nocheck` needs none of checkdepends.
+  arch-meson "$_repo" build -Dtests=disabled
+  meson compile -C build
+}
+
+check() {
+  # -Dtests=enabled: a missing pytest or validator fails here, so "no tests ran" can
+  # never read as a pass. The UI tier needs Xvfb and dbus-daemon, which checkdepends do
+  # not pull in, so in a clean chroot it always skips; the unit and static tiers still run.
+  meson configure build -Dtests=enabled
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 "$_repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

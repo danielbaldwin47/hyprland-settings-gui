@@ -20,20 +20,23 @@ Set ``HYPRTWEAKER_REQUIRE_UI=1`` to turn the skip into a hard failure. CI sets i
 on the job that installs GTK, so a broken install surfaces as a red build rather
 than a green one that quietly skipped everything.
 
-The tier draws on an Xvfb display of its own, one per pytest process, never on the
-desktop session it was started from: its windows would map there, and Hyprland
-would show its "Application Not Responding" dialog over the developer's work
-(#146). ``private_display.py`` starts it and pins GTK to it, for this tier and for
-the widget probe route (``tools/widget_probe.py``) alike.
-``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose. It is the
-owner's switch, for watching the tier, and CI's; the desktop fence refuses it from an
-agent's shell. The display opens in ``pytest_configure``, before collection: importing
-``Gtk`` initialises GTK, and some ``tests/unit`` modules import UI pages at collection
-time.
+The tier draws on an Xvfb display and a session bus of its own, one pair per pytest
+process, never on the desktop session it was started from: its windows would map there,
+and Hyprland would show its "Application Not Responding" dialog over the developer's work
+(#146). The bus is a ``dbus-daemon`` with no service directory, so the desktop's
+settings portal is not on it and nothing the owner runs can be activated (#212).
+``private_display.py`` starts both and pins GTK to them, for this tier and for the
+widget probe route (``tools/widget_probe.py``) alike.
+``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display and the host bus on
+purpose. It is the owner's switch, for watching the tier, and CI's; the desktop fence
+refuses it from an agent's shell. The display opens in ``pytest_configure``, before
+collection: importing ``Gtk`` initialises GTK, and some ``tests/unit`` modules import UI
+pages at collection time.
 """
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 from collections.abc import Iterator
@@ -41,7 +44,13 @@ from pathlib import Path
 
 import main_loop
 import pytest
-from private_display import PINNED, pin_environment, session_display_clash, start_xvfb
+from private_display import (
+    PINNED,
+    pin_environment,
+    session_display_clash,
+    start_bus,
+    start_xvfb,
+)
 
 UI_TESTS_DIR = Path(__file__).parent
 
@@ -113,11 +122,20 @@ def ui_unavailable() -> str | None:
     xvfb = shutil.which("Xvfb")
     if xvfb is None:
         return "Xvfb is not installed (pacman -S xorg-server-xvfb)"
+    dbus_daemon = shutil.which("dbus-daemon")
+    if dbus_daemon is None:
+        return "dbus-daemon is not installed, for the private session bus (pacman -S dbus)"
     display = start_xvfb(xvfb)
     if display is None:
         return "Xvfb did not open a display within 10 s"
     if clash := session_display_clash(display, os.environ.get("DISPLAY")):
         return clash
+    bus = start_bus(dbus_daemon)
+    if bus is None:
+        return "dbus-daemon did not open a private session bus within 10 s"
+    # It dies with this process whatever happens (PR_SET_PDEATHSIG); this ends it and
+    # removes its directory on a normal exit, an xdist worker's included.
+    atexit.register(bus.stop)
 
     # GDK reads these only while it opens its display, and the Harness tier reads the host
     # session from them at test time when both tiers share a process, so restore them.
@@ -125,11 +143,18 @@ def ui_unavailable() -> str | None:
     # window first realizes, so a restored one sends it to the session's X server, and
     # it crashes when nothing serves that display. Not GTK_A11Y: GTK reads it at the
     # first widget, after this returns, and restored it put every test widget on the
-    # desktop's accessibility bus.
-    saved = {
-        name: os.environ.get(name) for name in PINNED if name not in ("DISPLAY", "GTK_A11Y")
-    }
-    pin_environment(os.environ, display)
+    # desktop's accessibility bus. Nor the bus and the GSettings backend: GIO reads them
+    # at the first portal, settings or GApplication call, long after the display opens,
+    # and a restored bus address sent those to the owner's session bus.
+    kept = (
+        "DISPLAY",
+        "GTK_A11Y",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "GSETTINGS_BACKEND",
+        "ADW_DISABLE_PORTAL",
+    )
+    saved = {name: os.environ.get(name) for name in PINNED if name not in kept}
+    pin_environment(os.environ, display, bus.address)
     try:
         return open_display()
     finally:

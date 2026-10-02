@@ -511,7 +511,9 @@
       ]
     },
     "group.lock": {
-      "confirmed_keys": [],
+      "confirmed_keys": [
+        "action"
+      ],
       "forms": [
         {
           "accepted": true,
@@ -550,7 +552,9 @@
       "required_keys": []
     },
     "group.lock_active": {
-      "confirmed_keys": [],
+      "confirmed_keys": [
+        "action"
+      ],
       "forms": [
         {
           "accepted": true,
@@ -589,7 +593,9 @@
       "required_keys": []
     },
     "group.move_window": {
-      "confirmed_keys": [],
+      "confirmed_keys": [
+        "forward"
+      ],
       "forms": [
         {
           "accepted": true,
@@ -1312,7 +1318,9 @@
       "required_keys": []
     },
     "window.deny_from_group": {
-      "confirmed_keys": [],
+      "confirmed_keys": [
+        "action"
+      ],
       "forms": [
         {
           "accepted": true,
@@ -2309,6 +2317,67 @@
         "floating": "pb"
       },
       "path": "window.cycle_next"
+    },
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "refused": [
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "path": "group.lock"
+    },
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "refused": [
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "path": "group.lock_active"
+    },
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "refused": [
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "path": "window.deny_from_group"
+    },
+    {
+      "confirmed": true,
+      "key": "forward",
+      "observed": {
+        "default": [
+          "pa",
+          "pc",
+          "pb"
+        ],
+        "forward_false": [
+          "pb",
+          "pa",
+          "pc"
+        ],
+        "forward_true": [
+          "pa",
+          "pc",
+          "pb"
+        ]
+      },
+      "path": "group.move_window"
     }
   ],
   "effects_skipped": "",

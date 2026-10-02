@@ -477,6 +477,10 @@ class _Mapper:
             case "permission":
                 self._permission(value, origin)
             case "plugin":
+                # Verbatim, `~` included: hyprlang stores the value as written and Hyprland
+                # dlopen()s it unexpanded (read in Hyprland v0.56.2 legacy ConfigManager
+                # `handlePlugin` and PluginSystem `loadPluginInternal`, hyprlang v0.6.8),
+                # so a `~/` path never loaded there either and importing it changes nothing.
                 self.entities.plugins.append(PluginLoad(path=value.strip(), origin=origin))
             case "exec" | "execr" | "exec-once" | "execr-once" | "exec-shutdown":
                 self._exec(name, value, origin)

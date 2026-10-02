@@ -302,6 +302,7 @@ def evaluate(
     timeout: float = DEFAULT_TIMEOUT,
     basedir: Path | None = None,
     run_handlers: bool = False,
+    assume_plugins_loaded: bool = False,
 ) -> Recording:
     """Run `entry` under the recording stub and report what it did.
 
@@ -314,6 +315,11 @@ def evaluate(
     they declare with `on_enter`/`on_leave` calls. Off for every foreign config -- ADR-0009
     lifts whole handlers into `legacy.lua`, so entering one would double-count it -- and on
     for the single caller that reads back a handler this app wrote (`autostart.lua`, #70).
+
+    `assume_plugins_loaded` answers `hl.get_config` for any `plugin:` key as if its plugin
+    were loaded. Off for every foreign config; on for the single caller that reads a plugin
+    setting back out of a Module this app wrote, where each one sits behind that guard
+    (`retirement.capture`, #175).
     """
     if not consent.evaluate:
         raise ConsentRequired(f"importing {entry} would run it; no consent was given")
@@ -340,6 +346,7 @@ def evaluate(
             str(out_path),
             str(policy),
             "run" if run_handlers else "keep",
+            "plugins-loaded" if assume_plugins_loaded else "plugins-as-engine",
         ]
         try:
             completed = subprocess.run(

@@ -1,29 +1,36 @@
-"""The blocking startup read of the running compositor's version and descriptions (#176).
+"""The read of the running compositor's version and descriptions: the blocking one at
+startup (#176), and the one on connect when that missed (#214).
 
-The fake serves on the test's own event loop, and the reader blocks, so every read runs on
-a worker thread (`asyncio.to_thread`): called on the loop's thread it would sit on the very
-loop that has to answer it, and time out.
+The two readers share every test that is about a reply rather than a connection, through
+the `read_from` fixture. The fake serves on the test's own event loop, and the blocking
+reader blocks, so it runs on a worker thread (`asyncio.to_thread`): called on the loop's
+thread it would sit on the very loop that has to answer it, and time out.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from _fake_hyprland import CONVERSATION, FakeHyprland, run_with_fake
 
 from hyprtweaker.engine.ipc import (
+    CommandClient,
     Instance,
     LiveHyprland,
     NoInstance,
+    fetch_live_hyprland,
     read_live_hyprland,
 )
 from hyprtweaker.engine.ipc.live import parse_release_version
 
+ReadFrom = Callable[..., LiveHyprland | None]
 
-def read_from(fake: FakeHyprland, *, timeout: float = 1.0) -> LiveHyprland | None:
+
+def blocking(fake: FakeHyprland, *, timeout: float = 1.0) -> LiveHyprland | None:
     async def scenario(started: FakeHyprland) -> LiveHyprland | None:
         return await asyncio.to_thread(
             read_live_hyprland, lambda: started.instance, timeout=timeout
@@ -32,7 +39,20 @@ def read_from(fake: FakeHyprland, *, timeout: float = 1.0) -> LiveHyprland | Non
     return run_with_fake(scenario, fake)
 
 
-def test_the_captured_replies_read_as_a_snapshot() -> None:
+def on_connect(fake: FakeHyprland, *, timeout: float = 1.0) -> LiveHyprland | None:
+    async def scenario(started: FakeHyprland) -> LiveHyprland | None:
+        return await fetch_live_hyprland(CommandClient(started.instance), timeout=timeout)
+
+    return run_with_fake(scenario, fake)
+
+
+@pytest.fixture(params=[blocking, on_connect], ids=["blocking", "on_connect"])
+def read_from(request: pytest.FixtureRequest) -> ReadFrom:
+    reader: ReadFrom = request.param
+    return reader
+
+
+def test_the_captured_replies_read_as_a_snapshot(read_from: ReadFrom) -> None:
     live = read_from(FakeHyprland())
 
     assert live is not None
@@ -58,14 +78,16 @@ def test_a_socket_nobody_listens_on_reads_as_none(tmp_path: Path) -> None:
     assert read_live_hyprland(lambda: Instance(tmp_path)) is None
 
 
-def test_a_compositor_that_never_answers_reads_as_none_within_the_timeout() -> None:
+def test_a_compositor_that_never_answers_reads_as_none_within_the_timeout(
+    read_from: ReadFrom,
+) -> None:
     started = time.monotonic()
 
     assert read_from(FakeHyprland(never_answer=True), timeout=0.2) is None
     assert time.monotonic() - started < 1.0
 
 
-def test_one_deadline_covers_both_requests() -> None:
+def test_one_deadline_covers_both_requests(read_from: ReadFrom) -> None:
     """Each reply alone fits the budget, the two together do not: one deadline, not two."""
     assert read_from(FakeHyprland(reply_delay=0.15), timeout=1.0) is not None
     assert read_from(FakeHyprland(reply_delay=0.15), timeout=0.25) is None
@@ -82,7 +104,9 @@ def test_one_deadline_covers_both_requests() -> None:
         ("j/descriptions", '[{"name": "a:b", "description": "a "quoted" word"}]'),
     ],
 )
-def test_a_reply_a_release_would_not_send_reads_as_none(request_: str, reply: str) -> None:
+def test_a_reply_a_release_would_not_send_reads_as_none(
+    read_from: ReadFrom, request_: str, reply: str
+) -> None:
     assert read_from(FakeHyprland({**CONVERSATION, request_: reply})) is None
 
 
