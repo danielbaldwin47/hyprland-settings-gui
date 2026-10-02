@@ -6,16 +6,15 @@ worth stating, because it is what every part of this module is answering.
 
 An Apply transaction runs model -> bytes. Modules are rendered whole and deterministically,
 so the model is always the source and the file is always the derivative. Restore runs the
-other way: the bytes are the source, and they are bytes *this* model cannot produce -- they
-are what an earlier model rendered, and the app cannot read its own Lua back to reconstruct
-that one (#62). Laying them down alone would leave the model still holding the broken
-version, and the next edit would re-render straight over the recovery.
+other way: the bytes are the source. Laying them down alone would leave the model still
+holding the broken version, and the next edit would re-render straight over the recovery.
 
-So the model is brought into step from the one place that does know what the restored bytes
-mean: **the compositor that just loaded them**. Write the Snapshot, reload once, then re-read
-exactly the Options the Journal recorded those bytes as setting. That is the same mechanism
-the app already recovers its model with at startup (`reread.py`), pointed at one Module
-instead of the whole App dir -- not a new trick, and not one that waits on #62.
+So the model is brought into step from the restored bytes themselves, read through Lua as
+launch reads them (`overrides.written_values`), and not from the compositor: `user.lua` and
+a theming tool load after the app's Modules, so a live value may be theirs, and adopting it
+would write it into the app's file on the next edit (F3 of the #148 review). Only a key the
+bytes could not answer -- or every key, without a Lua interpreter, less the ones a loading
+Bridge module sets -- is read off the compositor after the one reload.
 
 Two things this deliberately does **not** do:
 
@@ -29,15 +28,19 @@ Two things this deliberately does **not** do:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Sequence
 
+from ..bridge import owners
+from ..importer.lua.sandbox import LuaUnavailable
 from ..ipc import CommandClient, IpcError
 from ..model import ConfigModel
 from ..paths import ENTRYPOINT_NAME
 from ..schema import ResolvedOption
 from ..state import Draft, Journal, LastKnownGood
-from ..writer import BeforeReplace, LuaSyntaxError, ProtectedFile, Writer
+from ..writer import BeforeReplace, LuaSyntaxError, ProtectedFile, Writer, module_relpath
+from .overrides import written_values
 from .reread import read_state
 from .result import ApplyOutcome, ApplyResult
 from .transaction import Reloader
@@ -51,6 +54,7 @@ async def reload_and_reread(
     client: CommandClient,
     model: ConfigModel,
     names: Sequence[str],
+    live: Sequence[str] | None = None,
 ) -> ApplyResult:
     """One reload behind the shared in-flight flag, then bring the model into step.
 
@@ -62,6 +66,10 @@ async def reload_and_reread(
 
     The flag is what keeps this reload from being read as somebody else's and answered with
     a full re-read of the config the app is in the middle of repairing (`Reloader`).
+
+    `live` narrows which of `names` are read off the compositor (all of them by default):
+    a key the app's own restored bytes already answered must not be, since `user.lua` or a
+    theming tool may set it after them (F3 of the #148 review).
     """
     keys = tuple(names)
     with reloader.confirming():
@@ -74,7 +82,7 @@ async def reload_and_reread(
             # loaded while a *different* one is what is broken, and re-reading is how the
             # model finds out which -- refusing to look would leave it describing the
             # version that was just replaced.
-            await read_state(model, client, _resolve(model, keys))
+            await read_state(model, client, _resolve(model, keys if live is None else live))
         except IpcError as error:
             return ApplyResult(ApplyOutcome.COMPOSITOR_GONE, keys=keys, detail=str(error))
 
@@ -309,14 +317,49 @@ class RestoreTransaction:
                 draft.discard()
             return ApplyResult(ApplyOutcome.NOTHING_TO_DO, keys=names)
 
+        live = await self._settle_from_bytes(names)
         result = await reload_and_reread(
             reloader=self._reloader,
             client=self._client,
             model=self._model,
             names=names,
+            live=live,
         )
         self._record(draft, result, changed)
         return result
+
+    async def _settle_from_bytes(self, names: Sequence[str]) -> tuple[str, ...]:
+        """Put the model in step with the restored Modules from their own bytes, as launch
+        does; return the keys that still have to be read off the compositor.
+
+        Not off the compositor first: `user.lua` and a theming tool load after the app's
+        Modules, so the live value of a key may be theirs, and the next write would render
+        it into the app's file (F3 of the #148 review). A key the restored Module used to
+        carry and the Snapshot does not is unset. Without Lua the keys are read live, minus
+        the ones a loading Bridge module sets, whose live answer is always the tool's.
+        """
+        paths = self._writer.paths
+        manifest = self._writer.manifest(self._model)
+        restored = {good.module for good in self._restores}
+        for option, _value in self._model.set_options():
+            if module_relpath(option) in restored and option.name not in names:
+                self._model.unset(option.name)
+        try:
+            values = await asyncio.to_thread(
+                written_values, paths.app_dir, self._model.schema, manifest, only=restored
+            )
+        except LuaUnavailable as error:
+            _log.warning("no Lua, so the restored Modules are read off Hyprland: %s", error)
+            tools = owners(manifest.bridges, quarantined=manifest.quarantined)
+            return tuple(name for name in names if name not in tools)
+        for name, value in values.items():
+            if name not in names:
+                continue
+            if value is None:
+                self._model.set_null(name)
+            else:
+                self._model.set(name, value)
+        return tuple(name for name in names if name not in values)
 
     def _record(self, draft: Draft | None, result: ApplyResult, changed: Sequence[str]) -> None:
         """Journal the restore like any other write that reached disk.

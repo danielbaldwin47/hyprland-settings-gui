@@ -1151,3 +1151,35 @@ def test_a_read_only_session_still_has_exactly_one_banner_line(tmp_path: Path) -
         assert session.model.get(ROUNDING) is UNSET
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_restore_takes_the_restored_bytes_not_an_override_of_them(tmp_path: Path) -> None:
+    """F3 of the #148 review: `user.lua` sets the border to 20 over the app's 3. Restore
+    read the live 20 into the model, cleared the "Overridden" mark, and the next edit in
+    the Section wrote 20 into the app's own Module."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+
+        (app_dir(tmp_path) / GENERAL_MODULE).write_bytes(b"-- hand edited\n")
+        fake.conversation["j/getoption " + BORDER_SIZE] = (
+            '{"option": "general:border_size", "int": 20, "set": true }'
+        )
+
+        assert session.restore_last_good(GENERAL_MODULE)
+        await settle(session, runner)
+
+        assert session.model.get(BORDER_SIZE) == 3
+        assert BORDER_SIZE in session.overridden
+
+        session.set_option("general:gaps_workspaces", 7)
+        await settle(session, runner)
+        text = (app_dir(tmp_path) / GENERAL_MODULE).read_text()
+        assert "border_size = 3," in text and "border_size = 20" not in text
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )

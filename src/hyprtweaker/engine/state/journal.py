@@ -585,12 +585,11 @@ class Journal:
         A Module the transaction *deleted* answers `None` too: its confirmed state is
         absence, and there are no bytes that spell that.
 
-        Bytes **and** the Options they set, because restoring is two halves and the app
-        cannot derive the second from the first: it does not read its own Lua (#62). The
-        bytes go back on disk; the Options are what the caller re-reads off the compositor
-        afterwards to put the model back in step with them. Handing back bytes alone would
-        leave the caller guessing from the *current* Manifest record -- the option set at the
-        moment of the failure, not of the good write.
+        Bytes **and** the Options they set, because restoring is two halves: the bytes go
+        back on disk, and the Options name what the model must take from them (read from
+        the bytes through Lua, `restore.py`). Handing back bytes alone would leave the
+        caller guessing from the *current* Manifest record -- the option set at the moment
+        of the failure, not of the good write.
         """
         for entry in reversed(self.entries()):
             if not entry.confirmed:

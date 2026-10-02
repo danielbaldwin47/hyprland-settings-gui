@@ -28,6 +28,7 @@ from .lua import LuaTree, insert, render_table, render_table_inline, table_key
 from .modules import (
     ENTITY_KIND_MODULES,
     BridgeRequire,
+    is_entity_module,
     is_option_module,
     module_relpath,
     module_stem,
@@ -57,6 +58,7 @@ __all__ = [
     "gate",
     "gate_available",
     "insert",
+    "is_entity_module",
     "is_option_module",
     "load_manifest",
     "module_relpath",

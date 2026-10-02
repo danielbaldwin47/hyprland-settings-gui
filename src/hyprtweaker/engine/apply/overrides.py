@@ -22,7 +22,7 @@ the main loop.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -53,16 +53,24 @@ def verified_options(app_dir: Path, manifest: Manifest) -> frozenset[str]:
 
 
 def written_values(
-    app_dir: Path, schema: Schema, manifest: Manifest, *, timeout: float = 5.0
+    app_dir: Path,
+    schema: Schema,
+    manifest: Manifest,
+    *,
+    timeout: float = 5.0,
+    only: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """What the app's own options Modules set, as model values, by Option name.
 
     Only Modules whose bytes hash to the Manifest's record, and only the Options that record
-    names -- restart-flagged ones included. What the model takes at launch for those
-    Options instead of the live values. Raises `LuaUnavailable` without an interpreter.
+    names -- restart-flagged ones included; `only` narrows it to those Modules. What the
+    model takes for those Options instead of the live values: at launch, and after Restore
+    last good. Raises `LuaUnavailable` without an interpreter.
     """
     raw: dict[str, Any] = {}
     for path, record in _verified(app_dir, manifest):
+        if only is not None and path.relative_to(app_dir).as_posix() not in only:
+            continue
         keys = {lua_key_for(name): name for name in record.options}
         for key, value in config_values(path, keys, timeout=timeout).items():
             raw[keys[key]] = value

@@ -199,6 +199,7 @@ from hyprtweaker.engine.writer import (
     LuaSyntaxError,
     ModuleSet,
     Writer,
+    is_entity_module,
     load_manifest,
     module_relpath,
 )
@@ -4139,6 +4140,14 @@ class Session:
         # The restore re-read the model itself, so the Rows have moved; and its own reload's
         # errors are the current truth about the config, replacing the ones it was answering.
         self._observe(result)
+        if any(is_entity_module(good.module) for good in restores):
+            # Entity lists are the restored files' too, or the next write renders the old
+            # lists over the bytes just put back.
+            self._load_entities()
+        if self._client is not None and result.reloaded:
+            # `_observe` took the OK as a read-back and cleared the marks; an override of a
+            # restored key is still an override (F3, F4 of the #148 review).
+            await self._scan_drift(self._client)
         self._repoll_if_timed_out(result)
         # After the observation, which clears the field: this notice is about what the
         # restore just did, so it has to survive the restore's own reload and nothing later.

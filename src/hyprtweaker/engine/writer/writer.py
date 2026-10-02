@@ -657,6 +657,10 @@ class Writer:
         """Record that the user saw `release`'s Retired notice (ADR-0012). Manifest only."""
         self._save(self._manifest_for(model).with_retired_notice(release))
 
+    def manifest(self, model: ConfigModel) -> Manifest:
+        """The Manifest as the next write would read it."""
+        return self._manifest_for(model)
+
     # --- internals ----------------------------------------------------------------------
 
     def _manifest_for(self, model: ConfigModel) -> Manifest:
