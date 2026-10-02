@@ -124,6 +124,15 @@ def answer(dialog: Any, response: str) -> None:
     dialog.force_close()
 
 
+def ask(page: Any, label: str) -> Any:
+    """Press `label` and wait for the confirm it opens: a switch that will run the tool
+    asks the wallpaper daemon first, off the main loop."""
+    before = page.dialog
+    click(page, label)
+    wait_until(lambda: page.dialog is not before, f"the confirm {label!r} opens")
+    return page.dialog
+
+
 def click(page: Any, label: str) -> None:
     button = page.button(label)
     assert button is not None, f"no visible {label!r} button; rows: {page.rows}"
@@ -245,7 +254,7 @@ def test_switching_to_a_tool_not_set_up_shows_its_files_first_then_sets_it_up_in
     page.reveal_backend("wallust")
     transactions = applier.transactions
 
-    click(page, "Switch to wallust")
+    ask(page, "Switch to wallust")
     lines = page.dialog.lines
     assert lines[0] == "Switch to wallust?"
     assert lines[1] == (
@@ -493,7 +502,7 @@ def test_remove_puts_back_what_setup_changed_and_asks_about_a_file_changed_since
     stub_tool("wallust")
     session, _ = make_session(tmp_path)
     page = build_page(session)
-    click(page, "Switch to wallust")
+    ask(page, "Switch to wallust")
     answer(page.dialog, "agree")
     config = tmp_path / "wallust/wallust.toml"
     config.write_text(config.read_text() + "# mine\n", encoding="utf-8")
@@ -551,3 +560,32 @@ def test_the_window_reveal_opens_the_page_on_the_tool(tmp_path: Path, stub_tool:
     assert window._selected_section() == entity_page_id("theming")
     assert window.theming_page.shown_tab == "wallust"
     window.close()
+
+
+def test_a_switch_whose_tool_has_not_run_names_the_run_and_does_it_once(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """Settled S3: one confirm covers setting up, the first run (its exact command) and the
+    switch; the colours load right after the run."""
+    log = tmp_path / "ran.log"
+    bridge = tmp_path / WALLUST_BRIDGE
+    wallust = stub_tool(
+        "wallust",
+        f"echo \"$@\" >> '{log}'\nmkdir -p '{bridge.parent}'\necho 'return {{}}' > '{bridge}'",
+    )
+    session, applier = make_session(tmp_path)
+    page = build_page(session, current_wallpaper=lambda: Path("/pictures/sea.png"))
+
+    dialog = ask(page, "Switch to wallust")
+    assert "This runs once, to make the colors:" in dialog.lines
+    assert f"{wallust} run /pictures/sea.png" in dialog.lines
+    assert "press Regenerate" not in dialog.get_body()
+    assert not log.exists()
+
+    answer(dialog, "agree")
+    wait_until(lambda: page.running is None, "the first run")
+
+    assert log.read_text() == "run /pictures/sea.png\n"
+    assert bridge_lines(session) == ['require("hyprtweaker/bridge/wallust")']
+    assert page.rows[1][1] == "In use"
+    assert applier.transactions == 2, "set up and switch, then load once the file is there"

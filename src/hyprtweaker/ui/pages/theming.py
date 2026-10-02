@@ -590,27 +590,49 @@ class ThemingPage:
     # --- actions --------------------------------------------------------------------------
 
     def switch(self, tool: str) -> None:
-        """ "Switch to <tool>": a confirm, then one transaction (setting it up if need be)."""
+        """ "Switch to <tool>": one confirm, then one transaction (setting it up if need be).
+
+        A tool that has not made its colors yet is run once in the same agreement when the
+        wallpaper daemon says what is on screen (S3: the confirm names the command); asking
+        runs the daemon's client, so the confirm waits for that answer off the main loop.
+        """
         spec = REGISTRY[tool]
         title = spec.title
-        wired = any(entry.tool == tool for entry in self._state.entries)
-        lead = (
-            f"{title} will make your border and group colors from your wallpaper, instead of "
-            f"{_source_words(self._state.source)}."
-        )
-        intro = ""
-        if wired:
-            body = f"{lead} Nothing outside hyprtweaker's own files changes."
-            plan = None
-        else:
+        plan: WirePlan | None = None
+        if not any(entry.tool == tool for entry in self._state.entries):
             planned = plan_wire(tool, paths=self._session.paths, find=self._actions.find)
             if isinstance(planned, NotDone):
                 self._tell(f"{title} cannot be set up", planned.reason)
                 return
             plan = planned
-            body = lead if plan.files else f"{lead} No file of {title}'s needs to change."
-            intro = f"To set {title} up, these files change:" if plan.files else ""
-        if not (self._session.paths.hypr_dir / spec.modules[0].file).is_file():
+        binary = self._actions.find(spec.detection.binaries[0])
+        has_run = (self._session.paths.hypr_dir / spec.modules[0].file).is_file()
+        if has_run or binary is None or not spec.rerun:
+            self._confirm_switch(tool, plan, None)
+            return
+        current = self._actions.current_wallpaper
+
+        def look() -> None:
+            image = current()
+            argv = spec.rerun_argv(binary, image, self._values[tool]) if image else None
+            GLib.idle_add(self._confirm_switch, tool, plan, argv)
+
+        threading.Thread(target=look, name=f"wallpaper-{tool}", daemon=True).start()
+
+    def _confirm_switch(
+        self, tool: str, plan: WirePlan | None, command: tuple[str, ...] | None
+    ) -> bool:
+        title = REGISTRY[tool].title
+        body = (
+            f"{title} will make your border and group colors from your wallpaper, instead of "
+            f"{_source_words(self._state.source)}."
+        )
+        if plan is None:
+            body += " Nothing outside hyprtweaker's own files changes."
+        elif not plan.files:
+            body += f" No file of {title}'s needs to change."
+        has_run = (self._session.paths.hypr_dir / REGISTRY[tool].modules[0].file).is_file()
+        if not has_run and command is None:
             body += (
                 f" Its colors load after its first run: once switched, press Regenerate on "
                 f"{title}'s tab."
@@ -621,16 +643,21 @@ class ThemingPage:
                 body=body,
                 verb=f"Switch to {title}",
                 plan=plan,
-                intro=intro,
-                on_agree=lambda: self._switched(tool, plan),
+                intro=f"To set {title} up, these files change:" if plan and plan.files else "",
+                command=command,
+                on_agree=lambda: self._switched(tool, plan, command),
             )
         )
+        return False
 
-    def _switched(self, tool: str, plan: WirePlan | None) -> None:
+    def _switched(
+        self, tool: str, plan: WirePlan | None, command: tuple[str, ...] | None
+    ) -> None:
         title = REGISTRY[tool].title
         self._shown = tool
         if plan is None:
-            if not self._session.set_color_source(Wallpaper(tool)):
+            switched = self._session.set_color_source(Wallpaper(tool))
+            if not switched:
                 self._tell(f"Could not switch to {title}", self._why())
         else:
             done = wire(
@@ -639,6 +666,11 @@ class ThemingPage:
                 register=lambda t: self._session.add_bridge(t, source=Wallpaper(t)),
             )
             self._report_wired(done)
+            switched = isinstance(done, Wired)
+        if switched and command is not None:
+            # The command the confirm named, and nothing else: argv[0] is the tool found.
+            self._running = tool
+            self._start(tool, command)
         self.refresh()
 
     def set_up(self, tool: str) -> None:
@@ -804,8 +836,11 @@ class ThemingPage:
         return False
 
     def _run(self, tool: str, binary: Path, image: Path) -> None:
+        self._start(tool, REGISTRY[tool].rerun_argv(binary, image, self._values[tool]))
+
+    def _start(self, tool: str, argv: tuple[str, ...]) -> None:
+        """Run `argv` off the main loop; `_ran` reports on it."""
         spec = REGISTRY[tool]
-        argv = spec.rerun_argv(binary, image, self._values.get(tool, {}))
         run = self._actions.run
 
         def work() -> None:
