@@ -332,7 +332,7 @@ ALLOWED = [
     "git status --short",
     "grep -rn matugen docs/",
     'git commit -m "Never run matugen, waybar or git stash from a test"',
-    "HARNESS_DRM_CARD=/dev/dri/card0 timeout 900 .venv/bin/pytest tests/integration -m hyprland",
+    "HARNESS_DRM_CARD=/dev/dri/card0 timeout 900 .venv/bin/pytest tests/integration -m x",
     "HARNESS_DRM_CARD=/dev/dri/card0 .venv/bin/python -m pytest tests/integration",
     ".venv/bin/python tools/sandbox.py --shot /tmp/shot.png",
     ".venv/bin/python tools/sandbox.py --home x",
