@@ -323,3 +323,41 @@ def test_a_widget_partly_scrolled_out_of_view_is_refused_not_shot(tmp_path: Path
         "RuntimeError: shoot: 100 of the widget's 200 px rows are scrolled out of view; "
         "scroll it into view or make the window larger first"
     )
+
+
+SHADOWED_PROBE = """\
+import widget_probe
+
+import sys
+
+from gi.repository import Adw, Gdk, GdkPixbuf, Gtk
+
+Adw.init()
+css = Gtk.CssProvider()
+css.load_from_string(".probe-red { background: #ff0000; }")
+Gtk.StyleContext.add_provider_for_display(
+    Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_USER
+)
+red = Gtk.Box(width_request=120, height_request=60, css_classes=["probe-red"],
+              halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+window = Adw.Window(default_width=600, default_height=400, content=red)
+widget_probe.shoot(red, sys.argv[1], margin=1)
+pixbuf = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1])
+pixels, stride, step = pixbuf.get_pixels(), pixbuf.get_rowstride(), pixbuf.get_n_channels()
+middle = stride * (pixbuf.get_height() // 2)
+red = [tuple(pixels[middle + step * x :][:3]) == (255, 0, 0) for x in range(pixbuf.get_width())]
+print(*red)
+"""
+
+
+def test_a_window_with_a_shadow_is_shot_at_one_to_one(tmp_path: Path) -> None:
+    # The #183 swatch shots came out scaled by 0.98 x 0.95 and blurred: the window paintable
+    # of a window with a shadow is larger than the window, and was squeezed into its size.
+    probe = tmp_path / "probe.py"
+    probe.write_text(SHADOWED_PROBE)
+    shot = tmp_path / "red.png"
+
+    result = run([*ROUTE, str(probe), str(shot)], tmp_path, **dead_session(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["False", *["True"] * 120, "False"]
