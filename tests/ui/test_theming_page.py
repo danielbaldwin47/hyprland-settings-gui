@@ -72,14 +72,16 @@ def make_session(root: Path, *, live: bool = True) -> tuple[Any, EntrypointAppli
     return session, applier
 
 
-def build_page(session: Any, **actions: Any) -> Any:
+def build_page(session: Any, memory: Any = None, **actions: Any) -> Any:
     """The page alone, in a window of its own so its dialogs present as the app's do."""
     from gi.repository import Adw
 
     from hyprtweaker.ui.pages.theming import ThemingActions, ThemingPage
 
     toasts: list[str] = []
-    page = ThemingPage(session, actions=ThemingActions(toast=toasts.append, **actions))
+    page = ThemingPage(
+        session, actions=ThemingActions(toast=toasts.append, **actions), memory=memory
+    )
     page.toasts = toasts  # type: ignore[attr-defined]
     Adw.ApplicationWindow(application=started_application(), content=page.page)
     return page
@@ -509,6 +511,30 @@ def test_options_change_the_command_and_write_nothing(tmp_path: Path, stub_tool:
         "-t scheme-tonal-spot --contrast 0"
     ]
     assert tree(tmp_path) == files
+
+
+def test_options_survive_a_rebuild_of_the_page(tmp_path: Path, stub_tool: Any) -> None:
+    """F8 of the #148 review: "until you close the app", but every Advanced toggle, View
+    switch or search reveal rebuilt the page with the defaults."""
+    from gi.repository import Gtk
+
+    from hyprtweaker.ui.pages.theming import ThemingMemory
+
+    stub_tool("matugen")
+    put(tmp_path / MATUGEN_BRIDGE)
+    session, _ = make_session(tmp_path)
+    wired(session, "matugen", source="matugen")
+    memory = ThemingMemory()
+    page = build_page(session, memory)
+    mode = next(row for row in page._rows[page._options] if row.get_title() == "Mode")
+    next(w for w in descendants(mode) if isinstance(w, Gtk.DropDown)).set_selected(1)
+
+    rebuilt = build_page(session, memory)
+
+    assert [row[2] for row in rebuilt.rows if row[1] == "Regenerate colors"] == [
+        "Runs matugen image '<your wallpaper>' --source-color-index 0 -m light "
+        "-t scheme-tonal-spot"
+    ]
 
 
 def descendants(widget: Any) -> list[Any]:

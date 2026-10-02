@@ -152,7 +152,11 @@ from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     load_tasks_mapping,
     plan_tasks_view,
 )
-from hyprtweaker.ui.pages.theming import ThemingActions, ThemingPage  # noqa: E402
+from hyprtweaker.ui.pages.theming import (  # noqa: E402
+    ThemingActions,
+    ThemingMemory,
+    ThemingPage,
+)
 from hyprtweaker.ui.pages.theming_presets import PresetActions  # noqa: E402
 from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
     WorkspaceRuleActions,
@@ -458,6 +462,8 @@ class MainWindow(Adw.ApplicationWindow):
         finally reaches is the *oldest* gesture rather than the last -- an undo that takes
         back something they have since changed twice."""
         self._result_toast: Adw.Toast | None = None
+        self._theming_memory = ThemingMemory()
+        """The Theming page's Regenerate options and tab, kept across rebuilds (F8)."""
         self.on_import_kept: Callable[[], None] | None = None
         """Starts the session a first-run import offer held back, once that import is kept.
         Set by the application only when it deferred the start for the offer."""
@@ -1231,6 +1237,7 @@ class MainWindow(Adw.ApplicationWindow):
         # The Theming Page (ADR-0014, #164): the Color source and the tools that make it.
         self._theming_page = ThemingPage(
             self._session,
+            memory=self._theming_memory,
             actions=ThemingActions(
                 toast=self._toast,
                 current_wallpaper=self._session.current_wallpaper,

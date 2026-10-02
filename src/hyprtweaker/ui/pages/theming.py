@@ -181,14 +181,39 @@ def _button(label: str, on_click: Callable[[], None], *, sensitive: bool = True)
     return button
 
 
+def _default_values() -> dict[str, dict[str, str | float | None]]:
+    return {
+        tool: {each.key: each.default for each in REGISTRY[tool].parameters}
+        for tool in BACKENDS
+    }
+
+
+@dataclass
+class ThemingMemory:
+    """What the Theming page keeps for the life of the window, across its rebuilds.
+
+    The window rebuilds every page on an Advanced toggle, a View switch or a search reveal,
+    and the Regenerate options say they last "until you close the app" (F8 of the #148
+    review): the window holds this and hands it to each new page.
+    """
+
+    values: dict[str, dict[str, str | float | None]] = field(default_factory=_default_values)
+    """Per backend, the Regenerate options chosen here."""
+    shown: str | None = None
+    """The backend tab last shown."""
+
+
 class ThemingPage:
     """The Theming module's Page (ADR-0014)."""
 
     title = "Theming"
     section = entity_page_id("theming")
 
-    def __init__(self, session: Session, *, actions: ThemingActions) -> None:
+    def __init__(
+        self, session: Session, *, actions: ThemingActions, memory: ThemingMemory | None = None
+    ) -> None:
         self._session = session
+        self._memory = memory if memory is not None else ThemingMemory()
         self._actions = actions
         self._page = Adw.PreferencesPage(title=self.title)
         self._source = Adw.PreferencesGroup(title=SOURCE_TITLE)
@@ -215,11 +240,6 @@ class ThemingPage:
         self._page.add(self._presets.group)
         self._rows: dict[Adw.PreferencesGroup, list[Gtk.Widget]] = {
             group: [] for group in (self._source, self._backends, self._options, self._other)
-        }
-        self._shown: str | None = None
-        self._values: dict[str, dict[str, str | float | None]] = {
-            tool: {each.key: each.default for each in REGISTRY[tool].parameters}
-            for tool in BACKENDS
         }
         self._running: str | None = None
         self._tab_rows: dict[str, Gtk.Widget] = {}
@@ -254,7 +274,7 @@ class ThemingPage:
 
     @property
     def shown_tab(self) -> str | None:
-        return self._shown if self._tabs.get_visible() else None
+        return self._memory.shown if self._tabs.get_visible() else None
 
     @property
     def rows(self) -> tuple[tuple[str, str, str], ...]:
@@ -383,7 +403,9 @@ class ThemingPage:
             if self._session.live and self._session.entrypoint_edited:
                 row.add_suffix(_button(REGENERATE_ENTRYPOINT, self._regenerate_entrypoint))
             self._add(self._source, row)
-        target = resume_target(state.source, state.entries, shown=self._shown or BACKENDS[0])
+        target = resume_target(
+            state.source, state.entries, shown=self._memory.shown or BACKENDS[0]
+        )
         if target is not None:
             row = _row(RESUME, f"Let {REGISTRY[target].title} make your colors again.")
             row.add_suffix(
@@ -408,14 +430,14 @@ class ThemingPage:
         tabs = {tool: self._tab(tool) for tool in BACKENDS}
         for tool, button in self._tab_buttons.items():
             button.set_label(tabs[tool].label)
-        if self._shown is None:
+        if self._memory.shown is None:
             in_use = [tool for tool, tab in tabs.items() if tab.state in IN_USE_STATES]
             listed = [
                 tool for tool, tab in tabs.items() if tab.state is not TabState.NOT_INSTALLED
             ]
-            self._shown = (in_use or listed or list(BACKENDS))[0]
-        self._select_tab(self._shown)
-        self._draw_tab(tabs[self._shown])
+            self._memory.shown = (in_use or listed or list(BACKENDS))[0]
+        self._select_tab(self._memory.shown)
+        self._draw_tab(tabs[self._memory.shown])
 
     def _tab(self, tool: str) -> Tab:
         state = self._state
@@ -430,13 +452,13 @@ class ThemingPage:
         self._quiet = False
 
     def _on_tab(self, button: Gtk.ToggleButton, tool: str) -> None:
-        if self._quiet or not button.get_active() or tool == self._shown:
+        if self._quiet or not button.get_active() or tool == self._memory.shown:
             return
         self._show(tool)
 
     def _show(self, tool: str) -> None:
         """Look at `tool`'s tab. Changes nothing but what is on screen."""
-        self._shown = tool
+        self._memory.shown = tool
         self._draw_source()
         self._clear(self._backends)
         self._tab_rows = {}
@@ -534,7 +556,9 @@ class ThemingPage:
         image is found when the button is pressed: asking the daemon runs a program."""
         spec = REGISTRY[tool]
         argv = spec.rerun_argv(
-            Path(spec.detection.binaries[0]), Path(WALLPAPER_PLACEHOLDER), self._values[tool]
+            Path(spec.detection.binaries[0]),
+            Path(WALLPAPER_PLACEHOLDER),
+            self._memory.values[tool],
         )
         return f"Runs {shlex.join(argv)}"
 
@@ -549,7 +573,7 @@ class ThemingPage:
             "Used when you press Regenerate here, until you close the app. Your own "
             "wallpaper script keeps its own settings."
         )
-        values = self._values[tab.tool]
+        values = self._memory.values[tab.tool]
         for parameter in parameters:
             match parameter:
                 case Choice():
@@ -666,7 +690,7 @@ class ThemingPage:
 
         def look() -> None:
             image = current()
-            argv = spec.rerun_argv(binary, image, self._values[tool]) if image else None
+            argv = spec.rerun_argv(binary, image, self._memory.values[tool]) if image else None
             GLib.idle_add(self._confirm_switch, tool, plan, argv)
 
         threading.Thread(target=look, name=f"wallpaper-{tool}", daemon=True).start()
@@ -706,7 +730,7 @@ class ThemingPage:
         self, tool: str, plan: WirePlan | None, command: tuple[str, ...] | None
     ) -> None:
         title = REGISTRY[tool].title
-        self._shown = tool
+        self._memory.shown = tool
         if plan is None:
             switched = self._session.set_color_source(Wallpaper(tool))
             if not switched:
@@ -924,7 +948,7 @@ class ThemingPage:
         return False
 
     def _run(self, tool: str, binary: Path, image: Path) -> None:
-        self._start(tool, REGISTRY[tool].rerun_argv(binary, image, self._values[tool]))
+        self._start(tool, REGISTRY[tool].rerun_argv(binary, image, self._memory.values[tool]))
 
     def _start(self, tool: str, argv: tuple[str, ...]) -> None:
         """Run `argv` off the main loop; `_ran` reports on it."""
