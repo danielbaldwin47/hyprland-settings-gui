@@ -68,6 +68,7 @@ class FakeContext:
         live_hyprland: LiveHyprland | None = None,
         retired: Mapping[str, str] | None = None,
         kept: Mapping[str, Any] | None = None,
+        bridge_owners: Mapping[str, str] | None = None,
         schema: Schema = SCHEMA,
     ) -> None:
         self.schema = schema
@@ -81,6 +82,8 @@ class FakeContext:
         """Retired Option name -> the release that retired it."""
         self.kept: Mapping[str, Any] = kept or {}
         """Retired Option name -> the value the Manifest keeps for it, for every reason."""
+        self.bridge_owners: Mapping[str, str] = bridge_owners or {}
+        """Option name -> the tool whose loading Bridge module sets it (#163, #165)."""
         self.model = ConfigModel(schema)
 
     def unknown_to_version(self, option: ResolvedOption) -> bool:
@@ -443,6 +446,122 @@ def test_a_row_matching_more_than_two_pills_shows_the_top_two_and_lists_the_rest
     assert first.tooltip == "This was written to your config, but Hyprland is not using it."
     assert second.tooltip.endswith("\nAlso: Not in this Hyprland, Restart, Advanced.")
     assert second.tooltip.startswith("Something loaded after the app's own settings")
+
+
+MATUGEN_KEYS = frozenset(
+    {
+        "general:col.active_border",
+        "general:col.inactive_border",
+        "group:col.border_active",
+        "group:col.border_inactive",
+        "group:col.border_locked_active",
+        "group:col.border_locked_inactive",
+    }
+)
+"""What the app's matugen template sets (#163 reading 7), written out by hand."""
+
+
+def _loading(*tools: str) -> Mapping[str, str]:
+    """`Session.bridge_owners` for these tools set up and loading, from the real registry."""
+    from hyprtweaker.engine.bridge import REGISTRY, entries_for, owners
+
+    entries = [
+        entry
+        for tool in tools
+        for entry in entries_for(
+            REGISTRY[tool], present={m.file for m in REGISTRY[tool].modules}
+        )
+    ]
+    return owners(entries)
+
+
+def _set_by(context: FakeContext) -> dict[str, str]:
+    """Every Option in the Schema wearing a "Set by" pill, with that pill's label."""
+    found = {}
+    for option in SCHEMA:
+        for pill in row_state(option, context).pills:
+            if pill.label.startswith("Set by "):
+                found[option.name] = pill.label
+    return found
+
+
+def test_every_option_matugen_sets_is_badged_and_no_other_is() -> None:
+    """#73 AC: "Options a tool controls are badged 'set by tool'", over the whole Schema."""
+    assert _set_by(FakeContext(bridge_owners=_loading("matugen"))) == dict.fromkeys(
+        MATUGEN_KEYS, "Set by matugen"
+    )
+    assert _set_by(FakeContext()) == {}, "no tool loading, no pill"
+
+
+def test_each_tool_badges_exactly_the_options_it_owns_by_its_display_name() -> None:
+    """The relation across the registry: what `bridge_owners` names, and nothing else."""
+    from hyprtweaker.engine.bridge import REGISTRY
+
+    owned = _loading("dms", "matugen")
+    in_schema = {name: tool for name, tool in owned.items() if name in SCHEMA}
+
+    assert _set_by(FakeContext(bridge_owners=owned)) == {
+        name: f"Set by {REGISTRY[tool].title}" for name, tool in in_schema.items()
+    }
+    assert "Set by DMS" in _set_by(FakeContext(bridge_owners=_loading("dms"))).values()
+
+
+def test_a_tool_owned_row_says_what_that_means_and_leads_to_the_tool() -> None:
+    """The pill answers "why does my change not stick": the tool's value is the one in use,
+    the user's is kept, and the pill opens that tool on the Theming page (ADR-0006)."""
+    option = SCHEMA["general:col.active_border"]
+
+    (pill,) = row_state(option, FakeContext(bridge_owners={option.name: "matugen"})).pills
+
+    assert pill.label == "Set by matugen"
+    assert pill.backend == "matugen"
+    assert pill.tooltip == (
+        "matugen sets this, so Hyprland uses matugen's value. A value you set here is kept "
+        "and applies once matugen no longer sets it. Click to open matugen on the Theming "
+        "page."
+    )
+
+
+def test_a_tool_owned_row_stays_editable_and_resettable() -> None:
+    """ADR-0014 "no inline unlock": the control keeps working and the pill explains."""
+    option = SCHEMA["general:col.active_border"]
+    context = FakeContext(bridge_owners={option.name: "matugen"})
+    context.model.set(option.name, Gradient.parse("rgba(33ccffee)"))
+
+    state = row_state(option, context)
+
+    assert (state.editable, state.resettable, state.modified) == (True, True, True)
+    assert state.subtitle == option.description
+
+
+def test_set_by_a_tool_replaces_overridden_rather_than_joining_it() -> None:
+    """The tool is what overrides the app's value: one pill, the one that names it."""
+    option = SCHEMA["general:col.active_border"]
+    context = FakeContext(
+        bridge_owners={option.name: "matugen"}, overridden=frozenset({option.name})
+    )
+
+    (pill,) = row_state(option, context).pills
+
+    assert pill.label == "Set by matugen"
+    assert "Also" not in pill.tooltip
+
+
+def test_didn_t_apply_outranks_set_by_and_a_capped_pill_keeps_its_link() -> None:
+    """Third pill folds into the second's tooltip; the second still opens the Theming page."""
+    option = SCHEMA["general:col.active_border"]
+    context = FakeContext(
+        bridge_owners={option.name: "matugen"},
+        unapplied=frozenset({option.name}),
+        device_overrides={option.name: ("epic-mouse-v1",)},
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Set by matugen")
+    assert second.tooltip.endswith("\nAlso: Per-device.")
+    assert second.backend == "matugen"
+    assert first.backend is None
 
 
 def _supplemented(record: dict[str, Any]) -> tuple[ResolvedOption, Schema]:

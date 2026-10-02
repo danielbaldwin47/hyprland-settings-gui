@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Protocol
 
+from hyprtweaker.engine.bridge import REGISTRY
 from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import (
     UNSET,
@@ -70,6 +71,7 @@ DEVICE_PILL: Final = "Per-device"
 PLUGIN_PILL: Final = "Plugin option"
 NOT_IN_HYPRLAND_PILL: Final = "Not in this Hyprland"
 RETIRED_PILL: Final = "Retired in {release}"
+SET_BY_TOOL_PILL: Final = "Set by {tool}"
 """Which of these a Row shows, and in what order, is `PILL_PRECEDENCE`'s alone."""
 
 NOT_SET: Final = "Not set"
@@ -269,6 +271,9 @@ class Pill:
 
     label: str
     tooltip: str
+    backend: str | None = None
+    """The tool whose controls on the Theming page this pill opens, or `None` for a pill
+    that only explains. A pill that leads somewhere renders as a button (ADR-0014)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,6 +363,11 @@ class RowContext(Protocol):
 
     @property
     def device_overrides(self) -> Mapping[str, tuple[str, ...]]: ...
+
+    @property
+    def bridge_owners(self) -> Mapping[str, str]:
+        """Option name to the theming tool whose loading Bridge module sets it (#163)."""
+        ...
 
     @property
     def live_hyprland(self) -> LiveHyprland | None: ...
@@ -545,6 +555,26 @@ def _overridden_pill(option: ResolvedOption, context: RowContext) -> Pill | None
     )
 
 
+def _set_by_tool_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # ADR-0006: a Bridge module is required after the app's own Modules, so the tool's value
+    # is the one Hyprland uses -- the answer to "why does my change not stick". The control
+    # stays editable (ADR-0014: no inline unlock): the user's value is kept in the app's own
+    # Module and applies again once the tool stops setting the key (#163 reading 3). The pill
+    # leads to the one place that changes who sets it, the tool on the Theming page.
+    tool = context.bridge_owners.get(option.name)
+    if tool is None:
+        return None
+    spec = REGISTRY.get(tool)
+    name = spec.title if spec is not None else tool
+    return Pill(
+        SET_BY_TOOL_PILL.format(tool=name),
+        f"{name} sets this, so Hyprland uses {name}'s value. A value you set here is kept "
+        f"and applies once {name} no longer sets it. Click to open {name} on the Theming "
+        "page.",
+        backend=tool,
+    )
+
+
 def _retired_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     # ADR-0012 §Retirement: "the Row is badged". A release removed an Option the user set,
     # so the app stopped writing it and keeps the value in the Manifest. The same Option
@@ -656,6 +686,7 @@ class PillKind(enum.Enum):
 
     UNAPPLIED = enum.auto()
     RETIRED = enum.auto()
+    SET_BY_TOOL = enum.auto()
     OVERRIDDEN = enum.auto()
     NOT_IN_HYPRLAND = enum.auto()
     PENDING_RESTART = enum.auto()
@@ -681,7 +712,8 @@ MAX_PILLS: Final = 2
 PILL_PRECEDENCE: Final[tuple[PillRule, ...]] = (
     PillRule(PillKind.UNAPPLIED, _unapplied_pill),
     PillRule(PillKind.RETIRED, _retired_pill, frozenset({PillKind.NOT_IN_HYPRLAND})),
-    # `Set by <tool>` (#165): suppresses OVERRIDDEN.
+    # The tool is what overrides the app's value, and this pill names it (#165).
+    PillRule(PillKind.SET_BY_TOOL, _set_by_tool_pill, frozenset({PillKind.OVERRIDDEN})),
     PillRule(PillKind.OVERRIDDEN, _overridden_pill),
     PillRule(PillKind.NOT_IN_HYPRLAND, _not_in_hyprland_pill),
     PillRule(PillKind.PENDING_RESTART, _pending_restart_pill, frozenset({PillKind.RESTART})),
@@ -709,4 +741,5 @@ def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:
 
     *shown, last = ranked[:MAX_PILLS]
     rest = ", ".join(pill.label for pill in ranked[MAX_PILLS:])
-    return (*shown, Pill(last.label, f"{last.tooltip}\nAlso: {rest}."))
+    # `replace`, so a capped pill that leads somewhere still does.
+    return (*shown, replace(last, tooltip=f"{last.tooltip}\nAlso: {rest}."))
