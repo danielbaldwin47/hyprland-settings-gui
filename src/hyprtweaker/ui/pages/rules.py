@@ -138,7 +138,8 @@ class RuleRow:
         self.index = index
 
         subtitle = rule_subtitle(rule)
-        self.widget = Adw.ActionRow(title=rule_title(rule), subtitle=subtitle)
+        # Labels and match patterns are user text: as Pango markup `&` renders blank.
+        self.widget = Adw.ActionRow(title=rule_title(rule), subtitle=subtitle, use_markup=False)
 
         handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
         handle.add_css_class("dim-label")

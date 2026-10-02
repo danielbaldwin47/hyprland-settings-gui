@@ -24,7 +24,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility
+from hyprtweaker.engine.schema import ResolvedOption, Schema
 from hyprtweaker.engine.schema.resolve import schema_dir
 
 from .plan import (
@@ -35,6 +35,7 @@ from .plan import (
     View,
     group_title,
     is_visible,
+    is_withheld,
 )
 
 TASKS_FILENAME = "tasks.json"
@@ -318,7 +319,7 @@ def _plan_page(
             if _claimed_elsewhere(placed, option.name, spec.id):
                 continue
             if not is_visible(option, disclosure):
-                withheld += 1
+                withheld += is_withheld(option, disclosure)
                 continue
             title = _section_group_title(schema, option, section, multi=multi)
             section_groups.setdefault(title, []).append(option)
@@ -338,7 +339,7 @@ def _plan_page(
                 # newer compositor simply has fewer settings, which is not an error.
                 continue
             if not is_visible(curated, disclosure):
-                withheld += 1
+                withheld += is_withheld(curated, disclosure)
                 continue
             members.append(curated)
         if members:
@@ -395,14 +396,9 @@ def _with_fallbacks(
             continue
         unplaced = [option for option in schema.section(section) if option.name not in placed]
         visible = [option for option in unplaced if is_visible(option, disclosure)]
-        # Only the advanced tier is withheld: the switch can reveal it. The hidden tier has no
-        # Tasks home at any switch setting (ADR-0013 §5), so counting it would hint at a
-        # setting the switch cannot bring here.
-        withheld = sum(
-            1
-            for option in unplaced
-            if option.visibility is Visibility.ADVANCED and option not in visible
-        )
+        # The hidden tier has no Tasks home at any switch setting (ADR-0013 §5), so it is not
+        # withheld: counting it would hint at a setting the switch cannot bring here.
+        withheld = sum(1 for option in unplaced if is_withheld(option, disclosure))
         if not visible and not withheld:
             # Every Option here is either curated elsewhere by name or is the hidden tier.
             # Nothing to show, and nothing the user could turn on to see.

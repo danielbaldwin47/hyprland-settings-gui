@@ -25,7 +25,8 @@ select = [
 # gi-free UI modules that decide rather than draw). ADR-0011 exempts the rest of the UI
 # because PyGObject stubs are perpetually partial and the layer is `gi`-dynamic -- neither
 # is true of toolkit-free code, and `session.py` in particular is where the model, the
-# writer and the socket meet. A new gi-free UI module joins this list and the ADR's.
+# writer and the socket meet. A new gi-free UI module joins this list and the ADR's;
+# `tests/unit/test_mypy_census.py` fails until it does.
 files = [
     "src/hyprtweaker/engine",
     "src/hyprtweaker/session.py",

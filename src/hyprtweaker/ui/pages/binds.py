@@ -27,7 +27,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from hyprtweaker.engine.binds_analysis import (  # noqa: E402
     find_conflicts,
@@ -173,15 +173,15 @@ def rival_label(bind: Bind, order: int | None) -> str:
 class BadgeKind(Enum):
     """Why a Bind row carries a badge: the one vocabulary for disabled and read-only binds.
 
-    The Binds Page row and the search entries (#75) both read this, through `bind_badge`,
-    so a bind is described the same way wherever it turns up. Each kind fixes what the row
-    offers, not only what it says:
+    The Binds Page row reads this through `bind_badge`; the search entries #75 adds should
+    read it the same way, so a bind is described alike wherever it turns up. Each kind fixes
+    what the row offers and how it looks, not only what it says:
 
     - `ERROR`: imported commented out because its Trigger names a key xkb does not know
       (ADR-0007). Enabled as it stands, Hyprland would refuse the *whole* config, so the
       row offers re-capture in place of Enable. Edit and Remove stay.
-    - `MULTI_KEY`: an `A&B` Trigger, which Hyprland 0.56 cannot load. Nothing in the app
-      can make it valid, so no edit and no Enable; Remove is offered.
+    - `MULTI_KEY`: an `A&B` Trigger, which Hyprland (0.56.2, ADR-0007) cannot load.
+      Nothing in the app can make it valid, so no edit and no Enable; Remove is offered.
     - `LUA_FUNCTION`: the action is a Lua function in `user.lua`, which the app does not
       write. Badge only: no edit, no Enable, and no Remove of a line it cannot see.
     - `DISABLED`: commented out by the user. One-click Enable, edit and Remove.
@@ -201,6 +201,25 @@ class BadgeKind(Enum):
     def removable(self) -> bool:
         """Whether the row offers Remove."""
         return self is not BadgeKind.LUA_FUNCTION
+
+    @property
+    def style(self) -> str:
+        """The badge label's style class: loud where the badge asks the user to act."""
+        return {BadgeKind.ERROR: "error", BadgeKind.MULTI_KEY: "warning"}.get(self, "dim-label")
+
+    @property
+    def dims_row(self) -> bool:
+        """Whether a disabled bind's row is dimmed.
+
+        Not when the badge asks the user to act: row opacity reaches the badge too, and that
+        badge is the one line saying this bind needs them.
+        """
+        return self not in (BadgeKind.ERROR, BadgeKind.MULTI_KEY)
+
+    @property
+    def verb(self) -> RowVerb | None:
+        """The button the row offers to turn the bind on, if any."""
+        return _VERBS.get(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,8 +256,8 @@ def bind_badge(bind: Bind) -> BindBadge | None:
     if MULTI_KEY in bind.keys:
         return BindBadge(
             BadgeKind.MULTI_KEY,
-            "Multi-key: Hyprland 0.56 can't load it",
-            f"Hyprland 0.56 rejects multi-key triggers like {trigger_text(bind)}: enabled, "
+            "Multi-key: Hyprland can't load it",
+            f"Hyprland rejects multi-key triggers like {trigger_text(bind)}: enabled, "
             "this keybind would stop your whole config from loading. It stays commented "
             "out; remove it, or add a keybind with a single key instead.",
         )
@@ -283,6 +302,31 @@ class BindActions:
     """Exchange two binds' positions -- which same-submap duplicate fires first."""
     edit_submap: Callable[[str | None], None]
     """Open the Submap editor; `None` means create one."""
+
+
+@dataclass(frozen=True, slots=True)
+class RowVerb:
+    """The button a badged row offers to turn its bind on, and the action it calls."""
+
+    label: str
+    tooltip: str
+    run: Callable[[BindActions, int], None]
+
+
+_VERBS = {
+    BadgeKind.DISABLED: RowVerb(
+        "Enable",
+        "Uncomment this bind so it fires again",
+        lambda actions, index: actions.enable(index, True),
+    ),
+    # Never a bare Enable (ADR-0007): as it stands this bind fails the whole config, so the
+    # way back is a new trigger, and a captured one turns it on.
+    BadgeKind.ERROR: RowVerb(
+        "Fix trigger…",
+        "Record a key Hyprland knows, then enable this bind with it",
+        lambda actions, index: actions.recapture(index),
+    ),
+}
 
 
 class BindRow:
@@ -340,18 +384,13 @@ class BindRow:
 
         badge = self.badge
         if badge is not None:
-            classes = (
-                ["error", "caption"]
-                if badge.kind is BadgeKind.ERROR
-                else ["dim-label", "caption"]
+            self.badge_label = Gtk.Label(
+                label=badge.text, css_classes=[badge.kind.style, "caption"]
             )
-            self.badge_label = Gtk.Label(label=badge.text, css_classes=classes)
             self.badge_label.set_tooltip_text(badge.tooltip)
             self.widget.add_suffix(self.badge_label)
-        # An error row is not dimmed: row opacity reaches the badge too, and the badge is
-        # the one line saying this bind needs the user, so it has to be readable.
-        if not bind.enabled and (badge is None or badge.kind is not BadgeKind.ERROR):
-            self.widget.add_css_class("dim-label")
+            if not bind.enabled and badge.kind.dims_row:
+                self.widget.add_css_class("dim-label")
 
         # A read-only bind still fires, so it still conflicts -- the badge is not gated
         # on editability.
@@ -365,19 +404,10 @@ class BindRow:
             return
         kind = badge.kind if badge is not None else None
 
-        if kind is BadgeKind.DISABLED:
-            self.enable_button = Gtk.Button(label="Enable", valign=Gtk.Align.CENTER)
-            self.enable_button.set_tooltip_text("Uncomment this bind so it fires again")
-            self.enable_button.connect("clicked", lambda _button: actions.enable(index, True))
-        elif kind is BadgeKind.ERROR:
-            # Never a bare Enable (ADR-0007): as it stands this bind fails the whole config,
-            # so the way back is a new trigger, and a captured one turns it on.
-            self.enable_button = Gtk.Button(label="Fix trigger…", valign=Gtk.Align.CENTER)
-            self.enable_button.set_tooltip_text(
-                "Record a key Hyprland knows, then enable this bind with it"
-            )
-            self.enable_button.connect("clicked", lambda _button: actions.recapture(index))
-        if self.enable_button is not None:
+        if kind is not None and (verb := kind.verb) is not None:
+            self.enable_button = Gtk.Button(label=verb.label, valign=Gtk.Align.CENTER)
+            self.enable_button.set_tooltip_text(verb.tooltip)
+            self.enable_button.connect("clicked", lambda _button: verb.run(actions, index))
             self.enable_button.add_css_class("flat")
             self.widget.add_suffix(self.enable_button)
 
@@ -608,7 +638,10 @@ class BindsPage:
             description = "These keybinds only fire while this submap is active."
             if name in unreachable:
                 description += f" {UNREACHABLE}"
-            group = Adw.PreferencesGroup(title=f"Submap: {name}", description=description)
+            # The title is Pango markup: a name with `&` would render blank unescaped.
+            group = Adw.PreferencesGroup(
+                title=f"Submap: {GLib.markup_escape_text(name)}", description=description
+            )
             suffix = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
             suffix.append(
                 self._header_button(

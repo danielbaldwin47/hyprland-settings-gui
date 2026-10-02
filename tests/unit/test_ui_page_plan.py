@@ -83,12 +83,15 @@ def test_the_hidden_tier_is_config_view_only_however_the_switch_is_set() -> None
     assert not is_visible(advanced, Disclosure(show_advanced=False, view=View.TASKS))
 
 
-def test_a_tasks_page_withholds_the_hidden_tier_it_never_shows() -> None:
-    """Withheld, not lost: the count is what an empty Page uses to explain itself."""
-    plan = plan_section(SCHEMA, "debug", Disclosure(show_advanced=True, view=View.TASKS))
+def test_a_tasks_page_never_counts_the_hidden_tier_as_withheld() -> None:
+    """The count backs a hint that the Advanced switch shows more; in Tasks it cannot show
+    the hidden tier at any setting (ADR-0013 §5), so those Options are not withheld."""
+    for show_advanced in (False, True):
+        plan = plan_section(
+            SCHEMA, "debug", Disclosure(show_advanced=show_advanced, view=View.TASKS)
+        )
 
-    assert plan.groups == ()
-    assert plan.withheld == len(SCHEMA.section("debug"))
+        assert (plan.groups, plan.withheld) == ((), 0)
 
 
 def test_the_config_view_is_planned_as_the_config_view() -> None:

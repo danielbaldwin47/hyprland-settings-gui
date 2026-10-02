@@ -111,7 +111,7 @@ class TestBindBadge:
         assert badge is not None
         assert (badge.kind, badge.text) == (
             BadgeKind.MULTI_KEY,
-            "Multi-key: Hyprland 0.56 can't load it",
+            "Multi-key: Hyprland can't load it",
         )
 
     def test_a_function_action_wins_over_every_other_reason(self) -> None:

@@ -37,7 +37,7 @@ from hyprtweaker.engine.ipc import CommandClient, EventStream
 from hyprtweaker.engine.model import ConfigModel
 from hyprtweaker.engine.paths import ENTRYPOINT_NAME, ConfigPaths
 from hyprtweaker.engine.schema import load_schema
-from hyprtweaker.engine.state import Journal
+from hyprtweaker.engine.state import Journal, LastKnownGood
 from hyprtweaker.engine.writer import Writer
 
 GAPS_IN = "general:gaps_in"
@@ -357,3 +357,50 @@ def test_a_rescue_killed_before_its_commit_keeps_the_hand_edit_it_overwrote(
     change = recovered.change(GENERAL_MODULE)
     assert change is not None
     assert Journal(paths).snapshot(change.before) == hand_edit
+
+
+def test_a_rescue_refused_after_its_first_module_landed_journals_what_it_overwrote(
+    tmp_path: Path,
+) -> None:
+    """`Writer.restore` gates per Module, so a two-Module rescue can replace the first and
+    then refuse the second. The first Module's overwritten hand edit is still the user's,
+    and the result must not claim nothing was written."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    model = fresh_model()
+    model.set(GAPS_IN, 6)
+    hand_edit = b"-- hand edited, and broken\n"
+    results: list[ApplyResult] = []
+
+    async def scenario(transaction: ApplyTransaction, fake: FakeHyprland) -> None:
+        await transaction.run([GAPS_IN])
+        journal = Journal(paths)
+        good = journal.last_known_good(GENERAL_MODULE)
+        assert good is not None
+        (paths.app_dir / GENERAL_MODULE).write_bytes(hand_edit)
+        unparseable = LastKnownGood(
+            module=DECORATION_MODULE, data=b"this is (not lua\n", options=(), at=good.at
+        )
+
+        restore = RestoreTransaction(
+            model=model,
+            writer=Writer(paths, SAMPLE_APP_VERSION),
+            client=CommandClient(fake.instance),
+            reloader=transaction.reloader,
+            restores=[good, unparseable],
+            journal=journal,
+        )
+        results.append(await restore.run(()))
+        assert (paths.app_dir / GENERAL_MODULE).read_bytes() == good.data, (
+            "the precondition: the first Module landed before the second was refused"
+        )
+
+    journal = with_transaction(tmp_path, model, scenario)
+
+    assert [result.outcome for result in results] == [ApplyOutcome.WRITE_FAILED]
+    newest = journal.entries()[-1]
+    assert newest.outcome == "write-failed"
+    assert newest.modules == (GENERAL_MODULE,)
+    change = newest.change(GENERAL_MODULE)
+    assert change is not None
+    assert journal.snapshot(change.before) == hand_edit
+    assert journal.recover() is None, "the pending record was released, not left behind"
