@@ -37,6 +37,7 @@ def test_the_owners_host_display_switch_keeps_the_session() -> None:
         "HYPRTWEAKER_UI_HOST_DISPLAY": "1",
         "WAYLAND_DISPLAY": "wayland-1",
         "DISPLAY": ":0",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
     }
 
     fence_desktop(environ)
@@ -45,6 +46,20 @@ def test_the_owners_host_display_switch_keeps_the_session() -> None:
         "HYPRTWEAKER_UI_HOST_DISPLAY": "1",
         "WAYLAND_DISPLAY": "wayland-1",
         "DISPLAY": ":0",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+    }
+
+
+def test_the_host_switch_without_a_bus_still_never_leaves_the_address_unset() -> None:
+    """CI's meson job set the switch for every suite on a runner with no session bus, and
+    the unset address would have let GIO fall back to `$XDG_RUNTIME_DIR/bus`."""
+    environ = {"HYPRTWEAKER_UI_HOST_DISPLAY": "1"}
+
+    fence_desktop(environ)
+
+    assert environ == {
+        "HYPRTWEAKER_UI_HOST_DISPLAY": "1",
+        "DBUS_SESSION_BUS_ADDRESS": NO_SESSION_BUS,
     }
 
 

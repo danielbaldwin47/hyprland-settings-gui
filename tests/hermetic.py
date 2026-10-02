@@ -54,6 +54,10 @@ def fence_desktop(environ: MutableMapping[str, str]) -> None:
     Xvfb and bus (`tests/ui/private_display.py`); nothing else needs a display.
     """
     if any(environ.get(name) == "1" for name in HOST_SESSION_OPT_INS):
+        # The owner's session, kept on purpose -- but where there is no bus to keep (a CI
+        # runner, a build chroot), never an unset address that GIO would resolve to
+        # `$XDG_RUNTIME_DIR/bus` (#148: the meson job set the opt-in for every suite).
+        environ.setdefault("DBUS_SESSION_BUS_ADDRESS", NO_SESSION_BUS)
         return
     if "DISPLAY" in environ:
         environ[SESSION_DISPLAY_ENV] = environ.pop("DISPLAY")

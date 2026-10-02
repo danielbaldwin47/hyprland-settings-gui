@@ -49,7 +49,9 @@ build() {
 check() {
   # -Dtests=enabled: a missing pytest or validator fails here, so "no tests ran" can
   # never read as a pass. The UI tier needs Xvfb and dbus-daemon, which checkdepends do
-  # not pull in, so in a clean chroot it always skips; the unit and static tiers still run.
+  # not pull in, so in a clean chroot it always skips; the unit and static tiers still run,
+  # and need neither: their desktop fence gives each test a bus address that reaches
+  # nothing (tests/hermetic.py), and the static tier skips its tests without Hyprland.
   meson configure build -Dtests=enabled
   meson test -C build --print-errorlogs
 }
