@@ -609,8 +609,9 @@ def _scrolled(child: Gtk.Widget) -> Gtk.Widget:
 
 
 def _row(title: str, subtitle: str, *, suffix: Gtk.Widget | None = None) -> Adw.ActionRow:
-    row = Adw.ActionRow(title=title, subtitle=subtitle, subtitle_selectable=True)
-    row.set_use_markup(False)
+    row = Adw.ActionRow(use_markup=False, subtitle_selectable=True)
+    row.set_title(title)
+    row.set_subtitle(subtitle)
     if suffix is not None:
         row.add_suffix(suffix)
     return row

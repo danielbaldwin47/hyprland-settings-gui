@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from started_app import presented
 
 
 def window_rule(**kwargs: Any) -> Any:
@@ -28,7 +29,7 @@ def open_editor(effects: dict[str, Any]) -> tuple[Any, list[Any]]:
     Adw.init()
     collected: list[Any] = []
     rule = window_rule(match={"class": "x"}, effects=effects)
-    return RuleEditor(kind="window", on_done=collected.append, rule=rule), collected
+    return presented(RuleEditor(kind="window", on_done=collected.append, rule=rule)), collected
 
 
 def row_of(editor: Any, name: str) -> Any:

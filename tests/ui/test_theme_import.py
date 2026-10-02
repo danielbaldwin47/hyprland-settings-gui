@@ -20,11 +20,10 @@ from typing import Any
 
 import main_loop
 import pytest
+from started_app import started_application
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
-
-APP_ID = "io.github.danielbaldwin47.Hyprtweaker.Test"
 
 
 def png(width: int = 4, height: int = 3) -> bytes:
@@ -58,7 +57,7 @@ def build(tmp_path: Path, *, wallpaper: bool = True, **options: Any):  # type: i
     from hyprtweaker.ui.shell.window import MainWindow
 
     Adw.init()
-    app = Adw.Application(application_id=APP_ID)
+    app = started_application()
 
     def no_compositor():  # type: ignore[no-untyped-def]
         raise NoInstance("no compositor in the test tier")

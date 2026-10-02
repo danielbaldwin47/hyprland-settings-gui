@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import main_loop
+from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
 TIMES = 3
@@ -45,7 +46,7 @@ def wired_window(session: Any) -> Any:
     from hyprtweaker.ui.shell.window import MainWindow
 
     Adw.init()
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     window = MainWindow(session, application=app)
     session.on_state_changed = window.sync
     session.on_applied = window.show_result
@@ -92,6 +93,32 @@ def test_a_bind_editor_closed_on_one_window_is_released_each_time(tmp_path: Path
 
     assert window.get_visible_dialog() is None
     assert collected(refs) == [True] * TIMES
+    window.close()
+
+
+def test_a_dialog_is_released_once_its_animation_out_takes_it_out_of_the_window(
+    tmp_path: Path,
+) -> None:
+    """libadwaita emits `closed` as a dialog starts to animate out, still in the window (#228).
+
+    It takes the dialog out when the animation ends (`adw-dialog.c`: `sheet_closing_cb` emits
+    `closed`, `sheet_closed_cb` removes it). A release queued on `closed` alone ran in
+    between whenever the main loop went idle mid-animation, was refused, and the dialog
+    stayed for as long as the window did. The animation's timing is the main loop's, so the
+    test plays its two ends itself: `closed` first, the removal after the loop has settled.
+    """
+    window = wired_window(offline_session(tmp_path))
+    add_bind_button(window).emit("clicked")
+    dialog = window.get_visible_dialog()
+    ref = weakref.ref(dialog)
+
+    dialog.emit("closed")
+    main_loop.settle("what the animation's first frames leave queued")
+    assert dialog.get_parent() is not None
+    dialog.force_close()
+    del dialog
+
+    assert collected([ref]) == [True]
     window.close()
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from started_app import presented
 
 from hyprtweaker.engine.importer.keysyms import validator_available
 
@@ -32,7 +33,7 @@ def make_dialog(**kwargs: Any) -> tuple[Any, list[str]]:
 
     Adw.init()
     recorded: list[str] = []
-    dialog = CaptureDialog(on_done=recorded.append, **kwargs)
+    dialog = presented(CaptureDialog(on_done=recorded.append, **kwargs))
     return dialog, recorded
 
 
@@ -275,7 +276,7 @@ def test_bind_editor_canonicalises_a_hand_typed_trigger() -> None:
 
     Adw.init()
     saved: list[Any] = []
-    editor = BindEditor(on_done=saved.append)
+    editor = presented(BindEditor(on_done=saved.append))
     editor._choose(None)
     editor._trigger.set_text("win + shift + q")
     editor._save()
@@ -289,7 +290,7 @@ def test_bind_editor_offers_capture_on_the_trigger_row() -> None:
     from hyprtweaker.ui.dialogs.bind_editor import BindEditor
 
     Adw.init()
-    editor = BindEditor(on_done=lambda _bind: None)
+    editor = presented(BindEditor(on_done=lambda _bind: None))
     editor._choose(None)
 
     def buttons(widget: Any) -> list[Any]:
@@ -482,7 +483,9 @@ def test_the_bind_editor_opens_capture_listing_its_switches(monkeypatch: Any) ->
     from hyprtweaker.ui.dialogs import bind_editor
 
     Adw.init()
-    editor = bind_editor.BindEditor(on_done=lambda _bind: None, fetch_switches=answering(LID))
+    editor = presented(
+        bind_editor.BindEditor(on_done=lambda _bind: None, fetch_switches=answering(LID))
+    )
     editor._choose(None)
     opened: list[Any] = []
     real = bind_editor.CaptureDialog

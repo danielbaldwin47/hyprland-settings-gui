@@ -674,9 +674,9 @@ class MonitorsPage:
         drifted: bool,
         editable: bool,
     ) -> Adw.ActionRow:
-        row = Adw.ActionRow(
-            title=profile.name, subtitle=profile_summary(profile), use_markup=False
-        )
+        row = Adw.ActionRow(use_markup=False)
+        row.set_title(profile.name)
+        row.set_subtitle(profile_summary(profile))
 
         if active and drifted:
             # The drift badge (ADR-0015): reality and the capture disagree.
@@ -735,10 +735,10 @@ class MonitorsPage:
         width, height = int(monitor.get("width", 0)), int(monitor.get("height", 0))
         refresh = float(monitor.get("refreshRate", 0.0))
         row = Adw.ExpanderRow(
-            title=description or connector,
-            subtitle=f"{connector} · {format_mode(width, height, refresh)}",
             use_markup=False,  # the EDID description is the vendor's text, not markup
         )
+        row.set_title(description or connector)
+        row.set_subtitle(f"{connector} · {format_mode(width, height, refresh)}")
         if rule is None:
             badge = Gtk.Label(label="No rule yet", css_classes=["dim-label", "caption"])
             badge.set_tooltip_text(
@@ -897,7 +897,9 @@ class MonitorsPage:
         breaking: bool,
     ) -> Adw.ExpanderRow:
         """The raw-fields editor for rules with no live display to build combos from."""
-        row = Adw.ExpanderRow(title=title, subtitle=subtitle, use_markup=False)
+        row = Adw.ExpanderRow(use_markup=False)
+        row.set_title(title)
+        row.set_subtitle(subtitle)
         output = rule.output
         lane = self._actions.apply_breaking if breaking else self._actions.apply_benign
 

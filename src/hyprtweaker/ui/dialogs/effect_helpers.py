@@ -122,7 +122,8 @@ class GrammarRow(Generic[T]):
         self.raw_toggle.connect("toggled", self._on_toggled)
         self.widget.add_suffix(self.raw_toggle)
 
-        self.raw_entry = Adw.EntryRow(title="Value", use_markup=False)
+        self.raw_entry = Adw.EntryRow(use_markup=False)
+        self.raw_entry.set_title("Value")
         self.raw_entry.connect("changed", self._on_text_changed)
         self.widget.add_row(self.raw_entry)
 
@@ -375,11 +376,11 @@ class FullscreenStateRow(GrammarRow[FullscreenState]):
 
     def _picker(self, title: str, subtitle: str) -> Adw.ComboRow:
         combo = Adw.ComboRow(
-            title=title,
-            subtitle=subtitle,
             use_markup=False,
             model=Gtk.StringList.new(list(FULLSCREEN_STATE_CHOICES)),
         )
+        combo.set_title(title)
+        combo.set_subtitle(subtitle)
         combo.connect("notify::selected", self._changed)
         return combo
 
@@ -429,7 +430,9 @@ class SuppressEventRow(GrammarRow[tuple[str, ...]]):
         self.switches: dict[str, Adw.SwitchRow] = {}
         for event in SUPPRESS_EVENTS:
             title, subtitle = _EVENT_WORDS[event]
-            switch = Adw.SwitchRow(title=title, subtitle=subtitle, use_markup=False)
+            switch = Adw.SwitchRow(use_markup=False)
+            switch.set_title(title)
+            switch.set_subtitle(subtitle)
             switch.connect("notify::active", self._changed)
             self.switches[event] = switch
         return list(self.switches.values())

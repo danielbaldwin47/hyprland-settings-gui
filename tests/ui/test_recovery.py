@@ -20,6 +20,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from started_app import started_application
+
 APP_VERSION = "0.0.0-test"
 
 USER_ERROR = "/home/user/.config/hypr/user.lua:12: unexpected symbol near '}'"
@@ -79,7 +81,7 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
         connect=no_compositor,
     )
     session.calls = []
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     window = MainWindow(session, application=app)
 
     # Toasts are counted at the door: `AdwToastOverlay` exposes no queue to read back, and

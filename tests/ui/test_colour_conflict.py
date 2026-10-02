@@ -16,6 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from started_app import started_application
+
 APP_VERSION = "0.0.0-test"
 
 
@@ -71,7 +73,7 @@ def build_window(tmp_path: Path) -> tuple[Any, Any]:
         connect=no_compositor,
     )
     session.applied = []
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     return session, MainWindow(session, application=app)
 
 
