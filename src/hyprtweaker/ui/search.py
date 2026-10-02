@@ -16,14 +16,14 @@ refinement is the word-prefix boost -- `round` should reach "Rounding" before it
 "Blur passes (rounding aware)" -- and it is a *tie-break within a field*, not a rank of its
 own, so the field order below still decides first.
 
-**Two groups** (ADR-0017 §Index scope): Settings, then Keybinds, rules & displays. The
+**Two groups** (ADR-0017 §Index scope): Settings, then Keybinds, rules, displays & presets. The
 Options are indexed once, at construction; the Entities are not, because they change under
 the window -- an edit, an undo, a foreign reload, a profile saved. Rather than a change
 signal fired from every site that mutates a list (and forgotten at the next one), the index
 *pulls*: each query compares the model's lists with the ones its entity entries were built
 from and rebuilds only when they differ (settled S2b, amended into ADR-0017 §Index build
-during #75). Monitor profiles live in files, not the model, so their store's revision
-counter stands in for the comparison there.
+during #75). Monitor profiles and Presets live in files, not the model, so their stores'
+revision counters stand in for the comparison there (settled S7: no change signal).
 """
 
 from __future__ import annotations
@@ -43,13 +43,16 @@ from hyprtweaker.engine.model.entities import (
 )
 from hyprtweaker.engine.model.options import ConfigModel
 from hyprtweaker.engine.monitors_catalog import CATCH_ALL_OUTPUT
+from hyprtweaker.engine.presets import Preset
 from hyprtweaker.engine.profiles import MonitorProfile
 from hyprtweaker.engine.schema import ResolvedOption, Schema
 from hyprtweaker.ui.pages.entity_text import (
     action_text,
     bind_badge,
     effects_text,
+    fields_summary,
     match_text,
+    preset_summary,
     profile_summary,
     rule_subtitle,
     rule_summary,
@@ -58,7 +61,7 @@ from hyprtweaker.ui.pages.entity_text import (
 )
 
 SETTINGS_GROUP = "Settings"
-ENTITIES_GROUP = "Keybinds, rules & displays"
+ENTITIES_GROUP = "Keybinds, rules, displays & presets"
 """ADR-0017's two result groups, in the order the finder lists them."""
 
 
@@ -166,15 +169,18 @@ class OptionHit:
 class EntityKind(enum.StrEnum):
     """The Entity kinds the finder indexes, in the order their hits tie-break.
 
-    #172 adds `WORKSPACE_RULE` and `PRESET`; each kind names the Page it opens (fed to
-    `tasks.entity_page_id`) and the noun its result row is labelled with.
+    Each kind names the Page it opens (fed to `tasks.entity_page_id`) and the noun its result
+    row is labelled with. Workspace rules sit with the other rules; Presets come last, as
+    the one kind that is not part of the config itself (#172).
     """
 
     BIND = "bind"
     WINDOW_RULE = "window_rule"
     LAYER_RULE = "layer_rule"
+    WORKSPACE_RULE = "workspace_rule"
     MONITOR_RULE = "monitor_rule"
     MONITOR_PROFILE = "monitor_profile"
+    PRESET = "preset"
 
     @property
     def page_kind(self) -> str:
@@ -191,20 +197,25 @@ _PAGE_KINDS = {
     EntityKind.BIND: "binds",
     EntityKind.WINDOW_RULE: "window_rules",
     EntityKind.LAYER_RULE: "layer_rules",
+    EntityKind.WORKSPACE_RULE: "workspace_rules",
     EntityKind.MONITOR_RULE: "monitors",
     EntityKind.MONITOR_PROFILE: "monitors",
+    EntityKind.PRESET: "theming",
 }
 
 _NOUNS = {
     EntityKind.BIND: "Keybind",
     EntityKind.WINDOW_RULE: "Window rule",
     EntityKind.LAYER_RULE: "Layer rule",
+    EntityKind.WORKSPACE_RULE: "Workspace rule",
     EntityKind.MONITOR_RULE: "Display rule",
     EntityKind.MONITOR_PROFILE: "Display profile",
+    EntityKind.PRESET: "Preset",
 }
 
 EntityTarget = Bind | WindowRule | LayerRule | MonitorRule | str
-"""What a hit points at: the entity object itself, or a Monitor profile's slug."""
+"""What a hit points at: the entity object itself, or the string that is its identity -- a
+workspace rule's selector, a Monitor profile's or a Preset's slug."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +302,7 @@ class _EntityEntry:
 
 
 Profiles = tuple[tuple[str, MonitorProfile], ...]
+Presets = tuple[tuple[str, Preset], ...]
 
 
 class EntitySource(Protocol):
@@ -304,11 +316,16 @@ class EntitySource(Protocol):
 
     def monitor_profiles(self) -> Profiles: ...
 
+    @property
+    def presets_revision(self) -> int: ...
+
+    def presets(self) -> Presets: ...
+
 
 _Snapshot = tuple[tuple[object, ...], ...]
 
 
-def _snapshot(entities: EntitySet, profiles: Profiles) -> _Snapshot:
+def _snapshot(entities: EntitySet, profiles: Profiles, presets: Presets) -> _Snapshot:
     """The inputs the entity entries are a function of, as comparable tuples.
 
     Submaps are in it because a bind's empty-submap badge reads them. Comparing is cheap
@@ -320,8 +337,10 @@ def _snapshot(entities: EntitySet, profiles: Profiles) -> _Snapshot:
         tuple(entities.submaps),
         tuple(entities.window_rules),
         tuple(entities.layer_rules),
+        tuple(entities.workspace_rules),
         tuple(entities.monitors),
         profiles,
+        presets,
     )
 
 
@@ -330,7 +349,7 @@ class SearchIndex:
 
     One in-memory index, no persistence. The Option entries are built at construction;
     the Entity entries on the first query, and again whenever a query finds the model's
-    lists (or the profile store's revision) moved since -- see the module docstring.
+    lists (or a profile or Preset store's revision) moved since -- see the module docstring.
     """
 
     def __init__(self, entries: tuple[_Entry, ...], source: EntitySource | None = None) -> None:
@@ -340,6 +359,8 @@ class SearchIndex:
         self._built_from: _Snapshot | None = None
         self._profiles: Profiles = ()
         self._profiles_revision: int | None = None
+        self._presets: Presets = ()
+        self._presets_revision: int | None = None
 
     @classmethod
     def build(cls, schema: Schema, source: EntitySource | None = None) -> SearchIndex:
@@ -406,10 +427,14 @@ class SearchIndex:
         if revision != self._profiles_revision:
             self._profiles = self._source.monitor_profiles()
             self._profiles_revision = revision
+        revision = self._source.presets_revision
+        if revision != self._presets_revision:
+            self._presets = self._source.presets()
+            self._presets_revision = revision
         entities = self._source.model.entities
-        snapshot = _snapshot(entities, self._profiles)
+        snapshot = _snapshot(entities, self._profiles, self._presets)
         if self._entity_entries is None or snapshot != self._built_from:
-            self._entity_entries = entity_entries(entities, self._profiles)
+            self._entity_entries = entity_entries(entities, self._profiles, self._presets)
             self._built_from = snapshot
         return self._entity_entries
 
@@ -435,7 +460,9 @@ def _best(entry: _Entry | _EntityEntry, needle: str) -> Hit | None:
 
 
 def entity_entries(
-    entities: EntitySet, profiles: Sequence[tuple[str, MonitorProfile]]
+    entities: EntitySet,
+    profiles: Sequence[tuple[str, MonitorProfile]],
+    presets: Sequence[tuple[str, Preset]],
 ) -> tuple[_EntityEntry, ...]:
     """Every indexed Entity, in kind order then list order, worded as its row words it.
 
@@ -481,6 +508,19 @@ def entity_entries(
                     (match_text(rule), effects_text(rule)),
                 )
             )
+    for index, workspace in enumerate(entities.workspace_rules):
+        summary = fields_summary(workspace.fields)
+        texts.append(
+            (
+                EntityKind.WORKSPACE_RULE,
+                workspace.workspace,
+                index,
+                workspace.workspace,
+                summary,
+                None,
+                ("", summary),
+            )
+        )
     for index, monitor in enumerate(entities.monitors):
         catch_all = monitor.output == CATCH_ALL_OUTPUT
         texts.append(
@@ -502,6 +542,18 @@ def entity_entries(
                 index,
                 profile.name,
                 profile_summary(profile),
+                None,
+                ("", ""),
+            )
+        )
+    for index, (slug, preset) in enumerate(presets):
+        texts.append(
+            (
+                EntityKind.PRESET,
+                slug,
+                index,
+                preset.name,
+                preset_summary(preset),
                 None,
                 ("", ""),
             )
@@ -547,10 +599,14 @@ def resolve(hit: EntityHit, source: EntitySource) -> int | None:
             items = source.model.entities.window_rules
         case EntityKind.LAYER_RULE:
             items = source.model.entities.layer_rules
+        case EntityKind.WORKSPACE_RULE:
+            items = [rule.workspace for rule in source.model.entities.workspace_rules]
         case EntityKind.MONITOR_RULE:
             items = source.model.entities.monitors
         case EntityKind.MONITOR_PROFILE:
             items = [slug for slug, _profile in source.monitor_profiles()]
+        case EntityKind.PRESET:
+            items = [slug for slug, _preset in source.presets()]
 
     for position, item in enumerate(items):
         if item is hit.target:

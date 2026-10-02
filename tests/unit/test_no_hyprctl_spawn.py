@@ -26,8 +26,9 @@ MAY_SPAWN = {
     "writer/syntax.py": "the `luac -p` syntax gate (ADR-0010 step 3)",
     "importer/lua/sandbox.py": (
         "the Lua interpreter a foreign hyprland.lua is evaluated by (ADR-0009) -- run "
-        "against `runner.lua`'s block-all sandbox, with the compositor's instance "
-        "signature stripped from its environment so nothing it does can reach the session"
+        "against `runner.lua`'s block-all sandbox, with no stdin and with the compositor's "
+        "instance signature, the runtime dir and the session bus address stripped from its "
+        "environment"
     ),
     "importer/lua/scripts.py": (
         "`luac -l` reads the globals a preserved closure loads straight out of its "
@@ -41,6 +42,16 @@ MAY_SPAWN = {
         "to switch to it. Run with the session's instance signature and display stripped "
         "from its environment, because --verify-config executes the config with live "
         "bindings and would otherwise reach the session the user is sitting in"
+    ),
+    "presets_archive.py": (
+        "the `zstd` binary, compressing or decompressing a Theme archive over pipes when "
+        "`compression.zstd` (Python 3.14+) is missing (#169); an argument list, never a "
+        "shell, with the session's instance signature and displays stripped"
+    ),
+    "tools.py": (
+        "the one engine module that runs a theming tool or a wallpaper daemon (#233): only "
+        "a program found on the tool search path, which every test, the widget probe and "
+        "the sandbox point at an empty directory of their own"
     ),
 }
 """Engine modules allowed to start a process, and why.

@@ -30,8 +30,10 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Adw, Gdk, Gtk, Pango  # noqa: E402
 
 from hyprtweaker.engine.schema import ResolvedOption  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 from hyprtweaker.ui.rows.state import (  # noqa: E402
     HelpContent,
+    Pill,
     RowContext,
     RowState,
     help_content,
@@ -59,6 +61,9 @@ _CHECKER_GREYS = (0.66, 0.33)
 Navigate = Callable[[str], None]
 """Show the Row for an Option name. The window's job -- the factory only knows the name."""
 
+RevealBackend = Callable[[str], None]
+"""Open the Theming page on a tool, by its registry name: a "Set by <tool>" pill's click."""
+
 _HELP_WIDTH_CHARS = 34
 """Wrap width for the popover's prose. A popover with no width request grows to the width of
 its longest description, and a few of those are two hundred characters of wiki prose."""
@@ -83,12 +88,16 @@ class RowChrome:
         *,
         on_reset: Callable[[str], None],
         navigate: Navigate | None = None,
+        reveal_backend: RevealBackend | None = None,
     ) -> None:
         self._option = option
         self._context = context
+        self._row = row
         self._control = control
         self._on_reset = on_reset
         self._navigate = navigate
+        self._reveal_backend = reveal_backend
+        self._shown_pills: tuple[Pill, ...] | None = None
 
         self._pills = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self._pills.set_valign(Gtk.Align.CENTER)
@@ -188,20 +197,36 @@ class RowChrome:
     def pill_labels(self) -> tuple[str, ...]:
         return tuple(pill.label for pill in self._state.pills)
 
+    @property
+    def pill_buttons(self) -> tuple[Gtk.Button, ...]:
+        """The pills that lead somewhere, in strip order. The UI tier clicks them."""
+        found = []
+        child = self._pills.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Button):
+                found.append(child)
+            child = child.get_next_sibling()
+        return tuple(found)
+
     # --- keeping up with the model -----------------------------------------------------------
 
     def refresh(self) -> None:
         """Recompute the whole strip. Cheap enough to run on every Row that could have moved.
 
-        Control sensitivity is set here rather than by the Page, because two independent
-        things decide it -- the session being live and the dependency being met -- and a
-        second writer would race the first back to the wrong answer.
+        Control sensitivity is set here rather than by the Page, because three independent
+        things decide it -- the session being live, the dependency being met, and the
+        running Hyprland taking the Option (#215) -- and a second writer would race the first
+        back to the wrong answer. The subtitle is set here for the same reason: it says why
+        the control is read-only, and that changes while the Row is shown.
         """
         state = row_state(self._option, self._context)
         self._state = state
 
         self._set_pills(state)
         self._set_summary(state)
+        # The factory turned markup off before the title went in (#228): a description or a
+        # kept value with `&` or `<` in it is text, never markup.
+        self._row.set_subtitle(state.subtitle)
 
         badge = state.dependency
         self._dependency.set_visible(badge is not None)
@@ -230,15 +255,37 @@ class RowChrome:
         self._swatches.set_colors(summary.swatches)
 
     def _set_pills(self, state: RowState) -> None:
+        # Rebuilt only when the pills change, so a refresh while the keyboard is on a pill
+        # button (any edit elsewhere syncs every Row) does not pull the focus out from under it.
+        if state.pills == self._shown_pills:
+            return
+        self._shown_pills = state.pills
         while (child := self._pills.get_first_child()) is not None:
             self._pills.remove(child)
+            release(child)  # a button's handler holds this chrome (#219)
         for pill in state.pills:
+            self._pills.append(self._pill(pill))
+        self._pills.set_visible(bool(state.pills))
+
+    def _pill(self, pill: Pill) -> Gtk.Widget:
+        """A label, or a button where the pill leads somewhere and the window can take it
+        there: a focusable button, so a keyboard user can follow it as a pointer can."""
+        if pill.backend is None or self._reveal_backend is None:
             label = _pill_label(pill.label)
             label.add_css_class("pill")
             label.add_css_class("dim-label")
             label.set_tooltip_text(pill.tooltip)
-            self._pills.append(label)
-        self._pills.set_visible(bool(state.pills))
+            return label
+        # Dressed as the dependency badge is, the Row's other pill that navigates (ADR-0013).
+        button = Gtk.Button(
+            child=_pill_label(pill.label),
+            css_classes=["pill", "flat", "caption"],
+            valign=Gtk.Align.CENTER,
+            hexpand=False,
+            tooltip_text=pill.tooltip,
+        )
+        button.connect("clicked", self._on_pill_clicked, pill.backend)
+        return button
 
     # --- signals -----------------------------------------------------------------------------
 
@@ -246,6 +293,10 @@ class RowChrome:
         badge = self._state.dependency
         if badge is not None and self._navigate is not None:
             self._navigate(badge.option)
+
+    def _on_pill_clicked(self, _button: Gtk.Button, tool: str) -> None:
+        if self._reveal_backend is not None:
+            self._reveal_backend(tool)
 
     def _on_reset_clicked(self, _button: Gtk.Button) -> None:
         # Reset means Unset -- stop emitting the Option -- never write-the-default-value

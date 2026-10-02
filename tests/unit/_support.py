@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from hyprtweaker.engine.ipc import LiveHyprland
     from hyprtweaker.engine.model import ConfigModel
     from hyprtweaker.engine.schema import Schema
+    from hyprtweaker.engine.wallpaper import Wallpapers
     from hyprtweaker.session import Session
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -267,6 +268,7 @@ def session_for(
     runner: Runner,
     *,
     live_hyprland: LiveHyprland | None = None,
+    wallpapers: Wallpapers | None = None,
 ) -> Session:
     """A Session over `fake`, posing as the Hyprland `live_hyprland` describes, if any.
 
@@ -284,6 +286,7 @@ def session_for(
         app_version=SAMPLE_APP_VERSION,
         connect=lambda: fake.instance,
         read_live=lambda: live_hyprland,
+        wallpapers=wallpapers,
     )
 
 
@@ -337,12 +340,29 @@ class SettlingApplier:
         self.commits.append(names)
 
     def settle(self, outcome: str = "ok") -> None:
+        """Report every commit since the last report as one transaction ending in `outcome`.
+
+        `"config-errors"` is Hyprland rejecting a Module this transaction wrote -- the
+        rejection that does not stand (`Session._stands`); an error in a file the app did not
+        write is a different verdict, and stands.
+        """
         from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+        from hyprtweaker.engine.writer import WriteResult
 
         if self.serial == self._reported:
             return
         self._reported = self.serial
-        self._session._applied(ApplyResult(ApplyOutcome(outcome), entities=self.serial))
+        rejected = ApplyOutcome(outcome) is ApplyOutcome.CONFIG_ERRORS
+        self._session._applied(
+            ApplyResult(
+                ApplyOutcome(outcome),
+                entities=self.serial,
+                write=WriteResult(("binds.lua",), (), (), False, ()) if rejected else None,
+                errors=("/home/user/.config/hypr/hyprtweaker/binds.lua:4: unexpected symbol",)
+                if rejected
+                else (),
+            )
+        )
 
 
 def entity_session(root: Path) -> tuple[Session, SettlingApplier]:

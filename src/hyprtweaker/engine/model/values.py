@@ -431,7 +431,7 @@ _LUA_ESCAPES = {
     "\b": "\\b",
     "\f": "\\f",
     "\v": "\\v",
-    "\0": "\\0",
+    "\0": "\\000",  # three digits: a short escape followed by a digit reads as one
 }
 
 
@@ -481,7 +481,16 @@ def parse_value(option_type: OptionType, raw: Any) -> Any:
     output and UI edits all land here, so an option can only ever hold a value of its own
     type. Rejecting early is the point -- a string in an `int` option is a config error at
     the next reload, and finding it at set time names the option instead.
+
+    Every rejection is a `ValueError` or `TypeError`, an overflowing number included.
     """
+    try:
+        return _parse(option_type, raw)
+    except OverflowError as error:
+        raise ValueError(f"out of range: {raw!r}") from error
+
+
+def _parse(option_type: OptionType, raw: Any) -> Any:
     if (complex_type := COMPLEX_TYPES.get(option_type)) is not None:
         return complex_type.parse(raw)
 
@@ -493,7 +502,9 @@ def parse_value(option_type: OptionType, raw: Any) -> Any:
         case OptionType.FLOAT:
             if isinstance(raw, bool) or not isinstance(raw, int | float | str):
                 raise ValueError(f"not a number: {raw!r}")
-            return float(raw)
+            if not math.isfinite(number := float(raw)):
+                raise ValueError(f"not a finite number: {raw!r}")
+            return number
         case _:
             if isinstance(raw, str):
                 return raw

@@ -459,9 +459,8 @@ class RuleEditor(Adw.Dialog):
             # A typed string effect, or an unknown/plugin effect shown raw. Either way the
             # text is the value; for the unknown kind the original object is kept beside it
             # so an untouched row round-trips by identity, not through a string.
-            entry = Adw.EntryRow(
-                title=name if spec is None else prop_title(name), use_markup=False
-            )
+            entry = Adw.EntryRow(use_markup=False)
+            entry.set_title(name if spec is None else prop_title(name))
             if value is not None:
                 entry.set_text(effect_text(value))
             widget = entry
@@ -545,11 +544,11 @@ class RuleEditor(Adw.Dialog):
                     continue
                 # Other programs' text: window titles often carry `&` and `<`.
                 row = Adw.ActionRow(
-                    title=cls,
-                    subtitle=str(info.get("title", "")),
                     activatable=True,
                     use_markup=False,
                 )
+                row.set_title(cls)
+                row.set_subtitle(str(info.get("title", "")))
                 row.connect("activated", self._on_pick_window, dict(info))
                 add_row(row)
             if not self._picker_rows:
@@ -561,7 +560,8 @@ class RuleEditor(Adw.Dialog):
                 if not namespace or namespace in seen:
                     continue
                 seen.add(namespace)
-                row = Adw.ActionRow(title=namespace, activatable=True, use_markup=False)
+                row = Adw.ActionRow(activatable=True, use_markup=False)
+                row.set_title(namespace)
                 row.connect("activated", self._on_pick_layer, namespace)
                 add_row(row)
             if not self._picker_rows:

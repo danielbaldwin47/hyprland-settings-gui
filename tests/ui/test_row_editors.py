@@ -703,20 +703,41 @@ def test_a_reset_font_weight_row_shows_the_default_again() -> None:
     assert not spin.get_visible()
 
 
-def test_a_font_weight_row_hyprland_lacks_wears_its_pill_and_still_writes() -> None:
+def _weight_lacking_session() -> PreviewSession:
     from hyprtweaker.engine.ipc import LiveHyprland
 
     present = tuple({"name": o.name} for o in SCHEMA if o.name != WEIGHT_INACTIVE)
     session = PreviewSession()
     session.live_hyprland = LiveHyprland("0.56.0", present)
+    return session
+
+
+def test_a_font_weight_row_hyprland_lacks_wears_its_pill_and_is_read_only() -> None:
+    """#215 over #194's two controls: the combo and the spinner both go insensitive."""
+    session = _weight_lacking_session()
     session.unknown = frozenset({WEIGHT_INACTIVE})
     row = build_row(WEIGHT_INACTIVE, session)
-    dropdown, _spin = weight_parts(row)
+    dropdown, spin = weight_parts(row)
 
     assert row.chrome.pill_labels == ("Not in this Hyprland",)
-    choose(dropdown, "Light")
+    assert not dropdown.is_sensitive() and not spin.is_sensitive()
+    assert row.widget.get_sensitive()
+    assert row.widget.get_subtitle().endswith(
+        "\nHyprland 0.56.0 does not have this setting, so it cannot be changed here."
+    )
 
-    assert session.model.get(WEIGHT_INACTIVE) == FontWeight("light")
+
+def test_a_retired_font_weight_row_shows_the_weight_it_keeps_read_only() -> None:
+    session = _weight_lacking_session()
+    session.retired = {WEIGHT_INACTIVE: "0.57.0"}
+    session.kept = {WEIGHT_INACTIVE: FontWeight("bold")}
+    row = build_row(WEIGHT_INACTIVE, session)
+    dropdown, spin = weight_parts(row)
+
+    assert row.chrome.pill_labels == ("Retired in 0.57.0",)
+    assert chosen(dropdown) == "Bold"
+    assert not dropdown.is_sensitive() and not spin.is_sensitive()
+    assert "\nYour value: " in row.widget.get_subtitle()
 
 
 # --- the Row contract still holds for all of them ---------------------------------------------

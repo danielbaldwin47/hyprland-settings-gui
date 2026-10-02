@@ -18,8 +18,9 @@ from collections.abc import Iterator
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
 
-from gi.repository import Gio, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GObject, Gtk  # noqa: E402
 
 PARENTED = "release() needs a widget already removed from its parent, not a {} still in it"
 
@@ -52,13 +53,35 @@ def release(widget: Gtk.Widget) -> None:
         live = ref()
         # Parentless only: a parent holds its children, and disposing a held child is a GTK
         # error. Preorder puts each parent first, so its dispose frees its children in turn.
-        if live is not None and live.get_parent() is None:
+        if live is None or live.get_parent() is not None:
+            continue
+        if isinstance(live, Adw.ComboRow):
+            _unhook_combo_row(live)
+        else:
             live.run_dispose()
     for ref in held:
         live = ref()
         if live is not None:
             for controller in list(live.observe_controllers()):
                 live.remove_controller(controller)
+
+
+def _unhook_combo_row(row: Adw.ComboRow) -> None:
+    """What disposing `row` would let go of, without disposing it (#228).
+
+    `Adw.ComboRow`'s dispose runs again when the row is finalized, and the second run hands
+    `gtk_list_view_set_model` the list views the first one cleared: two Gtk-CRITICALs per
+    row (libadwaita 1.9). So the row keeps its children and goes whole when its wrapper
+    does, once nothing in it calls back into Python: handlers go first, so clearing the
+    model emits nothing the app would hear.
+    """
+    for each in _preorder(row):
+        GObject.signal_handlers_destroy(each)
+    row.set_expression(None)
+    row.set_factory(None)
+    row.set_list_factory(None)
+    row.set_header_factory(None)
+    row.set_model(None)
 
 
 def _preorder(widget: Gtk.Widget) -> Iterator[Gtk.Widget]:

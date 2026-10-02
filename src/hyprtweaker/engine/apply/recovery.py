@@ -181,6 +181,7 @@ def plan(
     *,
     written: Sequence[str] = (),
     binds: int | None = None,
+    bridges: Sequence[str] = (),
 ) -> Recovery:
     """Attribute `errors` and route each blamed file to its recovery.
 
@@ -191,8 +192,10 @@ def plan(
     `binds` is the post-reload probe, and `None` means it was not taken. Only an explicit
     zero strands the user; conflating "not asked" with "none" would fire the emergency
     restore on every transaction that never probed.
+
+    `bridges` are the Manifest's Bridge files, for attribution (`ownership.attribute`).
     """
-    attributed = attribute(errors, written=written)
+    attributed = attribute(errors, written=written, bridges=bridges)
     return Recovery(problems=_group(attributed), stranded=bool(attributed) and binds == 0)
 
 

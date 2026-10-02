@@ -43,6 +43,7 @@ from hyprtweaker.engine.apply import (  # noqa: E402
     ApplyOutcome,
     ApplyResult,
     EntityStep,
+    PresetStep,
     Problem,
     Step,
     UndoGroup,
@@ -73,6 +74,13 @@ from hyprtweaker.engine.model.entities import (  # noqa: E402
 )
 from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking  # noqa: E402
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
+from hyprtweaker.engine.presets import (  # noqa: E402
+    ColorChoice,
+    PresetApplied,
+    PresetApplyResult,
+    PresetColorConflict,
+    PresetNotApplied,
+)
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
@@ -81,6 +89,11 @@ from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
+from hyprtweaker.ui.dialogs.colour_conflict import (  # noqa: E402
+    COLOR_CONFLICT_DIALOG,
+    ColourConflictDialog,
+    remembered_choice,
+)
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.declaration_editor import (  # noqa: E402
     DeclarationEditor,
@@ -139,6 +152,8 @@ from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     load_tasks_mapping,
     plan_tasks_view,
 )
+from hyprtweaker.ui.pages.theming import ThemingActions, ThemingPage  # noqa: E402
+from hyprtweaker.ui.pages.theming_presets import PresetActions  # noqa: E402
 from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
     WorkspaceRuleActions,
     WorkspaceRulesPage,
@@ -185,10 +200,7 @@ def _discard(coro: Any) -> None:
 
 
 def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> None:
-    """Release each dialog presented on `window` once it has closed.
-
-    An idle rather than the `closed` handler itself: libadwaita is still finishing the close
-    when it emits `closed`, and every handler of it must still find the dialog whole.
+    """Release each dialog presented on `window` once it has closed and left the window.
 
     Once per dialog: a dialog becomes visible again each time one it opened (Capture over
     the bind editor) closes. The mark lives on the wrapper, which PyGObject then keeps for
@@ -197,7 +209,27 @@ def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> Non
     dialog = window.get_visible_dialog()
     if dialog is not None and not getattr(dialog, "_release_on_close", False):
         dialog._release_on_close = True
-        dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
+        dialog.connect("closed", _release_once_out)
+
+
+def _release_once_out(dialog: Adw.Dialog) -> None:
+    """Release a closed dialog when it is out of the window (#228).
+
+    libadwaita emits `closed` as the dialog starts to animate out and takes it out of the
+    window when the animation ends; `release` refuses a widget still in a window. An idle
+    either way, not the handler itself: every handler of `closed` and of the removal must
+    still find the dialog whole.
+    """
+    if dialog.get_parent() is None:
+        GLib.idle_add(release, dialog)
+        return
+
+    def out(widget: Adw.Dialog, _pspec: Any) -> None:
+        if widget.get_parent() is None:
+            widget.disconnect(handler)
+            GLib.idle_add(release, widget)
+
+    handler = dialog.connect("notify::parent", out)
 
 
 UNDO_ACTION = "undo"
@@ -252,6 +284,9 @@ NOTICE_TOAST_SECONDS = 8
 
 A timeout rather than a toast that waits for the user: every toast queues behind the one on
 screen, and a notice nobody closed would hold back the next undo offer indefinitely."""
+
+PRESET_NOTE_SECONDS = 6
+"""What a Preset could not do (a wallpaper left as it was): long enough to read a sentence."""
 
 SHOW_ADVANCED_ACTION = "show-advanced"
 """One global switch, in the primary menu -- never per-Page (ADR-0013 §5).
@@ -322,6 +357,7 @@ class MainWindow(Adw.ApplicationWindow):
             session,
             on_edited=self._on_option_edited,
             navigate=self.reveal_option,
+            reveal_backend=self.reveal_backend,
         )
         self._prefs_store = PrefsStore(session.paths.state_dir)
         self._prefs = self._prefs_store.load()
@@ -361,6 +397,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
         self._scripting_page: ScriptingPage | None = None
+        self._theming_page: ThemingPage | None = None
         self._shown_entities: dict[str, tuple[Any, ...]] = {}
         """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
         self._shown_live = False
@@ -413,12 +450,15 @@ class MainWindow(Adw.ApplicationWindow):
         Not in the model yet, and the Page is not refreshed meanwhile: its widgets keep the
         value the user set until the batch applies."""
         self._debounce: int | None = None
+        self._colour_conflict: ColourConflictDialog | None = None
         self._undo_toast: Adw.Toast | None = None
         """The undo offer currently on screen, so the next one replaces it.
 
         Without this a burst of gestures stacks toasts, and the button on the one the user
         finally reaches is the *oldest* gesture rather than the last -- an undo that takes
         back something they have since changed twice."""
+        self._result_toast: Adw.Toast | None = None
+        """The last failure toast `on_applied` raised, which a Preset's offer replaces."""
 
         self.set_title("Hyprtweaker")
         self.set_default_size(1000, 700)
@@ -436,7 +476,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._sidebar.connect("row-activated", lambda *_: self._end_one_off_reveal())
 
         self._stack = Gtk.Stack(vexpand=True)
-        self._banner = Adw.Banner(revealed=False)
+        # Plain text, set before any title: the titles carry file names, and a path holding
+        # an ampersand parsed as markup renders nothing at all.
+        self._banner = Adw.Banner(revealed=False, use_markup=False)
         self._banner.connect("button-clicked", self._on_banner_clicked)
         # The one surface a failed apply reports through. It has to exist before
         # `_build_content` wraps the body in it, and before the first `show_result`.
@@ -802,8 +844,19 @@ class MainWindow(Adw.ApplicationWindow):
         flow = self.migration_flow()
         if response == "keep":
             flow.keep()
-        else:
-            self._spawn(flow.roll_back_live(pending))
+            return
+        flow.roll_back(pending)
+        self._spawn(flow.reload_restored())
+        if flow.rollback_notes:
+            # A theming tool's file left as the user changed it, or one that could not be
+            # put back, is said here as the wizard's own Roll back says it (finding 21).
+            GLib.idle_add(self._show_rollback_notes, flow.rollback_notes)
+
+    def _show_rollback_notes(self, notes: tuple[str, ...]) -> bool:
+        dialog = Adw.AlertDialog(heading="Rolled back", body="\n\n".join(notes))
+        dialog.add_response("ok", "OK")
+        dialog.present(self)
+        return GLib.SOURCE_REMOVE
 
     def _on_import(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         if self._session.hyprland_too_old:
@@ -887,6 +940,11 @@ class MainWindow(Adw.ApplicationWindow):
         return self._scripting_page
 
     @property
+    def theming_page(self) -> ThemingPage | None:
+        """The Theming Page (ADR-0014), once built. The UI tier asserts against it."""
+        return self._theming_page
+
+    @property
     def monitors_page(self) -> MonitorsPage | None:
         """The Displays Page, once built. The UI tier asserts against it."""
         return self._monitors_page
@@ -965,6 +1023,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._prefs = prefs
         self._prefs_store.save(prefs)
         self._forget_action.set_enabled(bool(prefs.remembered))
+        if self._theming_page is not None:
+            # The Presets group shows a remembered colour answer, with "Forget" (#171).
+            self._theming_page.presets.refresh()
 
     def _on_choose_theme(self, action: Gio.SimpleAction, parameter: Any) -> None:
         theme = _theme_from(parameter.get_string())
@@ -1115,6 +1176,28 @@ class MainWindow(Adw.ApplicationWindow):
         self._stack.add_named(_scrolled(scripting.page), scripting.section)
         self._section_titles[scripting.section] = scripting.title
         self._register(scripting.section, scripting.title, self._scripting_count())
+
+        # The Theming Page (ADR-0014, #164): the Color source and the tools that make it.
+        self._theming_page = ThemingPage(
+            self._session,
+            actions=ThemingActions(
+                toast=self._toast,
+                current_wallpaper=self._session.current_wallpaper,
+                presets=PresetActions(
+                    apply=self.apply_preset,
+                    remembered=lambda: remembered_choice(self._prefs.remembered),
+                    forget=lambda: self._remember(
+                        self._prefs.without_remembered(COLOR_CONFLICT_DIALOG)
+                    ),
+                    remember=self._remember_colours,
+                    toast=self._toast,
+                ),
+            ),
+        )
+        theming = self._theming_page
+        self._stack.add_named(_scrolled(theming.page), theming.section)
+        self._section_titles[theming.section] = theming.title
+        self._register(theming.section, theming.title, theming.set_up_count)
 
         self._shown_entities = self._entity_lists()
         self._shown_live = bool(self._session.live)
@@ -1824,6 +1907,10 @@ class MainWindow(Adw.ApplicationWindow):
         # `user.lua` changes: the Scripting inventory re-reads with it, its plugin list too.
         if self._scripting_page is not None:
             self._scripting_page.refresh()
+        # The Color source is read off the Entrypoint, which a transaction or a foreign
+        # reload can have changed: the Theming Page reads it again (ADR-0014).
+        if self._theming_page is not None:
+            self._theming_page.refresh()
         self._draw_entity_pages(self._moved_entities())
         # Always, not only when an Entity list moved: the Scripting count follows `user.lua`.
         self._sync_entity_counts()
@@ -1848,7 +1935,6 @@ class MainWindow(Adw.ApplicationWindow):
             self._banner.set_title(READ_ONLY_REASON[self._offered.kind])
             self._banner.set_revealed(True)
             self._banner.set_button_label("Convert...")
-            self._banner.set_use_markup(False)
             self._banner.remove_css_class(SEVERE_BANNER_CLASS)
             return
 
@@ -1858,9 +1944,6 @@ class MainWindow(Adw.ApplicationWindow):
         # libadwaita shows the button whenever the label is non-empty, so clearing it is how
         # a Banner with nothing to open loses its button rather than keeping a dead one.
         self._banner.set_button_label(health.button or "")
-        # Off, because these titles carry file names: a path containing an ampersand is not
-        # markup, and a Banner that tried to parse it as markup would render nothing at all.
-        self._banner.set_use_markup(False)
         # ADR-0016's red Banner, for the states where the config is not doing what the user
         # believes it is: an Entrypoint refusal, no keybinds, or a recovery that gave up.
         if health.severe:
@@ -1909,7 +1992,9 @@ class MainWindow(Adw.ApplicationWindow):
         if not result.ok:
             self._dismiss_undo()
         if not result.ok and not result.errors and not result.mismatches:
-            self._toasts.add_toast(Adw.Toast(title=_result_summary(result), timeout=5))
+            toast = Adw.Toast(title=_result_summary(result), timeout=5)
+            self._result_toast = toast
+            self._toasts.add_toast(toast)
 
     def show_revert(self, revert: AutoRevert) -> None:
         """The app has just taken back its own rejected write (ADR-0016 §Auto-revert).
@@ -2104,6 +2189,80 @@ class MainWindow(Adw.ApplicationWindow):
         # `sync` refreshes the Scripting Page, its plugin list included.
         self.sync()
 
+    # --- presets ----------------------------------------------------------------------------
+
+    @property
+    def colour_conflict(self) -> ColourConflictDialog | None:
+        """The "Use <preset>'s colors?" question on screen, if one is. For the UI tier."""
+        return self._colour_conflict
+
+    def apply_preset(
+        self,
+        slug: str,
+        *,
+        wallpaper: bool = False,
+        colors: ColorChoice | None = None,
+        remember: bool = False,
+    ) -> PresetApplyResult:
+        """Apply a Preset, asking first whose colours win while a wallpaper sets them.
+
+        The Presets group's Apply. A remembered answer is used without asking; otherwise
+        the question is a dialog and the Preset applies once it is answered. `wallpaper` is
+        the group's "change / keep mine". A refusal is said as a toast; what the wallpaper
+        part could not do arrives through `show_preset_note`.
+        """
+        if remember and colors is not None:
+            self._remember_colours(colors)
+        if colors is None:
+            colors = remembered_choice(self._prefs.remembered)
+        result = self._session.apply_preset(slug, colors=colors, wallpaper=wallpaper)
+        match result:
+            case PresetColorConflict(source):
+                name = dict(self._session.presets()).get(slug)
+                dialog = ColourConflictDialog(
+                    name.name if name is not None else slug,
+                    source,
+                    on_choice=lambda choice, remember: self._answer_colours(
+                        slug, wallpaper, choice, remember
+                    ),
+                )
+                dialog.connect("closed", self._on_colour_conflict_closed)
+                self._colour_conflict = dialog
+                dialog.present(self)
+            case PresetNotApplied(reason):
+                named = dict(self._session.presets()).get(slug)
+                toast = Adw.Toast(timeout=5)
+                toast.set_use_markup(False)  # a preset's name is the user's text
+                toast.set_title(
+                    f"{named.name if named is not None else slug} was not applied. {reason}"
+                )
+                self._toasts.add_toast(toast)
+            case PresetApplied():
+                pass
+        return result
+
+    def _answer_colours(
+        self, slug: str, wallpaper: bool, choice: ColorChoice, remember: bool
+    ) -> None:
+        self.apply_preset(slug, wallpaper=wallpaper, colors=choice, remember=remember)
+        self.sync()
+
+    def _remember_colours(self, choice: ColorChoice) -> None:
+        """Keep the answer to "whose colours win", so it is not asked again: the one place
+        it is written, for the Apply dialog, the colour question and the import alike."""
+        self._remember(self._prefs.with_remembered(COLOR_CONFLICT_DIALOG, choice.value))
+
+    def _on_colour_conflict_closed(self, dialog: ColourConflictDialog) -> None:
+        if self._colour_conflict is dialog:
+            self._colour_conflict = None
+
+    def show_preset_note(self, text: str) -> Adw.Toast:
+        """What applying or undoing a Preset could not do, said as a toast. Returned for
+        the UI tier."""
+        toast = Adw.Toast(title=text, timeout=PRESET_NOTE_SECONDS)
+        self._toasts.add_toast(toast)
+        return toast
+
     # --- undo -------------------------------------------------------------------------------
 
     @property
@@ -2126,6 +2285,11 @@ class MainWindow(Adw.ApplicationWindow):
         """
         self._sync_undo_action()
         self._dismiss_undo()
+        if isinstance(step, PresetStep) and self._result_toast is not None:
+            # A Preset that stood with a key that did not take: its offer says what did not,
+            # so the transaction still gets one toast (finding 13 of the #153 review).
+            self._result_toast.dismiss()
+        self._result_toast = None
         toast = Adw.Toast(title=self._gesture_title(step), timeout=UNDO_TOAST_SECONDS)
         toast.set_button_label("Undo")
         toast.connect("button-clicked", lambda *_: self._undo())
@@ -2257,6 +2421,8 @@ class MainWindow(Adw.ApplicationWindow):
             counts[declarations.section] = len(declarations.entities)
         if self._scripting_page is not None:
             counts[self._scripting_page.section] = self._scripting_count()
+        if self._theming_page is not None:
+            counts[self._theming_page.section] = self._theming_page.set_up_count
         index = 0
         while (row := self._sidebar.get_row_at_index(index)) is not None:
             index += 1
@@ -2276,10 +2442,21 @@ class MainWindow(Adw.ApplicationWindow):
         A gesture spanning several Options is counted rather than listed: the css-gaps editor
         writes four sides at once, and "Gaps in, Gaps in, Gaps in, Gaps in" is not a sentence.
         An Entity step carries its own title ("Bind removed"): only the session knew which
-        of add, remove or reorder the gesture was.
+        of add, remove or reorder the gesture was. A Preset step names the Preset.
         """
         if isinstance(step, EntityStep):
             return step.title
+        if isinstance(step, PresetStep):
+            names = set(step.options.names) if step.options is not None else set()
+            untaken = [
+                _counted(
+                    len(names & self._session.unconfirmed), "was not confirmed by Hyprland"
+                ),
+                _counted(len(names & self._session.overridden), "is overridden"),
+                _counted(len(names & self._session.unapplied), "did not apply"),
+            ]
+            said = " ".join(f"{part}." for part in untaken if part)
+            return f"Applied {step.name}. {said + ' ' if said else ''}Press Ctrl+Z to undo."
         titles = [self._session.schema[name].title for name in step.names]
         if len(titles) == 1:
             return f"{titles[0]} changed"
@@ -2390,8 +2567,12 @@ class MainWindow(Adw.ApplicationWindow):
         key: int | str = position
         if hit.kind is EntityKind.MONITOR_RULE:
             key = self._session.monitor_rules[position].output
+        elif hit.kind is EntityKind.WORKSPACE_RULE:
+            key = self._session.workspace_rules[position].workspace
         elif hit.kind is EntityKind.MONITOR_PROFILE:
             key = self._session.monitor_profiles()[position][0]
+        elif hit.kind is EntityKind.PRESET:
+            key = self._session.presets()[position][0]
         self._select_section(entity_page_id(hit.kind.page_kind))
         GLib.idle_add(self._reveal_entity, hit.kind, key, priority=GLib.PRIORITY_LOW)
 
@@ -2419,12 +2600,46 @@ class MainWindow(Adw.ApplicationWindow):
                     "window" if kind is EntityKind.WINDOW_RULE else "layer"
                 )
                 return rules.reveal(key) if rules is not None and isinstance(key, int) else None
+            case EntityKind.WORKSPACE_RULE:
+                workspaces = self._workspace_rules_page
+                return workspaces.reveal(str(key)) if workspaces is not None else None
             case EntityKind.MONITOR_RULE:
                 monitors = self._monitors_page
                 return monitors.reveal_rule(str(key)) if monitors is not None else None
             case EntityKind.MONITOR_PROFILE:
                 monitors = self._monitors_page
                 return monitors.reveal_profile(str(key)) if monitors is not None else None
+            case EntityKind.PRESET:
+                theming = self._theming_page
+                return theming.reveal_preset(str(key)) if theming is not None else None
+
+    def reveal_backend(self, tool: str) -> None:
+        """Open the Theming Page on `tool` and flash it: a "Set by <tool>" pill's click (#165).
+
+        Always lands (settled S8): matugen and wallust on their tab, another tool on its
+        "Other tools" row, an unknown one on the Page's top. The scroll waits a turn for
+        the reason `reveal_option` gives.
+        """
+        page = self._theming_page
+        if page is None:
+            return
+        self._end_one_off_reveal()
+        self._select_section(page.section)
+
+        def reveal() -> bool:
+            target = page.reveal_backend(tool)
+            if target is not None:
+                _scroll_when_laid_out(target)
+            return False
+
+        GLib.idle_add(reveal, priority=GLib.PRIORITY_LOW)
+
+    def _toast(self, text: str) -> None:
+        """A short message: plain text, since a tool's name or a path may hold `&`."""
+        toast = Adw.Toast(timeout=4)
+        toast.set_use_markup(False)
+        toast.set_title(text)
+        self._toasts.add_toast(toast)
 
     def _entity_changed(self) -> None:
         """A hit whose entity is gone: refresh the list and say so, rather than fail quietly."""
@@ -2537,6 +2752,9 @@ class MainWindow(Adw.ApplicationWindow):
             # Showing the Page re-reads the files: "open in editor, save, come back" must
             # not need a reload or a restart to show what was just written.
             self._scripting_page.refresh()
+        if self._theming_page is not None and section == self._theming_page.section:
+            # A tool installed or a config edited while the app ran shows on arrival.
+            self._theming_page.refresh()
         self._stack.set_visible_child_name(section)
         self._content_page.set_title(self._page_title(section))
         self._split.set_show_content(True)
@@ -2794,6 +3012,17 @@ _FAILURE_TEXT = {
 }
 
 
+def _counted(count: int, verb: str) -> str:
+    """ "1 setting is overridden", "2 settings are overridden"; empty for none."""
+    if count == 0:
+        return ""
+    if count == 1:
+        return f"1 setting {verb}"
+    plural = verb.replace("is ", "are ", 1) if verb.startswith("is ") else verb
+    plural = plural.replace("was ", "were ", 1) if plural.startswith("was ") else plural
+    return f"{count} settings {plural}"
+
+
 def _result_summary(result: ApplyResult) -> str:
     """One line naming what went wrong, in words rather than in the enum's wire spelling."""
     return _FAILURE_TEXT.get(result.outcome, "The change could not be applied.")
@@ -2803,7 +3032,13 @@ def _revert_summary(revert: AutoRevert) -> str:
     """ADR-0016's toast line, or the honest version when the restore did not land.
 
     "Reverted" is a claim about the config on disk, and claiming it over a file that is still
-    broken would send the user away from the one screen that could tell them so."""
+    broken would send the user away from the one screen that could tell them so. A write the
+    disk refused is said as that: Hyprland never saw it."""
+    cause = (
+        "The change could not be saved"
+        if revert.outcome is ApplyOutcome.WRITE_FAILED
+        else "Hyprland rejected the change"
+    )
     if revert.restored:
-        return "Hyprland rejected the change — reverted."
-    return "Hyprland rejected the change, and it could not be reverted."
+        return f"{cause} — reverted."
+    return f"{cause}, and it could not be reverted."

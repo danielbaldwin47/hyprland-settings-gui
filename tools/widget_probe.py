@@ -15,10 +15,11 @@ before `gi` and before any `hyprtweaker.ui` import, since either initialises GTK
 This runner starts an Xvfb and a session bus of its own (the UI tier's,
 `tests/ui/private_display.py`), sets `DISPLAY` to the Xvfb and `GDK_BACKEND=x11`, sets
 `DBUS_SESSION_BUS_ADDRESS` to the bus, keeps GSettings in memory and the settings portal
-off, drops `WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE`, points `XDG_CONFIG_HOME`
-and `XDG_STATE_HOME` at a throwaway directory, runs the app non-unique as
-`tools/sandbox.py` does, and runs the probe in this process with the worktree's `src`
-importable. Both servers end with it, a `timeout` kill included.
+off, drops `WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE`, points `HOME`, the four
+`XDG_*` homes and the tool search path (`HYPRTWEAKER_TOOL_PATH`, empty) at a throwaway
+directory, runs the app non-unique as `tools/sandbox.py` does, and runs the probe in this
+process with the worktree's `src` importable. Both servers end with it, a `timeout` kill
+included.
 
 The import is the fence: imported by a probe this runner did not start, `widget_probe`
 exits at once with one line naming this command, before GTK can open a display. On
@@ -217,6 +218,30 @@ def main(argv: list[str]) -> int:
         bus.stop()
 
 
+TOOL_PATH_ENV = "HYPRTWEAKER_TOOL_PATH"
+"""`hyprtweaker.engine.tools.TOOL_PATH_ENV`, spelled out: `src` is importable only in `_run`."""
+
+
+def sandbox_environment(sandbox: Path) -> dict[str, str]:
+    """The home, XDG homes and tool search path a probe and its app run with, in `sandbox`.
+
+    The tool search path, `<sandbox>/bin`, starts empty: `engine/tools.py` finds no
+    theming tool or wallpaper daemon there, installed or not, until the probe writes a
+    stub script into it to show a detected one (#233).
+    """
+    return {
+        "HOME": str(sandbox),
+        "XDG_CONFIG_HOME": str(sandbox / "config"),
+        "XDG_STATE_HOME": str(sandbox / "state"),
+        "XDG_DATA_HOME": str(sandbox / "data"),
+        "XDG_CACHE_HOME": str(sandbox / "cache"),
+        TOOL_PATH_ENV: str(sandbox / "bin"),
+        # An app the probe runs must not claim the app id on the session bus, or it hands
+        # its launch to the owner's open window (`hyprtweaker.application.NON_UNIQUE_ENV`).
+        "HYPRTWEAKER_NON_UNIQUE": "1",
+    }
+
+
 def _run(probe: Path, argv: list[str], display: str, bus: str) -> int:
     global _route_display, _route_bus
     _route_display, _route_bus = display, bus
@@ -232,11 +257,9 @@ def _run(probe: Path, argv: list[str], display: str, bus: str) -> int:
     sys.path[0:0] = [str(probe.parent), str(REPO_ROOT / "src")]
     sys.argv = [str(probe), *argv[1:]]
     with tempfile.TemporaryDirectory(prefix="widget-probe-") as sandbox:
-        os.environ["XDG_CONFIG_HOME"] = str(Path(sandbox) / "config")
-        os.environ["XDG_STATE_HOME"] = str(Path(sandbox) / "state")
-        # An app the probe runs must not claim the app id on the session bus, or it hands
-        # its launch to the owner's open window (`hyprtweaker.application.NON_UNIQUE_ENV`).
-        os.environ["HYPRTWEAKER_NON_UNIQUE"] = "1"
+        environment = sandbox_environment(Path(sandbox))
+        Path(environment[TOOL_PATH_ENV]).mkdir()
+        os.environ.update(environment)
         runpy.run_path(str(probe), run_name="__main__")
     return 0
 

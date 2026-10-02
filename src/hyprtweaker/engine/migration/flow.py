@@ -24,8 +24,9 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -33,6 +34,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from ..bridge import REGISTRY, BridgeEntry
+from ..bridge.wire import WireConsent
 from ..importer.loss import BACKUP_NAME, LossCode, LossReport, rescue_command, rescue_line
 from ..importer.lua.mapping import import_lua
 from ..importer.lua.sandbox import Consent, Policy
@@ -43,10 +46,12 @@ from ..monitors_catalog import arrangement_mismatches
 from ..paths import ConfigPaths
 from ..schema import Schema
 from ..state.manifest import Manifest
-from ..writer import Writer
+from ..tools import detached_environment, find_tool
+from ..writer import Writer, load_manifest
 from ..writer.binds import live_bind_count
 from ..writer.lua import table_key
 from . import backup as backups
+from . import bridge_setup
 from . import sentinel as sentinels
 from .detect import ConfigKind, Detection, detect
 from .export import render as export_render
@@ -273,6 +278,12 @@ class SwitchResult:
     they are looking at.
     """
 
+    bridges: tuple[str, ...] = ()
+    """One sentence per theming tool the user chose to set up (#187): set up, or not and why.
+
+    A tool that could not be wired never fails the switch; the user is told here instead.
+    """
+
     @property
     def failures(self) -> tuple[Check, ...]:
         return tuple(check for check in self.checks if not check.ok and check.hard)
@@ -296,6 +307,8 @@ class MigrationFlow:
     app_version: str
     client: Client | None = None
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    find: Callable[[str], Path | None] = field(default=find_tool, repr=False)
+    """How a theming tool's program is looked up (`engine.tools`): never run, only found."""
 
     step: Step = Step.DETECT
     detection: Detection | None = None
@@ -307,6 +320,10 @@ class MigrationFlow:
     the file the rescue line has to name (#131)."""
     _answer: asyncio.Event | None = field(default=None, repr=False)
     _decision: Decision | None = field(default=None, repr=False)
+    _consents: dict[str, WireConsent] = field(default_factory=dict, repr=False)
+    """The theming tools the user agreed to set up, by tool: wired at Switch, never before."""
+    rollback_notes: tuple[str, ...] = ()
+    """What the last rollback could not put back, one sentence per tool (#187)."""
 
     # --- 1. detect ----------------------------------------------------------------------
 
@@ -342,13 +359,29 @@ class MigrationFlow:
         `source` overrides what detection found, which is what makes Import... at any later
         time the same wizard rather than a second one: point it at a file, get a preview.
         """
+        preview = self.read_preview(source, consent=consent)
+        self.hold(preview)
+        return preview
+
+    def read_preview(
+        self,
+        source: Path | None = None,
+        *,
+        consent: Consent | None = None,
+        cancel: threading.Event | None = None,
+    ) -> Preview:
+        """`build_preview`'s read, holding nothing: the flow is unchanged once detection ran.
+
+        The wizard runs this off the main loop and `hold`s the result back on it, so a read
+        the user cancelled (`cancel` set: `Cancelled` is raised) leaves no Preview (#216).
+        """
         detection = self.detection or self.detect()
         path = source or detection.source
         if path is None:
             raise ValueError("nothing to import: no source file was detected or given")
 
         if asks_consent(path):
-            result = import_lua(path, self.schema, consent=consent or Consent())
+            result = import_lua(path, self.schema, consent=consent or Consent(), cancel=cancel)
         else:
             result = import_config(path, self.schema)
 
@@ -357,9 +390,12 @@ class MigrationFlow:
         # around it, so the wizard stamps the answer on before the report is saved -- a
         # report read back months later still carries the rescue that fits it (#131).
         result.loss.restore_backup = _displaces_entrypoint(preview.detection)
+        return preview
+
+    def hold(self, preview: Preview) -> None:
+        """Make `preview` the one the later steps back up, stage and switch."""
         self.preview = preview
         self.step = Step.BACK_UP
-        return preview
 
     def save_report(self) -> Path:
         """Persist the Loss report so it outlives the wizard (ADR-0009).
@@ -379,8 +415,47 @@ class MigrationFlow:
         self.backup = backups.create(self.paths, now=self.now())
         return self.backup
 
+    def bridge_offers(self) -> tuple[bridge_setup.ToolOffer, ...]:
+        """The theming tools the back-up step lists (ADR-0009 §Back up, bridge, static gate).
+
+        None without an IPC socket: that path is Detect/Preview only, and a tool wired for a
+        config that loads at next login would be set up behind a switch nobody verified.
+        """
+        if self.client is None:
+            return ()
+        return bridge_setup.offers(self.paths, self._manifest(), find=self.find)
+
+    def consent(self, consent: WireConsent) -> None:
+        """The user confirmed this tool's plan: it is wired at Switch, and only then.
+
+        One wallpaper color tool at a time (finding 18 of the #153 review): confirming
+        matugen withdraws wallust, and the switched tree makes the confirmed one the Color
+        source, so the switch never ends with two backends loading at once."""
+        spec = REGISTRY.get(consent.plan.tool)
+        if spec is not None and spec.color_source:
+            for tool in [t for t in self._consents if REGISTRY[t].color_source]:
+                self._consents.pop(tool)
+        self._consents[consent.plan.tool] = consent
+
+    def withdraw(self, tool: str) -> None:
+        """The user changed their mind before Switch: nothing of `tool`'s is touched."""
+        self._consents.pop(tool, None)
+
+    @property
+    def consents(self) -> tuple[WireConsent, ...]:
+        return tuple(self._consents.values())
+
+    def _bridge_entries(self) -> tuple[BridgeEntry, ...]:
+        """The Bridge entries the switched tree carries: those already in the Manifest (an
+        already-wired tool keeps loading) plus one per consented tool."""
+        return bridge_setup.with_consented(
+            self._manifest(), self._consents.values(), self.paths.hypr_dir
+        )
+
     @contextmanager
-    def _staged(self, preview: Preview) -> Iterator[ConfigPaths]:
+    def _staged(
+        self, preview: Preview, bridges: Sequence[BridgeEntry] | None = None
+    ) -> Iterator[ConfigPaths]:
         """The converted tree, rendered somewhere harmless.
 
         Staged rather than written in place, because the real Entrypoint *is* the switch:
@@ -391,16 +466,23 @@ class MigrationFlow:
         with tempfile.TemporaryDirectory(prefix="hyprtweaker-staged-") as raw:
             staging = ConfigPaths.rooted_at(Path(raw))
             staging.hypr_dir.mkdir(parents=True, exist_ok=True)
-            self._write_tree(preview, staging)
+            for entry in bridges or ():
+                # A tool's module that is already here loads in the real tree, so the gate
+                # has to load it too; one that is not renders as waiting in both.
+                source = self.paths.hypr_dir / entry.file
+                if source.is_file():
+                    (staging.hypr_dir / entry.file).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(source, staging.hypr_dir / entry.file)
+            self._write_tree(preview, staging, bridges)
             yield staging
 
     def stage_and_gate(self) -> VerifyGate:
         """Let Hyprland judge the converted tree before the live engine is touched."""
         preview = self._require_preview()
-        if shutil.which("Hyprland") is None:
+        if not _hyprland_installed():
             return VerifyGate(ran=False, ok=True, output="no Hyprland binary on this machine")
 
-        with self._staged(preview) as staging:
+        with self._staged(preview, self._bridge_entries()) as staging:
             runtime = staging.hypr_dir.parent / "run"
             runtime.mkdir(exist_ok=True)
             completed = _verify_config(staging.entrypoint, runtime)
@@ -455,16 +537,29 @@ class MigrationFlow:
 
         restore = self._preserve_foreign_entrypoint(preview)
         self._restore = restore
+        consents = self.consents
         sentinels.write(
             self.paths,
             kind=preview.detection.kind.value,
             source=preview.detection.source,
             backup=self.backup.path if self.backup else None,
             restore=restore,
+            bridge_tools=tuple(consent.plan.tool for consent in consents),
             now=self.now(),
         )
 
-        self._write_tree(preview, self.paths)
+        # The tree, Entrypoint included, lands before any tool file: noctalia, once its
+        # template is on, appends its own `require` to a `hyprland.lua` that lacks one, and
+        # the app would then read its own Entrypoint as hand-edited (#166 Left open). With
+        # the line already there -- commented while the tool has not run (S4) -- there is no
+        # window in which that can happen.
+        self._write_tree(preview, self.paths, self._bridge_entries())
+        bridges = bridge_setup.wire_consented(
+            consents,
+            register=self._carries_bridge,
+            unregister=lambda tool: self._drop_bridge(preview, tool),
+            hypr_dir=self.paths.hypr_dir,
+        )
         self._record_provenance(preview)
 
         await self.client.reload_full_reset()
@@ -475,7 +570,9 @@ class MigrationFlow:
         )
 
         self.step = Step.DECIDE
-        return SwitchResult(ok=ok, checks=tuple(checks), errors=errors, notes=_SWITCH_NOTES)
+        return SwitchResult(
+            ok=ok, checks=tuple(checks), errors=errors, notes=_SWITCH_NOTES, bridges=bridges
+        )
 
     async def _settled_errors(self) -> tuple[str, ...]:
         """`configerrors`, read only once the reload has actually finished.
@@ -630,8 +727,18 @@ class MigrationFlow:
         Takes an optional sentinel so a *relaunched* app can roll back a switch this object
         never made: after a crash the marker on disk is the only thing that remembers what
         the previous config was.
+
+        Each theming tool the switch wired is unwired first, while the Entrypoint still has
+        its line (#187). One that cannot be put back is said in `rollback_notes` and does
+        not stop the rest: the user is never stranded on the new config for a tool's sake.
         """
         record = marker or sentinels.read(self.paths)
+        self.rollback_notes = bridge_setup.unwire_all(
+            record.bridge_tools if record else (),
+            paths=self.paths,
+            manifest=self._manifest,
+            unregister=self._forget_bridge,
+        )
         restore = Path(record.restore) if record and record.restore else None
 
         if restore and restore.is_file():
@@ -645,6 +752,10 @@ class MigrationFlow:
     async def roll_back_live(self, marker: sentinels.Sentinel | None = None) -> None:
         """Roll back and make the running session read the restored config."""
         self.roll_back(marker)
+        await self.reload_restored()
+
+    async def reload_restored(self) -> None:
+        """Make the running session read the config a rollback put back."""
         if self.client is not None:
             await self.client.reload_full_reset()
 
@@ -695,6 +806,33 @@ class MigrationFlow:
             return None
         return _displaces_entrypoint(detection)
 
+    def _manifest(self) -> Manifest:
+        return load_manifest(
+            self.paths,
+            app_version=self.app_version,
+            schema_version=self.schema.hyprland_version,
+        )
+
+    def _carries_bridge(self, tool: str) -> bool:
+        """`wire`'s `register`: the entry is already in the tree the switch just wrote."""
+        return any(entry.tool == tool for entry in self._manifest().bridges)
+
+    def _drop_bridge(self, preview: Preview, tool: str) -> bool:
+        """Take a tool that could not be wired back out of the Manifest and the Entrypoint,
+        before the reload: a line for a tool nobody set up would wait forever."""
+        manifest = self._manifest().remove_bridge(tool)
+        writer = Writer(self.paths, app_version=self.app_version)
+        writer.set_bridges(preview.result.model, manifest.bridges)
+        return True
+
+    def _forget_bridge(self, tool: str) -> bool:
+        """`unwire`'s `unregister` on Roll back: the Manifest only, since the Entrypoint that
+        carries the line is about to be deleted or replaced by the user's own."""
+        if self.paths.manifest.is_file():
+            stripped = self._manifest().remove_bridge(tool)
+            self.paths.manifest.write_text(stripped.render(), encoding="utf-8")
+        return True
+
     def _require_preview(self) -> Preview:
         if self.preview is None:
             raise RuntimeError("no preview yet: call build_preview() first")
@@ -721,12 +859,18 @@ class MigrationFlow:
         os.replace(entrypoint, target)
         return target
 
-    def _write_tree(self, preview: Preview, paths: ConfigPaths) -> None:
+    def _write_tree(
+        self,
+        preview: Preview,
+        paths: ConfigPaths,
+        bridges: Sequence[BridgeEntry] | None = None,
+    ) -> None:
         """Render the imported config into an App dir: `vars`, `legacy`, then the Modules.
 
         `vars.lua` and `legacy.lua` are written first because the Entrypoint's require list
         is discovered from what is on disk -- write them after, and the file that requires
-        them would not mention them.
+        them would not mention them. `bridges`, when given, are recorded in the Manifest
+        first for the same reason: the Entrypoint renders its Bridge lines from it.
         """
         result = preview.result
         paths.app_dir.mkdir(parents=True, exist_ok=True)
@@ -740,7 +884,10 @@ class MigrationFlow:
         # model rather than in it: without this the tree carries the Options and none of the
         # binds, rules or monitors the Preview promised (#101).
         result.model.adopt_entities(result.entities)
-        Writer(paths, app_version=self.app_version).write(result.model)
+        writer = Writer(paths, app_version=self.app_version)
+        if bridges is not None:
+            writer.record_bridges(result.model, bridges)
+        writer.write(result.model)
 
     def _record_provenance(self, preview: Preview) -> None:
         """Stamp the Manifest with where this config came from (ADR-0009).
@@ -775,6 +922,10 @@ def _render_vars(variables: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _hyprland_installed() -> bool:
+    return shutil.which("Hyprland") is not None
+
+
 def _verify_config(entrypoint: Path, runtime_dir: Path) -> subprocess.CompletedProcess[str]:
     """`Hyprland --verify-config`, with the caller's own session out of reach.
 
@@ -782,11 +933,7 @@ def _verify_config(entrypoint: Path, runtime_dir: Path) -> subprocess.CompletedP
     `HYPRLAND_INSTANCE_SIGNATURE` could reach the session the user is sitting in -- the
     static test tier hit exactly this (prototype #30).
     """
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY")
-    }
+    environment = detached_environment()
     environment["XDG_RUNTIME_DIR"] = str(runtime_dir)
     return subprocess.run(
         ["Hyprland", "--verify-config", "-c", str(entrypoint)],

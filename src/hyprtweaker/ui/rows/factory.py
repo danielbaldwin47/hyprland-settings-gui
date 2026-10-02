@@ -46,6 +46,7 @@ from gi.repository import Adw, Gdk, Gtk  # noqa: E402
 from hyprtweaker.engine.model import (  # noqa: E402
     FONT_WEIGHT_NAMES,
     FONT_WEIGHT_RANGE,
+    UNSET,
     Color,
     CssGaps,
     FontWeight,
@@ -67,11 +68,12 @@ from hyprtweaker.engine.scripting import (  # noqa: E402
     layout_label,
 )
 from hyprtweaker.session import Session  # noqa: E402
-from hyprtweaker.ui.rows.chrome import Navigate, RowChrome  # noqa: E402
+from hyprtweaker.ui.rows.chrome import Navigate, RevealBackend, RowChrome  # noqa: E402
 from hyprtweaker.ui.rows.gesture import Gesture  # noqa: E402
 from hyprtweaker.ui.rows.state import (  # noqa: E402
     NO_VALUE,
     no_value_label,
+    row_value,
     shown_value,
 )
 
@@ -192,18 +194,21 @@ class RowFactory:
         *,
         on_edited: Callable[[str], None] | None = None,
         navigate: Navigate | None = None,
+        reveal_backend: RevealBackend | None = None,
     ) -> None:
-        """`on_edited` and `navigate` are the two things a Row cannot do for itself.
+        """`on_edited`, `navigate` and `reveal_backend` are what a Row cannot do for itself.
 
         A control that writes to the model has just changed what *other* Rows show -- its
         own reset arrow, and the dependency badge of everything gated on it -- and only the
         window knows where those Rows are. Same for the badge's click: it names an Option,
-        and turning a name into a visible Row is the window's job. Both default to doing
-        nothing so a Row is still buildable in isolation, which the smoke tier relies on.
+        and turning a name into a visible Row is the window's job, as is opening the Theming
+        page on the tool a "Set by <tool>" pill names (#165). All default to doing nothing so
+        a Row is still buildable in isolation, which the smoke tier relies on.
         """
         self._session = session
         self._on_edited = on_edited
         self._navigate = navigate
+        self._reveal_backend = reveal_backend
         self._echo_guard = False
 
     def build(self, option: ResolvedOption) -> OptionRow:
@@ -290,7 +295,8 @@ class RowFactory:
         # The unit belongs in the title: "`px` / `ms` / `deg` / `/s` in the title, so the
         # number means something" (prototype #8 FINDINGS, curation policy, 22 Options).
         row.set_title(f"{option.title} ({option.unit})" if option.unit else option.title)
-        row.set_subtitle(option.description)
+        # The subtitle is the chrome's (`RowState.subtitle`): the description, plus why the
+        # control is read-only on a Row that is, which can change while the Row is shown.
 
     def _chrome(
         self,
@@ -305,6 +311,7 @@ class RowFactory:
             self._session,
             on_reset=self._unset,
             navigate=self._navigate,
+            reveal_backend=self._reveal_backend,
         )
 
     # --- every write to the model goes through these ------------------------------------------
@@ -360,7 +367,8 @@ class RowFactory:
 
         def refresh() -> None:
             with self._quiet():
-                switch.set_active(bool(self._session.effective_value(option)))
+                value = row_value(option, self._session)
+                switch.set_active(bool(option.default if value is UNSET else value))
 
         def changed(*_: Any) -> None:
             if not self._echo_guard:
@@ -389,7 +397,7 @@ class RowFactory:
         row, chrome = self._row(option, control)
 
         def refresh() -> None:
-            value = shown_value(option, self._session.value_of(option))
+            value = shown_value(option, row_value(option, self._session))
             with self._quiet():
                 spin.set_value(_as_number(value, _parked(low, high)))
                 _show_value(control, value is not NO_VALUE)
@@ -479,7 +487,7 @@ class RowFactory:
         row, chrome = self._row(option, dropdown)
 
         def refresh() -> None:
-            value = shown_value(option, self._session.value_of(option))
+            value = shown_value(option, row_value(option, self._session))
             held = None if value is NO_VALUE else value
             index = _index_of(choices, held)
             with self._quiet():
@@ -527,7 +535,7 @@ class RowFactory:
         row, chrome = self._row(option, entry)
 
         def shown_text() -> str:
-            value = shown_value(option, self._session.value_of(option))
+            value = shown_value(option, row_value(option, self._session))
             return "" if value is NO_VALUE else display_text(value)
 
         def refresh() -> None:
@@ -587,7 +595,7 @@ class RowFactory:
         row, chrome = self._row(option, control)
 
         def refresh() -> None:
-            value = shown_value(option, self._session.value_of(option))
+            value = shown_value(option, row_value(option, self._session))
             with self._quiet():
                 # `_DEFAULT_STOP` when there is no value, not "leave whatever was there":
                 # the placeholder's click writes the button's current colour, and a button
@@ -711,7 +719,8 @@ class RowFactory:
                 angle.set_value(gradient.angle)
                 rebuild(gradient)
                 _show_value(
-                    control, shown_value(option, self._session.value_of(option)) is not NO_VALUE
+                    control,
+                    shown_value(option, row_value(option, self._session)) is not NO_VALUE,
                 )
 
         def angle_changed(*_: Any) -> None:
@@ -808,7 +817,8 @@ class RowFactory:
                 uniform.set_active(gaps.top == gaps.right == gaps.bottom == gaps.left)
                 show(gaps)
                 _show_value(
-                    control, shown_value(option, self._session.value_of(option)) is not NO_VALUE
+                    control,
+                    shown_value(option, row_value(option, self._session)) is not NO_VALUE,
                 )
 
         uniform.connect("toggled", shape_toggled)
@@ -860,7 +870,7 @@ class RowFactory:
         `option.type`, and an Overlay that gave an Option a `widget` its `type` disagrees
         with would otherwise hand a gradient editor a `CssGaps` to unpack.
         """
-        value = shown_value(option, self._session.value_of(option))
+        value = shown_value(option, row_value(option, self._session))
         if value is NO_VALUE:
             return fallback
         try:

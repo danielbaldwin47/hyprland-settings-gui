@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Protocol
 
+from hyprtweaker.engine.bridge import REGISTRY
 from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import (
     UNSET,
@@ -65,11 +66,13 @@ ADVANCED_PILL: Final = "Advanced"
 RESTART_PILL: Final = "Restart"
 PENDING_RESTART_PILL: Final = "Pending restart"
 UNAPPLIED_PILL: Final = "Didn't apply"
+UNCONFIRMED_PILL: Final = "Not confirmed"
 OVERRIDDEN_PILL: Final = "Overridden"
 DEVICE_PILL: Final = "Per-device"
 PLUGIN_PILL: Final = "Plugin option"
 NOT_IN_HYPRLAND_PILL: Final = "Not in this Hyprland"
 RETIRED_PILL: Final = "Retired in {release}"
+SET_BY_TOOL_PILL: Final = "Set by {tool}"
 """Which of these a Row shows, and in what order, is `PILL_PRECEDENCE`'s alone."""
 
 NOT_SET: Final = "Not set"
@@ -269,6 +272,9 @@ class Pill:
 
     label: str
     tooltip: str
+    backend: str | None = None
+    """The tool whose controls on the Theming page this pill opens, or `None` for a pill
+    that only explains. A pill that leads somewhere renders as a button (ADR-0014)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,9 +328,16 @@ class RowState:
     `editable` in both directions.
 
     A dependency-disabled Row is still resettable -- the value is in the config either way,
-    unmet dependency or not, and taking it back out is a legitimate edit. A read-only
-    session is not: `Session._refuse` would drop the write, and an arrow that silently does
-    nothing is worse than one visibly greyed out beside a Banner saying why."""
+    unmet dependency or not, and taking it back out is a legitimate edit. So is a set Row
+    the running Hyprland lacks: its key is a config error there, and Reset is the way out
+    (#215). A read-only session is not, nor is a Retired Row: `Session._refuse` would drop
+    the write, and an arrow that silently does nothing is worse than one visibly greyed out
+    beside the words saying why."""
+
+    subtitle: str
+    """The Option's description, and under it, on a read-only Row, why it is read-only
+    and what the user can do (#215). In the subtitle rather than only a pill's tooltip,
+    because a tooltip is out of reach of the keyboard and of a screen reader."""
 
 
 class RowContext(Protocol):
@@ -350,7 +363,17 @@ class RowContext(Protocol):
     def overridden(self) -> frozenset[str]: ...
 
     @property
+    def unconfirmed(self) -> frozenset[str]:
+        """Keys a timed-out transaction wrote that Hyprland never confirmed."""
+        ...
+
+    @property
     def device_overrides(self) -> Mapping[str, tuple[str, ...]]: ...
+
+    @property
+    def bridge_owners(self) -> Mapping[str, str]:
+        """Option name to the theming tool whose loading Bridge module sets it (#163)."""
+        ...
 
     @property
     def live_hyprland(self) -> LiveHyprland | None: ...
@@ -366,6 +389,14 @@ class RowContext(Protocol):
         """The release that retired this Option while the user set it, or `None` (ADR-0012)."""
         ...
 
+    def kept_value(self, name: str) -> OptionValue:
+        """The value the Manifest keeps for this Option, typed, or `UNSET` (#215).
+
+        Every retirement reason, announced or quiet: a kept value makes the Row read-only
+        whether or not `retired_in` gives it a pill.
+        """
+        ...
+
     def value_of(self, option: ResolvedOption) -> OptionValue: ...
 
     def effective_value(self, option: ResolvedOption) -> Any: ...
@@ -373,20 +404,80 @@ class RowContext(Protocol):
     def is_modified(self, option: ResolvedOption) -> bool: ...
 
 
+def row_value(option: ResolvedOption, context: RowContext) -> OptionValue:
+    """The value a Row renders: the kept value of a Retired Option, else the model's.
+
+    A Retired Option is Unset in the model -- the app stopped writing it -- so rendering
+    the model would show Hyprland's default where the pill promises "your value is kept"
+    (#215). Every control and the Value summary read through here.
+    """
+    kept = context.kept_value(option.name)
+    return context.value_of(option) if kept is UNSET else kept
+
+
 def row_state(option: ResolvedOption, context: RowContext) -> RowState:
     """Everything the suffix strip shows for one Option, right now."""
     dependency = unmet_dependency(option, context)
+    summary = value_summary(option, row_value(option, context))
+    retired = context.kept_value(option.name) is not UNSET
+    why = _read_only_reason(option, context, summary)
     return RowState(
         pills=_pills(option, context),
-        summary=value_summary(option, context.value_of(option)),
+        summary=summary,
         dependency=dependency,
         modified=context.is_modified(option),
         reset_tooltip=f"Reset to default: {default_label(option)}",
-        # Two independent reasons to dim, and they compose: a read-only session (no
-        # compositor to apply to) and an unmet dependency.
-        editable=context.live and dependency is None,
-        resettable=context.live,
+        # Three independent reasons to dim, and they compose: a read-only session (no
+        # compositor to apply to), an unmet dependency, and an Option this Hyprland does not
+        # take (Retired, or Not in this Hyprland: every edit would be a config error).
+        editable=context.live and dependency is None and why is None,
+        resettable=context.live and not retired,
+        subtitle="\n".join(
+            line for line in (option.description, why, _set_by_line(option, context)) if line
+        ),
     )
+
+
+def _set_by_line(option: ResolvedOption, context: RowContext) -> str | None:
+    """Who sets this Option, under its description: the "Set by" pill's news in words a
+    keyboard or screen reader reaches, since the control stays editable (finding 25 of the
+    #153 review)."""
+    tool = context.bridge_owners.get(option.name)
+    if tool is None:
+        return None
+    spec = REGISTRY.get(tool)
+    name = spec.title if spec is not None else tool
+    return f"{name} sets this. Your value applies once {name} no longer does."
+
+
+def _read_only_reason(
+    option: ResolvedOption, context: RowContext, summary: ValueSummary | None
+) -> str | None:
+    """Why this Option's control is read-only and what the user can do, or `None` (#215).
+
+    Only the two reasons the Row alone can explain. A read-only session has the Banner, and
+    an unmet dependency has its badge.
+    """
+    kept = context.kept_value(option.name)
+    if kept is not UNSET:
+        # The summary's spelling on an expander, so the line and the collapsed Row agree.
+        value = summary.text if summary is not None else value_label(option, kept)
+        release = context.retired_in(option)
+        if release is None:
+            return f"Your value: {value}. It is kept for when Hyprland has this setting again."
+        return (
+            f"Your value: {value}. Hyprland {release} removed this setting; it is kept for "
+            "when the setting returns."
+        )
+    live = context.live_hyprland
+    if live is None or not context.unknown_to_version(option):
+        return None
+    if context.is_modified(option):
+        return (
+            f"Hyprland {live.version} does not have this setting. Reset removes it from your "
+            "config."
+        )
+    return f"Hyprland {live.version} does not have this setting, so it cannot be changed here."
 
 
 def help_content(option: ResolvedOption) -> HelpContent:
@@ -451,6 +542,19 @@ def _same_value(left: Any, right: Any) -> bool:
 # decides order or whether another pill shows: that is `PILL_PRECEDENCE`, below.
 
 
+def _unconfirmed_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # Owner call 3 of the #153 review: after a timeout the live value is still the old one,
+    # so "Overridden" (and its user.lua) or "Didn't apply" would each claim something no
+    # reading showed. What is true: saved, and not checked.
+    if option.name not in context.unconfirmed:
+        return None
+    return Pill(
+        UNCONFIRMED_PILL,
+        "Saved to your config, but Hyprland did not answer in time, so the app could not "
+        "check that it took. It is checked again at the next reload.",
+    )
+
+
 def _unapplied_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     if option.name not in context.unapplied:
         return None
@@ -484,6 +588,26 @@ def _overridden_pill(option: ResolvedOption, context: RowContext) -> Pill | None
     )
 
 
+def _set_by_tool_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # ADR-0006: a Bridge module is required after the app's own Modules, so the tool's value
+    # is the one Hyprland uses -- the answer to "why does my change not stick". The control
+    # stays editable (ADR-0014: no inline unlock): the user's value is kept in the app's own
+    # Module and applies again once the tool stops setting the key (#163 reading 3). The pill
+    # leads to the one place that changes who sets it, the tool on the Theming page.
+    tool = context.bridge_owners.get(option.name)
+    if tool is None:
+        return None
+    spec = REGISTRY.get(tool)
+    name = spec.title if spec is not None else tool
+    return Pill(
+        SET_BY_TOOL_PILL.format(tool=name),
+        f"{name} sets this, so Hyprland uses {name}'s value unless your user.lua also sets "
+        f"it. A value you set here is kept and applies once {name} no longer sets it. Click "
+        f"to open {name} on the Theming page.",
+        backend=tool,
+    )
+
+
 def _retired_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     # ADR-0012 §Retirement: "the Row is badged". A release removed an Option the user set,
     # so the app stopped writing it and keeps the value in the Manifest. The same Option
@@ -494,25 +618,27 @@ def _retired_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
         return None
     return Pill(
         RETIRED_PILL.format(release=release),
-        f"Hyprland {release} removed this setting; your value is kept and comes back if the "
-        "setting returns.",
+        f"Hyprland {release} removed this setting, so it cannot be changed here. Your value "
+        "is kept and comes back if the setting returns.",
     )
 
 
 def _not_in_hyprland_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     # The `unknown-to-this-version` Row state (CONTEXT.md, #77): the running compositor
     # was described and this Option is not among its own, because the app degraded onto
-    # a Schema newer than it (ADR-0012). Informative only -- the control stays editable
-    # and writes are unchanged. A *set* Option a newer release removed is Retired
-    # instead (#178), whose row in `PILL_PRECEDENCE` suppresses this one.
+    # a Schema newer than it (ADR-0012). The control is read-only (#215): every edit would
+    # be a config error and an auto-revert. A set one keeps its Reset, the way out of the
+    # error its key raises. A *set* Option a newer release removed is Retired instead
+    # (#178), whose row in `PILL_PRECEDENCE` suppresses this one.
     live = context.live_hyprland
     if live is None or not context.unknown_to_version(option):
         return None
-    return Pill(
-        NOT_IN_HYPRLAND_PILL,
-        f"Hyprland {live.version} does not have this setting, so a change made here will "
-        "not take effect.",
+    cannot = (
+        f"Hyprland {live.version} does not have this setting, so it cannot be changed here."
     )
+    if context.is_modified(option):
+        return Pill(NOT_IN_HYPRLAND_PILL, f"{cannot} Reset removes it from your config.")
+    return Pill(NOT_IN_HYPRLAND_PILL, cannot)
 
 
 def _pending_restart_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
@@ -591,8 +717,10 @@ def _advanced_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
 class PillKind(enum.Enum):
     """A row of `PILL_PRECEDENCE`, so one row can name another it suppresses."""
 
+    UNCONFIRMED = enum.auto()
     UNAPPLIED = enum.auto()
     RETIRED = enum.auto()
+    SET_BY_TOOL = enum.auto()
     OVERRIDDEN = enum.auto()
     NOT_IN_HYPRLAND = enum.auto()
     PENDING_RESTART = enum.auto()
@@ -616,9 +744,16 @@ MAX_PILLS: Final = 2
 """A Row shows at most this many pills (inbox #79); the last one shown lists the rest."""
 
 PILL_PRECEDENCE: Final[tuple[PillRule, ...]] = (
+    # Unconfirmed is what is known after a timeout; the two drift marks would be guesses.
+    PillRule(
+        PillKind.UNCONFIRMED,
+        _unconfirmed_pill,
+        frozenset({PillKind.UNAPPLIED, PillKind.OVERRIDDEN}),
+    ),
     PillRule(PillKind.UNAPPLIED, _unapplied_pill),
     PillRule(PillKind.RETIRED, _retired_pill, frozenset({PillKind.NOT_IN_HYPRLAND})),
-    # `Set by <tool>` (#165): suppresses OVERRIDDEN.
+    # The tool is what overrides the app's value, and this pill names it (#165).
+    PillRule(PillKind.SET_BY_TOOL, _set_by_tool_pill, frozenset({PillKind.OVERRIDDEN})),
     PillRule(PillKind.OVERRIDDEN, _overridden_pill),
     PillRule(PillKind.NOT_IN_HYPRLAND, _not_in_hyprland_pill),
     PillRule(PillKind.PENDING_RESTART, _pending_restart_pill, frozenset({PillKind.RESTART})),
@@ -646,4 +781,5 @@ def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:
 
     *shown, last = ranked[:MAX_PILLS]
     rest = ", ".join(pill.label for pill in ranked[MAX_PILLS:])
-    return (*shown, Pill(last.label, f"{last.tooltip}\nAlso: {rest}."))
+    # `replace`, so a capped pill that leads somewhere still does.
+    return (*shown, replace(last, tooltip=f"{last.tooltip}\nAlso: {rest}."))

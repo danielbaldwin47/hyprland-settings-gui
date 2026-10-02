@@ -35,9 +35,12 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from ..bridge import BridgeEntry
 from ..model import UNSET, OptionValue
+from ..wallpaper import Shown
 
 UNDO_MAX_DEPTH = 200
 """How many gestures the stack remembers. Deep enough to walk back a whole sitting; bounded
@@ -76,8 +79,8 @@ class UndoStep:
     """One user gesture, as everything it changed.
 
     Plural because one gesture is not always one Option: the css-gaps editor's four spinners
-    coalesce into one Apply transaction, and so will applying a Preset (#69). Undoing half of
-    a gesture would leave a state the user never chose.
+    coalesce into one Apply transaction, and so does applying a Preset (`PresetStep`).
+    Undoing half of a gesture would leave a state the user never chose.
     """
 
     edits: tuple[Edit, ...]
@@ -149,7 +152,61 @@ class EntityStep:
         return frozenset(edit.kind for edit in self.edits)
 
 
-Step = UndoStep | EntityStep
+@dataclass(frozen=True, slots=True)
+class SourceChange:
+    """The Bridge entries before and after "Use preset's colors" gated them (ADR-0014).
+
+    Both, because undo puts `before` back only while the Manifest still holds `after`: a
+    Color source the user changed since is theirs, and is left as it is.
+    """
+
+    before: tuple[BridgeEntry, ...]
+    after: tuple[BridgeEntry, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class WallpaperChange:
+    """What each output showed before a Preset set `after` on all of them (ADR-0014).
+
+    Undo puts `before` back only while every output still shows `after`.
+    """
+
+    before: tuple[Shown, ...]
+    after: Path
+
+
+@dataclass(frozen=True, slots=True)
+class PresetStep:
+    """Applying a Preset: everything it changed, under the Preset's name (ADR-0014).
+
+    Its own variant rather than a title on `UndoStep`, because the undo toast names the
+    Preset ("Applied Nord") where an Option step names a Row, and because undoing a Preset
+    puts back everything the apply changed: the Options, the Color source when "Use preset's
+    colors" changed it, and the wallpaper when the apply set one. `options` is `None` when
+    every value matched already but the source or the wallpaper still moved.
+    """
+
+    name: str
+    options: UndoStep | None
+    color_source: SourceChange | None = None
+    wallpaper: WallpaperChange | None = None
+
+    @classmethod
+    def of(
+        cls,
+        name: str,
+        options: UndoStep | None,
+        *,
+        color_source: SourceChange | None = None,
+        wallpaper: WallpaperChange | None = None,
+    ) -> PresetStep | None:
+        """A step, or `None` when the Preset changed nothing (it matched the current look)."""
+        if options is None and color_source is None and wallpaper is None:
+            return None
+        return cls(name, options, color_source, wallpaper)
+
+
+Step = UndoStep | EntityStep | PresetStep
 """Anything on the one stack. Option and entity gestures interleave in the order they landed."""
 
 
@@ -202,6 +259,18 @@ class UndoStack:
         self._steps.append(step)
         if len(self._steps) > self._max_depth:
             del self._steps[0 : len(self._steps) - self._max_depth]
+
+    def replace(self, old: Step, new: Step) -> bool:
+        """Put `new` where `old` is, by identity. `False` when `old` is no longer on the stack.
+
+        For a step that learns more after it was recorded: a Preset's wallpaper is set only
+        once its transaction stands, which is after its step went on the stack.
+        """
+        for index, step in enumerate(self._steps):
+            if step is old:
+                self._steps[index] = new
+                return True
+        return False
 
     def pop(self) -> Step | None:
         """Take the newest gesture off the stack, or `None` when there is nothing to undo."""
