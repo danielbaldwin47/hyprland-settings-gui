@@ -302,19 +302,34 @@ def test_a_foreign_reload_badges_an_override_it_adds_and_clears_one_it_removes(
 
 
 @needs_lua
-def test_without_lua_there_is_no_scan_and_no_badge(
+def test_without_lua_the_session_is_read_only_and_writes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No interpreter means the app cannot read its own Modules back: that is no scan, not
-    "no overrides", and the session still opens live."""
+    """No interpreter means the app cannot read its own Modules back: ruling A1 of the #148
+    review (F9) opens the session read-only, saying what to install, and nothing is
+    written: an edit then would drop every key the unread model misses."""
 
     async def scenario(fake: FakeHyprland) -> None:
         await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
         live_says(fake, GAPS_IN, OVERRIDE)
+        module = tmp_path / "hypr" / "hyprtweaker" / "options" / "general.lua"
+        before = module.read_bytes()
         monkeypatch.setenv("PATH", str(tmp_path / "no-bin"))
 
-        session, _ = await launch(fake, tmp_path)
+        runner = Runner()
+        session = session_for(fake, tmp_path, runner)
+        session.start()
+        await runner.settle()
+        session.set_option(ROUNDING, 3)
+        await runner.settle()
 
+        assert not session.live
+        assert session.health.title == (
+            "This app reads your settings with Lua, which is not installed. Install Lua "
+            "(lua5.5, lua5.4, lua5.3, lua or luajit) and open the app again — settings are "
+            "read-only."
+        )
+        assert module.read_bytes() == before
         assert session.overridden == frozenset()
 
     run_with_fake(scenario, compositor())

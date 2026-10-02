@@ -20,7 +20,6 @@ from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import SupplementKind
 from hyprtweaker.engine.state import Manifest, RetiredValue, RetireReason
-from hyprtweaker.engine.state.retirement import UnkeptNotice
 from hyprtweaker.session import Notice
 
 BAR_HEIGHT = {"name": "plugin:hyprbars:bar_height", "description": "bar height", "default": 15}
@@ -145,9 +144,9 @@ def test_while_the_plugin_is_not_loaded_its_setting_is_kept_quietly_and_comes_ba
 def test_a_plugin_setting_whose_value_cannot_be_kept_is_not_called_removed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Spec #152 review finding 3: with no Lua to read its Module back, the value of a
-    setting whose plugin is not loaded is lost, and the user hears so -- but Hyprland
-    removed nothing, so the notice must not say it did."""
+    """Spec #152 review finding 3 lost the value without Lua. Ruling A1 of the #148 review
+    (F9): without Lua the session opens read-only, so the value is never written away and
+    no notice claims anything was removed."""
 
     async def scenario(fake: FakeHyprland) -> None:
         await set_with_plugin_loaded(fake, tmp_path)
@@ -155,8 +154,6 @@ def test_a_plugin_setting_whose_value_cannot_be_kept_is_not_called_removed(
 
         notices = await start(fake, tmp_path, described())
 
-        assert notices == [
-            UnkeptNotice("0.56.2", ("plugin:hyprbars:bar_height",), removed=False)
-        ]
+        assert notices == []
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))

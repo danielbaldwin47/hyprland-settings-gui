@@ -91,7 +91,7 @@ from hyprtweaker.engine.entities_catalog import (
     device_field_bounds,
     overridden_options,
 )
-from hyprtweaker.engine.importer.lua.sandbox import LuaUnavailable
+from hyprtweaker.engine.importer.lua.sandbox import LuaUnavailable, lua_missing_reason
 from hyprtweaker.engine.ipc import (
     MONITOR_ADDED,
     MONITOR_REMOVED,
@@ -589,6 +589,7 @@ class Session:
 
         self._held_back: dict[str, _HeldBack] = {}
         self._model_read = False
+        self._lua_missing: str | None = None
         """Per hand-edited Module, the edits it kept off disk (`replace_edited_file`)."""
 
         self.on_recorded: Callable[[Step], None] | None = None
@@ -804,6 +805,8 @@ class Session:
             return None
         if self._unsupported_reason is not None:
             return f"{self._unsupported_reason}."
+        if self._lua_missing is not None and self._offline_reason == self._lua_missing:
+            return f"{self._lua_missing}."
         return "This app is not connected to Hyprland."
 
     @property
@@ -2800,6 +2803,13 @@ class Session:
         """
         if self._unsupported_reason is not None:
             self.set_read_only(self._unsupported_reason)
+            return
+        if (missing := lua_missing_reason()) is not None:
+            # Ruling A1 of the #148 review (F9): without Lua the app cannot read its own
+            # Modules back, and a write from a model it could not read drops the keys it
+            # missed. Read-only, saying what to install.
+            self._lua_missing = missing
+            self.set_read_only(missing)
             return
         if self._applier is None and self._offline_reason != _NOT_CONNECTED_YET:
             # A reason set before the start (a first-run offer that has since been kept) is

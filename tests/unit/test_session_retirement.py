@@ -33,7 +33,7 @@ from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
 from hyprtweaker.engine.schema.resolve import SCHEMA_DIR_ENV
 from hyprtweaker.engine.state import Manifest, RetiredValue, RetireReason
-from hyprtweaker.engine.state.retirement import RenamedNotice, RetiredNotice, UnkeptNotice
+from hyprtweaker.engine.state.retirement import RenamedNotice, RetiredNotice
 from hyprtweaker.session import Notice, Session
 
 SCHEMA = sample_schema()
@@ -202,19 +202,20 @@ class TestNotice:
     def test_a_value_the_app_cannot_read_back_is_announced_not_dropped_silently(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """#150 review finding 4: with no Lua to read its Module, the value cannot be kept,
-        and the user hears that this start rather than finding it gone later."""
+        """#150 review finding 4 lost the value without Lua and announced it. Ruling A1 of
+        the #148 review (F9): without Lua the session opens read-only, so nothing is
+        written, the Module keeps the value, and there is nothing to announce."""
 
         async def scenario(fake: FakeHyprland) -> None:
             await first_start(fake, tmp_path)
             monkeypatch.setattr(sandbox, "lua_binary", lambda: None)
             fake.conversation[f"j/getoption {RESIZE}"] = NO_SUCH_OPTION
 
-            _, notices = await start(fake, tmp_path, live("0.57.0", without=(RESIZE,)))
+            session, notices = await start(fake, tmp_path, live("0.57.0", without=(RESIZE,)))
 
-            assert notices == [UnkeptNotice("0.57.0", (RESIZE,))]
-            assert manifest(tmp_path).retired == {}
-            assert "resize_on_border" not in module(tmp_path)
+            assert not session.live
+            assert notices == []
+            assert "resize_on_border" in module(tmp_path)
 
         run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
 

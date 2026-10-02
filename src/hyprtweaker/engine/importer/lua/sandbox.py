@@ -211,6 +211,17 @@ class Recording:
         return None
 
 
+def lua_missing_reason() -> str | None:
+    """Why this machine cannot read a Lua config, in the user's words, or `None` if it can."""
+    if lua_binary() is not None:
+        return None
+    return (
+        "This app reads your settings with Lua, which is not installed. Install Lua ("
+        + ", ".join(INTERPRETERS[:-1])
+        + f" or {INTERPRETERS[-1]}) and open the app again"
+    )
+
+
 def lua_binary() -> str | None:
     """The interpreter that will be used, or `None` if there is not one."""
     for name in INTERPRETERS:
