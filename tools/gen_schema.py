@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -41,7 +42,11 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "tests" / "integration"))
 
+from harness.guard import session_compositor_reason  # noqa: E402
+
+from hyprtweaker.engine.ipc import Instance  # noqa: E402
 from hyprtweaker.engine.schema import sources  # noqa: E402
 from hyprtweaker.engine.schema.generated import GeneratedSchema, dumps, load  # noqa: E402
 from hyprtweaker.engine.schema.infer import build_option  # noqa: E402
@@ -52,11 +57,37 @@ RAW_SOURCE_URL = "https://raw.githubusercontent.com/hyprwm/Hyprland/{ref}/{path}
 SOURCE_FILES = ("src/config/values/ConfigValues.cpp", "src/config/values/ConfigValues.hpp")
 
 
+def compositor_refusal() -> str | None:
+    """Why the compositor this process names may not be read, or `None` for a nested one.
+
+    The generator reads a live Hyprland only from a nested instance (the Harness's
+    `NestedHyprland` or `tools/sandbox.py`), never the owner's desktop session: the same
+    guard the Harness tier uses (F15 of the #148 review).
+    """
+    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not signature or not runtime:
+        return "no Hyprland named: HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR is unset"
+    reason = session_compositor_reason(Instance(Path(runtime) / "hypr" / signature))
+    if reason is None:
+        return None
+    return (
+        f"gen_schema reads only a nested Hyprland, and {reason}. Run it inside "
+        "tools/sandbox.py's instance (HYPRLAND_INSTANCE_SIGNATURE=<the signature it "
+        "prints>), or pass --descriptions, --animations and --version as files"
+    )
+
+
+def hyprctl(*args: str) -> str:
+    """`hyprctl <args>` against the nested instance this process names; refuses any other."""
+    if (refusal := compositor_refusal()) is not None:
+        raise SystemExit(refusal)
+    return subprocess.run(["hyprctl", *args], capture_output=True, text=True, check=True).stdout
+
+
 def hyprland_version() -> str:
     """The running compositor's version, e.g. `0.56.2` from `hyprctl version`."""
-    output = subprocess.run(
-        ["hyprctl", "version"], capture_output=True, text=True, check=True
-    ).stdout
+    output = hyprctl("version")
     match = re.search(r"Hyprland (\d+(?:\.\d+)*)", output)
     if match is None:
         raise SystemExit(f"could not parse a version out of `hyprctl version`:\n{output}")
@@ -69,10 +100,10 @@ def hyprland_commit() -> str | None:
     Recorded rather than the local input paths: provenance exists so a release check can
     reproduce the file, and one machine's `/tmp` scratch directory tells nobody anything.
     """
+    if compositor_refusal() is not None:
+        return None
     try:
-        output = subprocess.run(
-            ["hyprctl", "version"], capture_output=True, text=True, check=True
-        ).stdout
+        output = hyprctl("version")
     except (OSError, subprocess.CalledProcessError):
         return None
     match = re.search(r"at commit ([0-9a-f]{7,40})", output)
@@ -82,17 +113,13 @@ def hyprland_commit() -> str | None:
 def read_descriptions(path: Path | None) -> str:
     if path is not None:
         return path.read_text(encoding="utf-8")
-    return subprocess.run(
-        ["hyprctl", "-j", "descriptions"], capture_output=True, text=True, check=True
-    ).stdout
+    return hyprctl("-j", "descriptions")
 
 
 def read_animations(path: Path | None) -> str:
     if path is not None:
         return path.read_text(encoding="utf-8")
-    return subprocess.run(
-        ["hyprctl", "-j", "animations"], capture_output=True, text=True, check=True
-    ).stdout
+    return hyprctl("-j", "animations")
 
 
 def read_source(directory: Path | None, ref: str | None) -> tuple[str, str] | None:
