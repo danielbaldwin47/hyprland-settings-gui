@@ -234,5 +234,18 @@ def test_the_slot_holds_what_the_caller_adds(tmp_path: Path) -> None:
     marker = Gtk.Label(label="colour conflict row goes here")
     dialog.slot.append(marker)
     dialog.present(window)
+    main_loop.settle("the dialog")
 
     assert marker in walk(dialog)
+    assert dialog.slot.get_visible()
+
+
+def test_an_empty_slot_is_hidden(tmp_path: Path) -> None:
+    from hyprtweaker.ui.dialogs.theme_import import ThemeImportDialog
+
+    window, session, archive = build(tmp_path)
+    dialog = ThemeImportDialog(session, archive)
+    dialog.present(window)
+    main_loop.settle("the dialog")
+
+    assert not dialog.slot.get_visible()

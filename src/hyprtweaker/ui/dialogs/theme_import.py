@@ -72,13 +72,21 @@ class ThemeImportDialog(Adw.Dialog):
         self._defaults: dict[Adw.NavigationPage, Gtk.Widget] = {}
         """Each page's safe button, made the dialog's default while that page shows."""
         self.slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        """Empty: where the caller adds a row of its own under the summary (#171)."""
+        """Empty: where the caller adds a row of its own under the summary (#171). Shown
+        only when something is in it, so an empty slot leaves no gap in the column."""
+        self.slot.set_visible(False)
+        self._slot_children = self.slot.observe_children()
+        self._slot_children.connect(
+            "items-changed",
+            lambda children, *_: self.slot.set_visible(children.get_n_items() > 0),
+        )
 
         self._view = Adw.NavigationView()
         self._view.connect("notify::visible-page", self._on_visible_page)
         self.set_child(self._view)
         read = read_archive(source, find=find)
         if isinstance(read, ArchiveRefused):
+            self.set_content_height(260)  # one sentence: not a tall empty sheet
             self._view.push(self._stopped_page("Can't import this theme", read.reason))
         else:
             self._view.push(self._preview_page(read))
