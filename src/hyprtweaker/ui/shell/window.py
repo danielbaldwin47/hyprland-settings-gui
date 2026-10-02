@@ -1684,8 +1684,14 @@ class MainWindow(Adw.ApplicationWindow):
             self._workspace_rules_page.refresh()
         if self._monitors_page is None:
             return
-        self._session.fetch_monitors(self._monitors_page.set_connected)
+        # The page is looked up when the answer lands: a rebuild in between replaces it and
+        # releases the old one.
+        self._session.fetch_monitors(self._set_connected)
         self.sync()
+
+    def _set_connected(self, monitors: tuple[Mapping[str, Any], ...] | None) -> None:
+        if self._monitors_page is not None:
+            self._monitors_page.set_connected(monitors)
 
     def sync(self) -> None:
         """Make every control agree with the model, and the Banner with the session's health.

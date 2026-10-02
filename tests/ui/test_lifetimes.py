@@ -202,3 +202,146 @@ def test_a_dialog_shown_again_after_one_it_opened_closes_is_released_once(
 
     assert released == ["CaptureDialog"] * TIMES + ["BindEditor"]
     window.close()
+
+
+# --- what an open dialog removes, it lets go of (review #151, findings 14 and 15) --------
+
+WINDOWS = ({"class": "kitty", "title": "shell", "initialClass": "kitty"},)
+
+
+def widget_with_tooltip(root: Any, tooltip: str) -> Any:
+    """The first widget under `root` whose tooltip starts with `tooltip`."""
+    stack = [root]
+    while stack:
+        widget = stack.pop()
+        if (widget.get_tooltip_text() or "").startswith(tooltip):
+            return widget
+        child = widget.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    raise AssertionError(f"nothing under {root} has a tooltip starting {tooltip!r}")
+
+
+def rule_editor(window: Any, fetch: Any, match: dict[str, Any] | None = None) -> Any:
+    """A window-rule editor presented on `window`, as the Rules page presents one."""
+    from hyprtweaker.engine.model.entities import WindowRule
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    rule = WindowRule(match=match, effects={"float": True}) if match is not None else None
+    editor = RuleEditor(
+        kind="window", on_done=lambda _rule: None, rule=rule, fetch_targets=fetch
+    )
+    editor.present(window)
+    main_loop.settle("the rule editor to open")
+    return editor
+
+
+def test_a_rule_editor_whose_match_was_removed_is_released_after_close(tmp_path: Path) -> None:
+    window = wired_window(offline_session(tmp_path))
+    refs = []
+    for _ in range(TIMES):
+        editor = rule_editor(window, None, match={"class": "kitty", "title": "shell"})
+        widget_with_tooltip(editor, "Remove this match").emit("clicked")
+        main_loop.settle("the removed match row's release")
+        refs.append(weakref.ref(editor))
+        editor.force_close()
+        del editor
+        main_loop.settle("the rule editor to close")
+
+    assert collected(refs) == [True] * TIMES
+    window.close()
+
+
+def test_a_workspace_rule_editor_whose_field_was_removed_is_released_after_close(
+    tmp_path: Path,
+) -> None:
+    from hyprtweaker.engine.model.entities import WorkspaceRule
+
+    session = offline_session(tmp_path)
+    session.model.entities.workspace_rules.append(
+        WorkspaceRule(workspace="3", fields={"monitor": "DP-1", "persistent": True})
+    )
+    window = wired_window(session)
+    refs = []
+    for _ in range(TIMES):
+        dialog = window.workspace_rule_editor("3")
+        dialog.present(window)
+        widget_with_tooltip(dialog.fields.row("persistent"), "Remove").emit("clicked")
+        main_loop.settle("the removed field row's release")
+        # The field rows, not only the dialog: a removed row's own button holds them.
+        refs.extend((weakref.ref(dialog), weakref.ref(dialog.fields)))
+        dialog.force_close()
+        del dialog
+        main_loop.settle("the workspace rule editor to close")
+
+    assert collected(refs) == [True] * TIMES * 2
+    window.close()
+
+
+def test_a_rule_editor_whose_picker_was_used_is_released_after_close(tmp_path: Path) -> None:
+    window = wired_window(offline_session(tmp_path))
+    refs = []
+    for _ in range(TIMES):
+        editor = rule_editor(window, lambda done: done(WINDOWS))
+        editor._open_picker()
+        editor._picker_rows[0].emit("activated")
+        main_loop.settle("the picker page to pop")
+        refs.append(weakref.ref(editor))
+        editor.force_close()
+        del editor
+        main_loop.settle("the rule editor to close")
+
+    assert collected(refs) == [True] * TIMES
+    window.close()
+
+
+def test_the_pickers_also_match_switches_still_work_on_its_second_opening(
+    tmp_path: Path,
+) -> None:
+    """The switches outlive each picker page: releasing a popped page must not take them."""
+    window = wired_window(offline_session(tmp_path))
+    editor = rule_editor(window, lambda done: done(WINDOWS))
+    editor._open_picker()
+    editor._view.pop()
+    main_loop.settle("the first picker page's release")
+
+    editor._open_picker()
+    editor._pick_title.set_active(True)
+    editor._picker_rows[0].emit("activated")
+
+    assert editor._collect_match() == {"class": "^(kitty)$", "title": "^(shell)$"}
+    editor.force_close()
+    window.close()
+
+
+def test_a_fetch_answer_after_the_rule_editor_closed_touches_nothing(
+    tmp_path: Path, capfd: Any
+) -> None:
+    window = wired_window(offline_session(tmp_path))
+    pending: list[Any] = []
+    editor = rule_editor(window, pending.append, match={"class": "kitty"})
+    editor._open_picker()
+    editor.force_close()
+    main_loop.settle("the rule editor's close and release")
+    capfd.readouterr()
+
+    for answer in pending:  # the badge's count, then the picker's list
+        answer(WINDOWS)
+
+    assert "CRITICAL" not in capfd.readouterr().err
+    window.close()
+
+
+def test_a_monitors_answer_after_a_rebuild_lands_on_the_new_page(tmp_path: Path) -> None:
+    session = offline_session(tmp_path)
+    window = wired_window(session)
+    pending: list[Any] = []
+    session.fetch_monitors = pending.append
+    window._refresh_monitors()
+    window.rebuild()
+
+    pending[0](({"name": "DP-1", "width": 1920, "height": 1080, "x": 0, "y": 0, "scale": 1},))
+
+    assert [row.get_title() for row in window.monitors_page.connected_rows] == ["DP-1"]
+    window.close()
