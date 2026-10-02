@@ -466,3 +466,54 @@ def test_a_tool_is_not_set_up_while_the_session_is_read_only(tmp_path: Path) -> 
         assert not paths_of(tmp_path).entrypoint.exists()
 
     run_with_fake(scenario, FakeHyprland(conversation()))
+
+
+def test_removing_a_tool_whose_colours_load_stops_loading_them(tmp_path: Path) -> None:
+    """Hand-test defect 1 of #148: matugen had run, so its module sat in the bridge folder,
+    and Remove dropped the entry while the leftover file kept its require in hyprland.lua."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        leftover = put(tmp_path, "hyprtweaker/bridge/matugen.lua")
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        wire(session, MATUGEN)
+        assert session.set_color_source(Wallpaper("matugen"))
+        await settle(session, runner)
+        assert bridge_lines(tmp_path) == ['require("hyprtweaker/bridge/matugen")']
+
+        assert session.remove_bridge("matugen")
+        await settle(session, runner)
+
+        assert bridge_lines(tmp_path) == []
+        assert session.color_source() == ManualColors()
+        assert not leftover.exists()
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_a_tool_still_loading_with_no_entry_is_removed_by_remove(tmp_path: Path) -> None:
+    """The half-removed state an earlier build left: no entry, the require still there.
+    Remove on the page must still stop it loading rather than say there is nothing to do."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        put(tmp_path, "hyprtweaker/bridge/matugen.lua")
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        assert bridge_lines(tmp_path) == ['require("hyprtweaker/bridge/matugen")']
+        assert session.color_source() == Wallpaper("matugen")
+
+        assert session.remove_bridge("matugen")
+        await settle(session, runner)
+
+        assert bridge_lines(tmp_path) == []
+        assert session.color_source() == ManualColors()
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )

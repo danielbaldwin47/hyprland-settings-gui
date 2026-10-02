@@ -37,6 +37,7 @@ from hyprtweaker.engine.bridge.wire import (
     detect,
     plan_wire,
     unwire,
+    unwire_preview,
     wire,
 )
 from hyprtweaker.engine.paths import ConfigPaths
@@ -922,3 +923,27 @@ def test_wiring_starts_no_process_and_no_watcher() -> None:
         == set()
     )
     assert "run_tool" not in source
+
+
+def test_remove_finds_a_tool_that_loads_only_through_its_leftover_output(
+    paths: ConfigPaths,
+) -> None:
+    """#148 hand-test 1: no entry and no setup record, but matugen's module is still in the
+    bridge folder, so hyprland.lua loads it. Remove must act and say what it deletes."""
+    output = put(paths.bridge_dir / "matugen.lua", "return {}\n")
+    asked: list[str] = []
+
+    preview = unwire_preview("matugen", paths=paths)
+    result = unwire(
+        "matugen",
+        paths=paths,
+        manifest=Manifest.load(paths.manifest, app_version="x", schema_version="y"),
+        unregister=lambda tool: asked.append(tool) or True,
+    )
+
+    assert [each.shown for each in preview.deleted] == [
+        "~/.config/hypr/hyprtweaker/bridge/matugen.lua"
+    ]
+    assert asked == ["matugen"]
+    assert result == Unwired("matugen")
+    assert output.exists(), "deleting it is the Session's, inside its queued write"

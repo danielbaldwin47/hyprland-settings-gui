@@ -623,7 +623,12 @@ def unwire(
     spec = REGISTRY.get(tool)
     title = spec.title if spec else tool
     record = _Record.active(paths.bridge_backups_dir, tool)
-    entry = any(each.tool == tool for each in manifest.bridges)
+    # Its output left in the bridge folder loads with or without an entry (`ModuleSet`), so
+    # it is as much "set up here" as an entry is: a Remove that found only that would say
+    # there was nothing to undo while hyprland.lua went on loading it (#148 hand-test 1).
+    entry = any(each.tool == tool for each in manifest.bridges) or bool(
+        bridge_output(tool, paths)
+    )
     if record is None and not entry:
         return Unwired(tool, note=f"{title} is not set up here, so there was nothing to undo.")
     files = record.files if record else ()
@@ -687,13 +692,32 @@ def unwire_preview(tool: str, *, paths: ConfigPaths) -> UnwirePreview:
     (`NeedsChoice`) before touching it, and so does the confirm after this one.
     """
     record = _Record.active(paths.bridge_backups_dir, tool)
+    output = tuple(_ref(path, paths) for path in bridge_output(tool, paths))
     if record is None:
-        return UnwirePreview()
+        return UnwirePreview(deleted=output)
     wired = [each for each in record.files if record.status(each) is _Status.WIRED]
     return UnwirePreview(
         put_back=tuple(_ref(each.path, paths) for each in wired if each.copy is not None),
-        deleted=tuple(_ref(each.path, paths) for each in wired if each.copy is None),
+        deleted=(
+            *(_ref(each.path, paths) for each in wired if each.copy is None),
+            *output,
+        ),
     )
+
+
+def bridge_output(tool: str, paths: ConfigPaths) -> tuple[Path, ...]:
+    """The files `tool` has written into the app's bridge folder, as Remove finds them.
+
+    Only that folder: hyprland.lua loads every `.lua` there, entry or not (`ModuleSet`), so
+    a tool's leftover output keeps its colours loading after its entry is gone. Removing the
+    tool deletes it; the tool writes it again if it is set up again. A module at a tool's
+    native path is the tool's own file and is never touched.
+    """
+    spec = REGISTRY.get(tool)
+    if spec is None:
+        return ()
+    found = [paths.hypr_dir / module.file for module in spec.modules]
+    return tuple(path for path in found if path.parent == paths.bridge_dir and path.is_file())
 
 
 # --- the record -------------------------------------------------------------------------------

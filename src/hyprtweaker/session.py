@@ -84,6 +84,7 @@ from hyprtweaker.engine.bridge import (
     owners,
     with_presence,
 )
+from hyprtweaker.engine.bridge.wire import bridge_output
 from hyprtweaker.engine.bridge.wire import shown as tilde_path
 from hyprtweaker.engine.entities_catalog import (
     IDENTITY_FIELD,
@@ -989,14 +990,23 @@ class Session:
         after a crash never costs a reload.
         """
         manifest = self._manifest()
-        if not any(entry.tool == tool for entry in manifest.bridges):
+        output = bridge_output(tool, self._paths)
+        if not output and not any(entry.tool == tool for entry in manifest.bridges):
             return True
         if self.color_source_blocked is not None:
             return False
+
+        def delete_output() -> None:
+            # Before the Entrypoint is rendered: a file left in the bridge folder loads with
+            # no entry at all, which kept a removed tool loading (#148 hand-test 1).
+            for path in bridge_output(tool, self._paths):
+                path.unlink(missing_ok=True)
+
         return self._set_bridges(
             lambda current: [entry for entry in current if entry.tool != tool],
             manifest.remove_bridge(tool),
             f"remove {REGISTRY[tool].title if tool in REGISTRY else tool}",
+            first=delete_output,
         )
 
     def _module_files_present(self, spec: ToolSpec) -> frozenset[str]:
@@ -1007,13 +1017,22 @@ class Session:
         change: Callable[[Sequence[BridgeEntry]], Sequence[BridgeEntry]],
         prospective: Manifest,
         what: str,
+        *,
+        first: Callable[[], None] | None = None,
     ) -> bool:
         """Rewrite the Entrypoint with `change` applied to the Manifest's entries as they are
-        when the queued write runs, so a change landing in between is built on, not lost."""
-        return self._recovery_write(
-            lambda before: self._writer.set_bridges(
+        when the queued write runs, so a change landing in between is built on, not lost.
+        `first` runs in the queued write, just before it."""
+
+        def write(before: BeforeReplace | None) -> bool:
+            if first is not None:
+                first()
+            return self._writer.set_bridges(
                 self._model, change(self._manifest().bridges), before_replace=before
-            ),
+            )
+
+        return self._recovery_write(
+            write,
             prospective,
             what,
             exclude=tuple(owners(prospective.bridges, quarantined=prospective.quarantined)),
