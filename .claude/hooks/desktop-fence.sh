@@ -74,7 +74,9 @@
 # the word after any `VAR=…`, `env`, `command`, `exec` or wrapper (`timeout`,
 # `nohup`, `sudo`, `xargs`, `flock`, the launchers `uwsm-app`, `uwsm app` and
 # `app2unit`, …, each with the options that take a value, and `--`) is the one
-# judged, so `grep hyprctl docs/` or a heredoc commit message passes.
+# judged, so `grep hyprctl docs/` or a heredoc commit message passes. A path to a
+# program is the program (`/usr/bin/env` is `env`). The hook is a net for the usual
+# accidental routes, not a boundary: the rule binds whatever it lets through.
 # A command line handed to a shell is split and judged in turn: `bash -c '…'`,
 # `sh -c`, a heredoc into `bash`, `eval`, `watch '…'` and `flock -c`. Doubt fails
 # closed: without jq, any call whose input names one of the fenced words, a GTK
@@ -97,7 +99,7 @@ if ! command -v jq > /dev/null 2>&1; then
     raw_kill='(pgrep|pidof)[^;&]*kill|kill[^;&|]*(pgrep|pidof)|fuser[^;&|]* -[a-z]*k|kill( +-[A-Za-z0-9]+)? +(--? +)?(0|-1)([\";]|$)'
     raw_gtk='python[^|;&]*-[A-Za-z]*c[ "'"'"'].*(Gtk|Adw|Gdk|gi\.repository)'
     raw_stdin='python[0-9.]*( +-)? *<<.*(Gtk|Adw|Gdk|gi\.repository)'
-    raw_app='python[0-9.]*( +-[A-Za-z]+)* +(-[A-Za-z]*m *hyprtweaker|src/hyprtweaker)|hyprtweaker\.application|run_module\(.?.?hyprtweaker|Hyprtweaker(\.desktop)?([^[:alnum:]_.-]|$)'
+    raw_app='python[0-9.]*( +-[A-Za-z]+)* +(-[A-Za-z]*m *hyprtweaker|src/hyprtweaker)|hyprtweaker\.(application|main)|run_module\(.?.?hyprtweaker|Hyprtweaker(\.desktop)?([^[:alnum:]_.-]|$)'
     raw_xfile='(^|[^[:alnum:]_.-])(rm|unlink|rmdir|mv|ln|shred|find)[ \t"][^|;&]*(\.X11-unix|\.X[^ /"]*-lock|/tmp/\.X[0-9]*[*?])'
     raw_session='(^|[^[:alnum:]_.-])(omarchy-[a-z]|(hyprpm|uwsm|uwsm-app|app2unit|gtk-launch|hyprlock|hypridle|hyprsunset|swaybg|mpvpaper|makoctl|loginctl|notify-send|wl-copy|grim|hyprshot|hyprpicker|cage|sway|killall5|skill|matugen|wallust|noctalia|quickshell|swww|awww|hyprpaper|dbus-update-activation-environment)([^[:alnum:]_.-]|$))|gsettings +(set|reset)|dconf +(write|reset|load|update)|gio +launch|git( +-[^ ]+)* +stash( +(push|pop|apply|drop|clear|save|store|create|branch)|[\";]|$)|sandbox\.py[^|;&]* --window|HYPRTWEAKER_HARNESS_HOST_WINDOW=[^ "]'
     raw_systemctl='systemctl[^|;&]* (start|stop|restart|try-restart|reload|reload-or-restart|kill|isolate|mask|unmask|enable|disable|daemon-reload|set-environment|unset-environment|import-environment|edit|poweroff|reboot|suspend|hibernate)'
@@ -127,8 +129,8 @@ re_x_above='^/+(tmp/*)?$' # `/` or `/tmp`: removing it removes the X files with 
 re_gtk='gi\.repository|gi\.require_version|(^|[^[:alnum:]_.])(import|from)[[:space:]]+gi([^[:alnum:]_]|$)'
 re_py_run='subprocess|Popen|os\.system|os\.popen|os\.exec|os\.spawn|pty\.spawn|create_subprocess'
 re_py_word='(^|[^[:alnum:]_.-])(hyprctl|Hyprland|hyprland|start-hyprland|wtype|ydotool|ydotoold|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|matugen|wallust|noctalia|noctalia-shell|qs|quickshell|dms|swww|awww|swww-daemon|awww-daemon|hyprpaper|waybar|gsettings|dbus-update-activation-environment|uwsm|uwsm-app|app2unit|gtk-launch|hyprlock|hypridle|hyprsunset|swaybg|mpvpaper|makoctl|dconf)([^[:alnum:]_./-]|$)'
-# Python code that starts the app, as `python -m hyprtweaker` would (#270).
-re_py_app='hyprtweaker\.(application|__main__)([^[:alnum:]_]|$).*(main|run)[[:space:]]*\(|run_(module|path)\([^)]*hyprtweaker'
+# Python code that names the app's entry points, as `python -m hyprtweaker` does (#270).
+re_py_app='hyprtweaker\.(main|application|__main__)([^[:alnum:]_]|$)|from[[:space:]]+hyprtweaker[[:space:]]+import[^;]*(main|application)|run_(module|path)\([^)]*hyprtweaker'
 # The app's desktop entry, launched by id or by file wherever a command stands.
 re_app_entry='(^|/)io\.github\.danielbaldwin47\.Hyprtweaker(\.desktop)?(:.*)?$'
 # A theming tool, wallpaper daemon or bar: each writes, recolours or restarts something on
@@ -425,23 +427,27 @@ joined() {
 judge() {
     local -a w=("$@")
     local n=${#w[@]} i=0 text wrapped=0 wrapper="" positional=0 his="" display="" xdisplay=""
-    local launcher=""
+    local launcher="" word
     judged_name=""
     prefix_card=""
     # Prefix: keywords, assignments, `env` and its flags, wrappers and theirs.
     while ((i < n)); do
         text=${w[i]:1}
-        case "$text" in
+        # A program is its basename wherever it stands: /usr/bin/env is env (#148 fix
+        # review R7). An assignment keeps its value whole: PYTHONPATH=src/x is no path.
+        word=$text
+        [[ $text =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || word=${text##*/}
+        case "$word" in
             '!' | '{' | '}' | if | then | else | elif | fi | do | done | while | until | time | builtin | --)
                 wrapped=1
                 ;;
             exec | nohup | setsid | sudo | doas | nice | timeout | stdbuf | xargs | watch | ionice | chrt \
                 | taskset | flock | strace | systemd-run | dbus-run-session | coproc | uwsm-app | app2unit)
-                wrapped=1 wrapper=$text positional=${wrapper_positionals[$text]:-0}
-                [[ $text == uwsm-app || $text == app2unit ]] && launcher=$text
+                wrapped=1 wrapper=$word positional=${wrapper_positionals[$word]:-0}
+                [[ $word == uwsm-app || $word == app2unit ]] && launcher=$word
                 ;;
             command)
-                [[ ${w[i + 1]:-L} == ?-[vV] ]] && return # a lookup, not a run
+                [[ ${w[i + 1]:-L} == ?-[vV] ]] && [ -z "$launcher" ] && return # a lookup, not a run
                 wrapped=1
                 ;;
             env)
@@ -469,6 +475,7 @@ judge() {
                     if [ "$wrapper" = flock ] && [[ $text == -c || $text == --command ]]; then
                         text=${w[i + 1]:-L}
                         judge_command "${text:1}"
+                        refuse_launcher "$launcher" "flock"
                         return 0
                     fi
                     [ -n "$wrapper" ] && [[ ${wrapper_values[$wrapper]:-} == *" $text "* ]] && i=$((i + 1))
@@ -478,6 +485,7 @@ judge() {
                     :
                 elif [ "$wrapper" = watch ]; then # watch hands its words to `sh -c`
                     judge_command "$(joined "${w[@]:i}")"
+                    refuse_launcher "$launcher" "watch"
                     return 0
                 else
                     break
@@ -487,7 +495,12 @@ judge() {
         i=$((i + 1))
     done
     ((i < n)) || return 0
-    [ "${w[i]:0:1}" = L ] || return 0 # a command held in a variable: a stated limit
+    if [ "${w[i]:0:1}" != L ]; then
+        # A command held in a variable: a stated limit, but not behind a session launcher,
+        # where it is how the owner's own binds start a terminal (`uwsm-app -- $TERMINAL`).
+        refuse_launcher "$launcher" "a command held in a variable"
+        return 0
+    fi
     local name=${w[i]:1}
     name=${name##*/}
     judged_name=$name
@@ -609,9 +622,14 @@ judge() {
     esac
     # Judged first for what it runs (so the refusal names that); a launcher that would run
     # something harmless still starts it as a unit in the owner's session.
-    [ -n "$launcher" ] \
-        && deny "\`$launcher\` starts \`$name\` as a unit in the owner's desktop session: a window it opens maps on the owner's desktop, and the unit runs under their user manager. Run the command directly, and the app windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
+    refuse_launcher "$launcher" "\`$name\`"
     return 0
+}
+
+# A session launcher (`uwsm-app`, `app2unit`) is refused whatever it runs ($2).
+refuse_launcher() {
+    [ -n "$1" ] || return 0
+    deny "\`$1\` starts $2 as a unit in the owner's desktop session: a window it opens maps on the owner's desktop, and the unit runs under their user manager. Run the command directly, and the app windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
 }
 
 # An assignment word (flag + text): the owner's host-display opt-in, or a
@@ -830,7 +848,7 @@ judge_python() {
     elif [[ $script =~ (^|/)src/hyprtweaker(/|$) ]]; then
         app="python $script"
     elif [[ ${code//$'\n'/ } =~ $re_py_app ]]; then
-        app="python code that runs the app"
+        app="python code that names the app's entry point"
     fi
     if [ -n "$app" ]; then
         deny "\`$app\` runs the app against the session's own WAYLAND_DISPLAY, so its window maps on the owner's desktop and its config writes reach the owner's real config. Run it windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."

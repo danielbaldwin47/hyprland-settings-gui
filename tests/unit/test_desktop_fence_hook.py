@@ -553,9 +553,53 @@ ALLOWED_NEAR_LAUNCHES = [
     "dconf dump /org/gnome/",
     "gio info data/io.github.danielbaldwin47.Hyprtweaker.desktop",
     "grep -rn hyprtweaker.application src/",
-    ".venv/bin/python -c 'from hyprtweaker.application import Application'",
     "desktop-file-validate data/io.github.danielbaldwin47.Hyprtweaker.desktop",
 ]
+
+
+# The third round of R7 (#148 fix review): a program is its basename, a launcher is
+# refused at every exit of the judge, and python is judged by the app's entry points.
+REFUSED_NORMALISED = [
+    "/usr/bin/uwsm-app -- hyprctl reload",
+    "/usr/bin/env hyprctl reload",
+    "/usr/bin/timeout 5 hyprctl reload",
+    "/usr/bin/setsid hyprctl reload",
+    "/usr/bin/systemd-run --user hyprctl reload",
+    "../../usr/bin/nohup hyprctl reload",
+    "uwsm-app -- $TERMINAL",
+    "/usr/bin/uwsm-app -- $TERMINAL",
+    "/usr/bin/app2unit -- ${TERMINAL:-foot}",
+    "uwsm-app -- watch foot",
+    "uwsm-app -- flock /tmp/l -c foot",
+    "uwsm-app -- command -v foot",
+    'python -c "from hyprtweaker.main import main; main([])"',
+    'PYTHONPATH=src .venv/bin/python -c "from hyprtweaker.main import main; main([])"',
+    'PYTHONPATH=src /usr/bin/python3 -c "from hyprtweaker import main"',
+    ".venv/bin/python -c 'from hyprtweaker.application import Application'",
+    "/usr/bin/python3 -m hyprtweaker",
+    "/usr/bin/env python3 -m hyprtweaker.main",
+]
+ALLOWED_NORMALISED = [
+    "/usr/bin/env ls /tmp",
+    "/usr/bin/timeout 5 ls /tmp",
+    "PYTHONPATH=src/x .venv/bin/pytest tests/unit",
+    "PYTHONPATH=src .venv/bin/python -c 'from hyprtweaker.engine.paths import ConfigPaths'",
+    "echo $TERMINAL",
+]
+
+
+@pytest.mark.parametrize("command", REFUSED_NORMALISED)
+def test_a_path_a_variable_or_an_entry_point_does_not_hide_the_command(
+    world: World, command: str
+) -> None:
+    tool("jq")
+    assert verdict(FENCE, command, world.env) is not None
+
+
+@pytest.mark.parametrize("command", ALLOWED_NORMALISED)
+def test_normalising_lets_ordinary_work_through(world: World, command: str) -> None:
+    tool("jq")
+    assert verdict(FENCE, command, world.env) is None
 
 
 @pytest.mark.parametrize("command", REFUSED_LAUNCHES)
@@ -673,7 +717,7 @@ def test_the_fence_lets_through_what_cannot_reach_the_desktop(
         ),
         (
             "python -c 'from hyprtweaker.application import main; main()'",
-            "python code that runs the app",
+            "python code that names the app's entry point",
             "tools/sandbox.py",
         ),
         ("hyprlock", "`hyprlock`", "leave it to the owner"),
