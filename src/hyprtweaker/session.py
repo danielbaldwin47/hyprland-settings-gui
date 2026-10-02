@@ -800,25 +800,36 @@ class Session:
             "load a theming tool's colors",
         )
 
-    def add_bridge(self, tool: str) -> bool:
+    def add_bridge(self, tool: str, *, source: ChosenSource | None = None) -> bool:
         """Give `tool` its Bridge entries and the Entrypoint its lines: one transaction.
 
-        What #166's `wire` calls before it touches the tool's own files. Never gates (#163):
-        a Color source change is `set_color_source` afterwards. `False` when the session is
-        read-only or the Entrypoint was hand-edited (`color_source_blocked` says why).
+        What #166's `wire` calls before it touches the tool's own files. Never gates (#163)
+        unless `source` is given: then every entry, the new ones included, takes its state
+        for that Color source in the same transaction. The Theming page's "Switch to <tool>"
+        on a backend not yet set up passes `Wallpaper(tool)`, so no reload ever loads both
+        backends. `False` when the session is read-only or the Entrypoint was hand-edited
+        (`color_source_blocked` says why).
         """
         if self.color_source_blocked is not None:
             return False
         spec = REGISTRY[tool]
 
-        def added(current: Sequence[BridgeEntry]) -> list[BridgeEntry]:
+        def added(current: Sequence[BridgeEntry]) -> Sequence[BridgeEntry]:
             kept = [entry for entry in current if entry.tool != tool]
-            return [*kept, *entries_for(spec, present=self._module_files_present(spec))]
+            entries = [*kept, *entries_for(spec, present=self._module_files_present(spec))]
+            if source is None:
+                return entries
+            return bridge_states_for(
+                source, entries, present=self._bridge_files_present(entries)
+            )
 
-        prospective = self._manifest().add_bridge(
-            spec, present=self._module_files_present(spec)
-        )
+        manifest = self._manifest()
+        prospective = manifest.with_bridges(added(manifest.bridges))
         return self._set_bridges(added, prospective, f"set up {spec.title}")
+
+    def manifest(self) -> Manifest:
+        """The Manifest as it is on disk now: what #166's `detect` and `unwire` take."""
+        return self._manifest()
 
     def remove_bridge(self, tool: str) -> bool:
         """Take `tool`'s Bridge entries and lines out: what #166's `unwire` calls first.
