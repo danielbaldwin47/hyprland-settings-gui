@@ -35,8 +35,10 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
+import main_loop
 import pytest
 from private_display import PINNED, pin_environment, session_display_clash, start_xvfb
 
@@ -57,6 +59,34 @@ def sandboxed_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.delenv("HYPRLAND_INSTANCE_SIGNATURE", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def released_windows() -> Iterator[None]:
+    """Destroy and release every window a test opened, when the test ends (#219).
+
+    GTK keeps a toplevel until it is destroyed, and a destroyed `MainWindow` still holds
+    itself through its handlers until `release` cuts them. A dozen `build_window` helpers
+    left both undone, so a serial run of this tier held 150 windows and aborted. Windows
+    open before the test began, such as a module-scoped one, are their fixture's to close.
+
+    The main loop runs first and last, as the app's would around a close: first for the
+    idles the test left queued, which may present a dialog on the window, and last for the
+    idle that releases a dialog the test closed.
+    """
+    from gi.repository import Gtk
+
+    before = set(Gtk.Window.get_toplevels())
+    yield
+    if not any(window not in before for window in Gtk.Window.get_toplevels()):
+        return
+    from hyprtweaker.ui.release import release
+
+    main_loop.settle("the test's queued idles, before its windows close")
+    for window in [each for each in Gtk.Window.get_toplevels() if each not in before]:
+        window.destroy()
+        release(window)
+    main_loop.settle("the closed windows' and dialogs' release")
 
 
 HOST_DISPLAY_OPT_IN = "HYPRTWEAKER_UI_HOST_DISPLAY"
