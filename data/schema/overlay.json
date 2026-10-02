@@ -1112,13 +1112,41 @@
       "title": "Active title weight",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab titles",
-      "order": 3
+      "order": 3,
+      "labels": {
+        "thin": "Thin",
+        "ultralight": "Ultralight",
+        "light": "Light",
+        "semilight": "Semilight",
+        "book": "Book",
+        "normal": "Normal",
+        "medium": "Medium",
+        "semibold": "Semibold",
+        "bold": "Bold",
+        "ultrabold": "Ultrabold",
+        "heavy": "Heavy",
+        "ultraheavy": "Ultraheavy"
+      }
     },
     "group:groupbar:font_weight_inactive": {
       "title": "Inactive title weight",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab titles",
-      "order": 4
+      "order": 4,
+      "labels": {
+        "thin": "Thin",
+        "ultralight": "Ultralight",
+        "light": "Light",
+        "semilight": "Semilight",
+        "book": "Book",
+        "normal": "Normal",
+        "medium": "Medium",
+        "semibold": "Semibold",
+        "bold": "Bold",
+        "ultrabold": "Ultrabold",
+        "heavy": "Heavy",
+        "ultraheavy": "Ultraheavy"
+      }
     },
     "group:groupbar:font_size": {
       "title": "Font size",

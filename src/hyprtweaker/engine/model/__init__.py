@@ -61,6 +61,8 @@ from .options import (
 )
 from .values import (
     COMPLEX_TYPES,
+    FONT_WEIGHT_NAMES,
+    FONT_WEIGHT_RANGE,
     Color,
     ComplexValue,
     CssGaps,
@@ -83,6 +85,8 @@ __all__ = [
     "COMPLEX_TYPES",
     "DISPLAY_KINDS",
     "ENTITY_NOUNS",
+    "FONT_WEIGHT_NAMES",
+    "FONT_WEIGHT_RANGE",
     "KEYBIND_KINDS",
     "UNSET",
     "Animation",

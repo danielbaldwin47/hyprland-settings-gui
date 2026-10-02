@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, fields, is_dataclass
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from ..schema import GetOptionKey, OptionType, ResolvedOption
@@ -346,6 +348,17 @@ class FontWeight:
 
     weight: int | str
 
+    @property
+    def number(self) -> int | None:
+        """The weight Hyprland reads this as, or `None` for a name it does not know.
+
+        Names match case-insensitively, as Hyprland lowercases before its lookup
+        (`LuaConfigFontWeight.cpp:28-31`).
+        """
+        if isinstance(self.weight, int):
+            return self.weight
+        return FONT_WEIGHT_NAMES.get(self.weight.lower())
+
     def __post_init__(self) -> None:
         if isinstance(self.weight, int) and self.weight < 0:
             raise ValueError(f"font weight cannot be negative: {self.weight}")
@@ -374,6 +387,38 @@ class FontWeight:
 
     def lua(self) -> str:
         return str(self.weight) if isinstance(self.weight, int) else lua_string(self.weight)
+
+
+FONT_WEIGHT_NAMES: Mapping[str, int] = MappingProxyType(
+    {
+        "thin": 100,
+        "ultralight": 200,
+        "light": 300,
+        "semilight": 350,
+        "book": 380,
+        "normal": 400,
+        "medium": 500,
+        "semibold": 600,
+        "bold": 700,
+        "ultrabold": 800,
+        "heavy": 900,
+        "ultraheavy": 1000,
+    }
+)
+"""Every font-weight name Hyprland 0.56.2 accepts, in weight order, with its weight.
+
+Copied from Hyprland's own table, `CFontWeightConfigValueData::WEIGHTS`
+(`src/config/shared/complex/ComplexDataTypes.hpp:159-160` at v0.56.2), which the Lua parser
+looks names up in (`src/config/lua/types/LuaConfigFontWeight.cpp:31`). Any other name is a
+config error ("font weight "extrabold" was not found"). A number is any non-negative integer
+to that parser; the app offers 100 to 1000, the range Pango's weights span
+(`FONT_WEIGHT_RANGE`). Proven against the binary by `tests/static/test_font_weight_names.py`.
+The Overlay's `labels` for the two font-weight settings name exactly these keys, in this
+order (`tests/unit/test_font_weight_labels.py`).
+"""
+
+FONT_WEIGHT_RANGE = range(100, 1001)
+"""The numbers a font-weight Row accepts: thin (100) to ultraheavy (1000)."""
 
 
 _LUA_ESCAPES = {

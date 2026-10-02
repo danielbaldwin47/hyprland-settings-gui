@@ -156,8 +156,8 @@ group:group_on_movetoworkspace | bool | toggle | - | - | default | - | - | - | -
 group:groupbar:enabled | bool | toggle | - | - | default | - | - | - | - | Group bar
 group:groupbar:disable_when_only | bool | toggle | - | - | default | group:groupbar:enabled=True | - | - | - | Hide when the group has one window
 group:groupbar:font_family | string | font-picker | null | Inherit the global font | default | group:groupbar:enabled=True | - | - | - | Font
-group:groupbar:font_weight_active | font_weight | font-weight | - | - | default | group:groupbar:enabled=True | - | - | - | Active title weight
-group:groupbar:font_weight_inactive | font_weight | font-weight | - | - | default | group:groupbar:enabled=True | - | - | - | Inactive title weight
+group:groupbar:font_weight_active | font_weight | font-weight | - | - | default | group:groupbar:enabled=True | - | thin=Thin/ultralight=Ultralight/light=Light/semilight=Semilight/book=Book/normal=Normal/medium=Medium/semibold=Semibold/bold=Bold/ultrabold=Ultrabold/heavy=Heavy/ultraheavy=Ultraheavy | - | Active title weight
+group:groupbar:font_weight_inactive | font_weight | font-weight | - | - | default | group:groupbar:enabled=True | - | thin=Thin/ultralight=Ultralight/light=Light/semilight=Semilight/book=Book/normal=Normal/medium=Medium/semibold=Semibold/bold=Bold/ultrabold=Ultrabold/heavy=Heavy/ultraheavy=Ultraheavy | - | Inactive title weight
 group:groupbar:font_size | int | int-range | - | - | default | group:groupbar:enabled=True | min=2,max=64 | - | px | Font size
 group:groupbar:gradients | bool | toggle | - | - | default | group:groupbar:enabled=True | - | - | - | Gradient backgrounds
 group:groupbar:height | int | int-range | - | - | default | group:groupbar:enabled=True | min=1,max=64 | - | px | Height
