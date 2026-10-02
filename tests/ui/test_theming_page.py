@@ -562,6 +562,50 @@ def test_the_window_reveal_opens_the_page_on_the_tool(tmp_path: Path, stub_tool:
     window.close()
 
 
+def _option_row(window: Any, name: str) -> Any:
+    return next(row for page in window.pages if (row := page.row(name)) is not None)
+
+
+def test_a_row_matugen_sets_says_so_opens_matugen_and_follows_the_color_source(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """#165: "Set by matugen" on the Row, its click lands on matugen's tab, and the pill goes
+    when matugen stops setting colours -- with no Option edited, through `window.sync`."""
+    from hyprtweaker.engine.bridge import ManualColors, Wallpaper
+    from hyprtweaker.ui.pages.tasks import entity_page_id
+    from hyprtweaker.ui.shell.window import MainWindow
+
+    stub_tool("matugen")
+    stub_tool("wallust")
+    put(tmp_path / MATUGEN_BRIDGE)
+    session, _ = make_session(tmp_path)
+    wired(session, "matugen", source="matugen")
+    window = MainWindow(session, application=started_application())
+    session.on_state_changed = window.sync
+    owned = _option_row(window, "general:col.active_border")
+    other = _option_row(window, "general:gaps_in")
+
+    assert owned.chrome.pill_labels == ("Set by matugen",)
+    assert other.chrome.pill_labels == ()
+    (button,) = owned.chrome.pill_buttons
+    window.theming_page.reveal_backend("wallust")  # so landing on matugen's tab is the click's
+    assert window.theming_page.shown_tab == "wallust"
+
+    button.emit("clicked")
+    main_loop.settle("the pill's reveal")
+
+    assert window._selected_section() == entity_page_id("theming")
+    assert window.theming_page.shown_tab == "matugen"
+
+    assert session.set_color_source(ManualColors())
+    assert owned.chrome.pill_labels == ()
+    assert owned.chrome.pill_buttons == ()
+
+    assert session.set_color_source(Wallpaper("matugen"))
+    assert owned.chrome.pill_labels == ("Set by matugen",)
+    window.close()
+
+
 def test_a_switch_whose_tool_has_not_run_names_the_run_and_does_it_once(
     tmp_path: Path, stub_tool: Any
 ) -> None:
