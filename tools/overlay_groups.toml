@@ -355,7 +355,7 @@ options = [
 ]
 
 # --- misc ------------------------------------------------------------------------------------
-# On the Tasks view these read "Miscellaneous · <title>".
+# On the Tasks view these read as their own title: "Miscellaneous" names no thing (#148, A4).
 
 [[misc]]
 title = "Wallpaper and splash"

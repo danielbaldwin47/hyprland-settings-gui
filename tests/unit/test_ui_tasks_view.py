@@ -540,14 +540,17 @@ def test_a_page_spanning_sections_lists_them_in_the_mappings_order() -> None:
     )
 
     groups = page_in(schema, "both", mapping).groups
-    sections = [group.title.split(" · ")[0] for group in groups]
 
+    # Ruling A4 of the #148 review: "Miscellaneous" names no thing, so its Groups lead bare;
+    # the other Section's still say whose they are, after them.
     assert [(group.title, group.description) for group in groups[:2]] == [
-        ("Miscellaneous · Swallowing", "A terminal hides while the app it opened is open."),
-        ("Miscellaneous · Other settings", ""),
+        ("Swallowing", "A terminal hides while the app it opened is open."),
+        ("Other settings", ""),
     ]
-    assert sections == sorted(sections, key=["Miscellaneous", "Groups"].index)
-    assert sections[-1] == "Groups"
+    titles = [group.title for group in groups]
+    assert not any(title.startswith("Miscellaneous") for title in titles)
+    first_group = next(i for i, title in enumerate(titles) if title.startswith("Groups · "))
+    assert all(title.startswith("Groups · ") for title in titles[first_group:])
 
 
 def test_entity_destinations_are_passed_through_for_the_shell_to_place() -> None:
@@ -755,3 +758,14 @@ def test_a_new_option_is_still_on_exactly_one_page() -> None:
     ]
 
     assert sorted(names) == sorted(placed_options())
+
+
+def test_a_group_on_the_page_its_section_names_is_not_prefixed_again() -> None:
+    """#148 hand-test 7, ruling A4: Rendering read "Rendering · Performance and quality"
+    beside unprefixed groups from Miscellaneous, while "OpenGL · NVIDIA workarounds" says
+    something the bare title would not."""
+    titles = [group.title for group in page_named("system.rendering").groups]
+
+    assert "Performance and quality" in titles
+    assert not any(title.startswith(("Rendering · ", "Miscellaneous · ")) for title in titles)
+    assert any(title.startswith("OpenGL · ") for title in titles)

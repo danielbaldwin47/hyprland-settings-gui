@@ -324,7 +324,7 @@ def _plan_page(
                 continue
             shown.append(option)
         groups.extend(
-            _under_section(schema, group, section) if multi else group
+            _under_section(schema, group, section, spec.title) if multi else group
             for group in plan_groups(schema, section, shown)
         )
 
@@ -361,17 +361,25 @@ def _plan_page(
     )
 
 
-def _under_section(schema: Schema, group: GroupPlan, section: str) -> GroupPlan:
-    """A Group on a Page spanning several Sections, headed by its Section's title.
+def _under_section(
+    schema: Schema, group: GroupPlan, section: str, page_title: str
+) -> GroupPlan:
+    """A Group on a Page spanning several Sections, headed by its Section's title when that
+    says something.
 
     On a single-Section Page the Group is exactly the Config view's, so a Page that happens
     to be one Section reads the same in both Views. On a Page spanning several -- Layouts
-    is four -- the Section's own title leads, because the alternative is every Section's
-    untitled lead Group merging into one heap of unrelated settings.
+    is four -- the Section's own title leads ("Dwindle layout · Split direction"), because
+    "Split direction" alone would not say whose. Not when it says nothing (ruling A4 of the
+    #148 review): the Section the Page is named for ("Rendering" on Rendering), and
+    Miscellaneous, which names no thing. An untitled lead Group keeps the bare Section title.
     """
     section_title = schema.section_title(section)
-    title = f"{section_title} · {group.title}" if group.title else section_title
-    return replace(group, title=title)
+    if not group.title:
+        return replace(group, title=section_title)
+    if section == "misc" or section_title == page_title:
+        return group
+    return replace(group, title=f"{section_title} · {group.title}")
 
 
 PLUGIN_GROUP_TITLE = "Plugin options"
