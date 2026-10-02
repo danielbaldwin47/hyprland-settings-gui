@@ -25,7 +25,7 @@ Three rules, each learned from a defect the schema layer already names:
    better information, and here there is none to be had: `getoption` has no spelling for
    "this key has no value", so a compositor asked about one answers with whatever the
    marker resolved to. Parsing that back would turn "same as the outer gaps" into four gaps
-   of -1. `ApplyTransaction._compare` already stops at "the live config sets this key" for
+   of -1. `transaction.compare` already stops at "the live config sets this key" for
    exactly this reason, and the two must not disagree.
 
    That holds even when something else has since overridden the key: the model records what

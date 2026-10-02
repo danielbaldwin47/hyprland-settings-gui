@@ -21,6 +21,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -387,3 +388,49 @@ def evaluate(
             errors=("evaluation record was not an object",), policy=policy, basedir=root
         )
     return _decode(payload, policy=policy, basedir=root)
+
+
+_ABSENT = object()
+
+
+def config_values(
+    module: Path, keys: Iterable[str], *, timeout: float = DEFAULT_TIMEOUT
+) -> dict[str, Any]:
+    """What a Module this app wrote sets for each dotted Lua key in `keys`, JSON-native.
+
+    Evaluated with consent granted, which is defensible only because of what the file is:
+    the app's own output, already required by the Entrypoint on every reload (the footing
+    `writer/binds.py` reads `binds.lua` back on). Never a foreign config. Plugin guards
+    answer as if the plugin were loaded, because the app wrote every plugin setting behind
+    one (#175).
+
+    A key the Module does not set is left out, and a later `hl.config` wins, as in Lua. A
+    missing file sets nothing. Raises `LuaUnavailable` without an interpreter: a caller
+    that would read "nothing" as "the Module sets nothing" has to be able to tell.
+    """
+    if not module.is_file():
+        return {}
+    recording = evaluate(
+        module, consent=Consent(evaluate=True), timeout=timeout, assume_plugins_loaded=True
+    )
+    tables = [
+        call.args
+        for call in recording.calls
+        if call.name == "config" and isinstance(call.args, dict)
+    ]
+    values: dict[str, Any] = {}
+    for key in keys:
+        for table in tables:
+            value = _lookup(table, key.split("."))
+            if value is not _ABSENT:
+                values[key] = value
+    return values
+
+
+def _lookup(table: dict[str, Any], path: list[str]) -> Any:
+    node: Any = table
+    for step in path:
+        if not isinstance(node, dict) or step not in node:
+            return _ABSENT
+        node = node[step]
+    return node
