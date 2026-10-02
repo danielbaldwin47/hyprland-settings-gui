@@ -7,6 +7,7 @@ Every test writes real files under a `ConfigPaths.rooted_at(tmp_path)` layout an
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import pytest
@@ -15,8 +16,10 @@ from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.scripting import (
     CallKind,
     IndirectUse,
+    LoadsFile,
     ScriptingScan,
     UnfinishedText,
+    UnsearchedFile,
     discovered_layouts,
     scan_scripting,
 )
@@ -236,6 +239,95 @@ def test_discovered_layouts_are_lua_names_deduplicated_and_sorted(tmp_path: Path
         "lua:alpha",
         "lua:zig",
     )
+
+
+def test_a_digit_lua_does_not_read_as_one_is_an_operator_not_a_crash(tmp_path: Path) -> None:
+    """`str.isdigit` accepts `²`, which no Lua number starts with: the scan once raised on
+    it, and took the General page's layout row down with it."""
+    paths = paths_with(tmp_path, user='x = \u00b2\nhl.layout.register("after", {})\n')
+
+    scan = scan_scripting(paths)
+
+    assert hits(scan) == [("layout", "after", "user.lua", 2)]
+    assert discovered_layouts(paths) == ("lua:after",)
+
+
+FUZZ_ALPHABET = (
+    b"hl.on(timer)layout register plugin load require dofile"
+    b"\"'[]=-{}\\\n\t 0123456789.eExX,;:#~<>"
+    + "\u00b2\u0663\u00e9\u2028\uff10".encode()
+    + bytes(range(0x80, 0x90))
+)
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_any_bytes_give_a_scan_and_never_raise(tmp_path: Path, seed: int) -> None:
+    """The scan reads a user's own file as text, so no content may make it raise: whatever
+    it cannot follow is a gap, and every hit and gap names the file it came from."""
+    rng = random.Random(seed)
+    paths = paths_with(tmp_path)
+    paths.user_lua.parent.mkdir(parents=True)
+    for _ in range(25):
+        size = rng.randrange(0, 160)
+        data = bytes(rng.choice(FUZZ_ALPHABET) for _ in range(size))
+        paths.user_lua.write_bytes(data)
+
+        scan = scan_scripting(paths)
+
+        assert isinstance(scan, ScriptingScan)
+        assert {item.path for item in (*scan.hits, *scan.gaps)} <= {paths.user_lua}
+        assert all(layout.startswith("lua:") for layout in discovered_layouts(paths))
+
+
+def test_a_file_the_scanner_fails_on_is_a_gap_and_the_other_file_still_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hyprtweaker.engine import scripting
+
+    real = scripting._tokens
+
+    def fail_on_user(source: str):  # type: ignore[no-untyped-def]
+        if "broken" in source:
+            raise IndexError("scanner bug")
+        return real(source)
+
+    monkeypatch.setattr(scripting, "_tokens", fail_on_user)
+    paths = paths_with(
+        tmp_path,
+        user='-- broken\nhl.layout.register("a", {})\n',
+        legacy='hl.layout.register("b", {})\n',
+    )
+
+    scan = scan_scripting(paths)
+
+    assert scan.gaps == (UnsearchedFile(path=paths.user_lua),)
+    assert hits(scan) == [("layout", "b", "legacy.lua", 1)]
+    assert discovered_layouts(paths) == ("lua:b",)
+
+
+def test_a_file_that_loads_another_is_a_gap_on_its_line(tmp_path: Path) -> None:
+    """Calls in a file `user.lua` pulls in are never read, so each place that pulls one in
+    says so: the list must not claim more than it knows."""
+    user = """\
+require("mine.binds")
+local util = require "util"
+dofile(os.getenv("HOME") .. "/x.lua")
+pcall(require, "optional")
+local t = { require = 1 }
+t.require("not the global")
+-- require("in a comment")
+"""
+    paths = paths_with(tmp_path, user=user)
+
+    scan = scan_scripting(paths)
+
+    assert scan.gaps == (
+        LoadsFile(path=paths.user_lua, line=1),
+        LoadsFile(path=paths.user_lua, line=2),
+        LoadsFile(path=paths.user_lua, line=3),
+        LoadsFile(path=paths.user_lua, line=4),
+    )
+    assert scan.hits == ()
 
 
 @pytest.mark.parametrize("raising", ["scan_scripting", "discovered_layouts"])

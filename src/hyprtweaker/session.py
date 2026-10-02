@@ -181,7 +181,8 @@ class AutoRevert:
     """The Options whose values were put back."""
 
     modules: tuple[str, ...]
-    """The App-dir Modules the errors blamed on this transaction's own write."""
+    """The App-dir Modules put back: the ones the errors blamed on this transaction's own
+    write, or the ones a failed write changed."""
 
     errors: tuple[str, ...]
     """The `configerrors` lines, `file:line` prefixes intact."""
@@ -192,6 +193,10 @@ class AutoRevert:
     False is the escalation ADR-0016 names -- "if the restore transaction itself errors ...
     escalate to the Banner and stop auto-writing until the user acts". The toast still says
     what was attempted; what it must not do is claim a recovery that did not happen."""
+
+    outcome: ApplyOutcome = ApplyOutcome.CONFIG_ERRORS
+    """What the reverted transaction ran into: Hyprland's rejection, or `WRITE_FAILED`
+    when the disk refused the write. The toast says which."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -2047,10 +2052,12 @@ class Session:
         if found or restored:
             self._spawn(self._write_retirement(applier, restored))
 
-        notices: list[Notice] = list(retirement.unannounced(remaining))
-        for extra in (UnkeptNotice.of(found, values), RenamedNotice.of(restored)):
-            if extra is not None:
-                notices.append(extra)
+        notices: list[Notice] = [
+            *retirement.unannounced(remaining),
+            *UnkeptNotice.of(found, values),
+        ]
+        if (renamed := RenamedNotice.of(restored)) is not None:
+            notices.append(renamed)
         for notice in notices:
             if self.on_notice is not None:
                 self.on_notice(notice)
@@ -2326,12 +2333,12 @@ class Session:
             self._load_monitors()
 
     def _reread_declarations(self) -> None:
-        """Adopt hand edits to the six declarative Modules, gated like the others.
+        """Adopt hand edits to the seven declarative Modules, gated like the others.
 
-        One gate over all six and one load for all six, for `_reread_rules`'s reason:
+        One gate over all seven and one load for all seven, for `_reread_rules`'s reason:
         `_load_declarations` splices misfiled entities to the kind they are, so re-reading
         one file without the others would drop whatever it found belonging to a list the
-        other five own.
+        other six own.
         """
         changed = False
         for module in self.DECLARATION_MODULES:
@@ -2475,14 +2482,14 @@ class Session:
     """The seven Modules `_load_declarations` reads: the six of #70 and `plugins.lua` (#174)."""
 
     def _load_declarations(self) -> bool:
-        """Read the six declarative Entity Modules into the model.
+        """Read the seven declarative Entity Modules into the model.
 
         The same shape as `_load_rules` and `_load_monitors`, one tier wider: every file
         feeds every list, so an entity someone hand-moved into the wrong Module comes back
         as what it is rather than vanishing -- and vanishing is not cosmetic here, because a
         list the model believes is empty is a Module the Writer prunes.
 
-        All six are adopted together or none is. Six files is where that rule starts to
+        All seven are adopted together or none is. Seven files is where that rule starts to
         look expensive, and it is exactly where it starts to matter: a single unparseable
         `gestures.lua` must not license the Writer to delete a user's `env.lua`, which is
         the one Module whose contents Hyprland will not restore on the next reload.
@@ -2545,10 +2552,10 @@ class Session:
         """One transaction finished: close its gestures, then recover or record.
 
         The order is the whole design. Closing first turns "which Options were mid-gesture?"
-        into a concrete delta; that delta is then either the thing to *undo automatically*
-        (Hyprland rejected our own write) or the thing to *remember* (it stands, so Ctrl+Z
-        should be able to take it back). A gesture can never be both, which is why the failed
-        one is never pushed rather than pushed and popped.
+        into a concrete delta; that delta is then either the thing to *take out again* (the
+        transaction does not stand, `_stands`) or the thing to *remember* (it stands, so
+        Ctrl+Z should be able to take it back). A gesture can never be both, which is why the
+        failed one is never pushed rather than pushed and popped.
         """
         if self._reverting:
             # The restore transaction's own result. It carries no gesture of the user's, and
@@ -2564,21 +2571,11 @@ class Session:
             return
 
         delta = self._close(result.keys)
-        entity_steps = self._settle_entities(result)
-        blamed = self._own_write_errors(result)
-        if blamed and self._may_auto_revert(delta):
-            # No Banner for this one. The auto-revert is about to reload, and the errors it
-            # is answering will be gone by the time the user could read about them -- the
-            # toast is what tells that story (ADR-0016 reserves one for exactly this).
-            self._auto_revert(result, delta, blamed)
+        stands = self._stands(result)
+        entity_steps, failed = self._settle_entities(result, stands=stands)
+        if not stands:
+            self._fell(result, delta, self._lists_before(failed))
             return
-        if blamed and not self._recovery_halted:
-            # Our own write, rejected, with nothing recorded to put back -- which the app
-            # cannot reach by editing, only by writing without an edit. Reverting blind would
-            # mean re-rendering the same model into the same bad bytes, so this reports and
-            # stops, and the Banner says so.
-            _log.error("own write rejected with no model delta to revert: %s", result.errors)
-            self._recovery_halted = True
 
         step = self._step(delta)
         self._undo.record(step)
@@ -2592,34 +2589,57 @@ class Session:
             return
         newest: Step | None = entity_steps[-1] if entity_steps else step
         if newest is not None and result.ok and self.on_recorded is not None:
-            # After `on_applied`, and only for a transaction that stands: the window shows one
-            # toast, and an offer to undo a change that did not land would be an offer to undo
-            # nothing. One toast per transaction, naming the newest gesture it carried.
+            # After `on_applied`, and only for a clean one: the window shows one toast, and a
+            # transaction that stands with a failure (a timeout, a `user.lua` error) has its
+            # failure to say. One toast per transaction, naming the newest gesture it carried.
             self.on_recorded(newest)
 
-    def _settle_entities(self, result: ApplyResult) -> list[EntityStep]:
-        """The Entity steps this result lets stand, in commit order; the rest are dropped.
+    def _stands(self, result: ApplyResult) -> bool:
+        """Whether this transaction's edits are kept: in the model, and on the undo stack.
+
+        The one verdict every step is recorded through -- Option, Entity, and any later kind
+        (#227). A transaction does **not** stand when Hyprland rejected a Module it wrote
+        (ADR-0016 §Auto-revert), when it aborted before writing, or when its write failed
+        part-way: its edits leave the model, and no step reaches the stack.
+
+        Everything else stands, because its edit is on disk: an error in a file this
+        transaction did not write (`user.lua`, ADR-0016's table), a read-back mismatch and a
+        compositor that went away ("saved but not applied"). So does a `TIMEOUT`: its fate is
+        unknown, not failed, and the re-read it triggers (`_repoll_if_timed_out`) is the check
+        -- a list that re-read changes takes its steps off the stack (`_forget_entities`).
+        """
+        if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+            return False
+        return not self._own_write_errors(result)
+
+    def _settle_entities(
+        self, result: ApplyResult, *, stands: bool
+    ) -> tuple[list[EntityStep], list[EntityStep]]:
+        """The Entity steps this result lets stand, and the ungrouped ones it failed.
 
         Every pending step with a serial up to `result.entities` was rendered by this
-        transaction. Ok: it is recorded, or handed to its undo group. Not ok: it is dropped,
-        and its group marked failed -- ADR-0016's failed gesture, never on the stack. A group
-        this result completes is merged here, and lands after the steps it was held beside.
+        transaction. Standing: it is recorded, or handed to its undo group. Not standing: it
+        is returned as failed for `_fell` to take out of the model, and a grouped one marks
+        its group failed -- ADR-0016's failed gesture, never on the stack; the group's owner
+        (a display countdown) puts its own lists back. A group this result completes is
+        merged here, and lands after the steps it was held beside. Both lists are in commit
+        order.
         """
         if result.entities is None:
-            return []
+            return [], []
         reported = [p for p in self._pending_entities if p.serial <= result.entities]
         self._pending_entities = [
             p for p in self._pending_entities if p.serial > result.entities
         ]
         steps: list[EntityStep] = []
+        failed: list[EntityStep] = []
         groups: dict[int, UndoGroup] = {}
         for pending in reported:
             if pending.group is None:
-                if result.ok:
-                    steps.append(pending.step)
+                (steps if stands else failed).append(pending.step)
                 continue
             groups[id(pending.group)] = pending.group
-            if result.ok:
+            if stands:
                 pending.group.held.append(pending.step)
             else:
                 pending.group.failed = True
@@ -2627,17 +2647,100 @@ class Session:
             merged = self._close_group(group)
             if merged is not None:
                 steps.append(merged)
-        return steps
+        return steps, failed
 
-    def _may_auto_revert(self, delta: Mapping[str, OptionValue]) -> bool:
+    def _lists_before(self, failed: Sequence[EntityStep]) -> dict[str, tuple[Any, ...]]:
+        """Each list the `failed` steps moved, as it was before the first of them.
+
+        Only lists that still read as the failed steps left them: an edit committed since is
+        built on top, and writing `before` over it would take that edit out too. Such a list
+        is left for its own transaction to settle.
+        """
+        merged = EntityStep.merge(failed, "")
+        if merged is None:
+            return {}
+        entities = self._model.entities
+        return {
+            edit.kind: edit.before
+            for edit in merged.edits
+            if tuple(getattr(entities, edit.kind)) == edit.after
+        }
+
+    def _fell(
+        self,
+        result: ApplyResult,
+        delta: Mapping[str, OptionValue],
+        lists: Mapping[str, tuple[Any, ...]],
+    ) -> None:
+        """A transaction that does not stand (`_stands`): take its edits out, record nothing.
+
+        `delta` and `lists` are the model as it was before the transaction's edits. Aborted,
+        nothing reached disk, so the model goes back and nothing is written. Rejected or
+        failed mid-write, the file may hold the edit, so the model goes back through a write
+        (`_auto_revert`) -- unless recovery is halted, when the edit is left where it is and
+        reported. Either way no step: Ctrl+Z still means the gesture before this one.
+        """
+        self._repoll_if_timed_out(result)
+        if result.outcome is ApplyOutcome.ABORTED:
+            self._restore(delta)
+            self._put_back(lists)
+            self._finish_failed(result)
+            self._changed()
+            return
+        modules = self._failed_modules(result)
+        if self._may_auto_revert(delta, lists):
+            # No Banner for this one. The auto-revert is about to reload, and the errors it
+            # is answering will be gone by the time the user could read about them -- the
+            # toast is what tells that story (ADR-0016 reserves one for exactly this).
+            self._undo_when_landed()
+            self._auto_revert(result, delta, lists, modules)
+            return
+        if modules and not (delta or lists) and not self._recovery_halted:
+            # Our own write, rejected, with nothing recorded to put back -- which the app
+            # cannot reach by editing, only by writing without an edit. Reverting blind would
+            # mean re-rendering the same model into the same bad bytes, so this reports and
+            # stops, and the Banner says so.
+            _log.error("own write rejected with no model delta to revert: %s", result.errors)
+            self._recovery_halted = True
+        self._finish_failed(result)
+
+    def _finish_failed(self, result: ApplyResult) -> None:
+        """Report a transaction that did not stand and is not being reverted."""
+        self._observe(result)
+        self._report(result)
+        # A Ctrl+Z waiting on a gesture this result failed is dropped, not run.
+        self._undo_when_landed()
+
+    def _put_back(self, lists: Mapping[str, tuple[Any, ...]]) -> None:
+        for kind, before in lists.items():
+            getattr(self._model.entities, kind)[:] = before
+
+    def _failed_modules(self, result: ApplyResult) -> tuple[str, ...]:
+        """The App-dir Modules a failed transaction may have left holding its edit.
+
+        For a rejection, the ones Hyprland blamed (`_own_write_errors`). For a write that
+        failed part-way, the ones the Journal saw change -- it records what the disk says,
+        not what was meant (`ApplyTransaction.run`).
+        """
+        if result.outcome is not ApplyOutcome.WRITE_FAILED:
+            return self._own_write_errors(result)
+        entries = self._journal.entries()
+        if entries and entries[-1].outcome == str(ApplyOutcome.WRITE_FAILED):
+            return entries[-1].modules
+        return ()
+
+    def _may_auto_revert(
+        self, delta: Mapping[str, OptionValue], lists: Mapping[str, tuple[Any, ...]]
+    ) -> bool:
         """Whether the app is still allowed to answer a rejected write by writing again.
 
-        Two gates, and ADR-0016 names both. There has to be a delta to put back -- reverting
-        blind would re-render the same model into the same bad bytes. And recovery must not
-        already have failed: "if the restore transaction itself errors ... stop auto-writing
-        until the user acts", which is a gate on the *next* rejection as much as on this one.
+        Two gates, and ADR-0016 names both. There has to be a delta to put back, Options or
+        Entity lists -- reverting blind would re-render the same model into the same bad
+        bytes. And recovery must not already have failed: "if the restore transaction itself
+        errors ... stop auto-writing until the user acts", which is a gate on the *next*
+        rejection as much as on this one.
         """
-        return bool(delta) and not self._recovery_halted
+        return bool(delta or lists) and not self._recovery_halted
 
     def _repoll_if_timed_out(self, result: ApplyResult) -> None:
         """ADR-0016 §Timeout: "re-poll once; if still unconfirmed, treat as a foreign-unknown
@@ -2648,6 +2751,12 @@ class Session:
         Guessing either way is worse than asking again, and the "foreign-unknown" treatment is
         exactly the re-read the app already performs for somebody else's reload -- so this
         routes to it rather than inventing a third recovery.
+
+        It is also the timed-out transaction's check (`_stands`): its steps are already on the
+        stack, in order, and the re-read drops those over any list it changes. The result
+        itself is never observed (`ApplyResult.reloaded`); the re-read's scan raises the
+        Banner from what the compositor now says. Every other outcome resets the once-only
+        guard, whether it stood or not.
         """
         if result.outcome is not ApplyOutcome.TIMEOUT or self._closing:
             self._repolled = False
@@ -2697,8 +2806,12 @@ class Session:
 
         Every finished reload lands here, clean ones included -- a clean reload is how a
         Banner *clears*, and a recovery that only ever raised one would leave the user
-        looking at a problem they had already fixed.
+        looking at a problem they had already fixed. A result that ran no reload, or whose
+        reload went unanswered, is dropped here, whichever transaction produced it: it learnt
+        nothing about the config, so the Banner stays as the last reload left it (#227).
         """
+        if not result.reloaded:
+            return
         self._note(
             result.errors,
             written=result.written,
@@ -2858,6 +2971,7 @@ class Session:
         # The restore re-read the model itself, so the Rows have moved; and its own reload's
         # errors are the current truth about the config, replacing the ones it was answering.
         self._observe(result)
+        self._repoll_if_timed_out(result)
         # After the observation, which clears the field: this notice is about what the
         # restore just did, so it has to survive the restore's own reload and nothing later.
         self._rescued, self._pending_rescue = self._pending_rescue, ()
@@ -3000,6 +3114,7 @@ class Session:
         if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
             _log.error("could not %s: %s", what, result.detail)
         self._observe(result)
+        self._repoll_if_timed_out(result)
         self._report(result)
         self._changed()
 
@@ -3009,9 +3124,13 @@ class Session:
         self,
         result: ApplyResult,
         delta: Mapping[str, OptionValue],
+        lists: Mapping[str, tuple[Any, ...]],
         modules: Sequence[str],
     ) -> None:
         """Put the model back and re-apply it, so the file goes back with it.
+
+        `delta` is the Options and `lists` the Entity lists, each as before the transaction.
+        An Entity-only revert carries no keys: the re-apply renders the whole model anyway.
 
         The model *is* the restore. Modules are rendered whole and deterministically
         (ADR-0010), so a model returned to its pre-transaction values renders byte-for-byte
@@ -3022,12 +3141,13 @@ class Session:
         No confirmation, per the ADR: instant apply has no cancel, and the bytes being
         restored were live and confirmed moments ago.
         """
-        _log.warning("Hyprland rejected our own write to %s; reverting", ", ".join(modules))
+        _log.warning("own write to %s did not stand (%s); reverting", modules, result.outcome)
         # Read before re-applying: right now the newest Journal entry for each Module is the
         # failed write, so its `before` digest is the Snapshot the revert has to reproduce.
         # A moment later the revert's own entry is newest, and its `before` is the bad bytes.
         expected = self._snapshot_digests(modules)
         self._restore(delta)
+        self._put_back(lists)
         self._changed()
         self._spawn(self._revert_transaction(result, tuple(delta), expected))
 
@@ -3059,6 +3179,7 @@ class Session:
                     modules=tuple(expected),
                     errors=result.errors,
                     restored=restored and not self._recovery_halted,
+                    outcome=result.outcome,
                 )
             )
         self._changed()

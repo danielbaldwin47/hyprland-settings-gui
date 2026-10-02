@@ -17,6 +17,7 @@ from _live_window import live_entity_window
 
 BARS = "/usr/lib/hyprland-plugins/libhyprbars.so"
 EXPO = "/usr/lib/hyprland-plugins/hyprexpo.so"
+BARS2 = "/opt/plugins/libborders-plus-plus.so"
 
 
 def plugin(path: str, *, enabled: bool = True) -> Any:
@@ -197,6 +198,105 @@ def test_alt_up_and_down_reorder_the_list(tmp_path: Path) -> None:
     assert window.undo_toast.get_title() == "Plugins reordered"
 
 
+def shortcut(row: Any, trigger: str) -> Any:
+    from gi.repository import Gtk
+
+    for controller in row.widget.observe_controllers():
+        if isinstance(controller, Gtk.ShortcutController):
+            for each in controller:
+                if each.get_trigger().to_string() == trigger:
+                    return each
+    raise AssertionError(f"no {trigger} shortcut on the row")
+
+
+def test_each_control_rebuilds_the_list_from_inside_its_own_handler_cleanly(
+    tmp_path: Path, capfd: Any
+) -> None:
+    """Spec #152 review finding 6: the switch, remove and Alt+Down each rebuild the list
+    while their own row's handler is still running, and the row they came from is released
+    then. The list must match the model afterwards, with no GTK critical on the way."""
+    import main_loop
+    from gi.repository import Gtk
+
+    session, window, applier = window_with(tmp_path, plugin(BARS), plugin(EXPO), plugin(BARS2))
+    window.present()
+    main_loop.settle("the window to map")
+    capfd.readouterr()
+
+    group_of(window).rows[0].enabled_switch.emit("state-set", False)
+    applier.settle()
+    main_loop.settle("the rebuild after the switch")
+    group_of(window).rows[1].remove_button.emit("clicked")
+    applier.settle()
+    main_loop.settle("the rebuild after the remove")
+    row = group_of(window).rows[0]
+    shortcut(row, "<Alt>Down").get_action().activate(
+        Gtk.ShortcutActionFlags(0), row.widget, None
+    )
+    applier.settle()
+    main_loop.settle("the rebuild after the move")
+
+    listed = [(p.path, p.enabled) for p in session.declarations("plugins")]
+    assert listed == [(BARS2, True), (BARS, False)]
+    assert [
+        (r.widget.get_subtitle(), r.enabled_switch.get_active()) for r in group_of(window).rows
+    ] == listed
+    assert "CRITICAL" not in capfd.readouterr().err
+    window.close()
+
+
+def test_a_loaded_list_answered_after_the_page_was_released_is_dropped(
+    tmp_path: Path, capfd: Any
+) -> None:
+    """The `plugin list` reply is asynchronous: one that lands after a View switch (or the
+    window's close) released the page must not rebuild the disposed group."""
+    import main_loop
+
+    from hyprtweaker.ui.pages.plan import View
+
+    session, window, _applier = window_with(tmp_path, plugin(BARS))
+    held: list[Any] = []
+    session.fetch_loaded_plugins = held.append
+    window.scripting_page.refresh()
+    released = group_of(window)
+    window.present()
+    main_loop.settle("the window to map")
+    window.set_view(View.TASKS if window.view is View.CONFIG else View.CONFIG)
+    main_loop.settle("the new View to build")
+    assert window.scripting_page.plugins is not released, "the precondition: a new page"
+    capfd.readouterr()
+
+    held[0](("hyprbars",))
+
+    assert "CRITICAL" not in capfd.readouterr().err
+    window.close()
+
+
+def test_after_alt_down_the_moved_plugin_keeps_the_focus(tmp_path: Path) -> None:
+    """The move rebuilds every row; without this a second Alt+Down needs a Tab back first."""
+    import main_loop
+    from gi.repository import Gtk
+
+    _session, window, applier = window_with(tmp_path, plugin(BARS), plugin(EXPO), plugin(BARS2))
+    window.present()
+    window._select_section(window.scripting_page.section)
+    main_loop.settle("the Scripting page to show")
+    row = group_of(window).rows[0]
+    row.widget.grab_focus()
+
+    shortcut(row, "<Alt>Down").get_action().activate(
+        Gtk.ShortcutActionFlags(0), row.widget, None
+    )
+    applier.settle()
+    main_loop.settle("the rebuild after the move")
+
+    moved = group_of(window).rows[1]
+    assert moved.widget.get_subtitle() == BARS
+    focus = window.get_focus()
+    assert focus is not None and (focus is moved.widget or focus.is_ancestor(moved.widget))
+    window.close()
+
+
 def test_adding_a_path_already_listed_is_refused_with_a_reason(tmp_path: Path) -> None:
     session, window, _applier = window_with(tmp_path, plugin(BARS))
     toasts: list[str] = []
@@ -208,13 +308,37 @@ def test_adding_a_path_already_listed_is_refused_with_a_reason(tmp_path: Path) -
     assert toasts == ["libhyprbars.so is already in the list"]
 
 
-def test_the_footer_slot_is_there_and_empty(tmp_path: Path) -> None:
-    """#175 fills it with the plugin-options sentence; until then it shows nothing."""
-    _session, window, _applier = window_with(tmp_path)
+PLUGIN_SETTINGS_FOOTER = (
+    "This version of Hyprland does not report the settings a plugin adds, so they are not "
+    "shown here. Set them in your user.lua."
+)
+
+
+def test_the_footer_says_plugin_settings_are_not_shown_and_where_to_set_them(
+    tmp_path: Path,
+) -> None:
+    """Hyprland 0.56.2's `descriptions` omits every plugin setting (ADR-0018): without this
+    sentence a user who loads a plugin finds no rows for it and no word on why."""
+    _session, window, _applier = window_with(tmp_path, plugin(BARS))
     footer = group_of(window).footer
 
-    assert footer.get_text() == ""
-    assert not footer.get_visible()
+    assert footer.get_text() == PLUGIN_SETTINGS_FOOTER
+    assert footer.get_visible()
+
+
+def test_the_footer_hides_once_hyprland_reports_a_plugins_settings(tmp_path: Path) -> None:
+    """A later Hyprland that lists them gives them rows, and the sentence would be false."""
+    from hyprtweaker.engine.schema import SupplementKind, supplement
+
+    session, window, _applier = window_with(tmp_path, plugin(BARS))
+    record = {"name": "plugin:hyprbars:bar_height", "description": "x", "default": 15}
+    session._schema = supplement(
+        session.schema, (record,), version="0.58.0", kind=SupplementKind.PLUGIN
+    )
+
+    window.scripting_page.refresh()
+
+    assert not group_of(window).footer.get_visible()
 
 
 def test_a_read_only_session_shows_the_list_but_offers_no_edit(tmp_path: Path) -> None:

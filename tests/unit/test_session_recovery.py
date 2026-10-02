@@ -24,7 +24,7 @@ from hyprtweaker.engine.ipc import IpcError
 from hyprtweaker.engine.model import UNSET
 from hyprtweaker.engine.paths import ENTRYPOINT_NAME, ConfigPaths
 from hyprtweaker.engine.state import Manifest
-from hyprtweaker.engine.writer import LuaSyntaxError, syntax
+from hyprtweaker.engine.writer import LuaSyntaxError, Writer, syntax
 from hyprtweaker.session import Session
 
 BORDER_SIZE = "general:border_size"
@@ -928,6 +928,124 @@ def test_a_regenerate_the_syntax_gate_refuses_journals_nothing(
 
     run_with_fake(
         scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_a_regenerate_whose_write_fails_keeps_the_banner_and_reports_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No reload ran, so nothing was learnt about the config: the Banner that was up stays
+    up. Before this, the failed write was observed as a clean reload and cleared it."""
+
+    def read_only(self: Writer, model: object, *, before_replace: object = None) -> bool:
+        raise OSError(30, "Read-only file system")
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        fake.conversation["j/configerrors"] = ENTRYPOINT_ERROR
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        entries = session.journal.entries()
+        reports: list[str] = []
+        session.on_applied = lambda result: reports.append(str(result.outcome))
+        monkeypatch.setattr(Writer, "regenerate_entrypoint", read_only)
+
+        assert session.regenerate_entrypoint()
+        await settle(session, runner)
+
+        assert session.health.unhealthy
+        assert reports == ["write-failed"]
+        assert session.journal.entries() == entries
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_an_apply_whose_write_fails_keeps_the_banner_and_reports_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec #152 review addendum 21: a write the filesystem refused ran no reload, so it
+    says nothing about the config. The Banner that was up stays up."""
+
+    def read_only(*_args: object, **_kwargs: object) -> object:
+        raise OSError(30, "Read-only file system")
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        fake.conversation["j/configerrors"] = USER_ERROR
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        reports: list[str] = []
+        session.on_applied = lambda result: reports.append(str(result.outcome))
+        monkeypatch.setattr(Writer, "write", read_only)
+
+        session.set_option(ROUNDING, 14)
+        await settle(session, runner)
+
+        assert session.health.unhealthy
+        assert reports == ["write-failed"]
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_an_apply_with_nothing_to_write_leaves_the_banner_as_it_was(tmp_path: Path) -> None:
+    """No bytes moved and no reload ran: the errors on screen are still the current ones."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        fake.conversation["j/configerrors"] = USER_ERROR
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        reports: list[str] = []
+        session.on_applied = lambda result: reports.append(str(result.outcome))
+
+        session.set_option(ROUNDING, 14)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+
+        assert reports == ["nothing-to-do"], "the precondition: a result that wrote nothing"
+        assert session.health.unhealthy
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_a_restore_whose_write_fails_keeps_the_banner_and_reports_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def read_only(*_args: object, **_kwargs: object) -> object:
+        raise OSError(30, "Read-only file system")
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        fake.conversation["j/configerrors"] = USER_ERROR
+        await foreign_reload(fake, session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        reports: list[str] = []
+        session.on_applied = lambda result: reports.append(str(result.outcome))
+        monkeypatch.setattr(Writer, "restore", read_only)
+
+        assert session.restore_last_good(GENERAL_MODULE)
+        await settle(session, runner)
+
+        assert session.health.unhealthy
+        assert reports == ["write-failed"]
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
     )
 
 

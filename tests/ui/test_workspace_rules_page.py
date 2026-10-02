@@ -538,7 +538,8 @@ def test_a_held_layout_the_list_lacks_joins_it_and_is_not_changed(tmp_path: Path
 
     combo = dialog.fields.row("layout")
 
-    assert choice(combo) == "lua:columns"
+    # Spelled as the General page's Layout row spells it: no file registers `columns`.
+    assert choice(combo) == "columns (not found)"
     assert [
         combo.get_model().get_string(i) for i in range(combo.get_model().get_n_items())
     ] == [
@@ -546,7 +547,7 @@ def test_a_held_layout_the_list_lacks_joins_it_and_is_not_changed(tmp_path: Path
         "master",
         "scrolling",
         "monocle",
-        "lua:columns",
+        "columns (not found)",
     ]
     dialog.fields.text_entry("monitor").set_text("DP-2")
     dialog.save()
@@ -587,7 +588,7 @@ def test_layouts_your_lua_files_register_join_the_layout_choices(tmp_path: Path)
 
     assert [
         combo.get_model().get_string(i) for i in range(combo.get_model().get_n_items())
-    ] == ["dwindle", "master", "scrolling", "monocle", "lua:foo"]
+    ] == ["dwindle", "master", "scrolling", "monocle", "foo (Lua layout)"]
 
 
 def test_a_value_a_typed_row_cannot_show_gets_a_raw_row_and_is_kept(tmp_path: Path) -> None:

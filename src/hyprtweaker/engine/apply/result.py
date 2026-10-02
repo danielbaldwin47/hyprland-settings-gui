@@ -221,6 +221,22 @@ class ApplyResult:
         return self.outcome in (ApplyOutcome.OK, ApplyOutcome.NOTHING_TO_DO)
 
     @property
+    def reloaded(self) -> bool:
+        """Hyprland answered a reload this transaction issued, so `errors` (empty included)
+        describe the config as it now is.
+
+        False for every outcome that learnt nothing about the config: no reload ran
+        (`ABORTED`, `WRITE_FAILED`, `NOTHING_TO_DO`), or one ran unanswered (`TIMEOUT`, whose
+        re-read is what finds out; `COMPOSITOR_GONE`). Their empty `errors` mean "not asked",
+        never "clean" -- reading them as clean would clear a Banner whose cause is on disk.
+        """
+        return self.outcome in (
+            ApplyOutcome.OK,
+            ApplyOutcome.CONFIG_ERRORS,
+            ApplyOutcome.READ_BACK_MISMATCH,
+        )
+
+    @property
     def confirmed(self) -> bool:
         """Every key this transaction wrote was actually checked against the compositor.
 

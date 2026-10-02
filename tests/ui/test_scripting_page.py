@@ -71,6 +71,15 @@ def sidebar_by_category(window: Any) -> dict[str, str]:
     return placed
 
 
+def descendants(widget: Any) -> list[Any]:
+    found = [widget]
+    child = widget.get_first_child()
+    while child is not None:
+        found.extend(descendants(child))
+        child = child.get_next_sibling()
+    return found
+
+
 def rows(page: Any) -> list[tuple[str, str, str]]:
     return [(group, row.title, row.subtitle) for group, row in page.listed_rows()]
 
@@ -135,12 +144,30 @@ def test_the_open_button_hands_the_file_to_the_window(tmp_path: Path) -> None:
 
 
 def test_the_inventory_says_it_is_best_effort(tmp_path: Path) -> None:
+    from gi.repository import Adw
+
     window = build_window(tmp_path, user=USER_LUA)
 
-    assert window.scripting_page.caveat == (
-        "Found by reading user.lua and legacy.lua. Calls built at runtime, in loops or "
-        "through other names may not appear."
-    )
+    leads = [
+        group.get_description()
+        for group in descendants(window.scripting_page.page)
+        if isinstance(group, Adw.PreferencesGroup) and group.get_title() == "In your Lua files"
+    ]
+    assert leads == [
+        "Found by reading user.lua and legacy.lua only, not the files they load. Calls built "
+        "at runtime, in loops or through other names may not appear."
+    ]
+
+
+def test_a_file_loaded_from_user_lua_is_a_row_saying_its_calls_are_not_listed(
+    tmp_path: Path,
+) -> None:
+    window = build_window(tmp_path, user='require("mine.binds")\nhl.on("kept", f)\n')
+
+    assert rows(window.scripting_page) == [
+        ("In your Lua files", "Loads another file; calls in it are not listed", "user.lua:1"),
+        ("Event handlers", "kept", "user.lua:2"),
+    ]
 
 
 def test_an_empty_inventory_still_shows_the_page_with_one_sentence(tmp_path: Path) -> None:
@@ -188,22 +215,33 @@ def test_what_could_not_be_read_is_shown_beside_what_was_found(tmp_path: Path) -
 def test_a_scanner_crash_shows_a_row_instead_of_breaking_the_window(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from hyprtweaker.ui.pages import scripting
+    from hyprtweaker.engine import scripting
 
     def crash(*_args: object) -> object:
         raise RuntimeError("scanner bug")
 
-    monkeypatch.setattr(scripting, "scan_scripting", crash)
+    monkeypatch.setattr(scripting, "_tokens", crash)
 
     window = build_window(tmp_path, user=USER_LUA)
 
     assert rows(window.scripting_page) == [
         (
             "In your Lua files",
-            "Could not search your Lua files",
-            "This list is for reading only, so your settings are not affected.",
+            "Could not search user.lua",
+            "Nothing in it is listed. This list is for reading only, so your settings are "
+            "not affected.",
         )
     ]
+
+
+def test_a_digit_lua_does_not_read_as_one_still_builds_the_layout_row_and_the_page(
+    tmp_path: Path,
+) -> None:
+    """`x = ²` once raised out of the scan and took the General page's layout row down."""
+    window = build_window(tmp_path, user='x = \u00b2\nhl.layout.register("cols", {})\n')
+
+    assert rows(window.scripting_page) == [("Custom layouts", "cols", "user.lua:2")]
+    assert "lua:cols" in window._layout_choices()
 
 
 def test_showing_the_page_reads_the_files_again(tmp_path: Path) -> None:
