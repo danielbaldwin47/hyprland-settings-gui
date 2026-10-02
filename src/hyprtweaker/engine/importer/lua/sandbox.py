@@ -320,7 +320,11 @@ def evaluate(
 
     interpreter = lua_binary()
     if interpreter is None:
-        raise LuaUnavailable("no Lua interpreter found (tried " + ", ".join(INTERPRETERS) + ")")
+        raise LuaUnavailable(
+            "Reading a Lua config needs Lua, which is not installed. Install Lua ("
+            + ", ".join(INTERPRETERS[:-1])
+            + f" or {INTERPRETERS[-1]}) and try again."
+        )
 
     entry = entry.resolve()
     root = (basedir or entry.parent).resolve()
@@ -349,7 +353,10 @@ def evaluate(
             )
         except subprocess.TimeoutExpired:
             return Recording(
-                errors=(f"evaluation did not finish within {timeout:g}s",),
+                errors=(
+                    f"Your config took longer than {timeout:g} seconds to run, so reading "
+                    "it was stopped.",
+                ),
                 policy=policy,
                 basedir=root,
             )

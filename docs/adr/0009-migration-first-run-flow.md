@@ -61,14 +61,20 @@ Five steps, each an `Adw.NavigationView` subpage in one dialog (prototyped in #7
   a new risky piece and gets its own prototype before the spec.
 
   Reading a `.lua` runs it, so the wizard asks first, on a page before Preview: "Reading your
-  hyprland.lua means running it once in a sandbox: no commands run, no files change." with
+  hyprland.lua means running it once: none of its commands run and no files change." with
   "Read it" and "Not now" (the default; it closes the wizard having read nothing). The read
   is blocked (`Policy.BLOCK`): the config's commands and writes are faked. When that blocked
   read comes back empty (no Option, no Entity) or erroring *and* it tried `os.execute` or
-  `io.popen`, a second page lists those commands verbatim and offers to run them for real
-  (`Policy.PASSTHROUGH`); its safe exit is the default, and the run-for-real button is never
-  default or suggested. Neither consent is remembered: every wizard run asks again. Import…
-  of any `.lua` opens on the consent page. (Decided on inbox #79, 2026-10-01; #190.)
+  `io.popen`, a second page lists those commands verbatim, with the file deletes and moves
+  that running for real would also do and how often each repeats, says others may run, and
+  offers to run them for real (`Policy.PASSTHROUGH`); its safe exit is the default, and the
+  run-for-real button is never default or suggested, and is unclickable until clicks queued
+  behind the read have drained. When the erroring read still imported settings, the page
+  says how many and adds "Continue without running them", which is then the default and
+  goes to the Preview of that read. Neither consent is remembered: every wizard run asks
+  again. Import… of any `.lua` opens on the consent page. (Decided on inbox #79,
+  2026-10-01; #190. Wording, listing and Continue decided in the #150 review, owner calls 2
+  and 3, 2026-10-02.)
 - Either way, every key present in the source is marked **set** (ADR-0005 tri-state), and
   import provenance (date, source hash) lands in the Manifest.
 
@@ -111,8 +117,11 @@ Requires a live session; without an IPC socket the wizard runs Detect/Preview on
    - **Bind count** is hard. The expected count is what the Writer emits (`live_bind_count`: a
      disabled bind is a comment and a function-valued one is never written), and the check
      is `live >= expected`, because `legacy.lua` and preserved scripts can register more. It
-     is hard only because a Harness run over every `tests/corpus/` rice showed no false
-     rollback; a config that loads with no keybinds is ADR-0016's emergency.
+     is hard only because a Harness run over the `tests/corpus/` rices showed no false
+     rollback; a config that loads with no keybinds is ADR-0016's emergency. That run covers
+     six of the seven: ml4w stages one file and no Entities until #206. Two of the six, hyde
+     and jakoolit, still roll back on `configerrors` the importer itself generates; the run
+     pins those errors per rice until #205 removes them.
    - **Workspace-rule count** and **monitor arrangement** are soft: reported on the Keep or
      roll back page under "What this could not confirm", never a rollback, because each
      compares against what Hyprland *did* with a request (merged a selector, picked the

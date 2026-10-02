@@ -168,6 +168,11 @@ class Applier:
         """
         return self._queue.commit_entities()
 
+    def force_write(self) -> None:
+        """Write the model and reload although no Option or Entity changed: the Module
+        itself must change, as when retirement drops a key the model cannot hold."""
+        self._queue.commit_entities()
+
     async def apply(self, *names: str) -> ApplyResult:
         """Commit and await the transaction that carries `names`."""
         return await self._queue.apply(*names)

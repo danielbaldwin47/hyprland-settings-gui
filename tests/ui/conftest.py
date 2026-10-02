@@ -88,7 +88,9 @@ def ui_unavailable() -> str | None:
 
     # GDK reads these only while it opens its display, and the Harness tier reads the host
     # session from them at test time when both tiers share a process, so restore them.
-    saved = {name: os.environ.get(name) for name in PINNED}
+    # Not GTK_A11Y: GTK reads it at the first widget, after this returns, and restored it
+    # put every test widget on the desktop's accessibility bus.
+    saved = {name: os.environ.get(name) for name in PINNED if name != "GTK_A11Y"}
     pin_environment(os.environ, display)
     try:
         return open_display()

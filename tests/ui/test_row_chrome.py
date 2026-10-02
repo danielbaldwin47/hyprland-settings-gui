@@ -44,12 +44,15 @@ class FakeSession:
         self.overridden: frozenset[str] = frozenset()
         self.device_overrides: dict[str, tuple[str, ...]] = {}
         self.live_hyprland = live_hyprland
+        self.unknown: frozenset[str] = frozenset()
+        """What `unknown_to_version` answers: the Session's own rule is tested on a real
+        Session (`test_session_live_version.py`), so the fake holds the answer."""
         self.retired: dict[str, str] = {}
         self.model = ConfigModel(SCHEMA)
         self.applied: list[str] = []
 
     def unknown_to_version(self, option: ResolvedOption) -> bool:
-        return self.live_hyprland is not None and option.name not in self.live_hyprland.names
+        return option.name in self.unknown
 
     def retired_in(self, option: ResolvedOption) -> str | None:
         return self.retired.get(option.name)
@@ -311,6 +314,7 @@ def test_a_row_the_running_hyprland_lacks_says_so_and_still_writes() -> None:
     """#181: the pill informs, the control stays live, and an edit is written as before."""
     live = LiveHyprland("0.56.0", tuple({"name": o.name} for o in SCHEMA if o.name != ROUNDING))
     session = FakeSession(live_hyprland=live)
+    session.unknown = frozenset({ROUNDING})
     row = build_row(ROUNDING, session)
 
     assert row.chrome.pill_labels == ("Not in this Hyprland",)

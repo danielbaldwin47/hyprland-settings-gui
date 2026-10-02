@@ -59,9 +59,13 @@ class LiveHyprland:
 def parse_release_version(text: str) -> str | None:
     """`"0.56.2"` from a `version` field, or `None` for anything that is not a release.
 
-    A git build (`0.56.2-12-gabcdef`) or a packager's `unknown` answers `None` rather than
-    a guess: degrading onto the wrong Schema offers options the compositor rejects, and the
-    newest Schema is the app's long-standing answer to "version not known".
+    Anything else (a packager's `unknown`, a `0.56.2-12-gabcdef`) answers `None` rather
+    than a guess: degrading onto the wrong Schema offers options the compositor rejects,
+    and the newest Schema is the app's long-standing answer to "version not known". A git
+    build is not such a case: Hyprland puts its distance from the tag in `tag` and
+    `commits`, and `version` stays the bare number of the release it builds on, so it
+    reads as that release (from the field layout of a captured 0.56.2 reply; no git build
+    has been probed).
     """
     match = _RELEASE_VERSION.fullmatch(text.strip())
     return match.group(1) if match is not None else None

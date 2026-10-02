@@ -9,10 +9,11 @@ So the catalog is curated, and honest about which half is which:
 
 - **the path set** is transcribed from the stub's namespace classes and is complete;
 - **argument specs** are hand-written, and exist for the dispatchers whose argument shape
-  is actually known from probing. Everything else is `free_form`: the editor
-  offers a key/value table rather than a generated form (`coverage()` counts them).
+  is actually known from probing. Everything else is free-form (it carries a
+  `free_form_reason`): the editor offers a key/value table rather than a generated form
+  (`coverage()` counts them).
 
-`free_form` is a real answer, not a placeholder for one. A guessed form is worse than no
+Free-form is a real answer, not a placeholder for one. A guessed form is worse than no
 form -- it would present invented field names as though Hyprland documented them, and a
 wrong key is either a config error or a silently ignored no-op. A free-form table lets a
 user write the call they already know how to write, and the round-trip through `binds.lua`
@@ -38,7 +39,8 @@ visibly changes state. The record is `tests/golden/dispatcher-probe-0.56.2.json`
 lists every key the compositor read, because the bind editor rebuilds a call from the listed
 keys alone and a missing one would be dropped from a saved bind on its next edit. A shape
 `ArgSpec` cannot say (exactly-one-of keys, alternative call shapes) or a key no probe could
-confirm stays `free_form`, with its reason on the entry.
+confirm stays free-form, with its reason on the entry: the sentence the bind editor shows
+the user above the raw table, and a comment beside the entry for the probe evidence.
 
 Engine-side and GTK-free on purpose: the picker is UI, but "what dispatchers exist" is a
 fact about Hyprland, and the Binds writer needs it to validate a path it is about to emit.
@@ -77,13 +79,12 @@ class Dispatcher:
     """What the picker calls it."""
 
     args: tuple[ArgSpec, ...] = ()
-    """Curated argument specs. Empty plus `free_form` means "shape unknown"."""
+    """Curated argument specs. Empty plus a `free_form_reason` means "shape unknown"."""
 
-    free_form: bool = False
-    """Offer a raw key/value table instead of a generated form."""
-
-    free_form_reason: str = ""
-    """Why no generated form is honest, in one line. Required of every `free_form` entry."""
+    free_form_reason: str | None = None
+    """Set, the editor offers a raw key/value table instead of a generated form, and shows
+    this sentence above it: what the action takes, or why no form is honest, in the user's
+    words (#150 review, finding 17). `None` for a curated or plain entry."""
 
     positional: bool = False
     """Takes bare arguments rather than a table (`hl.dsp.submap("resize")`)."""
@@ -104,7 +105,13 @@ def _plain(path: str, label: str) -> Dispatcher:
 
 def _free_form(path: str, label: str, why: str) -> Dispatcher:
     """A dispatcher no generated form can describe truthfully, and the reason, in one line."""
-    return Dispatcher(path=path, label=label, free_form=True, free_form_reason=why)
+    return Dispatcher(path=path, label=label, free_form_reason=why)
+
+
+UNCONFIRMED_KEYS = (
+    "Hyprland does not say which settings this action reads, so the app has no form for it."
+)
+"""The free-form reason for a dispatcher whose keys no probe could confirm."""
 
 
 WINDOW = ArgSpec(
@@ -190,10 +197,10 @@ CATALOG: tuple[Dispatcher, ...] = (
         args=(ArgSpec(name="data", required=True, label="Event data"),),
         positional=True,
     ),
-    _free_form(
+    _free_form(  # exactly-one-of keys, which `ArgSpec` cannot say
         "focus",
         "Move focus",
-        "takes exactly one of direction, monitor, workspace, window, urgent_or_last or last",
+        "Give exactly one of: direction, monitor, workspace, window, urgent_or_last or last.",
     ),
     Dispatcher(
         path="layout",
@@ -254,16 +261,9 @@ CATALOG: tuple[Dispatcher, ...] = (
     ),
     # --- group ------------------------------------------------------------------------
     Dispatcher(path="group.toggle", label="Toggle group", args=(WINDOW,)),
-    _free_form(
-        "group.lock",
-        "Lock the group",
-        "its action only shows when fired at a grouped window, so no probe confirmed the key",
-    ),
-    _free_form(
-        "group.lock_active",
-        "Lock the active group",
-        "its action only shows when fired at a grouped window, so no probe confirmed the key",
-    ),
+    # Their `action` only shows when fired at a grouped window, so no probe confirmed the key.
+    _free_form("group.lock", "Lock the group", UNCONFIRMED_KEYS),
+    _free_form("group.lock_active", "Lock the active group", UNCONFIRMED_KEYS),
     Dispatcher(path="group.next", label="Focus the next window in the group", args=(WINDOW,)),
     Dispatcher(
         path="group.prev", label="Focus the previous window in the group", args=(WINDOW,)
@@ -273,11 +273,8 @@ CATALOG: tuple[Dispatcher, ...] = (
         label="Focus a group member",
         args=(ArgSpec(name="index", type="int", required=True, label="Index"), WINDOW),
     ),
-    _free_form(
-        "group.move_window",
-        "Move a window out of the group",
-        "the compositor reads no key when it is built, and `forward` was never seen to act",
-    ),
+    # The compositor reads no key when it is built, and `forward` was never seen to act.
+    _free_form("group.move_window", "Move a window out of the group", UNCONFIRMED_KEYS),
     # --- window -----------------------------------------------------------------------
     Dispatcher(path="window.close", label="Close the window", args=(WINDOW,)),
     Dispatcher(path="window.kill", label="Force-kill the window", args=(WINDOW,)),
@@ -287,11 +284,8 @@ CATALOG: tuple[Dispatcher, ...] = (
     Dispatcher(path="window.pseudo", label="Toggle pseudo-tiling", args=(WINDOW, ACTION)),
     _plain("window.bring_to_top", "Bring the window to the top"),
     _plain("window.toggle_swallow", "Toggle swallowing"),
-    _free_form(
-        "window.deny_from_group",
-        "Deny the window from a group",
-        "the compositor reads no key when it is built, and an `action` was never seen to act",
-    ),
+    # The compositor reads no key when it is built, and an `action` was never seen to act.
+    _free_form("window.deny_from_group", "Deny the window from a group", UNCONFIRMED_KEYS),
     Dispatcher(
         path="window.fullscreen",
         label="Toggle fullscreen",
@@ -341,15 +335,16 @@ CATALOG: tuple[Dispatcher, ...] = (
             WINDOW,
         ),
     ),
-    _free_form(
+    _free_form(  # exactly-one-of keys, as the compositor's own error lists them
         "window.move",
         "Move the window",
-        "takes exactly one of direction, x and y, workspace, monitor or a group move",
+        "Give exactly one of: direction, x and y, workspace, into_group or out_of_group.",
     ),
-    _free_form(
+    _free_form(  # three alternative call shapes
         "window.resize",
         "Resize the window",
-        "three call shapes: no arguments, x and y with relative, or keep_aspect_ratio",
+        "Leave it empty, give x and y (add relative = true to resize by that much), or give "
+        "keep_aspect_ratio.",
     ),
     Dispatcher(
         path="window.set_prop",
@@ -360,10 +355,10 @@ CATALOG: tuple[Dispatcher, ...] = (
             WINDOW,
         ),
     ),
-    _free_form(
+    _free_form(  # exactly-one-of keys
         "window.swap",
         "Swap the window",
-        "takes exactly one of direction, target, next or prev",
+        "Give exactly one of: direction, target, next or prev.",
     ),
     # --- workspace --------------------------------------------------------------------
     Dispatcher(
@@ -443,15 +438,17 @@ class Coverage:
 
 
 def coverage() -> Coverage:
-    """The curated / plain / free_form split of the catalog (#126).
+    """The curated / plain / free-form split of the catalog (#126).
 
-    `free_form` is a valid answer and this is where it is counted, so the number can only
+    Free-form is a valid answer and this is where it is counted, so the number can only
     fall for a reason a probe gave: an entry leaves the group when a nested compositor has
     shown a form that does not lose a key (`tests/integration/test_dispatcher_probe.py`).
     """
     curated = tuple(entry.path for entry in CATALOG if entry.args)
-    free = tuple(entry.path for entry in CATALOG if entry.free_form)
-    plain = tuple(entry.path for entry in CATALOG if not entry.args and not entry.free_form)
+    free = tuple(entry.path for entry in CATALOG if entry.free_form_reason is not None)
+    plain = tuple(
+        entry.path for entry in CATALOG if not entry.args and entry.free_form_reason is None
+    )
     return Coverage(curated=curated, plain=plain, free_form=free)
 
 
@@ -470,6 +467,7 @@ __all__ = [
     "CATALOG",
     "EXEC_PATH",
     "NAMESPACE_LABELS",
+    "UNCONFIRMED_KEYS",
     "ArgSpec",
     "ArgType",
     "Coverage",

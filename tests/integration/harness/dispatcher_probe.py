@@ -657,9 +657,9 @@ def check_entry(record: ProbeRecord, entry: Dispatcher) -> list[str]:
 
     Pure: it reads the record, not a compositor, so the unit tier can run it on every
     commit against the committed record, and a release check can run it on a fresh one.
-    A `free_form` entry makes no claim, so it has nothing to disagree with.
+    A free-form entry makes no claim, so it has nothing to disagree with.
     """
-    if entry.free_form or entry.path not in record.dispatchers:
+    if entry.free_form_reason is not None or entry.path not in record.dispatchers:
         return []
     data = record.dispatchers[entry.path]
     problems: list[str] = []
@@ -733,7 +733,7 @@ def generated_calls(entry: Dispatcher) -> Iterator[tuple[str, str]]:
 
 def check_generated_calls(nested: NestedHyprland, entry: Dispatcher) -> list[str]:
     """Ask the compositor whether the calls the editor would write for `entry` load."""
-    if entry.free_form:
+    if entry.free_form_reason is not None:
         return []
     problems = []
     for label, lua in generated_calls(entry):

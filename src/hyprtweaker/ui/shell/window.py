@@ -500,7 +500,8 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _explain_unavailable_import(self, popover: Gtk.PopoverMenu) -> None:
-        """Say why Import is greyed out, in the Banner's own sentence (#101).
+        """Say why Import is greyed out, in the Banner's own words (#101), less its "settings
+        are read-only", which is about the Pages, not about importing.
 
         Below Hyprland 0.56 the compositor reads hyprlang only, so the wizard would write a
         Lua file it cannot load. The action is disabled in `_install_actions`; this is the
@@ -515,7 +516,7 @@ class MainWindow(Adw.ApplicationWindow):
                 type(widget).__name__ == "GtkModelButton"
                 and widget.get_property("text") == IMPORT_LABEL
             ):
-                widget.set_tooltip_text(self._session.health.title)
+                widget.set_tooltip_text(f"{self._session.unsupported_reason}.")
                 return
             child = widget.get_first_child()
             while child is not None:

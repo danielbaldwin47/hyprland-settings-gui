@@ -15,7 +15,8 @@ start, **before the first write**, in this order:
     writer.set_retired(model, landed(<manifest on disk>, restored).retired)
 
 `Session._retire_and_restore` runs it. `detect`, `retire`, `restore` and `landed` are pure
-over the Manifest; `capture` is the one reader. `unannounced(remaining)` is the notice.
+over the Manifest; `capture` is the one reader. `unannounced(remaining)` is the notice, and
+`UnkeptNotice.of` names what `capture` could not read, so nothing is dropped unannounced.
 A rename runs through the same pass: the old name is detected and retired, and `restore`
 hands its value straight to the Option that names it in `renamed_from` -- so a notice of
 "retired this release" lists `found` less what `restored` took back under a new name.
@@ -197,15 +198,26 @@ def restore(
 def _taker(
     name: str, entry: RetiredValue, schema: Schema, live: LiveNames | None
 ) -> ResolvedOption | None:
-    """The Option that takes a kept value back now, if any."""
+    """The Option that takes a kept value back now, if any.
+
+    Stricter than `emittable` with a snapshot: an older Hyprland lacking the name is `Not
+    in this Hyprland`, which keeps writes going, but putting a kept value back into a
+    compositor without the key is a config error. So a running compositor must name it.
+    """
+
+    def takes(taker: str) -> bool:
+        if live is not None and taker not in live.names:
+            return False
+        return emittable(taker, schema, live)
+
     option = schema.get(name)
     if option is not None:
         returned = live is not None or version_key(entry.retired_in) <= version_key(
             schema.hyprland_version
         )
-        return option if returned and emittable(name, schema, live) else None
+        return option if returned and takes(name) else None
     renamed = next((each for each in schema if each.renamed_from == name), None)
-    return renamed if renamed is not None and emittable(renamed.name, schema, live) else None
+    return renamed if renamed is not None and takes(renamed.name) else None
 
 
 def landed(manifest: Manifest, restored: Sequence[Restoration]) -> Manifest:
@@ -246,6 +258,25 @@ class RenamedNotice:
             (each.retired_name, each.option.name) for each in restored if each.renamed
         )
         return cls(tuple(sorted(moved))) if moved else None
+
+
+@dataclass(frozen=True, slots=True)
+class UnkeptNotice:
+    """This start's notice for Options a release removed whose values `capture` could not
+    read (no Lua, or a Module deleted or hand-edited): the write drops them, and the user
+    is told so rather than finding them gone. Nothing records it: once the keys are gone,
+    the next start detects nothing."""
+
+    release: str
+    names: tuple[str, ...]
+    """Colon-form names, sorted."""
+
+    @classmethod
+    def of(cls, found: Sequence[Retirement], values: Mapping[str, Any]) -> UnkeptNotice | None:
+        """The notice for the found names `values` lacks, or `None` when every one was
+        read. One start detects under one release, so one notice covers them."""
+        lost = sorted(each.name for each in found if each.name not in values)
+        return cls(found[0].retired_in, tuple(lost)) if lost else None
 
 
 def unannounced(manifest: Manifest) -> tuple[RetiredNotice, ...]:
