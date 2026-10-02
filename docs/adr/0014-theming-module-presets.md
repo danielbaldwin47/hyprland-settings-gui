@@ -42,7 +42,7 @@ In scope for v1. Export writes a **Theme archive** — `<slug>.hyprtweaker-theme
 
 ## Consequences
 
-- Source switching regenerates the Entrypoint (require gating), so it rides the existing Apply pipeline — no new write path.
+- Source switching regenerates the Entrypoint (require gating), so it rides the existing Apply pipeline — no new write path: amended during #163, it is a queued Entrypoint transaction, Quarantine's (one Journal entry, one Entrypoint write, one reload), since an Apply transaction renders the model and the model does not describe the Entrypoint; a Preset applying its colours records the gate and lets its own Apply transaction carry the Entrypoint.
 - The module edits tool-owned config files outside the App dir (matugen/wallust config stanzas) — like the wizard's output-flip in ADR-0006, behind the user's explicit action.
 - Per-backend parameter UI is data (like Template packs), so a third backend later is additive.
 - Local sharing is trivially the JSON file; the archive format exists only to carry the wallpaper.
