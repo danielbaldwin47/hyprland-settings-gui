@@ -483,9 +483,9 @@ def test_an_import_never_replaces_a_preset_or_an_image(tmp_path: Path) -> None:
 
 
 def test_deleting_an_imported_preset_deletes_its_image(tmp_path: Path) -> None:
-    store = PresetStore(tmp_path / "presets")
+    store = PresetStore(tmp_path / "app" / "presets")
     slug, _ = store.add(nord(), ("png", png()))
 
     store.delete(slug)
 
-    assert tree(tmp_path) == {"presets": None, "presets/wallpapers": None}
+    assert tree(tmp_path / "app") == {"presets": None, "presets/wallpapers": None}
