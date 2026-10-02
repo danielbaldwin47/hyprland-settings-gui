@@ -208,13 +208,37 @@ def test_adding_a_path_already_listed_is_refused_with_a_reason(tmp_path: Path) -
     assert toasts == ["libhyprbars.so is already in the list"]
 
 
-def test_the_footer_slot_is_there_and_empty(tmp_path: Path) -> None:
-    """#175 fills it with the plugin-options sentence; until then it shows nothing."""
-    _session, window, _applier = window_with(tmp_path)
+PLUGIN_SETTINGS_FOOTER = (
+    "This version of Hyprland does not report the settings a plugin adds, so they are not "
+    "shown here. Set them in your user.lua."
+)
+
+
+def test_the_footer_says_plugin_settings_are_not_shown_and_where_to_set_them(
+    tmp_path: Path,
+) -> None:
+    """Hyprland 0.56.2's `descriptions` omits every plugin setting (ADR-0018): without this
+    sentence a user who loads a plugin finds no rows for it and no word on why."""
+    _session, window, _applier = window_with(tmp_path, plugin(BARS))
     footer = group_of(window).footer
 
-    assert footer.get_text() == ""
-    assert not footer.get_visible()
+    assert footer.get_text() == PLUGIN_SETTINGS_FOOTER
+    assert footer.get_visible()
+
+
+def test_the_footer_hides_once_hyprland_reports_a_plugins_settings(tmp_path: Path) -> None:
+    """A later Hyprland that lists them gives them rows, and the sentence would be false."""
+    from hyprtweaker.engine.schema import SupplementKind, supplement
+
+    session, window, _applier = window_with(tmp_path, plugin(BARS))
+    record = {"name": "plugin:hyprbars:bar_height", "description": "x", "default": 15}
+    session._schema = supplement(
+        session.schema, (record,), version="0.58.0", kind=SupplementKind.PLUGIN
+    )
+
+    window.scripting_page.refresh()
+
+    assert not group_of(window).footer.get_visible()
 
 
 def test_a_read_only_session_shows_the_list_but_offers_no_edit(tmp_path: Path) -> None:

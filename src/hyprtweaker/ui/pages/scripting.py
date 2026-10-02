@@ -37,6 +37,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import PluginLoad  # noqa: E402
+from hyprtweaker.engine.schema import SupplementKind  # noqa: E402
 from hyprtweaker.engine.scripting import (  # noqa: E402
     CallKind,
     IndirectUse,
@@ -87,6 +88,12 @@ PLUGINS_TITLE = "Plugins"
 PLUGINS_DESCRIPTION = "Loaded in this order each time Hyprland reads its config."
 PLUGINS_EMPTY = "No plugins load from this app. Add a plugin's .so file to load it at startup."
 ADD_PLUGIN = "Add plugin"
+PLUGIN_SETTINGS_FOOTER = (
+    "This version of Hyprland does not report the settings a plugin adds, so they are not "
+    "shown here. Set them in your user.lua."
+)
+"""ADR-0018: Hyprland 0.56.2's `descriptions` omits every plugin setting, so a loaded plugin
+gets no rows. Shown until a Hyprland reports one, when the sentence would be false."""
 
 
 class PluginStatus(enum.Enum):
@@ -247,7 +254,8 @@ class PluginRow:
 class PluginsGroup:
     """The `plugins.lua` list as one group: rows, the empty state, and what else is loaded.
 
-    `footer` is the slot #175 fills with how plugin settings appear; empty and hidden here.
+    `footer` says why a plugin's settings get no rows here (`PLUGIN_SETTINGS_FOOTER`), and
+    hides once the running Hyprland reports any plugin setting.
     """
 
     def __init__(self, session: Session, *, actions: PluginActions | None) -> None:
@@ -270,7 +278,10 @@ class PluginsGroup:
             subtitle="Loaded by Hyprland, but not from this list", use_markup=False
         )
         self.footer = Gtk.Label(
-            wrap=True, xalign=0, css_classes=["dim-label", "caption"], visible=False
+            label=PLUGIN_SETTINGS_FOOTER,
+            wrap=True,
+            xalign=0,
+            css_classes=["dim-label", "caption"],
         )
         self.footer.set_margin_top(12)
         self.group.add(self.footer)
@@ -321,6 +332,13 @@ class PluginsGroup:
         self.also_loaded.set_visible(bool(others))
         if others:
             self.group.add(self.also_loaded)
+        self.footer.set_visible(
+            not any(
+                option.supplement is not None
+                and option.supplement.kind is SupplementKind.PLUGIN
+                for option in self._session.schema
+            )
+        )
 
 
 def _is_file(path: str) -> bool:
