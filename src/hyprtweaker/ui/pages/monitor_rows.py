@@ -38,7 +38,7 @@ from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     parse_mode,
     sdr_eotf_name,
 )
-from hyprtweaker.ui.gap_field import GapField, commit_on_settle  # noqa: E402
+from hyprtweaker.ui.rows.gap_field import GapField, commit_on_settle  # noqa: E402
 
 Apply = Callable[[Mapping[str, Any]], None]
 """One edit to the display's rule: `{field: value}`, `UNSET` meaning "remove this key"."""

@@ -42,7 +42,7 @@ from hyprtweaker.engine.workspace_catalog import (  # noqa: E402
     find_field,
     retype_like,
 )
-from hyprtweaker.ui.gap_field import GapField  # noqa: E402
+from hyprtweaker.ui.rows.gap_field import GapField  # noqa: E402
 
 _MISSING: Any = object()
 """No value: a row that holds none writes no key."""

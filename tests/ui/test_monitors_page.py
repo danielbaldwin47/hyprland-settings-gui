@@ -777,7 +777,7 @@ def test_reserved_area_commits_on_the_instant_lane() -> None:
 
 
 def _gap_field_type() -> type:
-    from hyprtweaker.ui.gap_field import GapField
+    from hyprtweaker.ui.rows.gap_field import GapField
 
     return GapField
 
