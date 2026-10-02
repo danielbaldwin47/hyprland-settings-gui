@@ -322,3 +322,22 @@ def test_reveal_focuses_the_named_row(tmp_path: Path) -> None:
     # the right row rather than raising or walking off the list.
     window.binds_page.reveal(1)
     window.binds_page.reveal(99)  # out of range must be a no-op, not an error
+
+
+def test_an_ampersand_in_a_trigger_or_command_is_shown_as_written(tmp_path: Path) -> None:
+    """`A&B` and `a && b` are text, not Pango markup: parsed as markup they render blank."""
+    from gi.repository import Gtk
+
+    row, _calls = editable_row(exec_bind("SUPER + A&B", "make && run"))
+
+    def texts(widget: Any) -> list[str]:
+        found = [widget.get_text()] if isinstance(widget, Gtk.Label) else []
+        child = widget.get_first_child()
+        while child is not None:
+            found += texts(child)
+            child = child.get_next_sibling()
+        return found
+
+    shown = texts(row.widget)
+    assert "SUPER + A&B" in shown
+    assert "make && run" in shown

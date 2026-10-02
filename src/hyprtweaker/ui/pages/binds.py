@@ -330,6 +330,8 @@ class BindRow:
             title=trigger_text(bind),
             subtitle="\n".join(lines),
             subtitle_lines=len(lines),
+            # A trigger (`A&B`) or command (`a && b`) is text: as Pango markup it renders blank.
+            use_markup=False,
         )
         if description := bind.options.description:
             label = Gtk.Label(label=description, css_classes=["dim-label"], wrap=True)
