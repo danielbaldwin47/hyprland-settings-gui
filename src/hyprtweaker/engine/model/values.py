@@ -386,7 +386,7 @@ _LUA_ESCAPES = {
     "\b": "\\b",
     "\f": "\\f",
     "\v": "\\v",
-    "\0": "\\0",
+    "\0": "\\000",  # three digits: a short escape followed by a digit reads as one
 }
 
 
