@@ -162,8 +162,117 @@ def test_a_disabled_bind_is_badged_and_does_not_conflict(tmp_path: Path) -> None
     window.binds_page.refresh()
 
     rows = window.binds_page.rows
-    assert rows[1].disabled_badge is not None
+    assert rows[1].badge_label is not None
+    assert rows[1].badge_label.get_label() == "Disabled"
     assert rows[0].conflict_badge is None, "a disabled bind must not count as a conflict"
+
+
+# --- the four badge states (#139) -------------------------------------------------------
+
+
+def editable_row(bind: Any) -> tuple[Any, list[tuple[Any, ...]]]:
+    """One `BindRow` as a live session builds it, with every verb recorded."""
+    from hyprtweaker.ui.pages.binds import BindActions, BindRow
+
+    calls: list[tuple[Any, ...]] = []
+    actions = BindActions(
+        add=lambda submap: calls.append(("add", submap)),
+        edit=lambda index: calls.append(("edit", index)),
+        remove=lambda index: calls.append(("remove", index)),
+        enable=lambda index, on: calls.append(("enable", index, on)),
+        rebind=lambda index: calls.append(("rebind", index)),
+        recapture=lambda index: calls.append(("recapture", index)),
+        swap=lambda first, second: calls.append(("swap", first, second)),
+        edit_submap=lambda name: calls.append(("edit_submap", name)),
+    )
+    row = BindRow(bind, 3, actions=actions, on_jump=lambda _index: None, editable=True)
+    return row, calls
+
+
+def no_xkb_for_notakey(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        "hyprtweaker.engine.importer.binds.known_keysym", lambda name: name != "notakey"
+    )
+
+
+def test_a_user_disabled_bind_enables_in_one_click(tmp_path: Path) -> None:
+    row, calls = editable_row(exec_bind("SUPER + Q", "kitty", enabled=False))
+
+    assert row.badge_label.get_label() == "Disabled"
+    assert "dim-label" in row.widget.get_css_classes()
+    assert row.enable_button.get_label() == "Enable"
+    row.enable_button.emit("clicked")
+    assert calls == [("enable", 3, True)]
+    assert row.edit_button is not None and row.remove_button is not None
+
+
+def test_a_dead_keysym_bind_wears_an_error_badge_and_enable_recaptures(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    no_xkb_for_notakey(monkeypatch)
+    row, calls = editable_row(exec_bind("SUPER + notakey", "kitty", enabled=False))
+
+    assert row.badge_label.get_label() == 'Unknown key "notakey"'
+    assert "error" in row.badge_label.get_css_classes()
+    assert "dim-label" not in row.widget.get_css_classes(), "row opacity would fade the badge"
+    assert row.enable_button.get_label() == "Fix trigger…"
+    row.enable_button.emit("clicked")
+    assert calls == [("recapture", 3)], "an error-disabled bind must never enable in one click"
+    assert row.edit_button is not None and row.remove_button is not None
+
+
+def test_a_multi_key_bind_offers_only_remove(tmp_path: Path, monkeypatch: Any) -> None:
+    no_xkb_for_notakey(monkeypatch)
+    row, calls = editable_row(exec_bind("SUPER + A&B", "kitty", enabled=False))
+
+    assert row.badge_label.get_label() == "Multi-key: Hyprland 0.56 can't load it"
+    assert "error" not in row.badge_label.get_css_classes()
+    assert (row.enable_button, row.edit_button) == (None, None)
+    row.remove_button.emit("clicked")
+    assert calls == [("remove", 3)]
+
+
+def test_a_lua_function_bind_offers_no_controls(tmp_path: Path) -> None:
+    from hyprtweaker.engine.model.entities import Bind
+
+    row, _calls = editable_row(Bind(keys="SUPER + W", dispatcher=None))
+
+    assert row.badge_label.get_label() == "Defined by a Lua function in user.lua"
+    assert (row.enable_button, row.edit_button, row.remove_button) == (None, None, None)
+
+
+def test_fix_trigger_enables_the_bind_with_the_captured_key(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import hyprtweaker.ui.shell.window as window_module
+
+    no_xkb_for_notakey(monkeypatch)
+    session, window = build_window(tmp_path)
+    # Rows offer controls only on a live session; this tier has no compositor to connect.
+    monkeypatch.setattr(type(session), "live", property(lambda _self: True))
+    session.model.entities.binds.append(exec_bind("SUPER + notakey", "kitty", enabled=False))
+    window.binds_page.refresh()
+
+    captures: list[Any] = []
+
+    class FakeCapture:
+        def __init__(self, *, on_done: Any, **_kwargs: Any) -> None:
+            captures.append(on_done)
+
+        def present(self, _parent: Any) -> None:
+            pass
+
+    replaced: list[tuple[int, Any]] = []
+    monkeypatch.setattr(window_module, "CaptureDialog", FakeCapture)
+    monkeypatch.setattr(
+        session, "replace_bind", lambda index, bind: replaced.append((index, bind)) or True
+    )
+
+    window.binds_page.rows[0].enable_button.emit("clicked")
+    captures[0]("SUPER + F")
+
+    [(index, bind)] = replaced
+    assert (index, bind.keys, bind.enabled) == (0, "SUPER + F", True)
 
 
 def test_a_declared_empty_submap_gets_a_group_flagged_unreachable(tmp_path: Path) -> None:
@@ -215,3 +324,22 @@ def test_reveal_focuses_the_named_row(tmp_path: Path) -> None:
     # the right row rather than raising or walking off the list.
     window.binds_page.reveal(1)
     window.binds_page.reveal(99)  # out of range must be a no-op, not an error
+
+
+def test_an_ampersand_in_a_trigger_or_command_is_shown_as_written(tmp_path: Path) -> None:
+    """`A&B` and `a && b` are text, not Pango markup: parsed as markup they render blank."""
+    from gi.repository import Gtk
+
+    row, _calls = editable_row(exec_bind("SUPER + A&B", "make && run"))
+
+    def texts(widget: Any) -> list[str]:
+        found = [widget.get_text()] if isinstance(widget, Gtk.Label) else []
+        child = widget.get_first_child()
+        while child is not None:
+            found += texts(child)
+            child = child.get_next_sibling()
+        return found
+
+    shown = texts(row.widget)
+    assert "SUPER + A&B" in shown
+    assert "make && run" in shown

@@ -14,11 +14,12 @@ from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall
 pytest.importorskip("gi", reason="the Binds Page imports gi at module scope")
 
 from hyprtweaker.ui.pages.binds import (
+    BadgeKind,
     RowConflict,
     action_text,
+    bind_badge,
     flag_text,
     ordinal,
-    read_only_reason,
     rival_label,
     trigger_text,
 )
@@ -81,16 +82,53 @@ class TestFlags:
         assert flag_text(exec_bind(options=BindOptions(description="hi"))) == ""
 
 
-class TestReadOnlyReason:
-    def test_an_ordinary_bind_is_editable(self) -> None:
-        assert read_only_reason(exec_bind()) == ""
+@pytest.fixture
+def xkb_knows_all_but_notakey(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stand-in for libxkbcommon, so the dead-keysym state is tested without a skip."""
+    monkeypatch.setattr(
+        "hyprtweaker.engine.importer.binds.known_keysym", lambda name: name != "notakey"
+    )
 
-    def test_a_function_action_is_not(self) -> None:
-        assert "user.lua" in read_only_reason(Bind(keys="A", dispatcher=None))
 
-    def test_a_multi_key_bind_is_not(self) -> None:
-        """0 uses in the corpus and only approximate under Lua (ADR-0007)."""
-        assert read_only_reason(exec_bind("SUPER + A&B")) != ""
+@pytest.mark.usefixtures("xkb_knows_all_but_notakey")
+class TestBindBadge:
+    def test_an_enabled_ordinary_bind_has_no_badge(self) -> None:
+        assert bind_badge(exec_bind()) is None
+
+    def test_a_user_disabled_bind_is_plain_disabled(self) -> None:
+        badge = bind_badge(exec_bind(enabled=False))
+        assert badge is not None
+        assert (badge.kind, badge.text) == (BadgeKind.DISABLED, "Disabled")
+
+    def test_a_disabled_dead_keysym_bind_is_an_error_naming_the_key(self) -> None:
+        badge = bind_badge(exec_bind("SUPER + notakey", enabled=False))
+        assert badge is not None
+        assert (badge.kind, badge.text) == (BadgeKind.ERROR, 'Unknown key "notakey"')
+
+    def test_a_multi_key_bind_is_not_mistaken_for_a_dead_keysym(self) -> None:
+        """`A&B` is one token xkb does not know; the multi-key reason must win."""
+        badge = bind_badge(exec_bind("SUPER + A&B", enabled=False))
+        assert badge is not None
+        assert (badge.kind, badge.text) == (
+            BadgeKind.MULTI_KEY,
+            "Multi-key: Hyprland 0.56 can't load it",
+        )
+
+    def test_a_function_action_wins_over_every_other_reason(self) -> None:
+        badge = bind_badge(Bind(keys="SUPER + A&B", dispatcher=None, enabled=False))
+        assert badge is not None
+        assert (badge.kind, badge.text) == (
+            BadgeKind.LUA_FUNCTION,
+            "Defined by a Lua function in user.lua",
+        )
+
+    def test_multi_key_and_lua_function_carry_different_reasons(self) -> None:
+        multi = bind_badge(exec_bind("SUPER + A&B"))
+        function = bind_badge(Bind(keys="SUPER + A", dispatcher=None))
+        assert multi is not None and function is not None
+        assert multi.tooltip != function.tooltip
+        assert "user.lua" in function.tooltip
+        assert "A&B" in multi.tooltip
 
 
 class TestConflictText:
