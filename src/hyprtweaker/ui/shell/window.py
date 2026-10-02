@@ -183,9 +183,9 @@ EXPORT_ACTION = "export-config"
 REPORT_ACTION = "import-report"
 
 READ_ONLY_REASON = {
-    ConfigKind.LEGACY_CONF: "You are still on hyprland.conf -- settings can't be saved yet.",
+    ConfigKind.LEGACY_CONF: "You are still on hyprland.conf, so settings can't be saved yet.",
     ConfigKind.FOREIGN_LUA: (
-        "Your hyprland.lua was not written here -- settings can't be saved until it is "
+        "Your hyprland.lua was not written here, so settings can't be saved until it is "
         "imported."
     ),
 }
@@ -194,6 +194,12 @@ READ_ONLY_REASON = {
 Shown, dismissible, and not repeated: "no nagging beyond that". The app is still worth
 opening on an unmigrated box, which is why the pages render at all.
 """
+
+CONVERT_SENTENCE = (
+    "Your config has not been converted yet: use Convert... at the top of the window."
+)
+"""What a dialog or a disabled control says while an import is on offer (F20 of the #148
+review): "not connected to Hyprland" would send the user looking for the wrong problem."""
 
 
 def _discard(coro: Any) -> None:
@@ -810,7 +816,7 @@ class MainWindow(Adw.ApplicationWindow):
         elif detection.offers_import:
             # Read-only until the offered import is accepted: there is nowhere honest to
             # write while the live session is reading a file this app does not own.
-            session.set_read_only(READ_ONLY_REASON[detection.kind])
+            session.set_read_only(READ_ONLY_REASON[detection.kind], sentence=CONVERT_SENTENCE)
             self.sync_banner()
             GLib.idle_add(self._present_offer, detection)
         return detection
@@ -862,7 +868,9 @@ class MainWindow(Adw.ApplicationWindow):
         detection = self._detect()
         if detection.offers_import:
             self._offered = detection
-            self._session.set_read_only(READ_ONLY_REASON[detection.kind])
+            self._session.set_read_only(
+                READ_ONLY_REASON[detection.kind], sentence=CONVERT_SENTENCE
+            )
             self.sync_banner()
         # Said, as the wizard's own Roll back says it, with any theming tool's file left
         # as the user changed it or not put back (finding 21).

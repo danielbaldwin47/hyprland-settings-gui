@@ -590,6 +590,7 @@ class Session:
         self._held_back: dict[str, _HeldBack] = {}
         self._model_read = False
         self._lua_missing: str | None = None
+        self._offline_sentence: str | None = None
         """Per hand-edited Module, the edits it kept off disk (`replace_edited_file`)."""
 
         self.on_recorded: Callable[[Step], None] | None = None
@@ -807,6 +808,9 @@ class Session:
             return f"{self._unsupported_reason}."
         if self._lua_missing is not None and self._offline_reason == self._lua_missing:
             return f"{self._lua_missing}."
+        if self._offline_sentence is not None:
+            # A reason the caller can say better: an import still on offer (F20).
+            return self._offline_sentence
         return "This app is not connected to Hyprland."
 
     @property
@@ -2821,13 +2825,14 @@ class Session:
             self._changed()
         self._spawn(self._go_live())
 
-    def set_read_only(self, reason: str) -> None:
+    def set_read_only(self, reason: str, *, sentence: str | None = None) -> None:
         """Declare the session read-only for a reason it could not discover itself.
 
         The app knows one such reason: without PyGObject's asyncio integration there is no
         loop to run a transaction on, so no amount of connecting would help. Saying so up
         front beats leaving the Banner on "Connecting to Hyprland…" forever.
         """
+        self._offline_sentence = sentence
         self._go_offline(reason)
         self._changed()
 
@@ -2836,7 +2841,9 @@ class Session:
             instance = self._connect()
         except NoInstance as error:
             await self._read_files()
-            self.set_read_only(str(error))
+            # The reason in the user's words; the variable name is for the log (hand-test 2).
+            _log.info("no compositor: %s", error)
+            self.set_read_only("Hyprland is not running in this session")
             return
 
         events = EventStream(instance, on_lost=self._on_stream_lost)
@@ -2847,7 +2854,8 @@ class Session:
         except IpcError as error:
             await events.aclose()
             await self._read_files()
-            self.set_read_only(f"{instance.command_socket} is not answering: {error}")
+            _log.warning("%s is not answering: %s", instance.command_socket, error)
+            self.set_read_only("Hyprland is not answering")
             return
 
         if self._live_hyprland is None:
@@ -2873,6 +2881,7 @@ class Session:
         self._applier.start()
         self._retire_and_restore(self._applier)
         self._offline_reason = None
+        self._offline_sentence = None
         # A tool that ran while the app was closed may have written its file (S4).
         self.load_waiting_bridges()
         self._changed()
@@ -3213,7 +3222,8 @@ class Session:
         try:
             await self._recover(client)
         except IpcError as error:
-            self.set_read_only(f"lost contact with Hyprland: {error}")
+            _log.warning("lost contact with Hyprland: %s", error)
+            self.set_read_only("Lost contact with Hyprland")
             return
         await self._scan_drift(client)
         self.load_waiting_bridges()
@@ -3221,6 +3231,7 @@ class Session:
             # Held read-only behind an import offer (a rolled-back switch, #148 hand-test
             # 20): the import is kept now, so the session applies again.
             self._offline_reason = None
+            self._offline_sentence = None
         self._changed()
 
     async def _reread_after_foreign_reload(self, keep: Collection[str] = ()) -> None:
@@ -3239,7 +3250,8 @@ class Session:
         try:
             result = await self._read_model(client, stale, launch=False)
         except IpcError as error:
-            self.set_read_only(f"lost contact with Hyprland: {error}")
+            _log.warning("lost contact with Hyprland: %s", error)
+            self.set_read_only("Lost contact with Hyprland")
             return
         _log.info(
             "foreign reload: %d option(s) re-read, %d no longer set",

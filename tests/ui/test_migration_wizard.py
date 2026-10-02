@@ -111,6 +111,10 @@ class TestFirstRunRouting:
         assert detection.kind is ConfigKind.LEGACY_CONF
         assert not session.paths.entrypoint.exists()
         assert session.offline_reason
+        # F20 of the #148 review: what dialogs and disabled controls say names Convert.
+        assert session.offline_sentence == (
+            "Your config has not been converted yet: use Convert... at the top of the window."
+        )
 
     def test_a_hyprland_without_lua_gets_its_banner_not_the_offer(self, tmp_path: Path) -> None:
         """Below 0.56 every config is hyprlang, and converting it would leave a Lua file

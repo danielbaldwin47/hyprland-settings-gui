@@ -57,7 +57,7 @@ def test_without_a_compositor_the_session_is_read_only_and_says_why(tmp_path: Pa
 
         assert not session.live
         assert session.offline_reason is not None
-        assert "not running under Hyprland" in session.offline_reason
+        assert session.offline_reason == "Hyprland is not running in this session"
 
     run_with_fake(scenario)
 
@@ -445,3 +445,43 @@ def test_without_hyprland_or_files_preset_save_says_the_settings_were_not_read(
     assert not session.model_read
     assert isinstance(saved[0], PresetNotSaved)
     assert saved[0].reason.startswith("Your settings have not been read")
+
+
+def test_without_hyprland_the_banner_says_so_in_plain_words(tmp_path: Path) -> None:
+    """#148 hand-test 2: the Banner read "HYPRLAND_INSTANCE_SIGNATURE is unset -- not running
+    under Hyprland — settings are read-only.", an environment variable and two dashes."""
+
+    async def scenario() -> None:
+        runner = Runner()
+        session = Session(
+            spawn=runner.spawn,
+            schema=SCHEMA,
+            paths=ConfigPaths.rooted_at(tmp_path),
+            app_version=APP_VERSION,
+            connect=_no_instance,
+        )
+        session.start()
+        await runner.settle()
+
+        assert session.health.title == (
+            "Hyprland is not running in this session — settings are read-only."
+        )
+        assert session.offline_sentence == "This app is not connected to Hyprland."
+
+    asyncio.run(scenario())
+
+
+def test_a_read_only_reason_can_carry_its_own_sentence(tmp_path: Path) -> None:
+    """F20 of the #148 review: an unconverted config read "This app is not connected to
+    Hyprland." on Theming and in the preset dialogs, while the Banner said to convert."""
+    session = Session(
+        spawn=lambda coro: coro.close(),
+        schema=SCHEMA,
+        paths=ConfigPaths.rooted_at(tmp_path),
+        app_version=APP_VERSION,
+        connect=_no_instance,
+    )
+
+    session.set_read_only("You are still on hyprland.conf", sentence="Convert it first.")
+
+    assert session.offline_sentence == "Convert it first."
