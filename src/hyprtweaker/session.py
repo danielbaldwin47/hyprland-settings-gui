@@ -119,7 +119,7 @@ from hyprtweaker.engine.model.entities import (
     WorkspaceRule,
     entity_title,
 )
-from hyprtweaker.engine.model.values import parse_value
+from hyprtweaker.engine.model.values import parse_lua, parse_value
 from hyprtweaker.engine.paths import (
     ANIMATIONS_MODULE,
     AUTOSTART_MODULE,
@@ -1020,6 +1020,25 @@ class Session:
         """
         entry = self._retired.get(option.name)
         return entry.retired_in if entry is not None and entry.reason.announced else None
+
+    def kept_value(self, name: str) -> OptionValue:
+        """The value the app kept for this Option when it stopped writing it, or `UNSET`.
+
+        Every retirement reason, announced or quiet: a kept value is what makes a Row
+        read-only (#215), whether or not it wears a pill. Typed against the loaded Schema's
+        Option the way a restore would type it (`parse_lua`), so the Row renders it as its
+        own control would; a value that Option will not take is shown as it was kept.
+        """
+        entry = self._retired.get(name)
+        if entry is None:
+            return UNSET
+        option = self._schema.get(name)
+        if option is None:
+            return entry.value
+        try:
+            return parse_lua(option, entry.value)
+        except (ValueError, TypeError):
+            return entry.value
 
     def notice_seen(self, notice: Notice) -> None:
         """The user has dismissed `notice`: a Retired one is not shown again (ADR-0012).
@@ -2312,11 +2331,27 @@ class Session:
         Unreachable from the UI, which makes every control insensitive while read-only. It
         is an invariant rather than a guard for that reason -- worth stating so no later
         caller has to rediscover it.
+
+        A Retired Option is declined on a live session too, for every retirement reason
+        (#215): Hyprland does not take it, so a write is a config error and an auto-revert,
+        and a value in the model would also shadow the one the Manifest keeps for it. Its
+        Row is read-only; this holds the line for every other caller (Search, scripts).
+        An Option merely Not in this Hyprland is not retired and is not refused here: its
+        Reset is the user's way out of the config error the key raises.
         """
-        if self.live and self._applier is not None:
+        why = self._refusal(name)
+        if why is None:
             return False
-        _log.debug("read-only session: refusing the edit to %s", name)
+        _log.debug("refusing the edit to %s: %s", name, why)
         return True
+
+    def _refusal(self, name: str) -> str | None:
+        """Why an edit to `name` is declined, or `None` when it may go ahead."""
+        if not self.live or self._applier is None:
+            return "the session is read-only"
+        if name in self._retired:
+            return "it is Retired; the Manifest keeps its value"
+        return None
 
     # --- undo -------------------------------------------------------------------------------
 
