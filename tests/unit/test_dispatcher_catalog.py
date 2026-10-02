@@ -144,8 +144,8 @@ class TestProbedShapes:
     def test_group_lock_keeps_the_raw_table_for_the_action_the_importer_writes(self) -> None:
         """Its `action` shows only when fired at a group, so no form can claim it; a plain
         entry dropped the key on edit."""
-        assert entry_for("group.lock").free_form
-        assert entry_for("group.lock_active").free_form
+        assert entry_for("group.lock").free_form_reason is not None
+        assert entry_for("group.lock_active").free_form_reason is not None
 
     def test_fullscreen_reads_an_action_as_well_as_a_mode(self) -> None:
         """The Importer writes `action`; the curated entry listed only `window` and `mode`."""
@@ -181,15 +181,15 @@ class TestCoverage:
             "window.swap",
         )
 
-    def test_every_free_form_entry_says_why_in_one_line(self) -> None:
+    def test_every_free_form_entry_says_why_in_one_sentence_for_the_user(self) -> None:
+        """The bind editor shows the reason above the raw table (#150 review, finding 17),
+        so it is a sentence in the user's words, not a note about the probe."""
         for path in coverage().free_form:
             reason = entry_for(path).free_form_reason
-            assert reason and "\n" not in reason, f"{path} has no one-line justification"
-
-    def test_a_curated_entry_has_no_free_form_reason(self) -> None:
-        for entry in CATALOG:
-            if not entry.free_form:
-                assert not entry.free_form_reason, entry.path
+            assert reason and "\n" not in reason, f"{path} has no one-line reason"
+            assert reason[0].isupper() and reason.endswith("."), reason
+            for word in ("probe", "compositor", "`", "schema"):
+                assert word not in reason, f"{path}: {reason!r} says {word!r}"
 
     def test_the_three_groups_partition_the_catalog(self) -> None:
         report = coverage()
@@ -210,7 +210,7 @@ class TestCatalogShape:
     def test_free_form_dispatchers_declare_no_arguments(self) -> None:
         """Free-form means "shape unknown"; args would be a guess wearing a form."""
         for entry in CATALOG:
-            if entry.free_form:
+            if entry.free_form_reason is not None:
                 assert not entry.args, f"{entry.path} is free-form but declares args"
 
     def test_every_namespace_has_a_label(self) -> None:
@@ -272,7 +272,7 @@ def test_a_call_the_importer_writes_survives_the_form_that_edits_it(
     call = translate_dispatcher(name, args, origin="hyprland.conf:1", report=report)
     assert call is not None, f"{name} {args!r} was not translated"
     entry = entry_for(call.path)
-    if entry.free_form:
+    if entry.free_form_reason is not None:
         return
     listed = {spec.name for spec in entry.args}
     assert set(call.args) <= listed, f"{call.path} drops {set(call.args) - listed} on edit"
