@@ -15,20 +15,20 @@
 #    running with a HOME other than the account's. That last test is the
 #    Harness guard's (tests/integration/harness/guard.py): the session's own
 #    compositor runs the account's config, a nested one a sandbox HOME.
-#  - `wtype`, which types into WAYLAND_DISPLAY: nested means a
-#    `WAYLAND_DISPLAY=<display>` prefix naming the Wayland socket of an
-#    instance that passes the same lock test.
+#  - `wtype`, `wl-copy`, `grim` and `hyprpicker`, which act on WAYLAND_DISPLAY:
+#    nested means a `WAYLAND_DISPLAY=<display>` prefix naming the Wayland socket
+#    of an instance that passes the same lock test.
 #  - `xdotool`, which types into DISPLAY (the desktop's Xwayland): private means
 #    a `DISPLAY=:<n>` prefix, n in 200-999, written out.
-#  - `Hyprland` (and `hyprland`, `start-hyprland`): tools/sandbox.py and the
-#    Harness start the nested ones.
+#  - `Hyprland` (and `hyprland`, `start-hyprland`, `cage`, `sway`): tools/sandbox.py
+#    and the Harness start the nested ones.
 #  - `ydotool` (and `ydotoold`), always: it writes to the kernel's uinput and
 #    has no nested form.
 #
 # More families are refused always (#209, review of #151), each with its working shape:
 #
 #  - A pattern kill, which can kill the owner's Hyprland, terminal or apps:
-#    `pkill`, `killall`, `fuser -k`, and `kill` of pids found by name (`$(pgrep …)`,
+#    `pkill`, `killall`, `killall5`, `skill`, `fuser -k`, and `kill` of pids found by name (`$(pgrep …)`,
 #    `$(pidof …)`, `$(ps …)`, a variable or `read` filled from them, or a pipe from
 #    them into `xargs kill`), or of a process group (`kill 0`, `kill -1`,
 #    `kill -- -<pgid>`). Kill a PID you started and recorded: `kill <pid>`, `kill $!`.
@@ -46,8 +46,13 @@
 #    `:0`). pytest and tools/widget_probe.py start their own Xvfb as children, on a
 #    private display, and pass.
 #  - `rm`, `unlink`, `rmdir`, `mv`, `ln`, `shred`, and `find` with `-delete` or
-#    an `-exec` of one of those, when an operand is under `/tmp/.X11-unix/` or is
-#    a `/tmp/.X<n>-lock`. Reading them (`ls`, `ss -xlp`, `find -exec ls`) passes.
+#    an `-exec` of one of those, when an operand (after one level of `{a,b}`) is
+#    under `/tmp/.X11-unix/`, is a `/tmp/.X<n>-lock`, or is `/` or `/tmp` above
+#    them. Reading them (`ls`, `ss -xlp`, `find -exec ls`) passes.
+#  - A command on the owner's session or its managers: `omarchy-*` (but
+#    `omarchy-version`), `hyprpm` (but `list`), `uwsm` (but `check`), `hyprshot`,
+#    `notify-send`, `loginctl` and `systemctl` but their reads (`list-*`, `show*`,
+#    `*-status`; `status`, `cat`, `is-*`).
 #  - Setting `HYPRTWEAKER_UI_HOST_DISPLAY`, the owner's opt-in that maps the UI
 #    tier's windows on the desktop, as a prefix, an assignment or an `export`.
 #
@@ -80,8 +85,11 @@ if ! command -v jq > /dev/null 2>&1; then
     raw_stdin='python[0-9.]*( +-)? *<<.*(Gtk|Adw|Gdk|gi\.repository)'
     raw_app='python[0-9.]*( +-[A-Za-z]+)* +(-[A-Za-z]*m *hyprtweaker|src/hyprtweaker)'
     raw_xfile='(^|[^[:alnum:]_.-])(rm|unlink|rmdir|mv|ln|shred|find)[ \t"][^|;&]*(\.X11-unix|\.X[^ /"]*-lock|/tmp/\.X[0-9]*[*?])'
-    if grep -Eq "$raw_words|$raw_x|$raw_kill|$raw_gtk|$raw_stdin|$raw_app|$raw_xfile" <<< "$input"; then
-        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"This call names hyprctl, Hyprland, wtype, ydotool, xdotool, a pattern kill (pkill, killall, fuser -k, kill by pgrep or pidof), an X server (Xvfb, Xorg, X, Xwayland, Xephyr, Xnest, Xvnc, xvfb-run), a python -c that names Gtk, Adw, Gdk or gi.repository, an app start, HYPRTWEAKER_UI_HOST_DISPLAY, or a removal or link of /tmp/.X11-unix or an X lock, and without jq the desktop fence cannot tell whether it reaches the owner'"'"'s desktop session, so it fails closed. install jq, then run it again (.claude/hooks/desktop-fence.sh)."}}'
+    raw_session='(^|[^[:alnum:]_.-])(omarchy-[a-z]|(hyprpm|uwsm|loginctl|notify-send|wl-copy|grim|hyprshot|hyprpicker|cage|sway|killall5|skill)([^[:alnum:]_.-]|$))'
+    raw_systemctl='systemctl[^|;&]* (start|stop|restart|try-restart|reload|reload-or-restart|kill|isolate|mask|unmask|enable|disable|daemon-reload|set-environment|unset-environment|import-environment|edit|poweroff|reboot|suspend|hibernate)'
+    raw_find_tmp='find +/+(tmp/*)?[ "][^|;&]*-(delete|exec)'
+    if grep -Eq "$raw_words|$raw_x|$raw_kill|$raw_gtk|$raw_stdin|$raw_app|$raw_xfile|$raw_session|$raw_systemctl|$raw_find_tmp" <<< "$input"; then
+        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"This call names hyprctl, Hyprland, wtype, ydotool, xdotool, a pattern kill (pkill, killall, fuser -k, kill by pgrep or pidof), an X server (Xvfb, Xorg, X, Xwayland, Xephyr, Xnest, Xvnc, xvfb-run), a python -c that names Gtk, Adw, Gdk or gi.repository, an app start, HYPRTWEAKER_UI_HOST_DISPLAY, a command on the owner'"'"'s session (omarchy-*, hyprpm, uwsm, loginctl, systemctl stop or restart, notify-send, wl-copy, grim, hyprshot, hyprpicker, cage, sway), or a removal or link of /tmp/.X11-unix or an X lock, and without jq the desktop fence cannot tell whether it reaches the owner'"'"'s desktop session, so it fails closed. install jq, then run it again (.claude/hooks/desktop-fence.sh)."}}'
     fi
     exit 0
 fi
@@ -96,10 +104,11 @@ deny() {
 
 docs="docs/agents/local-checks.md, Running the app; .claude/hooks/desktop-fence.sh"
 xdocs="docs/agents/local-checks.md, Private X displays; .claude/hooks/desktop-fence.sh"
-fenced_words='hyprctl|[Hh]yprland|wtype|ydotool|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|HYPRTWEAKER_UI_HOST_DISPLAY|\.X11-unix|\.X[^ /]*-lock'
+fenced_words='hyprctl|[Hh]yprland|hyprpm|hyprshot|hyprpicker|omarchy-|uwsm|loginctl|notify-send|wl-copy|wtype|ydotool|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|HYPRTWEAKER_UI_HOST_DISPLAY|\.X11-unix|\.X[^ /]*-lock'
 re_x_dir='(^|/)\.X11-unix(/|$)'
 re_x_lock='^(/tmp/)?\.X[^/]*-lock$'
 re_x_glob='(^|/)\.X[0-9]*[*?[]'
+re_x_above='^/+(tmp/*)?$' # `/` or `/tmp`: removing it removes the X files with it
 # Python code that loads GTK, runs a command, or removes or links a file.
 re_gtk='gi\.repository|gi\.require_version|(^|[^[:alnum:]_.])(import|from)[[:space:]]+gi([^[:alnum:]_]|$)'
 re_py_run='subprocess|Popen|os\.system|os\.popen|os\.exec|os\.spawn|pty\.spawn|create_subprocess'
@@ -454,18 +463,47 @@ judge() {
     local name=${w[i]:1}
     name=${name##*/}
     judged_name=$name
+    local sub
     local -a rest=("${w[@]:i+1}")
     case "$name" in
         hyprctl) judge_hyprctl "$his" "${rest[@]}" ;;
-        wtype) judge_wtype "$display" ;;
+        wtype | wl-copy | grim | hyprpicker) judge_wayland_client "$name" "$display" ;;
+        hyprshot)
+            deny "\`hyprshot\` asks the session's compositor (through hyprctl) what to shoot, so it captures the owner's desktop. Screenshot a nested instance: \`.venv/bin/python tools/sandbox.py --shot <png>\`, or \`WAYLAND_DISPLAY=<display printed by tools/sandbox.py> grim <png>\` ($docs)."
+            ;;
+        notify-send)
+            deny "\`notify-send\` pops a notification on the owner's desktop session. Print what you need the owner to see to your own output, or put it in the effort PR's ready comment ($docs)."
+            ;;
+        omarchy-version*) ;;
+        omarchy-*)
+            deny "\`$name\` restarts or changes the owner's desktop session (Omarchy runs it there); it has no nested form. Probe behaviour in a nested instance from \`tools/sandbox.py\`, and leave a change to the owner's session to the owner ($docs)."
+            ;;
+        hyprpm)
+            [[ $(first_operand " " "${rest[@]}") =~ ^(list|)$ ]] \
+                || deny "\`hyprpm\` builds or loads plugins into the session's compositor on the owner's desktop. \`hyprpm list\` reads; leave plugin changes to the owner ($docs)."
+            ;;
+        uwsm)
+            [[ $(first_operand " " "${rest[@]}") =~ ^(check|)$ ]] \
+                || deny "\`uwsm\` starts, stops or launches into the owner's desktop session. Run the app in a nested instance with \`.venv/bin/python tools/sandbox.py\` ($docs)."
+            ;;
+        loginctl)
+            sub=$(first_operand " -p -P -H -M -n -o -s --property --host --machine --lines --output --signal --kill-whom " "${rest[@]}")
+            [[ $sub =~ ^(list-.*|show-.*|.*-status|)$ ]] \
+                || deny "\`loginctl $sub\` acts on the owner's login session (ending, locking or signalling the desktop). Reads pass: \`loginctl list-sessions\`, \`loginctl show-session <id>\` ($docs)."
+            ;;
+        systemctl)
+            sub=$(first_operand " -p -P -t -H -M -n -o -s --property --type --state --host --machine --lines --output --signal --kill-whom --kill-value --what --root --image --job-mode --preset-mode --timestamp --message --when " "${rest[@]}")
+            [[ $sub =~ ^(status|show|cat|help|list-.*|is-.*|show-environment|get-default|)$ ]] \
+                || deny "\`systemctl $sub\` changes a manager the owner's desktop session runs under (its units, its environment, the machine's power state). Reads pass: \`systemctl --user status|show|list-units\`, \`systemctl --user show-environment\` ($docs)."
+            ;;
         xdotool) judge_xdotool "$xdisplay" ;;
-        Hyprland | hyprland | start-hyprland)
+        Hyprland | hyprland | start-hyprland | cage | sway)
             deny "\`$name\` from an agent's shell starts a compositor on the owner's desktop session (its seat, display and user manager). Start a nested one with \`.venv/bin/python tools/sandbox.py\` or the Harness tier's NestedHyprland; for the version, \`pacman -Q hyprland\` ($docs)."
             ;;
         ydotool | ydotoold)
             deny "\`$name\` writes to the kernel's uinput, so its keys and clicks land on the owner's desktop session; it has no nested form. Type into a nested instance with \`$display_shape\`, or drive the widget in a widget probe ($docs)."
             ;;
-        pkill | killall)
+        pkill | killall | killall5 | skill)
             deny "\`$name\` matches processes by name across the whole session, so it can kill the owner's desktop compositor, terminal or apps, not only your own. $kill_shape ($docs)."
             ;;
         kill) judge_kill "${rest[@]}" ;;
@@ -664,14 +702,23 @@ judge_python() {
 # Removing, moving or linking the session's X sockets and locks. The words after the
 # command name are matched as paths wherever they stand, so a flag or a target counts.
 judge_x_files() {
-    local name=$1 arg text hit=""
+    local name=$1 arg text hit="" path pre alt
+    local -a paths alts
     shift
     for arg in "$@"; do
         text=${arg:1}
-        if [[ $text =~ $re_x_dir || $text =~ $re_x_lock || $text =~ $re_x_glob ]]; then
-            hit=$text
-            break
+        paths=("$text")
+        if [[ $text =~ ^([^{]*)\{([^}]*)\}(.*)$ ]]; then # one level of brace expansion
+            pre=${BASH_REMATCH[1]}
+            IFS=, read -r -a alts <<< "${BASH_REMATCH[2]}"
+            for alt in "${alts[@]}"; do paths+=("$pre$alt${BASH_REMATCH[3]}"); done
         fi
+        for path in "${paths[@]}"; do
+            if [[ $path =~ $re_x_dir || $path =~ $re_x_lock || $path =~ $re_x_glob || $path =~ $re_x_above ]]; then
+                hit=$path
+                break 2
+            fi
+        done
     done
     [ -n "$hit" ] || return 0
     if [ "$name" = find ]; then # a find that only lists or reads is a read
@@ -725,15 +772,34 @@ judge_hyprctl() {
     done
 }
 
-judge_wtype() {
+# A Wayland client that types, copies, captures or picks on WAYLAND_DISPLAY: $1 the
+# command, $2 the WAYLAND_DISPLAY word of its prefix.
+judge_wayland_client() {
     local why
-    if [ -z "$1" ]; then
+    if [ -z "$2" ]; then
         why="it follows WAYLAND_DISPLAY, which is the session's (\`${WAYLAND_DISPLAY:-unset}\`)"
     else
-        why=$(not_nested_display "$1")
+        why=$(not_nested_display "$2")
         [ -z "$why" ] && return 0
     fi
-    deny "\`wtype\` would type into the owner's desktop session: $why. Name a nested display: \`$display_shape\` ($docs)."
+    deny "\`$1\` would act on the owner's desktop session: $why. Name a nested display: \`WAYLAND_DISPLAY=<display printed by tools/sandbox.py> $1 …\` ($docs)."
+}
+
+# The first operand among the words $2… (flag + text): the subcommand. $1 lists the
+# options that take the next word as their value, space-delimited.
+first_operand() {
+    local values=$1 text
+    shift
+    while (($#)); do
+        text=${1:1}
+        shift
+        if [[ $values == *" $text "* ]]; then
+            (($#)) && shift
+        elif [[ $text != -* ]]; then
+            printf '%s' "$text"
+            return
+        fi
+    done
 }
 
 # `xdotool` types into DISPLAY: only a private display (200-999) written out passes.
