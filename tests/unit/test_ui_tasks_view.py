@@ -278,6 +278,46 @@ def test_an_uncurated_all_advanced_section_keeps_a_page_that_counts_what_it_with
     assert (on.option_count, on.withheld) == (1, 0)
 
 
+def test_a_curated_page_counts_only_what_the_switch_can_reveal() -> None:
+    """The hidden tier never renders in Tasks (ADR-0013 §5), so a curated Page that names a
+    hidden Option must not hint at a setting the Advanced switch cannot bring there."""
+    hidden = next(option for option in SCHEMA if option.visibility is Visibility.HIDDEN)
+    advanced = next(option for option in SCHEMA if option.visibility is Visibility.ADVANCED)
+    default = next(option for option in SCHEMA if option.visibility is Visibility.DEFAULT)
+    mapping = TasksMapping(
+        categories=(
+            CategorySpec(
+                id="system",
+                title="System",
+                pages=(
+                    PageSpec(
+                        id="system.mixed",
+                        title="Mixed",
+                        sections=(),
+                        groups=(
+                            GroupSpec(
+                                title="Mixed",
+                                options=(default.name, advanced.name, hidden.name),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    for show_advanced, withheld in ((False, 1), (True, 0)):
+        page = next(
+            page
+            for category in plan_tasks_view(
+                SCHEMA, mapping, Disclosure(show_advanced=show_advanced)
+            )
+            for page in category.option_pages
+            if page.section == "system.mixed"
+        )
+        assert page.withheld == withheld, f"show_advanced={show_advanced}"
+
+
 def test_a_revealed_advanced_option_on_a_fallback_page_is_shown_not_withheld() -> None:
     (option,) = SCHEMA.section("opengl")
     page = next(

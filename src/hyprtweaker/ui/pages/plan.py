@@ -117,6 +117,17 @@ def is_visible(option: ResolvedOption, disclosure: Disclosure) -> bool:
     return disclosure.show_advanced
 
 
+def is_withheld(option: ResolvedOption, disclosure: Disclosure) -> bool:
+    """Whether the Advanced switch, turned on, would render this Option where it now does not.
+
+    What a Page's withheld count counts, in both Views: its hint promises the switch shows
+    more, so an Option the View never renders (the hidden tier in Tasks) is not withheld.
+    """
+    return not is_visible(option, disclosure) and is_visible(
+        option, replace(disclosure, show_advanced=True)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class GroupPlan:
     """One `Adw.PreferencesGroup`: a heading and the Rows under it."""
@@ -179,7 +190,7 @@ def plan_section(
         section=section,
         title=schema.section_title(section),
         groups=groups,
-        withheld=len(options) - len(visible),
+        withheld=sum(1 for option in options if is_withheld(option, disclosure)),
     )
 
 
