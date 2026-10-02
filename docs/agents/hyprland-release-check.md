@@ -47,10 +47,10 @@ Done when the CI overlay completeness test passes against the new schema locally
 ## 4. Verify
 
 - CI tier: overlay completeness + unit golden files + `Hyprland --verify-config` over written outputs.
-- Recommended, non-blocking: the nested-Hyprland Harness (`-m hyprland`) on `<ver>` over `tests/corpus/`. Harness failures do not block the PR — file each as its own issue and link them in the summary.
+- Recommended, non-blocking: the nested-Hyprland Harness (`-m hyprland`, with `HARNESS_DRM_CARD` set: `docs/agents/local-checks.md` § Harness tier) on `<ver>` over `tests/corpus/`. Harness failures do not block the PR — file each as its own issue and link them in the summary.
 
 ## 5. Ship
 
 - Enforce the support window: `data/schema/` carries **latest + previous** only — delete older schema files (git history keeps them).
-- Open the PR: schema + diff + overlay + engine-table updates, summary comment with per-class counts, options still unplaced in *New in \<ver\>* groups, and any follow-up issues opened.
-- Close the release-check issue when the PR merges.
+- Open the PR, base `main` (`docs/agents/issue-tracker.md` § Open a PR): schema + diff + overlay + engine-table updates, summary comment with per-class counts, options still unplaced in *New in \<ver\>* groups, and any follow-up issues opened. Its body carries `Closes #<release-check issue>`.
+- Once CI is green, add the `ready-to-merge` label. The owner merges, and the merge closes the release-check issue.

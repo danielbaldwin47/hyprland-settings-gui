@@ -4,7 +4,7 @@ Both skills read this file before they draft. It adds four things to them: the *
 
 ## A spec
 
-- A spec is an issue labelled `spec` (`docs/agents/issue-tracker.md` § Specs). Its tickets each carry `Part of #<spec>` and their blocking edges (`issue-tracker.md` § Wayfinding operations, Blocking).
+- A spec is an issue labelled `spec` (`docs/agents/issue-tracker.md` § Specs). Its tickets are its sub-issues, which is what `/implement-spec` reads. Each ticket also carries a `Part of #<spec>` line for a human reader, and its blocking edges as native dependencies (`issue-tracker.md` § Wayfinding operations, Blocking).
 - **Decided literals.** Every text or number a user will read that an earlier decision settled (an ADR, a grilling answer, a prototype the owner accepted) goes into the spec as a table: where and when it shows, what it says, and the issue or ADR that decided it, copied from there.
 - **Open calls.** A text, number or case that no decision covers is listed under "Open calls" for the owner, with a recommendation. The build follows the recommendation and the PR reports it.
 - **A promise of no change is checked against every other line.** Where the spec says a surface stays as it is, each change the spec asks for either carries that condition or is listed as an open call.

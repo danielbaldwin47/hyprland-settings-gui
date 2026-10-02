@@ -16,6 +16,8 @@ elsewhere proves only that the harness is noisy.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -74,6 +76,39 @@ def test_the_nested_compositor_is_not_the_one_we_are_sitting_in(
         # The engine's own Instance must point at the nested sockets, since that is what
         # the end-to-end test drives the real Applier through.
         assert nested.signature in str(nested.instance.directory)
+
+
+def user_manager_environment() -> str | None:
+    """`systemctl --user show-environment`, or `None` where there is no user manager."""
+    if shutil.which("systemctl") is None:
+        return None
+    result = subprocess.run(
+        ["systemctl", "--user", "show-environment"], capture_output=True, text=True, check=False
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
+def test_the_host_user_manager_environment_is_untouched(
+    harness_home: Path, artifacts: Path
+) -> None:
+    """A nested Hyprland must not export itself to the developer's systemd user manager.
+
+    Unfenced, Hyprland runs `systemctl --user import-environment` and
+    `dbus-update-activation-environment` at start and unsets the same variables at exit.
+    On the owner's machine that left the desktop's portals pointed at a dead nested socket,
+    with no `HYPRLAND_INSTANCE_SIGNATURE` at all.
+    """
+    before = user_manager_environment()
+    if before is None:
+        pytest.skip("no systemd user manager to protect")
+    entrypoint = write_config(harness_home, MINIMAL_CONFIG)
+
+    with NestedHyprland(entrypoint, home=harness_home, log=artifacts / "nested.log") as nested:
+        assert nested.hyprctl("monitors") is not None
+        during = user_manager_environment()
+
+    assert during == before, "the nested compositor exported itself to the user manager"
+    assert user_manager_environment() == before, "the nested compositor's exit unset host vars"
 
 
 def test_values_written_in_lua_are_readable_back_out(

@@ -14,6 +14,6 @@ When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the 
 
 Applying `ready-for-human` also files an inbox item ("Implement yourself: <title> → #<n>") per `docs/agents/needs-from-you.md` — the label alone leaves the ticket invisible to the human, who reads the inbox, not label queries.
 
-**Agent-filed tickets get `needs-triage`, never `ready-for-agent`.** Promotion to agent-ready is the human's act — it is the approval the self-landing grant rests on, and an agent applying it to its own follow-up launders that approval away (one run shipped seven self-approved tickets this way).
+**Agent-filed tickets get `needs-triage`, never `ready-for-agent`.** Promotion to agent-ready is the human's act — it is the owner's approval that the work should be built, and an agent applying it to its own follow-up launders that approval away (one run shipped seven self-approved tickets this way). The one exception is a spec or its tickets cut at the owner's request (`/to-spec`, `/to-tickets`, or an explicit ask): the request is the approval, so they carry `ready-for-agent` (`docs/agents/issue-tracker.md` § Specs).
 
 Edit the right-hand column to match whatever vocabulary you actually use.

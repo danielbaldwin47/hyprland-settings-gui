@@ -33,7 +33,7 @@ GitHub shares one number space across issues and PRs, so a bare `#42` may be eit
 
 ## Specs
 
-A change spec is an issue labelled `spec`. One that fits a single build session also carries `ready-for-agent`; a larger one carries `spec` alone and is cut into `ready-for-agent` tickets before anyone builds it (`docs/agents/tickets.md`).
+A change spec is an issue labelled `spec`. One that fits a single build session also carries `ready-for-agent`; a larger one carries `spec` alone and is cut into `ready-for-agent` tickets before anyone builds it (`docs/agents/tickets.md`). Those labels apply when the owner asked for the spec or the cut; a follow-up an agent files on its own gets `needs-triage` (`docs/agents/triage-labels.md`). Tickets are sub-issues of their spec, and the specs of an effort are sub-issues of an issue labelled `effort` (`docs/agents/implement-spec.md`).
 
 ## When a skill says "publish to the issue tracker"
 
