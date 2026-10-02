@@ -88,6 +88,7 @@ package_sources = {
   'hyprtweaker/engine/migration': [
     '__init__.py',
     'backup.py',
+    'bridge_setup.py',
     'detect.py',
     'export.py',
     'flow.py',

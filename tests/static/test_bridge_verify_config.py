@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -163,3 +164,44 @@ def test_a_native_path_module_is_really_loaded(tmp_path: Path) -> None:
     colors.write_text(DMS_OUTPUT.replace('"rgb(8fcdff)"', '"notacolor"', 1), encoding="utf-8")
 
     assert verify(tmp_path, paths.entrypoint).returncode != 0
+
+
+def test_the_wizard_s_gate_accepts_a_tree_with_a_waiting_and_an_active_tool(
+    stub_tool: Callable[..., Path],
+) -> None:
+    """#187: the Migration wizard's static gate runs on the staged tree with each consented
+    tool's line in it -- matugen waiting for its first run, DMS loading the file it wrote."""
+    from hyprtweaker.engine.bridge.wire import WireConsent
+    from hyprtweaker.engine.migration.bridge_setup import Offer
+    from hyprtweaker.engine.migration.flow import MigrationFlow
+
+    paths = ConfigPaths.default()
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    paths.hyprland_conf.write_text("general {\n    gaps_in = 5\n}\n", encoding="utf-8")
+    (paths.hypr_dir / "dms").mkdir()
+    (paths.hypr_dir / "dms/colors.lua").write_text(DMS_OUTPUT, encoding="utf-8")
+    (paths.config_home / "matugen").mkdir()
+    (paths.config_home / "matugen/config.toml").write_text("[config]\n", encoding="utf-8")
+    stub_tool("dms", "exit 99")
+    stub_tool("matugen", "exit 99")
+
+    class Live:
+        """A client is all the offer asks for; nothing here is switched."""
+
+    flow = MigrationFlow(
+        paths=paths,
+        schema=load_schema("0.56.2", ROOT / "data" / "schema"),
+        app_version="0.0.0-test",
+        client=Live(),  # type: ignore[arg-type]
+    )
+    flow.build_preview()
+    flow.back_up()
+    for offer in flow.bridge_offers():
+        assert isinstance(offer, Offer), offer
+        flow.consent(WireConsent(offer.plan))
+
+    verdict = flow.stage_and_gate()
+
+    assert sorted(consent.plan.tool for consent in flow.consents) == ["dms", "matugen"]
+    assert verdict.ran
+    assert verdict.ok, verdict.output
