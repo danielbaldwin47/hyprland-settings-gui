@@ -64,6 +64,7 @@ class FakeContext:
         pending_restart: frozenset[str] = frozenset(),
         unapplied: frozenset[str] = frozenset(),
         overridden: frozenset[str] = frozenset(),
+        unconfirmed: frozenset[str] = frozenset(),
         device_overrides: Mapping[str, tuple[str, ...]] | None = None,
         live_hyprland: LiveHyprland | None = None,
         retired: Mapping[str, str] | None = None,
@@ -76,6 +77,7 @@ class FakeContext:
         self.pending_restart = pending_restart
         self.unapplied = unapplied
         self.overridden = overridden
+        self.unconfirmed = unconfirmed
         self.device_overrides: Mapping[str, tuple[str, ...]] = device_overrides or {}
         self.live_hyprland = live_hyprland
         self.retired: Mapping[str, str] = retired or {}
@@ -516,10 +518,35 @@ def test_a_tool_owned_row_says_what_that_means_and_leads_to_the_tool() -> None:
     assert pill.label == "Set by matugen"
     assert pill.backend == "matugen"
     assert pill.tooltip == (
-        "matugen sets this, so Hyprland uses matugen's value. A value you set here is kept "
-        "and applies once matugen no longer sets it. Click to open matugen on the Theming "
-        "page."
+        "matugen sets this, so Hyprland uses matugen's value unless your user.lua also sets "
+        "it. A value you set here is kept and applies once matugen no longer sets it. Click "
+        "to open matugen on the Theming page."
     )
+    assert row_state(option, FakeContext(bridge_owners={option.name: "matugen"})).subtitle == (
+        f"{option.description}\n"
+        "matugen sets this. Your value applies once matugen no longer does."
+    )
+
+
+def test_a_timed_out_key_reads_not_confirmed_over_both_drift_marks() -> None:
+    """Owner call 3 of the #153 review: nothing overrides it and nothing says it failed."""
+    option = SCHEMA["general:gaps_in"]
+    context = FakeContext(
+        unconfirmed=frozenset({option.name}),
+        overridden=frozenset({option.name}),
+        unapplied=frozenset({option.name}),
+    )
+
+    (pill,) = row_state(option, context).pills
+
+    assert pill.label == "Not confirmed"
+    assert pill.tooltip == (
+        "Saved to your config, but Hyprland did not answer in time, so the app could not "
+        "check that it took. It is checked again at the next reload."
+    )
+    assert [
+        p.label for p in row_state(option, FakeContext(unapplied=context.unapplied)).pills
+    ] == ["Didn't apply"]
 
 
 def test_a_tool_owned_row_stays_editable_and_resettable() -> None:
@@ -531,7 +558,7 @@ def test_a_tool_owned_row_stays_editable_and_resettable() -> None:
     state = row_state(option, context)
 
     assert (state.editable, state.resettable, state.modified) == (True, True, True)
-    assert state.subtitle == option.description
+    assert state.subtitle.startswith(f"{option.description}\nmatugen sets this.")
 
 
 def test_set_by_a_tool_replaces_overridden_rather_than_joining_it() -> None:

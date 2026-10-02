@@ -367,3 +367,33 @@ def test_an_override_is_never_adopted_as_the_users_own_value(tmp_path: Path) -> 
         assert session.overridden == {GAPS_IN}
 
     run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_a_timed_out_edit_reads_not_confirmed_until_a_reload_confirms_it(
+    tmp_path: Path,
+) -> None:
+    """Owner call 3 of the #153 review: after a timeout the live value is the old one, and
+    "Overridden" (blaming user.lua) would be false; the next reading settles it."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+
+        fake.reload_emits_event = False
+        await edit(session, runner, GAPS_IN, CssGaps(10, 10, 10, 10))
+        await session.drain()
+        await runner.settle()
+
+        assert GAPS_IN not in session.overridden
+        assert session.unconfirmed == {GAPS_IN}
+
+        fake.reload_emits_event = True
+        live_says(fake, GAPS_IN, CssGaps(10, 10, 10, 10))
+        await foreign_reload(fake, session, runner)
+
+        assert session.unconfirmed == frozenset()
+        assert session.overridden == frozenset()
+        assert session.unapplied == frozenset()
+
+    run_with_fake(scenario, compositor())

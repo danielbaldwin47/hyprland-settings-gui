@@ -641,6 +641,14 @@ class Session:
         that: running the user's own code to answer a question about a badge is
         consent-and-safety weight no badge earns. Both marks change through `_mark` only."""
 
+        self._unconfirmed: tuple[str, ...] = ()
+        """Keys a timed-out transaction wrote: saved to the config, never confirmed live.
+
+        Neither drift mark is true of them -- nothing overrides the value, and it may well
+        have applied -- so their Row says "Not confirmed" instead (owner call 3 of the #153
+        review). The timeout's own re-read leaves them marked; the next Read-back or drift
+        scan that covers a key replaces its mark, as for the others (`_mark`)."""
+
         self._drift_watches: list[set[str]] = []
         """One set per drift scan in flight, of the keys a transaction read back meanwhile.
 
@@ -757,6 +765,11 @@ class Session:
         Per key, from the newest reading of it, as `overridden` is: see there.
         """
         return frozenset(self._unapplied)
+
+    @property
+    def unconfirmed(self) -> frozenset[str]:
+        """Keys a timed-out transaction wrote that Hyprland never confirmed (`_unconfirmed`)."""
+        return frozenset(self._unconfirmed)
 
     @property
     def overridden(self) -> frozenset[str]:
@@ -2878,7 +2891,7 @@ class Session:
             return
         self._observe_foreign(errors, binds)
 
-    async def _scan_drift(self, client: CommandClient) -> None:
+    async def _scan_drift(self, client: CommandClient, *, keep: Collection[str] = ()) -> None:
         """ADR-0005's drift badge for every key the app's Modules set (`overrides.py`, #191).
 
         At launch and after every foreign reload, after `_scan`, so the Row wears its pill
@@ -2907,7 +2920,7 @@ class Session:
             mismatches = ()
         finally:
             self._drift_watches.remove(watch)
-        self._mark(mismatches, covers=lambda name: name not in watch)
+        self._mark(mismatches, covers=lambda name: name not in watch and name not in keep)
 
     async def drain(self) -> None:
         """Wait until every pending edit has been applied and confirmed.
@@ -2997,7 +3010,9 @@ class Session:
         self._applying_preset = None
         self._spawn(self._reread_after_foreign_reload())
 
-    async def _reread_after_foreign_reload(self) -> None:
+    async def _reread_after_foreign_reload(self, keep: Collection[str] = ()) -> None:
+        """`keep`: keys whose drift marks this re-read's scan leaves alone -- a timed-out
+        transaction's, which read "Not confirmed" until a later reading covers them."""
         client = self._client
         if client is None:
             return
@@ -3030,7 +3045,7 @@ class Session:
         # The other half ADR-0016 asks for: somebody else's reload can break the config just
         # as thoroughly as the app's own, and it surfaces identically.
         await self._scan(client)
-        await self._scan_drift(client)
+        await self._scan_drift(client, keep=keep)
         # A tool run from the user's own script may have written its first file (S4).
         self.load_waiting_bridges()
         self._changed()
@@ -3592,10 +3607,16 @@ class Session:
         if result.outcome is not ApplyOutcome.TIMEOUT or self._closing:
             self._repolled = False
             return
+        # Its keys read "Not confirmed", and a scan already running leaves them so.
+        keys = set(result.keys)
+        for watch in self._drift_watches:
+            watch.update(keys)
+        self._mark((), covers=keys.__contains__)
+        self._unconfirmed = (*self._unconfirmed, *result.keys)
         if self._repolled:
             return
         self._repolled = True
-        self._spawn(self._reread_after_foreign_reload())
+        self._spawn(self._reread_after_foreign_reload(keep=frozenset(keys)))
 
     def _report(self, result: ApplyResult) -> None:
         self._pending_restart.update(result.pending_restart)
@@ -3705,6 +3726,7 @@ class Session:
         (something later won): `Mismatch` decides which, and never both.
         """
         fresh = [mismatch for mismatch in mismatches if covers(mismatch.name)]
+        self._unconfirmed = tuple(name for name in self._unconfirmed if not covers(name))
         self._unapplied = (
             *(name for name in self._unapplied if not covers(name)),
             *(mismatch.name for mismatch in fresh if mismatch.unapplied),

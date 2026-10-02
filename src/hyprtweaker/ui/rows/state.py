@@ -66,6 +66,7 @@ ADVANCED_PILL: Final = "Advanced"
 RESTART_PILL: Final = "Restart"
 PENDING_RESTART_PILL: Final = "Pending restart"
 UNAPPLIED_PILL: Final = "Didn't apply"
+UNCONFIRMED_PILL: Final = "Not confirmed"
 OVERRIDDEN_PILL: Final = "Overridden"
 DEVICE_PILL: Final = "Per-device"
 PLUGIN_PILL: Final = "Plugin option"
@@ -362,6 +363,11 @@ class RowContext(Protocol):
     def overridden(self) -> frozenset[str]: ...
 
     @property
+    def unconfirmed(self) -> frozenset[str]:
+        """Keys a timed-out transaction wrote that Hyprland never confirmed."""
+        ...
+
+    @property
     def device_overrides(self) -> Mapping[str, tuple[str, ...]]: ...
 
     @property
@@ -426,8 +432,22 @@ def row_state(option: ResolvedOption, context: RowContext) -> RowState:
         # take (Retired, or Not in this Hyprland: every edit would be a config error).
         editable=context.live and dependency is None and why is None,
         resettable=context.live and not retired,
-        subtitle="\n".join(line for line in (option.description, why) if line),
+        subtitle="\n".join(
+            line for line in (option.description, why, _set_by_line(option, context)) if line
+        ),
     )
+
+
+def _set_by_line(option: ResolvedOption, context: RowContext) -> str | None:
+    """Who sets this Option, under its description: the "Set by" pill's news in words a
+    keyboard or screen reader reaches, since the control stays editable (finding 25 of the
+    #153 review)."""
+    tool = context.bridge_owners.get(option.name)
+    if tool is None:
+        return None
+    spec = REGISTRY.get(tool)
+    name = spec.title if spec is not None else tool
+    return f"{name} sets this. Your value applies once {name} no longer does."
 
 
 def _read_only_reason(
@@ -522,6 +542,19 @@ def _same_value(left: Any, right: Any) -> bool:
 # decides order or whether another pill shows: that is `PILL_PRECEDENCE`, below.
 
 
+def _unconfirmed_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # Owner call 3 of the #153 review: after a timeout the live value is still the old one,
+    # so "Overridden" (and its user.lua) or "Didn't apply" would each claim something no
+    # reading showed. What is true: saved, and not checked.
+    if option.name not in context.unconfirmed:
+        return None
+    return Pill(
+        UNCONFIRMED_PILL,
+        "Saved to your config, but Hyprland did not answer in time, so the app could not "
+        "check that it took. It is checked again at the next reload.",
+    )
+
+
 def _unapplied_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     if option.name not in context.unapplied:
         return None
@@ -568,9 +601,9 @@ def _set_by_tool_pill(option: ResolvedOption, context: RowContext) -> Pill | Non
     name = spec.title if spec is not None else tool
     return Pill(
         SET_BY_TOOL_PILL.format(tool=name),
-        f"{name} sets this, so Hyprland uses {name}'s value. A value you set here is kept "
-        f"and applies once {name} no longer sets it. Click to open {name} on the Theming "
-        "page.",
+        f"{name} sets this, so Hyprland uses {name}'s value unless your user.lua also sets "
+        f"it. A value you set here is kept and applies once {name} no longer sets it. Click "
+        f"to open {name} on the Theming page.",
         backend=tool,
     )
 
@@ -684,6 +717,7 @@ def _advanced_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
 class PillKind(enum.Enum):
     """A row of `PILL_PRECEDENCE`, so one row can name another it suppresses."""
 
+    UNCONFIRMED = enum.auto()
     UNAPPLIED = enum.auto()
     RETIRED = enum.auto()
     SET_BY_TOOL = enum.auto()
@@ -710,6 +744,12 @@ MAX_PILLS: Final = 2
 """A Row shows at most this many pills (inbox #79); the last one shown lists the rest."""
 
 PILL_PRECEDENCE: Final[tuple[PillRule, ...]] = (
+    # Unconfirmed is what is known after a timeout; the two drift marks would be guesses.
+    PillRule(
+        PillKind.UNCONFIRMED,
+        _unconfirmed_pill,
+        frozenset({PillKind.UNAPPLIED, PillKind.OVERRIDDEN}),
+    ),
     PillRule(PillKind.UNAPPLIED, _unapplied_pill),
     PillRule(PillKind.RETIRED, _retired_pill, frozenset({PillKind.NOT_IN_HYPRLAND})),
     # The tool is what overrides the app's value, and this pill names it (#165).

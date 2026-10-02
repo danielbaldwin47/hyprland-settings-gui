@@ -44,6 +44,7 @@ class FakeSession:
         self.pending_restart: frozenset[str] = frozenset()
         self.unapplied: frozenset[str] = frozenset()
         self.overridden: frozenset[str] = frozenset()
+        self.unconfirmed: frozenset[str] = frozenset()
         self.device_overrides: dict[str, tuple[str, ...]] = {}
         self.bridge_owners: dict[str, str] = {}
         self.live_hyprland = live_hyprland
