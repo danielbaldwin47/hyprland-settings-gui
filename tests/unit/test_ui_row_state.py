@@ -41,6 +41,7 @@ from hyprtweaker.ui.rows.state import (
     help_content,
     no_value_label,
     row_state,
+    row_value,
     shown_value,
     unmet_dependency,
     value_label,
@@ -66,6 +67,7 @@ class FakeContext:
         device_overrides: Mapping[str, tuple[str, ...]] | None = None,
         live_hyprland: LiveHyprland | None = None,
         retired: Mapping[str, str] | None = None,
+        kept: Mapping[str, Any] | None = None,
         schema: Schema = SCHEMA,
     ) -> None:
         self.schema = schema
@@ -77,6 +79,8 @@ class FakeContext:
         self.live_hyprland = live_hyprland
         self.retired: Mapping[str, str] = retired or {}
         """Retired Option name -> the release that retired it."""
+        self.kept: Mapping[str, Any] = kept or {}
+        """Retired Option name -> the value the Manifest keeps for it, for every reason."""
         self.model = ConfigModel(schema)
 
     def unknown_to_version(self, option: ResolvedOption) -> bool:
@@ -84,6 +88,9 @@ class FakeContext:
 
     def retired_in(self, option: ResolvedOption) -> str | None:
         return self.retired.get(option.name)
+
+    def kept_value(self, name: str) -> OptionValue:
+        return self.kept.get(name, UNSET)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         return self.model.get(option.name)
@@ -305,8 +312,7 @@ def test_an_option_the_running_hyprland_lacks_wears_the_not_in_this_hyprland_pil
 
     assert pill.label == "Not in this Hyprland"
     assert pill.tooltip == (
-        "Hyprland 0.56.0 does not have this setting, so a change made here will not take "
-        "effect."
+        "Hyprland 0.56.0 does not have this setting, so it cannot be changed here."
     )
     assert _pills(SCHEMA["general:gaps_in"], context) == (), "only the option it lacks"
 
@@ -322,8 +328,8 @@ def test_a_retired_option_wears_its_release_in_place_of_not_in_this_hyprland() -
     assert row_state(SCHEMA["decoration:rounding"], context).pills == (
         Pill(
             "Retired in 0.57.0",
-            "Hyprland 0.57.0 removed this setting; your value is kept and comes back if the "
-            "setting returns.",
+            "Hyprland 0.57.0 removed this setting, so it cannot be changed here. Your value is "
+            "kept and comes back if the setting returns.",
         ),
     )
     assert _pills(SCHEMA["decoration:dim_strength"], context) == ("Not in this Hyprland",)
@@ -347,14 +353,78 @@ def test_no_running_hyprland_means_no_option_is_unknown_to_it() -> None:
     assert _pills(SCHEMA["decoration:rounding"], FakeContext(live_hyprland=None)) == ()
 
 
-def test_an_option_unknown_to_the_running_hyprland_stays_editable() -> None:
-    """The pill informs; it does not lock. The write path is unchanged (#181)."""
-    context = FakeContext(live_hyprland=_live_without("decoration:rounding"))
+def test_a_retired_row_is_read_only_and_says_what_it_keeps() -> None:
+    """#215: Hyprland no longer takes the setting, so the control cannot change it, and
+    the Row shows the value the app kept rather than the default it is not using."""
+    option = SCHEMA["decoration:rounding"]
+    context = FakeContext(retired={option.name: "0.57.0"}, kept={option.name: 8})
 
-    state = row_state(SCHEMA["decoration:rounding"], context)
+    state = row_state(option, context)
 
-    assert state.editable
-    assert state.resettable
+    assert not state.editable
+    assert not state.resettable
+    assert row_value(option, context) == 8
+    assert state.subtitle == (
+        "rounded corners' radius (in layout px)\n"
+        "Your value: 8. Hyprland 0.57.0 removed this setting; it is kept for when the "
+        "setting returns."
+    )
+    assert state.pills[0].tooltip == (
+        "Hyprland 0.57.0 removed this setting, so it cannot be changed here. Your value is "
+        "kept and comes back if the setting returns."
+    )
+
+
+def test_a_value_kept_for_a_quiet_reason_is_read_only_without_a_pill() -> None:
+    """settled.md #215: every retirement reason locks the Row; only REMOVED is announced."""
+    option = SCHEMA["general:gaps_in"]
+    context = FakeContext(kept={option.name: CssGaps(4, 4, 4, 4)})
+
+    state = row_state(option, context)
+
+    assert (state.editable, state.resettable, state.pills) == (False, False, ())
+    assert state.subtitle == (
+        "gaps between windows\nYour value: 4. It is kept for when Hyprland has this "
+        "setting again."
+    )
+    assert state.summary is not None and state.summary.text == "4"
+
+
+def test_a_set_row_the_running_hyprland_lacks_is_read_only_but_resettable() -> None:
+    """#215: every edit would be a config error and an auto-revert; Reset takes the key out."""
+    option = SCHEMA["decoration:rounding"]
+    context = FakeContext(live_hyprland=_live_without(option.name))
+    context.model.set(option.name, 8)
+
+    state = row_state(option, context)
+
+    assert (state.editable, state.resettable, state.modified) == (False, True, True)
+    assert row_value(option, context) == 8
+    assert state.pills[0].tooltip == (
+        "Hyprland 0.56.0 does not have this setting, so it cannot be changed here. Reset "
+        "removes it from your config."
+    )
+    assert state.subtitle.endswith(
+        "\nHyprland 0.56.0 does not have this setting. Reset removes it from your config."
+    )
+
+
+def test_an_unset_row_the_running_hyprland_lacks_is_read_only() -> None:
+    option = SCHEMA["decoration:rounding"]
+    context = FakeContext(live_hyprland=_live_without(option.name))
+
+    state = row_state(option, context)
+
+    assert (state.editable, state.modified) == (False, False)
+    assert state.pills[0].tooltip == (
+        "Hyprland 0.56.0 does not have this setting, so it cannot be changed here."
+    )
+    assert state.subtitle == (
+        "rounded corners' radius (in layout px)\n"
+        "Hyprland 0.56.0 does not have this setting, so it cannot be changed here."
+    )
+    other = row_state(SCHEMA["general:gaps_in"], context)
+    assert other.editable and other.subtitle == "gaps between windows"
 
 
 def test_a_row_matching_more_than_two_pills_shows_the_top_two_and_lists_the_rest() -> None:
