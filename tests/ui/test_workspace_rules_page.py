@@ -321,12 +321,19 @@ def test_show_it_reveals_and_flashes_the_existing_row(tmp_path: Path) -> None:
     assert dialog.closed == [True]
 
 
-def test_reveal_answers_whether_the_selector_has_a_row(tmp_path: Path) -> None:
-    _session, window = build_window(tmp_path, rules=(rule("5"),))
+def test_reveal_returns_the_row_it_flashed_and_none_for_a_stranger(tmp_path: Path) -> None:
+    """The row, so a search hit's window can scroll to it once (#172, as `BindsPage.reveal`)."""
+    from hyprtweaker.ui.flash import FLASH_CLASS
+
+    _session, window = build_window(tmp_path, rules=(rule("4"), rule("5")))
     page = window.workspace_rules_page
 
-    assert page.reveal("5") is True
-    assert page.reveal("6") is False
+    revealed = page.reveal("5")
+
+    assert revealed is not None and revealed.get_title() == "5"
+    assert FLASH_CLASS in revealed.get_css_classes()
+    assert [row.rule.workspace for row in page.rows if row.widget is revealed] == ["5"]
+    assert page.reveal("6") is None
 
 
 def test_a_refused_save_keeps_the_dialog_open_and_says_why(tmp_path: Path) -> None:

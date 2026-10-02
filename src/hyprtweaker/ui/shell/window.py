@@ -2531,8 +2531,12 @@ class MainWindow(Adw.ApplicationWindow):
         key: int | str = position
         if hit.kind is EntityKind.MONITOR_RULE:
             key = self._session.monitor_rules[position].output
+        elif hit.kind is EntityKind.WORKSPACE_RULE:
+            key = self._session.workspace_rules[position].workspace
         elif hit.kind is EntityKind.MONITOR_PROFILE:
             key = self._session.monitor_profiles()[position][0]
+        elif hit.kind is EntityKind.PRESET:
+            key = self._session.presets()[position][0]
         self._select_section(entity_page_id(hit.kind.page_kind))
         GLib.idle_add(self._reveal_entity, hit.kind, key, priority=GLib.PRIORITY_LOW)
 
@@ -2560,12 +2564,18 @@ class MainWindow(Adw.ApplicationWindow):
                     "window" if kind is EntityKind.WINDOW_RULE else "layer"
                 )
                 return rules.reveal(key) if rules is not None and isinstance(key, int) else None
+            case EntityKind.WORKSPACE_RULE:
+                workspaces = self._workspace_rules_page
+                return workspaces.reveal(str(key)) if workspaces is not None else None
             case EntityKind.MONITOR_RULE:
                 monitors = self._monitors_page
                 return monitors.reveal_rule(str(key)) if monitors is not None else None
             case EntityKind.MONITOR_PROFILE:
                 monitors = self._monitors_page
                 return monitors.reveal_profile(str(key)) if monitors is not None else None
+            case EntityKind.PRESET:
+                theming = self._theming_page
+                return theming.reveal_preset(str(key)) if theming is not None else None
 
     def reveal_backend(self, tool: str) -> None:
         """Open the Theming Page on `tool` and flash it: a "Set by <tool>" pill's click (#165).

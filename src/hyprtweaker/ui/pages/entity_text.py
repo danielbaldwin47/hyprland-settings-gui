@@ -3,8 +3,8 @@
 The Binds, Rules, Workspaces and Monitors Pages and the Presets group each describe their
 Entity in one place; the search entries (#75, #172) describe the same Entity in the same
 words, so those functions live here, in a module that imports no `gi`, and the Pages and
-the finder both read them. A bind or a
-rule is therefore worded alike wherever it turns up, and strict mypy covers the words.
+the finder both read them. An Entity is therefore worded alike wherever it turns up, and
+strict mypy covers the words.
 
 Only text and the vocabulary of a badge live here. What a row does about a badge -- the
 button, its callable -- stays in the Page, which holds the widgets those callables reach.
