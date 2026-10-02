@@ -527,18 +527,25 @@ class _Mapper:
                 return
             coords.append(number)
         outside = [c for c in coords if not -1.0 <= c <= 2.0]
+        # Lua rejects the whole curve, and every animation using it then fails (settled on
+        # a nested 0.56.2, F29 of the #148 review): the nearest legal points are written,
+        # as #205 does for an animation's speed, and the report says so.
+        coords = [min(2.0, max(-1.0, c)) for c in coords]
+        points = [[coords[0], coords[1]], [coords[2], coords[3]]]
         if outside:
             self.report.add(
                 LossCode.ANIMATION_RANGE,
-                f"bezier {name!r} has coordinates outside the -1..2 range Lua accepts "
-                f"({', '.join(str(c) for c in outside)}); Hyprland will reject the curve",
+                f"bezier {name!r} has points outside the -1 to 2 range Hyprland accepts "
+                f"({', '.join(str(c) for c in outside)}); they were moved to the nearest "
+                "edge, so its motion is gentler.",
                 origin=origin,
                 source=f"bezier = {value}",
+                replacement=(
+                    f"points = {{ {{ {points[0][0]}, {points[0][1]} }}, "
+                    f"{{ {points[1][0]}, {points[1][1]} }} }}"
+                ),
             )
-        spec = {
-            "type": "bezier",
-            "points": [[coords[0], coords[1]], [coords[2], coords[3]]],
-        }
+        spec = {"type": "bezier", "points": points}
         self.entities.curves.append(Curve(name=name, spec=spec, origin=origin))
 
     def _animation(self, value: str, origin: str) -> None:

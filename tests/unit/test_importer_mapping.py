@@ -895,6 +895,22 @@ class TestAnimationsAndCurves:
         )
         assert item.replacement == "speed = 100"
 
+    def test_a_bezier_point_outside_the_range_is_clamped_and_said_so(
+        self, schema, tmp_path
+    ) -> None:
+        """F29 of the #148 review, settled on a nested 0.56.2: Lua rejects the whole curve
+        ("value -3.00 is less than the minimum of -1.00") and every animation using it then
+        fails ("no such bezier"). The nearest legal points are written instead."""
+        result = _map("bezier = wild, 0.1, -3, 0.5, 2.5\n", schema, tmp_path)
+
+        assert result.entities.curves[0].spec["points"] == [[0.1, -1.0], [0.5, 2.0]]
+        [item] = [i for i in result.loss if i.code is LossCode.ANIMATION_RANGE]
+        assert item.message == (
+            "bezier 'wild' has points outside the -1 to 2 range Hyprland accepts (-3.0, "
+            "2.5); they were moved to the nearest edge, so its motion is gentler."
+        )
+        assert item.replacement == "points = { { 0.1, -1.0 }, { 0.5, 2.0 } }"
+
     @pytest.mark.parametrize("speed", ["0", "-2", "fast"])
     def test_an_animation_with_no_usable_speed_is_left_to_the_default(
         self, speed: str, schema, tmp_path

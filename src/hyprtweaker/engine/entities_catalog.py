@@ -835,7 +835,7 @@ def curve_findings(curve: Curve) -> tuple[Finding, ...]:
                     Finding(
                         curve.name,
                         f"{axis} is outside {CURVE_POINT_MIN}..{CURVE_POINT_MAX}; "
-                        f"Hyprland clamps control points to that range.",
+                        "Hyprland rejects the curve, and animations using it stop.",
                     )
                 )
     return tuple(findings)
