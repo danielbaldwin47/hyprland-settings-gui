@@ -472,6 +472,104 @@ ALLOWED = [
 ]
 
 
+# Each launcher and wrapper runs the command after it, so the fence judges that command
+# (#148 fix review R7): `uwsm-app -- hyprctl reload` reloaded the owner's compositor.
+WRAPPERS = [
+    "uwsm-app --",
+    "uwsm-app -a term -t scope --",
+    "uwsm app --",
+    "uwsm app -s b --",
+    "app2unit --",
+    "app2unit -t service",
+    "systemd-run --user --scope",
+    "setsid -f",
+    "nohup",
+    "env FOO=1",
+    "exec",
+    "nice -n 5",
+    "timeout 5",
+    "xargs",
+    "setsid -f uwsm-app --",
+]
+SHELLS = ["sh -c", "bash -c", "nohup bash -c"]
+
+
+LAUNCHERS = ("uwsm-app", "uwsm app", "app2unit")
+
+
+@pytest.mark.parametrize("wrapper", WRAPPERS)
+def test_a_wrapper_is_judged_by_the_command_it_runs(world: World, wrapper: str) -> None:
+    """A refused command is refused behind any wrapper, for its own reason. A harmless one
+    passes a plain wrapper; a desktop launcher is refused whatever it runs, since starting
+    a command as a unit in the owner's session is its whole job (`uwsm app -- foot` maps a
+    terminal on the owner's desktop)."""
+    tool("jq")
+    refused = verdict(FENCE, f"{wrapper} hyprctl reload", world.env)
+    assert refused is not None and "`hyprctl reload`" in refused
+    app = verdict(FENCE, f"{wrapper} .venv/bin/python -m hyprtweaker", world.env)
+    assert app is not None and "`python -m hyprtweaker`" in app
+    harmless = verdict(FENCE, f"{wrapper} ls /tmp", world.env)
+    if wrapper.startswith(LAUNCHERS) or " uwsm-app" in wrapper:
+        assert harmless is not None and "as a unit in the owner's desktop session" in harmless
+    else:
+        assert harmless is None
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_shell_string_is_judged_by_the_command_it_runs(world: World, shell: str) -> None:
+    tool("jq")
+    assert verdict(FENCE, f"{shell} 'hyprctl reload'", world.env) is not None
+    assert verdict(FENCE, f"{shell} 'ls /tmp'", world.env) is None
+
+
+# Routes to the owner's desktop from #270 (items 1 and 2) and the app's desktop entry.
+REFUSED_LAUNCHES = [
+    "app2unit -- hyprtweaker",
+    "uwsm-app -- matugen image x.png",
+    "uwsm-app -- io.github.danielbaldwin47.Hyprtweaker.desktop",
+    "app2unit io.github.danielbaldwin47.Hyprtweaker.desktop:new-window",
+    "gtk-launch io.github.danielbaldwin47.Hyprtweaker",
+    "gtk-launch foot",
+    "gio launch data/io.github.danielbaldwin47.Hyprtweaker.desktop",
+    'python -c "from hyprtweaker.application import main; main()"',
+    ".venv/bin/python - <<'EOF'\nimport runpy\n"
+    "runpy.run_module('hyprtweaker', run_name='__main__')\nEOF",
+    'env -S "hyprtweaker"',
+    "hyprlock",
+    "hypridle",
+    "hyprsunset -t 4000",
+    "swaybg -i wall.png",
+    "mpvpaper '*' wall.mp4",
+    "makoctl dismiss -a",
+    "makoctl reload",
+    "dconf write /org/gnome/desktop/interface/color-scheme \"'prefer-dark'\"",
+    "dconf reset -f /org/gnome/",
+    "dconf load / < settings.ini",
+]
+ALLOWED_NEAR_LAUNCHES = [
+    "makoctl list",
+    "makoctl history",
+    "dconf read /org/gnome/desktop/interface/color-scheme",
+    "dconf dump /org/gnome/",
+    "gio info data/io.github.danielbaldwin47.Hyprtweaker.desktop",
+    "grep -rn hyprtweaker.application src/",
+    ".venv/bin/python -c 'from hyprtweaker.application import Application'",
+    "desktop-file-validate data/io.github.danielbaldwin47.Hyprtweaker.desktop",
+]
+
+
+@pytest.mark.parametrize("command", REFUSED_LAUNCHES)
+def test_a_launcher_daemon_or_app_start_is_refused(world: World, command: str) -> None:
+    tool("jq")
+    assert verdict(FENCE, command, world.env) is not None
+
+
+@pytest.mark.parametrize("command", ALLOWED_NEAR_LAUNCHES)
+def test_their_reads_and_mentions_pass(world: World, command: str) -> None:
+    tool("jq")
+    assert verdict(FENCE, command, world.env) is None
+
+
 @pytest.mark.parametrize("command", REFUSED)
 def test_the_fence_refuses_a_call_aimed_at_the_desktop(world: World, command: str) -> None:
     tool("jq")
@@ -560,6 +658,27 @@ def test_the_fence_lets_through_what_cannot_reach_the_desktop(
             "`hyprctl`",
             "hyprctl --instance <signature",
         ),
+        ("uwsm-app -- hyprctl reload", "`hyprctl reload`", "hyprctl --instance <signature"),
+        ("uwsm app -- hyprctl reload", "`hyprctl reload`", "hyprctl --instance <signature"),
+        ("app2unit -- hyprtweaker", "`hyprtweaker`", "tools/sandbox.py"),
+        (
+            "gtk-launch io.github.danielbaldwin47.Hyprtweaker",
+            "`gtk-launch`",
+            "tools/sandbox.py",
+        ),
+        (
+            "uwsm-app -- io.github.danielbaldwin47.Hyprtweaker.desktop",
+            "desktop entry",
+            "tools/sandbox.py",
+        ),
+        (
+            "python -c 'from hyprtweaker.application import main; main()'",
+            "python code that runs the app",
+            "tools/sandbox.py",
+        ),
+        ("hyprlock", "`hyprlock`", "leave it to the owner"),
+        ("dconf write /a/b 1", "`dconf write`", "dconf read"),
+        ("makoctl dismiss -a", "`makoctl dismiss`", "makoctl list"),
     ],
 )
 def test_a_refusal_names_the_call_why_and_the_shape_that_works(
@@ -652,6 +771,16 @@ def test_without_jq_the_fence_fails_closed_on_the_four_words(no_jq_env: dict[str
         "dbus-update-activation-environment --all",
         ".venv/bin/python tools/sandbox.py --window",
         "HYPRTWEAKER_HARNESS_HOST_WINDOW=1 .venv/bin/pytest tests/integration",
+        "uwsm-app -- hyprctl reload",
+        "app2unit -- foot",
+        "gtk-launch foot",
+        "gio launch x.desktop",
+        "hyprlock",
+        "swaybg -i x.png",
+        "makoctl dismiss",
+        "dconf write /a/b 1",
+        "python -c 'from hyprtweaker.application import main; main()'",
+        "uwsm-app -- io.github.danielbaldwin47.Hyprtweaker.desktop",
     ],
 )
 def test_without_jq_the_fence_refuses_the_new_words(

@@ -60,15 +60,21 @@
 #    `meson devenv` (its command judged as typed), `tools/sandbox.py --window`; and the
 #    Harness tier (`pytest tests/integration`) without `HARNESS_DRM_CARD=` on it.
 #  - A theming tool, wallpaper daemon or bar (ruling A14): matugen, wallust, noctalia,
-#    qs/quickshell, dms, swww, awww, hyprpaper, waybar; `gsettings` but its reads;
-#    `dbus-update-activation-environment`.
+#    qs/quickshell, dms, swww, awww, hyprpaper, waybar; `gsettings` and `dconf` but
+#    their reads; `dbus-update-activation-environment`. The session's own daemons
+#    (#270): hyprlock, hypridle, hyprsunset, swaybg, mpvpaper; `makoctl` but its reads.
+#  - A desktop launcher: `gtk-launch`, `gio launch`, and the app's desktop entry
+#    (`io.github.danielbaldwin47.Hyprtweaker[.desktop]`) wherever a command stands.
+#  - python code that starts the app (`hyprtweaker.application` with `main(` or
+#    `.run(`, `runpy.run_module("hyprtweaker…")`), as `-c` or on stdin.
 #  - `git stash` but `list` and `show`: one stack shared by every worktree.
 #
 # A command is judged only at command position: the command is split into
 # simple commands (quotes, `$(…)`, backticks, pipes and heredocs followed), and
 # the word after any `VAR=…`, `env`, `command`, `exec` or wrapper (`timeout`,
-# `nohup`, `sudo`, `xargs`, `flock`, …, each with the options that take a value)
-# is the one judged, so `grep hyprctl docs/` or a heredoc commit message passes.
+# `nohup`, `sudo`, `xargs`, `flock`, the launchers `uwsm-app`, `uwsm app` and
+# `app2unit`, …, each with the options that take a value, and `--`) is the one
+# judged, so `grep hyprctl docs/` or a heredoc commit message passes.
 # A command line handed to a shell is split and judged in turn: `bash -c '…'`,
 # `sh -c`, a heredoc into `bash`, `eval`, `watch '…'` and `flock -c`. Doubt fails
 # closed: without jq, any call whose input names one of the fenced words, a GTK
@@ -91,9 +97,9 @@ if ! command -v jq > /dev/null 2>&1; then
     raw_kill='(pgrep|pidof)[^;&]*kill|kill[^;&|]*(pgrep|pidof)|fuser[^;&|]* -[a-z]*k|kill( +-[A-Za-z0-9]+)? +(--? +)?(0|-1)([\";]|$)'
     raw_gtk='python[^|;&]*-[A-Za-z]*c[ "'"'"'].*(Gtk|Adw|Gdk|gi\.repository)'
     raw_stdin='python[0-9.]*( +-)? *<<.*(Gtk|Adw|Gdk|gi\.repository)'
-    raw_app='python[0-9.]*( +-[A-Za-z]+)* +(-[A-Za-z]*m *hyprtweaker|src/hyprtweaker)'
+    raw_app='python[0-9.]*( +-[A-Za-z]+)* +(-[A-Za-z]*m *hyprtweaker|src/hyprtweaker)|hyprtweaker\.application|run_module\(.?.?hyprtweaker|Hyprtweaker(\.desktop)?([^[:alnum:]_.-]|$)'
     raw_xfile='(^|[^[:alnum:]_.-])(rm|unlink|rmdir|mv|ln|shred|find)[ \t"][^|;&]*(\.X11-unix|\.X[^ /"]*-lock|/tmp/\.X[0-9]*[*?])'
-    raw_session='(^|[^[:alnum:]_.-])(omarchy-[a-z]|(hyprpm|uwsm|loginctl|notify-send|wl-copy|grim|hyprshot|hyprpicker|cage|sway|killall5|skill|matugen|wallust|noctalia|quickshell|swww|awww|hyprpaper|dbus-update-activation-environment)([^[:alnum:]_.-]|$))|gsettings +(set|reset)|git( +-[^ ]+)* +stash( +(push|pop|apply|drop|clear|save|store|create|branch)|[\";]|$)|sandbox\.py[^|;&]* --window|HYPRTWEAKER_HARNESS_HOST_WINDOW=[^ "]'
+    raw_session='(^|[^[:alnum:]_.-])(omarchy-[a-z]|(hyprpm|uwsm|uwsm-app|app2unit|gtk-launch|hyprlock|hypridle|hyprsunset|swaybg|mpvpaper|makoctl|loginctl|notify-send|wl-copy|grim|hyprshot|hyprpicker|cage|sway|killall5|skill|matugen|wallust|noctalia|quickshell|swww|awww|hyprpaper|dbus-update-activation-environment)([^[:alnum:]_.-]|$))|gsettings +(set|reset)|dconf +(write|reset|load|update)|gio +launch|git( +-[^ ]+)* +stash( +(push|pop|apply|drop|clear|save|store|create|branch)|[\";]|$)|sandbox\.py[^|;&]* --window|HYPRTWEAKER_HARNESS_HOST_WINDOW=[^ "]'
     raw_systemctl='systemctl[^|;&]* (start|stop|restart|try-restart|reload|reload-or-restart|kill|isolate|mask|unmask|enable|disable|daemon-reload|set-environment|unset-environment|import-environment|edit|poweroff|reboot|suspend|hibernate)'
     raw_find_tmp='find +/+(tmp/*)?[ "][^|;&]*-(delete|exec)'
     if grep -Eq "$raw_words|$raw_x|$raw_kill|$raw_gtk|$raw_stdin|$raw_app|$raw_xfile|$raw_session|$raw_systemctl|$raw_find_tmp" <<< "$input"; then
@@ -112,7 +118,7 @@ deny() {
 
 docs="docs/agents/local-checks.md, Running the app; .claude/hooks/desktop-fence.sh"
 xdocs="docs/agents/local-checks.md, Private X displays; .claude/hooks/desktop-fence.sh"
-fenced_words='hyprctl|[Hh]yprland|hyprpm|hyprshot|hyprpicker|omarchy-|uwsm|loginctl|notify-send|wl-copy|wtype|ydotool|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|HYPRTWEAKER_UI_HOST_DISPLAY|HYPRTWEAKER_HARNESS_HOST_WINDOW|matugen|wallust|noctalia|quickshell|swww|awww|hyprpaper|waybar|gsettings|dbus-update-activation-environment|\.X11-unix|\.X[^ /]*-lock'
+fenced_words='hyprctl|[Hh]yprland|hyprpm|hyprshot|hyprpicker|omarchy-|uwsm|loginctl|notify-send|wl-copy|wtype|ydotool|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|HYPRTWEAKER_UI_HOST_DISPLAY|HYPRTWEAKER_HARNESS_HOST_WINDOW|matugen|wallust|noctalia|quickshell|swww|awww|hyprpaper|waybar|gsettings|dbus-update-activation-environment|app2unit|gtk-launch|hyprlock|hypridle|hyprsunset|swaybg|mpvpaper|makoctl|dconf|hyprtweaker|Hyprtweaker|\.X11-unix|\.X[^ /]*-lock'
 re_x_dir='(^|/)\.X11-unix(/|$)'
 re_x_lock='^(/tmp/)?\.X[^/]*-lock$'
 re_x_glob='(^|/)\.X[0-9]*[*?[]'
@@ -120,7 +126,11 @@ re_x_above='^/+(tmp/*)?$' # `/` or `/tmp`: removing it removes the X files with 
 # Python code that loads GTK, runs a command, or removes or links a file.
 re_gtk='gi\.repository|gi\.require_version|(^|[^[:alnum:]_.])(import|from)[[:space:]]+gi([^[:alnum:]_]|$)'
 re_py_run='subprocess|Popen|os\.system|os\.popen|os\.exec|os\.spawn|pty\.spawn|create_subprocess'
-re_py_word='(^|[^[:alnum:]_.-])(hyprctl|Hyprland|hyprland|start-hyprland|wtype|ydotool|ydotoold|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|matugen|wallust|noctalia|noctalia-shell|qs|quickshell|dms|swww|awww|swww-daemon|awww-daemon|hyprpaper|waybar|gsettings|dbus-update-activation-environment)([^[:alnum:]_./-]|$)'
+re_py_word='(^|[^[:alnum:]_.-])(hyprctl|Hyprland|hyprland|start-hyprland|wtype|ydotool|ydotoold|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|matugen|wallust|noctalia|noctalia-shell|qs|quickshell|dms|swww|awww|swww-daemon|awww-daemon|hyprpaper|waybar|gsettings|dbus-update-activation-environment|uwsm|uwsm-app|app2unit|gtk-launch|hyprlock|hypridle|hyprsunset|swaybg|mpvpaper|makoctl|dconf)([^[:alnum:]_./-]|$)'
+# Python code that starts the app, as `python -m hyprtweaker` would (#270).
+re_py_app='hyprtweaker\.(application|__main__)([^[:alnum:]_]|$).*(main|run)[[:space:]]*\(|run_(module|path)\([^)]*hyprtweaker'
+# The app's desktop entry, launched by id or by file wherever a command stands.
+re_app_entry='(^|/)io\.github\.danielbaldwin47\.Hyprtweaker(\.desktop)?(:.*)?$'
 # A theming tool, wallpaper daemon or bar: each writes, recolours or restarts something on
 # the owner's desktop session (F12 and ruling A14 of the #148 review). Tests and probes use
 # the refusing stand-ins and stub tools of tests/hermetic.py; real tools are the owner's.
@@ -153,6 +163,8 @@ declare -A wrapper_values=(
     [systemd-run]=" -p -u -E -M -H -C --property --unit --setenv --machine --host --capsule --description --slice --uid --gid --nice --working-directory --service-type "
     [dbus-run-session]=" --config-file --dbus-daemon "
     [exec]=" -a "
+    [uwsm-app]=" -s -t -a -u -d -p -S "
+    [app2unit]=" -s -t -a -u -d -p -S "
 )
 # Wrappers whose first operand is not the command: flock's lock file, taskset's mask.
 declare -A wrapper_positionals=([flock]=1 [taskset]=1)
@@ -413,6 +425,7 @@ joined() {
 judge() {
     local -a w=("$@")
     local n=${#w[@]} i=0 text wrapped=0 wrapper="" positional=0 his="" display="" xdisplay=""
+    local launcher=""
     judged_name=""
     prefix_card=""
     # Prefix: keywords, assignments, `env` and its flags, wrappers and theirs.
@@ -423,8 +436,9 @@ judge() {
                 wrapped=1
                 ;;
             exec | nohup | setsid | sudo | doas | nice | timeout | stdbuf | xargs | watch | ionice | chrt \
-                | taskset | flock | strace | systemd-run | dbus-run-session | coproc)
+                | taskset | flock | strace | systemd-run | dbus-run-session | coproc | uwsm-app | app2unit)
                 wrapped=1 wrapper=$text positional=${wrapper_positionals[$text]:-0}
+                [[ $text == uwsm-app || $text == app2unit ]] && launcher=$text
                 ;;
             command)
                 [[ ${w[i + 1]:-L} == ?-[vV] ]] && return # a lookup, not a run
@@ -497,6 +511,8 @@ judge() {
                 || deny "\`hyprpm\` builds or loads plugins into the session's compositor on the owner's desktop. \`hyprpm list\` reads; leave plugin changes to the owner ($docs)."
             ;;
         uwsm)
+            # `uwsm app` launches its command line as a unit: judge what it would run.
+            [ "${rest[0]:1}" = app ] && { judge "Luwsm-app" "${rest[@]:1}"; return 0; }
             [[ $(first_operand " " "${rest[@]}") =~ ^(check|)$ ]] \
                 || deny "\`uwsm\` starts, stops or launches into the owner's desktop session. Run the app in a nested instance with \`.venv/bin/python tools/sandbox.py\` ($docs)."
             ;;
@@ -553,6 +569,24 @@ judge() {
             ;;
         bash | sh | dash | zsh | ksh | mksh | ash | fish) judge_shell "${rest[@]}" ;;
         meson) judge_meson "${rest[@]}" ;;
+        gtk-launch)
+            deny "\`gtk-launch\` starts a desktop application in the owner's session, so its window maps on the owner's desktop (the app's own entry among them). Run the app windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
+            ;;
+        gio)
+            [ "$(first_operand " " "${rest[@]}")" = launch ] \
+                && deny "\`gio launch\` starts a desktop entry in the owner's session, so its window maps on the owner's desktop (the app's own entry among them). Run the app windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
+            ;;
+        hyprlock | hypridle | hyprsunset | swaybg | mpvpaper)
+            deny "\`$name\` is one of the session's own daemons (lock screen, idle, night light, wallpaper): run from an agent's shell it locks, dims or re-wallpapers the owner's desktop, or fights the instance already running there. It has no nested form here; leave it to the owner ($docs)."
+            ;;
+        makoctl)
+            [[ $(first_operand " " "${rest[@]}") =~ ^(list|history|help|)$ ]] \
+                || deny "\`makoctl $(first_operand " " "${rest[@]}")\` dismisses, restores or reconfigures the owner's desktop notifications. Reads pass: \`makoctl list\`, \`makoctl history\` ($docs)."
+            ;;
+        dconf)
+            [[ $(first_operand " " "${rest[@]}") =~ ^(read|list|dump|watch|help|)$ ]] \
+                || deny "\`dconf $(first_operand " " "${rest[@]}")\` writes the owner's desktop settings, which their running apps and theme read at once. Reads pass: \`dconf read\`, \`dconf list\`, \`dconf dump\`. Tests and probes keep GSettings in memory (GSETTINGS_BACKEND=memory) ($docs)."
+            ;;
         hyprtweaker)
             deny "\`$name\` is the app's launcher: it runs the app against the session's own WAYLAND_DISPLAY, so its window maps on the owner's desktop and its writes reach the owner's real config. Run it windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
             ;;
@@ -568,7 +602,15 @@ judge() {
         eval) judge_command "$(joined "${rest[@]}")" ;;
         python | python[0-9]*) judge_python "${rest[@]}" ;;
         rm | unlink | rmdir | mv | ln | shred | find) judge_x_files "$name" "${rest[@]}" ;;
+        *)
+            [[ $name =~ $re_app_entry ]] \
+                && deny "\`$name\` is the app's desktop entry: launched, the app runs against the session's own WAYLAND_DISPLAY, so its window maps on the owner's desktop and its writes reach the owner's real config. Run it windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
+            ;;
     esac
+    # Judged first for what it runs (so the refusal names that); a launcher that would run
+    # something harmless still starts it as a unit in the owner's session.
+    [ -n "$launcher" ] \
+        && deny "\`$launcher\` starts \`$name\` as a unit in the owner's desktop session: a window it opens maps on the owner's desktop, and the unit runs under their user manager. Run the command directly, and the app windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
     return 0
 }
 
@@ -787,6 +829,8 @@ judge_python() {
         app="python -m $module"
     elif [[ $script =~ (^|/)src/hyprtweaker(/|$) ]]; then
         app="python $script"
+    elif [[ ${code//$'\n'/ } =~ $re_py_app ]]; then
+        app="python code that runs the app"
     fi
     if [ -n "$app" ]; then
         deny "\`$app\` runs the app against the session's own WAYLAND_DISPLAY, so its window maps on the owner's desktop and its config writes reach the owner's real config. Run it windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
