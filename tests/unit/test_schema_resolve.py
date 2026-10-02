@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -440,6 +441,24 @@ def test_an_unknown_field_inside_a_group_is_rejected() -> None:
     text = overlay_with_groups([{"title": "Typing", "descripton": "typo"}])
     with pytest.raises(ValueError, match="unknown overlay field"):
         overlay_module.loads(text)
+
+
+@pytest.mark.parametrize(
+    ("groups", "says"),
+    [
+        ([{"description": "No title."}], "section 'a' group: missing title"),
+        ([{"title": ""}], "section 'a' group: empty title"),
+        ([{"title": 3}], "section 'a' group: title 3 is not text"),
+        (
+            [{"title": "Typing", "description": 7}],
+            "section 'a' group 'Typing': description 7 is not text",
+        ),
+        ({"title": "Typing"}, "section 'a': groups must be a list"),
+    ],
+)
+def test_a_malformed_group_is_rejected_naming_its_section(groups: object, says: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(says)):
+        overlay_module.loads(overlay_with_groups(groups))  # type: ignore[arg-type]
 
 
 def test_two_groups_with_one_title_in_a_section_are_rejected() -> None:

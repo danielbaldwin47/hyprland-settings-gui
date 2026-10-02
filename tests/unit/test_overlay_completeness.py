@@ -39,6 +39,7 @@ row follows these conventions; the mechanical ones are tests below:
 from __future__ import annotations
 
 import re
+import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -57,6 +58,10 @@ from hyprtweaker.engine.schema import overlay as overlay_module
 from hyprtweaker.engine.schema.resolve import available_versions
 from hyprtweaker.ui.pages.plan import Disclosure, plan_config_view
 from hyprtweaker.ui.pages.tasks import load_tasks_mapping, plan_tasks_view
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+
+import overlay_help
 
 SCHEMA_DIR = Path(__file__).resolve().parents[2] / "data" / "schema"
 
@@ -329,9 +334,10 @@ HYPRLAND_SECTION_ORDER = (
 )
 """The order Hyprland declares its Sections in, which the sidebar keeps (ADR-0013)."""
 
-BANNED_WORDS = re.compile(r"\b(schema|overlay|options?|config variables?)\b", re.IGNORECASE)
-"""Words a Group's title or description never uses (spec #154 S6): the user sees settings,
-not the app's data model. "XKB option" is the one allowed use, the term the user types."""
+BANNED_WORDS = overlay_help.BANNED
+"""Words a Group's title or description, a help line or a combo label never uses (spec #154
+S6): the user sees settings, not the app's data model. One list, `tools/overlay_help.py`'s.
+"XKB option" is the one allowed use, the term the user types."""
 
 GROUP_WORD = re.compile(r"\bgroups?\b", re.IGNORECASE)
 """A title saying "Group" names the widget rather than what it holds; on the `group`
@@ -474,6 +480,36 @@ def test_no_two_rows_in_a_group_share_a_title(schema: Schema) -> None:
         seen[key] = option.name
 
     assert not clashes, f"Rows sharing a title within one Group: {clashes}"
+
+
+def test_combo_labels_are_in_the_apps_voice(schema: Schema) -> None:
+    """A label is copy the user reads as much as a title is (spec #154 S6)."""
+    offending = [
+        (option.name, label)
+        for option in schema
+        for label in (option.labels or {}).values()
+        if BANNED_WORDS.search(label.replace("XKB option", ""))
+    ]
+
+    assert not offending, f"Labels using a word the app does not use: {offending}"
+
+
+def test_no_page_in_either_view_repeats_a_group_heading(schema: Schema) -> None:
+    """Two "Behaviour" headings on one Page read as one Group split in two."""
+    shown = Disclosure(show_advanced=True)
+    pages = [*plan_config_view(schema, shown)] + [
+        page
+        for category in plan_tasks_view(schema, load_tasks_mapping(SCHEMA_DIR), shown)
+        for page in category.option_pages
+    ]
+    repeated = [
+        (page.section, title)
+        for page in pages
+        for title in {group.title for group in page.groups}
+        if [group.title for group in page.groups].count(title) > 1
+    ]
+
+    assert not repeated, f"Pages repeating a Group heading: {repeated}"
 
 
 def test_sections_keep_hyprlands_declaration_order(schema: Schema) -> None:

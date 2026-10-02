@@ -126,10 +126,24 @@ def _parse_entry(name: str, payload: dict[str, Any]) -> OverlayEntry:
 
 
 def _parse_groups(section: str, payload: Any) -> tuple[OverlayGroup, ...]:
+    if payload is None:
+        return ()
+    if not isinstance(payload, list):
+        raise ValueError(f"section {section!r}: groups must be a list")
     groups: list[OverlayGroup] = []
-    for entry in payload or ():
-        _reject_unknown(f"section {section!r} group", entry, _GROUP_KEYS)
-        group = OverlayGroup(title=str(entry["title"]), description=entry.get("description"))
+    for entry in payload:
+        where = f"section {section!r} group"
+        _reject_unknown(where, entry, _GROUP_KEYS)
+        if "title" not in entry:
+            raise ValueError(f"{where}: missing title")
+        title, description = entry["title"], entry.get("description")
+        if not isinstance(title, str):
+            raise ValueError(f"{where}: title {title!r} is not text")
+        if not title:
+            raise ValueError(f"{where}: empty title")
+        if description is not None and not isinstance(description, str):
+            raise ValueError(f"{where} {title!r}: description {description!r} is not text")
+        group = OverlayGroup(title=title, description=description)
         if any(seen.title == group.title for seen in groups):
             raise ValueError(f"section {section!r}: duplicate group {group.title!r}")
         groups.append(group)

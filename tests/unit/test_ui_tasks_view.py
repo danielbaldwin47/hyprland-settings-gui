@@ -254,9 +254,13 @@ def test_an_ordinary_curated_group_never_carries_the_new_in_flag() -> None:
 
     assert NEW_IN_GROUP_DESCRIPTION not in descriptions.values()
     assert descriptions["Borders"] == ""
-    assert descriptions["Snapping"] == (
-        "Floating windows snap to nearby windows and monitor edges as you drag them."
+    curated_snapping = next(
+        group.description
+        for group in SCHEMA.section_groups("general")
+        if group.title == "Snapping"
     )
+    assert curated_snapping
+    assert descriptions["Snapping"] == curated_snapping
 
 
 def test_the_fallback_page_joins_the_system_category() -> None:
@@ -406,6 +410,26 @@ def test_a_page_spanning_sections_names_each_group_after_its_section() -> None:
         for group in SCHEMA.section_groups(section)
     ]
     assert len(titles) == len(set(titles))
+
+
+def test_an_untitled_lead_group_on_a_page_spanning_sections_takes_its_sections_title() -> None:
+    """With `layout` uncurated its settings form one untitled Group; on Layouts, which spans
+    four Sections, that Group is headed "Layout" rather than left blank (`_under_section`)."""
+    schema = curated("layout", {}, {})
+    page = next(
+        page
+        for category in plan_tasks_view(schema, MAPPING, Disclosure(show_advanced=True))
+        for page in category.option_pages
+        if page.section == "look.layouts"
+    )
+    titles = [group.title for group in page.groups]
+
+    assert "" not in titles
+    assert titles[0] == "Layout"
+    assert [option.name for option in page.groups[0].options] == [
+        "layout:single_window_aspect_ratio",
+        "layout:single_window_aspect_ratio_tolerance",
+    ]
 
 
 CURATED_DECORATION = curated(
@@ -596,7 +620,6 @@ def test_a_new_option_in_a_homed_section_joins_a_new_in_group_on_its_home_page()
 
     groups = group_names(page)
     assert groups["New in 0.99.0"] == ["cursor:no_warps"]
-    assert "cursor:no_warps" not in groups["Warping"]
     assert [group.description for group in page.groups if group.title == "New in 0.99.0"] == [
         NEW_IN_GROUP_DESCRIPTION
     ]

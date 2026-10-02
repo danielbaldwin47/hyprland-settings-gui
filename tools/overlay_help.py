@@ -95,8 +95,9 @@ def help_problems(
         problems.append("is the upstream description; write what it says in full")
     for number in dict.fromkeys(_NUMBER.findall(text)):
         if labels and number in labels:
+            shown = labels[number]
             problems.append(
-                f"quotes the stored value {number}, which the control shows as {labels[number]!r}"
+                f"quotes the stored value {number}, which the control shows as {shown!r}"
             )
     return problems
 
