@@ -30,38 +30,6 @@ env:
   SKIP_CEILING: '13'
 
 jobs:
-  harness-probe:
-    name: harness probe (#89 spike)
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - name: vkms with its connector forced off
-        run: |
-          set +e
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends linux-modules-extra-$(uname -r) >/dev/null 2>&1
-          sudo modprobe vkms; echo "vkms rc=$?"
-          echo off | sudo tee /sys/class/drm/card0-Virtual-2/status
-          for s in /sys/class/drm/card*-*/status; do echo "$s: $(cat $s)"; done
-          sudo chmod 666 /dev/dri/card0
-      - name: Hyprland on vkms, in an Arch container, gate bypassed by hand
-        run: |
-          set +e
-          docker run --rm --privileged -v /dev:/dev -v /sys:/sys archlinux bash -c '
-            pacman -Sy --noconfirm hyprland grim bubblewrap mesa >/tmp/pac.log 2>&1
-            Hyprland --version | head -2
-            pacman -Q hyprland mesa
-            mkdir -p /tmp/xdg && chmod 700 /tmp/xdg
-            export XDG_RUNTIME_DIR=/tmp/xdg LIBSEAT_BACKEND=noop AQ_DRM_DEVICES=/dev/dri/card0 HYPRLAND_NO_SD_VARS=1
-            (Hyprland --i-am-really-stupid >/tmp/h.log 2>&1 &) ; sleep 8
-            export HYPRLAND_INSTANCE_SIGNATURE=$(ls /tmp/xdg/hypr | head -1)
-            hyprctl monitors 2>&1 | head -12
-            hyprctl output create headless 2>&1; sleep 1
-            hyprctl -j monitors 2>&1 | head -c 600
-            echo; grep -iE "err|crit|warn|renderer|gbm|egl|llvmpipe|swrast" /tmp/h.log | head -25
-            hyprctl dispatch exit >/dev/null 2>&1; sleep 1; tail -5 /tmp/h.log'
-
   lint:
     name: ruff + mypy (engine)
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
