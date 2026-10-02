@@ -17,6 +17,7 @@ say "leave this alone", because a reload resets every value first.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from ..model.values import lua_literal_for, lua_string
@@ -161,11 +162,29 @@ def _guarded(option: ResolvedOption, value: Any) -> str:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class BridgeRequire:
+    """One Bridge module's line in the Entrypoint, already decided (ADR-0006 §Placement)."""
+
+    require: str
+    """The `require` name: Quarantine's key, and what an error naming the file is matched to."""
+
+    file: str
+    """Where the module lives, relative to the hypr dir."""
+
+    text: str
+    """The line as written: the require, or the require commented with its reason."""
+
+    @property
+    def loads(self) -> bool:
+        return not self.text.startswith("--")
+
+
 def render_entrypoint(
     *,
     modules: Sequence[str],
     legacy: str | None,
-    bridges: Sequence[str],
+    bridges: Sequence[BridgeRequire],
     user: str | None,
     app_version: str,
     quarantined: Sequence[str] = (),
@@ -177,19 +196,20 @@ def render_entrypoint(
     1. **generated Modules** -- what the GUI owns;
     2. **`legacy`** -- imported constructs the GUI cannot represent, so they sit above the
        generated values they may need to correct;
-    3. **`bridge/*`** -- external tools (matugen, wallust, ...), which must beat the GUI or
-       live theming silently stops working;
+    3. **Bridges** -- external tools (matugen, wallust, ...), which must beat the GUI or
+       live theming silently stops working. Each states its own line: a loading require, or
+       the require commented with why it does not load (`engine/bridge/entries.py`);
     4. **`user`** -- last, so the escape hatch actually escapes. The app never fights it; it
        badges Options `user.lua` overrides instead.
 
     Only files that exist are required: Hyprland's `require` is protected, and asking for a
     `user.lua` the user never created would add an error to every reload.
 
-    `quarantined` names requires the caller has already left out of the lists above
-    (ADR-0016 §Quarantine). They are re-stated here as commented-out `require` lines, which
-    is the whole reason this takes them at all: the file is the user's to read, and a
-    `user.lua` that has silently stopped loading is indistinguishable from one the app never
-    noticed. The comment says what happened and that it is reversible.
+    `quarantined` holds the lines the caller has already left out of the lists above
+    (ADR-0016 §Quarantine). They are re-stated here commented out, which is the whole reason
+    this takes them at all: the file is the user's to read, and a `user.lua` that has
+    silently stopped loading is indistinguishable from one the app never noticed. The
+    comment says what happened and that it is reversible.
     """
     lines = [
         GENERATED_BANNER.format(version=app_version),
@@ -201,21 +221,30 @@ def render_entrypoint(
         if not requires:
             return
         lines.append(f"-- {comment}")
-        lines.extend(f'require("{path}")' for path in requires)
+        lines.extend(requires)
         lines.append("")
 
-    block("Settings written by hyprtweaker.", modules)
+    def required(paths: Sequence[str]) -> list[str]:
+        return [f'require("{path}")' for path in paths]
+
+    block("Settings written by hyprtweaker.", required(modules))
     block(
         "Imported constructs the GUI cannot represent. Never rewritten.",
-        [legacy] if legacy else [],
+        required([legacy] if legacy else []),
     )
-    block("External tools. Owned by the tool, not by hyprtweaker.", bridges)
-    block("Your own Lua. Required last, so it wins. Never rewritten.", [user] if user else [])
+    block(
+        "External tools. Owned by the tool, not by hyprtweaker.",
+        [bridge.text for bridge in bridges],
+    )
+    block(
+        "Your own Lua. Required last, so it wins. Never rewritten.",
+        required([user] if user else []),
+    )
 
     if quarantined:
         lines.append("-- Disabled by hyprtweaker because it stopped the config from loading.")
         lines.append("-- Nothing in these files was changed. Re-enable them in Settings.")
-        lines.extend(f'-- require("{path}")' for path in sorted(quarantined))
+        lines.extend(f"-- {line}" for line in sorted(quarantined))
         lines.append("")
 
     return "\n".join(lines).rstrip("\n") + "\n"

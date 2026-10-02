@@ -28,6 +28,7 @@ package_sources = {
     'rule_matching.py',
     'rules_catalog.py',
     'scripting.py',
+    'tools.py',
     'triggers.py',
     'workspace_catalog.py',
     'workspace_selector.py',
@@ -45,6 +46,11 @@ package_sources = {
     'result.py',
     'transaction.py',
     'undo.py',
+  ],
+  'hyprtweaker/engine/bridge': [
+    '__init__.py',
+    'entries.py',
+    'registry.py',
   ],
   'hyprtweaker/engine/importer': [
     '__init__.py',

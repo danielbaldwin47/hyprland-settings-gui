@@ -30,6 +30,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from ..bridge import same_module
 from ..paths import APP_DIR_NAME, BRIDGE_DIR, ENTRYPOINT_NAME, LEGACY_MODULE, USER_MODULE
 
 _FILE_LINE = re.compile(r"^(?P<file>.+?):(?P<line>\d+):\s*(?P<message>.*)$")
@@ -85,10 +86,14 @@ class ConfigError:
     ownership: Ownership
 
 
-def attribute(errors: Sequence[str], *, written: Sequence[str] = ()) -> tuple[ConfigError, ...]:
-    """Classify every `configerrors` line. `written` names what this transaction laid down."""
+def attribute(
+    errors: Sequence[str], *, written: Sequence[str] = (), bridges: Sequence[str] = ()
+) -> tuple[ConfigError, ...]:
+    """Classify every `configerrors` line. `written` names what this transaction laid down;
+    `bridges` the hypr-dir-relative files of the Manifest's Bridge entries, which may live
+    outside the App dir (`noctalia.lua`, `dms/colors.lua`) and are foreign all the same."""
     just_written = frozenset(written)
-    return tuple(_one(line, just_written) for line in errors if line.strip())
+    return tuple(_one(line, just_written, tuple(bridges)) for line in errors if line.strip())
 
 
 def own_write_modules(errors: Sequence[str], *, written: Sequence[str]) -> tuple[str, ...]:
@@ -106,19 +111,20 @@ def own_write_modules(errors: Sequence[str], *, written: Sequence[str]) -> tuple
     return tuple(name for name in written if name in blamed)
 
 
-def _one(line: str, written: frozenset[str]) -> ConfigError:
+def _one(line: str, written: frozenset[str], bridges: tuple[str, ...]) -> ConfigError:
     require = _REQUIRE.match(line.strip())
     if require is not None:
         target = require.group("module")
         # A require target is hypr-dir-relative and extensionless; giving it the suffix the
         # file has on disk lets one classifier answer both shapes.
-        module = _module_for_path(f"{target.strip().removesuffix('.lua')}.lua")
+        file = f"{target.strip().removesuffix('.lua')}.lua"
+        module = _module_for_path(file, bridges)
         return ConfigError(
             line=line,
             path=target,
             number=None,
             module=module,
-            ownership=_classify(module, target, written),
+            ownership=_classify(module, file, written, bridges),
         )
 
     located = _FILE_LINE.match(line.strip())
@@ -128,25 +134,27 @@ def _one(line: str, written: frozenset[str]) -> ConfigError:
         )
 
     path = located.group("file")
-    module = _module_for_path(path)
+    module = _module_for_path(path, bridges)
     return ConfigError(
         line=line,
         path=path,
         number=int(located.group("line")),
         module=module,
-        ownership=_classify(module, path, written),
+        ownership=_classify(module, path, written, bridges),
     )
 
 
-def _classify(module: str | None, path: str, written: frozenset[str]) -> Ownership:
+def _classify(
+    module: str | None, path: str, written: frozenset[str], bridges: tuple[str, ...]
+) -> Ownership:
     if module == ENTRYPOINT_NAME:
         return Ownership.ENTRYPOINT
     if module is not None:
         return Ownership.OWN_WRITE if module in written else Ownership.APP_MODULE
-    return Ownership.FOREIGN if _is_foreign(path) else Ownership.UNKNOWN
+    return Ownership.FOREIGN if _is_foreign(path, bridges) else Ownership.UNKNOWN
 
 
-def _module_for_path(path: str) -> str | None:
+def _module_for_path(path: str, bridges: tuple[str, ...] = ()) -> str | None:
     """The App-dir-relative name a path implicates, or `None` for a file the app never writes.
 
     Suffix matching on `<APP_DIR_NAME>/…` rather than a comparison against `paths.app_dir` --
@@ -155,7 +163,7 @@ def _module_for_path(path: str) -> str | None:
     layout change moves both this and the writer together.
     """
     cleaned = _normalise(path).rstrip("/")
-    if not cleaned or _is_foreign(cleaned):
+    if not cleaned or _is_foreign(cleaned, bridges):
         return None
 
     marker = f"/{APP_DIR_NAME}/"
@@ -176,7 +184,7 @@ def _normalise(path: str) -> str:
     return path.strip()
 
 
-def _is_foreign(path: str) -> bool:
+def _is_foreign(path: str, bridges: tuple[str, ...] = ()) -> bool:
     """Whether a path names one of the files the app has promised never to rewrite.
 
     `user.lua` is the escape hatch, `legacy.lua` is written once by the Importer, and a
@@ -184,9 +192,20 @@ def _is_foreign(path: str) -> bool:
     dir, so this has to be asked before the App-dir match rather than after it -- otherwise
     a `legacy.lua` error would be attributed to the app and, if the same transaction had
     written a Module, could authorise an automatic write over somebody else's file.
+
+    A Bridge module is anything under the App's bridge dir, plus each file in `bridges`,
+    the Manifest's entries, matched by suffix or -- for a `require("dms.colors")` failure --
+    by module name in either spelling.
     """
     cleaned = _normalise(path)
     if f"/{BRIDGE_DIR}/" in cleaned or cleaned.startswith(f"{BRIDGE_DIR}/"):
+        return True
+    if any(
+        cleaned == file
+        or cleaned.endswith(f"/{file}")
+        or same_module(cleaned.removesuffix(".lua"), file.removesuffix(".lua"))
+        for file in bridges
+    ):
         return True
     return any(
         cleaned == name or cleaned.endswith(f"/{name}")

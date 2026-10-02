@@ -47,6 +47,11 @@ MAY_SPAWN = {
         "`compression.zstd` (Python 3.14+) is missing (#169); an argument list, never a "
         "shell, with the session's instance signature and displays stripped"
     ),
+    "tools.py": (
+        "the one engine module that runs a theming tool or a wallpaper daemon (#233): only "
+        "a program found on the tool search path, which every test, the widget probe and "
+        "the sandbox point at an empty directory of their own"
+    ),
 }
 """Engine modules allowed to start a process, and why.
 

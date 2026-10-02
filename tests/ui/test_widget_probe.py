@@ -122,6 +122,10 @@ print(json.dumps({
     )},
     "config": os.environ["XDG_CONFIG_HOME"],
     "state": os.environ["XDG_STATE_HOME"],
+    "homes": {name: os.environ.get(name) for name in (
+        "HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "HYPRTWEAKER_TOOL_PATH",
+    )},
+    "tools": sorted(os.listdir(os.environ["HYPRTWEAKER_TOOL_PATH"])),
     "served": Path(f"/tmp/.X11-unix/X{display[1:]}").is_socket(),
     "children": children,
     "socket": socket_path,
@@ -172,6 +176,16 @@ def test_the_route_gives_the_probe_a_private_xvfb_and_no_desktop_session(
     assert config.parent == state.parent
     assert config.parent.name.startswith("widget-probe-")
     assert not config.parent.exists()  # removed when the probe ended
+    # Home and the tool search path are in the same throwaway directory, and no tool is on
+    # that path: an app the probe runs finds no theming tool or wallpaper daemon (#233).
+    sandbox = config.parent
+    assert seen["homes"] == {
+        "HOME": str(sandbox),
+        "XDG_DATA_HOME": str(sandbox / "data"),
+        "XDG_CACHE_HOME": str(sandbox / "cache"),
+        "HYPRTWEAKER_TOOL_PATH": str(sandbox / "bin"),
+    }
+    assert seen["tools"] == []
     assert display != ":0"
     assert display.startswith(":")
     # An X server answers on it, and the only processes the route started are that Xvfb and
