@@ -309,6 +309,61 @@ def test_a_declared_empty_submap_gets_a_group_flagged_unreachable(tmp_path: Path
     assert UNREACHABLE in groups[1].get_description()
 
 
+def test_an_empty_submap_and_the_bind_entering_it_are_flagged_until_it_gets_a_bind(
+    tmp_path: Path,
+) -> None:
+    from hyprtweaker.engine.model.entities import Bind, DispatcherCall, Submap
+
+    reason = "Hyprland cannot enter a submap with no binds. Add a bind to it."
+    session, window = build_window(tmp_path)
+    session.model.entities.submaps.append(Submap(name="resize"))
+    session.model.entities.binds.append(
+        Bind(keys="SUPER + R", dispatcher=DispatcherCall(path="submap", positional=("resize",)))
+    )
+    window.binds_page.refresh()
+
+    description = window.binds_page.groups[1].get_description()
+    assert reason in description
+    # Fixed first: the empty sentence leads the unreachable one, here absent (SUPER + R enters).
+    badge = window.binds_page.rows[0].badge_label
+    assert badge is not None
+    assert reason in badge.get_tooltip_text()
+    assert "warning" in badge.get_css_classes()
+
+    session.model.entities.binds.append(exec_bind("right", "grow", submap="resize"))
+    window.binds_page.refresh()
+
+    assert reason not in window.binds_page.groups[1].get_description()
+    assert window.binds_page.rows[0].badge_label is None
+
+
+def test_a_submap_both_empty_and_unreachable_says_the_empty_part_first(tmp_path: Path) -> None:
+    from hyprtweaker.engine.model.entities import Submap
+    from hyprtweaker.ui.pages.binds import UNREACHABLE
+
+    session, window = build_window(tmp_path)
+    session.model.entities.submaps.append(Submap(name="resize"))
+    window.binds_page.refresh()
+
+    description = window.binds_page.groups[1].get_description()
+    empty = "Hyprland cannot enter a submap with no binds. Add a bind to it."
+    assert empty in description and UNREACHABLE in description
+    assert description.index(empty) < description.index(UNREACHABLE)
+
+
+def test_a_submap_with_only_a_disabled_bind_is_flagged_empty(tmp_path: Path) -> None:
+    from hyprtweaker.engine.model.entities import Submap
+
+    session, window = build_window(tmp_path)
+    session.model.entities.submaps.append(Submap(name="resize"))
+    session.model.entities.binds.append(
+        exec_bind("right", "grow", submap="resize", enabled=False)
+    )
+    window.binds_page.refresh()
+
+    assert "cannot enter a submap" in window.binds_page.groups[1].get_description()
+
+
 def test_a_submap_name_with_an_ampersand_shows_in_its_group_title(tmp_path: Path) -> None:
     """The group title is Pango markup: an unescaped `&` renders it blank."""
     from gi.repository import Gtk

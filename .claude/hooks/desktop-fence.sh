@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # PreToolUse guard on Bash: the desktop fence for an agent's own shell
-# (docs/agents/local-checks.md, Running the app). The owner's desktop
-# compositor is their daily session, and the session exports its
-# HYPRLAND_INSTANCE_SIGNATURE and WAYLAND_DISPLAY, so a bare call reaches it.
-# Four commands are refused unless they name a nested instance:
+# (docs/agents/local-checks.md, Running the app and Private X displays). The
+# owner's desktop compositor is their daily session, and the session exports its
+# HYPRLAND_INSTANCE_SIGNATURE, WAYLAND_DISPLAY and DISPLAY, so a bare call reaches
+# it. Four commands are refused unless they name a nested instance:
 #
 #  - `hyprctl`, any subcommand but `instances` (which reads lock files only).
 #    Nested means a selector, `--instance <sig>`, `-i <sig>`, `--instance=<sig>`
@@ -22,23 +22,50 @@
 #  - `ydotool` (and `ydotoold`), always: it writes to the kernel's uinput and
 #    has no nested form.
 #
+# Four more families are refused always (#209), each with its working shape:
+#
+#  - `pkill` and `killall`, which match by name across the whole session and
+#    can kill the owner's Hyprland, terminal or apps. Kill a PID you started
+#    and recorded: `kill <pid>`, `kill $!`.
+#  - A GTK start outside the probe route: `python`/`python3`/`pythonX.Y` code
+#    (`-c`, or stdin: `python - <<EOF`) that names `Gtk`, `Adw`, `Gdk` or `gi.repository`, or running the app
+#    directly (`-m hyprtweaker`, a script under `src/hyprtweaker`) instead of
+#    through `tools/sandbox.py`. The route is `tools/widget_probe.py`,
+#    `tools/sandbox.py` or pytest.
+#  - An X server started from the shell: `Xvfb`, `Xorg`, `Xwayland`, `xvfb-run`
+#    (an X server unlinks the socket of the display it binds, which is how an
+#    agent's Xvfb replaced the desktop's `:0`). pytest and tools/widget_probe.py
+#    start their own Xvfb as children, on a private display, and pass.
+#  - `rm`, `unlink`, `rmdir`, `mv`, `ln`, `shred`, and `find` with `-delete` or
+#    `-exec`, when an operand is under `/tmp/.X11-unix/` or is a
+#    `/tmp/.X<n>-lock`. Reading them (`ls`, `ss -xlp`) passes.
+#
 # A command is judged only at command position: the command is split into
 # simple commands (quotes, `$(…)`, backticks and heredocs followed), and the
 # word after any `VAR=…`, `env`, `command`, `exec` or wrapper (`timeout`,
 # `nohup`, `sudo`, …) is the one judged, so `grep hyprctl docs/` or a heredoc
 # commit message passes. Doubt fails closed: without jq, any call whose input
-# contains one of the four words is refused. The hook guards against
-# mistakes, not deliberate evasion: a call inside a script, `bash -c '…'`,
-# `eval`, an alias, a command held in a variable, or a direct write to the
-# compositor's socket (`socat`, `nc`) passes. tests/unit/test_no_unguarded_instance.py
-# fences tests/integration; this hook fences the interactive route.
+# names one of the words above (or a `python -c` that names Gtk, Adw, Gdk or
+# gi.repository, or removes or links an X socket or lock) is refused. The hook
+# guards against mistakes, not deliberate evasion: a call inside a script file,
+# `bash -c '…'`, `eval`, an alias, a command held in a variable, python code
+# in a script file, a path relative to a `cd` into
+# /tmp/.X11-unix, or a direct write to the compositor's socket (`socat`, `nc`)
+# passes. tests/unit/test_no_unguarded_instance.py fences tests/integration;
+# this hook fences the interactive route.
 set -uo pipefail
 
 input=$(cat)
 
 if ! command -v jq > /dev/null 2>&1; then
-    if grep -Eq 'hyprctl|Hyprland|wtype|ydotool' <<< "$input"; then
-        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"This call names hyprctl, Hyprland, wtype or ydotool, and without jq the desktop fence cannot tell whether it reaches the owner'"'"'s desktop compositor, so it fails closed. install jq, then run it again (.claude/hooks/desktop-fence.sh)."}}'
+    # Raw JSON, so no command position: the words, a GTK python -c, an app start, an X file.
+    raw_words='hyprctl|Hyprland|wtype|ydotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland'
+    raw_gtk='python[^|;&]*-[A-Za-z]*c[ "'"'"'].*(Gtk|Adw|Gdk|gi\.repository)'
+    raw_stdin='python[0-9.]*( +-)? *<<.*(Gtk|Adw|Gdk|gi\.repository)'
+    raw_app='python[0-9.]*( +-[A-Za-z]+)* +(-[A-Za-z]*m +hyprtweaker|src/hyprtweaker)'
+    raw_xfile='(^|[^[:alnum:]_.-])(rm|unlink|rmdir|mv|ln|shred|find)[ \t"][^|;&]*(\.X11-unix|\.X[^ /"]*-lock|/tmp/\.X[0-9]*[*?])'
+    if grep -Eq "$raw_words|$raw_gtk|$raw_stdin|$raw_app|$raw_xfile" <<< "$input"; then
+        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"This call names hyprctl, Hyprland, wtype, ydotool, pkill, killall, an X server (Xvfb, Xorg, Xwayland, xvfb-run), a python -c that names Gtk, Adw, Gdk or gi.repository, an app start, or a removal or link of /tmp/.X11-unix or an X lock, and without jq the desktop fence cannot tell whether it reaches the owner'"'"'s desktop session, so it fails closed. install jq, then run it again (.claude/hooks/desktop-fence.sh)."}}'
     fi
     exit 0
 fi
@@ -52,6 +79,12 @@ deny() {
 }
 
 docs="docs/agents/local-checks.md, Running the app; .claude/hooks/desktop-fence.sh"
+xdocs="docs/agents/local-checks.md, Private X displays; .claude/hooks/desktop-fence.sh"
+fenced_words='hyprctl|[Hh]yprland|wtype|ydotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|\.X11-unix|\.X[^ /]*-lock'
+re_x_dir='(^|/)\.X11-unix(/|$)'
+re_x_lock='(^|/)\.X[^/]*-lock$'
+re_x_glob='(^|/)\.X[0-9]*[*?[]'
+re_gtk='Gtk|Adw|Gdk|gi\.repository'
 sig_shape="hyprctl --instance <signature printed by tools/sandbox.py>"
 display_shape="WAYLAND_DISPLAY=<display printed by tools/sandbox.py> wtype …"
 
@@ -241,7 +274,7 @@ judge() {
                     case "${w[i + 1]:1}" in
                         -u | --unset | -C | --chdir) i=$((i + 2)) ;;
                         -S* | --split-string*) # a command line in one word: doubt
-                            [[ $* =~ hyprctl|[Hh]yprland|wtype|ydotool ]] && return 1
+                            [[ $* =~ $fenced_words ]] && return 1
                             return 0
                             ;;
                         -*) i=$((i + 1)) ;;
@@ -276,8 +309,85 @@ judge() {
         ydotool | ydotoold)
             deny "\`$name\` writes to the kernel's uinput, so its keys and clicks land on the owner's desktop session; it has no nested form. Type into a nested instance with \`$display_shape\`, or drive the widget in a widget probe ($docs)."
             ;;
+        pkill | killall)
+            deny "\`$name\` matches processes by name across the whole session, so it can kill the owner's desktop compositor, terminal or apps, not only your own. Kill a PID you started and recorded: \`kill <pid>\`, or \`kill \$!\` after a background start ($docs)."
+            ;;
+        Xvfb | Xorg | Xwayland | xvfb-run)
+            deny "\`$name\` from an agent's shell starts an X server, which unlinks the socket of the display number it binds (/tmp/.X11-unix/X<n>) without asking who listens there, so it can replace the desktop's own :0 (it did on 2026-10-01); \`xvfb-run\` also leaves GDK_BACKEND and WAYLAND_DISPLAY alone, so GTK maps on the desktop. Run \`.venv/bin/pytest tests/ui\` or \`.venv/bin/python tools/widget_probe.py <probe.py>\`, which start their own Xvfb on a private display; a script that needs an X server calls \`start_xvfb\` in tests/ui/private_display.py ($xdocs)."
+            ;;
+        python | python[0-9]*) judge_python "${w[@]:i+1}" ;;
+        rm | unlink | rmdir | mv | ln | shred | find) judge_x_files "$name" "${w[@]:i+1}" ;;
     esac
     return 0
+}
+
+# A GTK start outside the probe route: `-c` code naming GTK, or the app run directly.
+judge_python() {
+    local -a args=("$@")
+    local j=0 m=${#args[@]} text code="" module="" script=""
+    while ((j < m)); do
+        text=${args[j]:1}
+        case "$text" in
+            -W | -X) j=$((j + 1)) ;; # options that take their value as the next word
+            --)
+                script=${args[j + 1]:1}
+                break
+                ;;
+            -*c)
+                code=${args[j + 1]:1}
+                break
+                ;;
+            -*m)
+                module=${args[j + 1]:1}
+                break
+                ;;
+            -*) ;;
+            *)
+                script=$text
+                break
+                ;;
+        esac
+        j=$((j + 1))
+    done
+    # Code read from stdin (`python - <<EOF`) is skipped by the splitter: judge the whole command.
+    if [ -z "$code$module" ] && { [ -z "$script" ] || [ "$script" = - ]; }; then
+        code=$cmd
+    fi
+    if [[ $code =~ $re_gtk ]]; then
+        deny "\`python -c\` code that names Gtk, Adw, Gdk or gi.repository starts GTK on the session's own GDK_BACKEND and WAYLAND_DISPLAY, so its window maps on the owner's desktop. Run it as a widget probe, whose first line is \`import widget_probe\`: \`.venv/bin/python tools/widget_probe.py <probe.py>\` ($docs)."
+    fi
+    local app=""
+    if [[ $module == hyprtweaker || $module == hyprtweaker.* ]]; then
+        app="python -m $module"
+    elif [[ $script =~ (^|/)src/hyprtweaker(/|$) ]]; then
+        app="python $script"
+    fi
+    if [ -n "$app" ]; then
+        deny "\`$app\` runs the app against the session's own WAYLAND_DISPLAY, so its window maps on the owner's desktop and its config writes reach the owner's real config. Run it windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
+    fi
+}
+
+# Removing, moving or linking the session's X sockets and locks. The words after the
+# command name are matched as paths wherever they stand, so a flag or a target counts.
+judge_x_files() {
+    local name=$1 arg text hit=""
+    shift
+    for arg in "$@"; do
+        text=${arg:1}
+        if [[ $text =~ $re_x_dir || $text =~ $re_x_lock || $text =~ $re_x_glob ]]; then
+            hit=$text
+            break
+        fi
+    done
+    [ -n "$hit" ] || return 0
+    if [ "$name" = find ]; then # a find that only lists is a read
+        local deletes=0
+        for arg in "$@"; do
+            case "${arg:1}" in -delete | -exec | -execdir | -ok | -okdir) deletes=1 ;; esac
+        done
+        ((deletes)) || return 0
+    fi
+    deny "\`$name\` on \`$hit\` removes, moves or links the desktop's X sockets or locks: the owner's Xwayland listens on /tmp/.X11-unix/X0, and a change there cuts off every X11 app the owner starts next (2026-10-02). Reading them (\`ls /tmp/.X11-unix\`, \`ss -xlp\`) is the whole of an agent's business there; an agent's own X server takes a private display through \`start_xvfb\` ($xdocs)."
 }
 
 judge_hyprctl() {
@@ -324,7 +434,7 @@ judge_wtype() {
     deny "\`wtype\` would type into the owner's desktop session: $why. Name a nested display: \`$display_shape\` ($docs)."
 }
 
-doubt="the desktop fence fails closed on a call it cannot read that names hyprctl, Hyprland, wtype or ydotool, since that call may reach the owner's desktop compositor"
+doubt="the desktop fence fails closed on a call it cannot read that names hyprctl, Hyprland, wtype, ydotool, pkill, killall, an X server or an X socket, since that call may reach the owner's desktop session"
 segments=$(FENCE_CMD="$cmd" awk "$split_awk") \
     || deny "awk could not split this command, and $doubt. Report the command on the fence's ticket and run it in a nested instance's shape ($docs)."
 while IFS= read -r line; do
