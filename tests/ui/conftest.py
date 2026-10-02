@@ -38,7 +38,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from private_display import PINNED, pin_environment, start_xvfb
+from private_display import PINNED, pin_environment, session_display_clash, start_xvfb
 
 UI_TESTS_DIR = Path(__file__).parent
 
@@ -85,10 +85,15 @@ def ui_unavailable() -> str | None:
     display = start_xvfb(xvfb)
     if display is None:
         return "Xvfb did not open a display within 10 s"
+    if clash := session_display_clash(display, os.environ.get("DISPLAY")):
+        return clash
 
     # GDK reads these only while it opens its display, and the Harness tier reads the host
     # session from them at test time when both tiers share a process, so restore them.
-    saved = {name: os.environ.get(name) for name in PINNED}
+    # DISPLAY stays on the Xvfb: the NVIDIA EGL driver opens `$DISPLAY` again when a
+    # window first realizes, so a restored one sends it to the session's X server, and
+    # it crashes when nothing serves that display.
+    saved = {name: os.environ.get(name) for name in PINNED if name != "DISPLAY"}
     pin_environment(os.environ, display)
     try:
         return open_display()

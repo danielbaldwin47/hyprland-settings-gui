@@ -40,7 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMAND = ".venv/bin/python tools/widget_probe.py <probe.py> [args...]"
 
 sys.path.insert(0, str(REPO_ROOT / "tests" / "ui"))
-from private_display import pin_environment, start_xvfb  # noqa: E402
+from private_display import pin_environment, session_display_clash, start_xvfb  # noqa: E402
 
 # The Xvfb this process started, set only by `main`. A probe that imports this module
 # without the runner gets a fresh copy, where it is None, so the fence refuses.
@@ -129,6 +129,8 @@ def main(argv: list[str]) -> int:
     display = start_xvfb(xvfb)
     if display is None:
         raise SystemExit("widget_probe: Xvfb did not open a display within 10 s")
+    if clash := session_display_clash(display, os.environ.get("DISPLAY")):
+        raise SystemExit(f"widget_probe: {clash}")
 
     _route_display = display
     pin_environment(os.environ, display)
