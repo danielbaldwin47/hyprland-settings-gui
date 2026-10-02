@@ -66,6 +66,7 @@ package_sources = {
     'errors.py',
     'events.py',
     'instance.py',
+    'live.py',
   ],
   'hyprtweaker/engine/migration': [
     '__init__.py',
