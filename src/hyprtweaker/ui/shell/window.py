@@ -340,6 +340,8 @@ class MainWindow(Adw.ApplicationWindow):
         than failing to open a window."""
         self._categories: tuple[CategoryPlan, ...] = ()
         self._built: list[SidebarEntry] = []
+        self._badges: dict[str, Gtk.Label] = {}
+        """Each sidebar row's count label by section, so `sync` can update it in place."""
         """Every built Page, in build order, as the sidebar needs to know it.
 
         The sidebar is filled from this rather than during construction: the two Views
@@ -984,6 +986,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._pages = []
         self._section_titles = {}
         self._built = []
+        self._badges = {}
         self._sidebar.remove_all()
         # The window holds its focus widget. A focused Row of an old Page outlives `release`,
         # and its chrome then keeps the Page and the window (#219). Whether GTK lets go of it
@@ -1001,7 +1004,7 @@ class MainWindow(Adw.ApplicationWindow):
             page = ConfigPage(plan, self._factory)
             self._pages.append(page)
             self._stack.add_named(_scrolled(page.page), plan.section)
-            self._register(plan.section, plan.title, plan.option_count)
+            self._register(plan.section, plan.title, lambda n=plan.option_count: n)
             self._section_titles[plan.section] = plan.title
 
         # An Entity Page, so it comes from the model rather than from the Schema plan: there
@@ -1022,7 +1025,8 @@ class MainWindow(Adw.ApplicationWindow):
         )
         self._stack.add_named(_scrolled(self._binds_page.page), BindsPage.section)
         self._section_titles[BindsPage.section] = BindsPage.title
-        self._register(BindsPage.section, BindsPage.title, len(self._binds_page.binds))
+        binds_page = self._binds_page
+        self._register(BindsPage.section, BindsPage.title, lambda: len(binds_page.binds))
 
         # The rule Pages: the same Entity-Page shape, twice (ADR-0008).
         self._window_rules_page = WindowRulesPage(
@@ -1034,7 +1038,9 @@ class MainWindow(Adw.ApplicationWindow):
         for rules_page in (self._window_rules_page, self._layer_rules_page):
             self._stack.add_named(_scrolled(rules_page.page), rules_page.section)
             self._section_titles[rules_page.section] = rules_page.title
-            self._register(rules_page.section, rules_page.title, len(rules_page.rules))
+            self._register(
+                rules_page.section, rules_page.title, lambda page=rules_page: len(page.rules)
+            )
 
         # The Workspaces Page: workspace rules, one row per selector (ADR-0008, #159).
         self._workspace_rules_page = WorkspaceRulesPage(
@@ -1048,7 +1054,7 @@ class MainWindow(Adw.ApplicationWindow):
         workspaces = self._workspace_rules_page
         self._stack.add_named(_scrolled(workspaces.page), workspaces.section)
         self._section_titles[workspaces.section] = workspaces.title
-        self._register(workspaces.section, workspaces.title, len(workspaces.rules))
+        self._register(workspaces.section, workspaces.title, lambda: len(workspaces.rules))
 
         # The Displays destination: an Entity Page over monitor rules plus the live
         # helper data the canvas draws from (ADR-0008, #68).
@@ -1070,7 +1076,10 @@ class MainWindow(Adw.ApplicationWindow):
         )
         self._stack.add_named(_scrolled(self._monitors_page.page), MonitorsPage.section)
         self._section_titles[MonitorsPage.section] = MonitorsPage.title
-        self._register(MonitorsPage.section, MonitorsPage.title, len(self._monitors_page.rules))
+        monitors_page = self._monitors_page
+        self._register(
+            MonitorsPage.section, MonitorsPage.title, lambda: len(monitors_page.rules)
+        )
         # The app-open answer feeds the canvas *and* the Profile-match toast: one fetch,
         # riding the same helper-data lane hotplug refreshes use (ADR-0018).
         self._session.fetch_monitors(self._on_monitors_event)
@@ -1082,7 +1091,7 @@ class MainWindow(Adw.ApplicationWindow):
             page = page_class(self._session, actions=self._declaration_actions(page_class.kind))
             self._declaration_pages[page_class.kind] = page
             self._stack.add_named(_scrolled(page.page), page.section)
-            self._register(page.section, page.title, len(page.entities))
+            self._register(page.section, page.title, lambda page=page: len(page.entities))
             self._section_titles[page.section] = page.title
 
         # The Scripting Page: the plugin load list (#174) above a read-only inventory of the
@@ -1100,7 +1109,12 @@ class MainWindow(Adw.ApplicationWindow):
         scripting = self._scripting_page
         self._stack.add_named(_scrolled(scripting.page), scripting.section)
         self._section_titles[scripting.section] = scripting.title
-        self._register(scripting.section, scripting.title, scripting.hit_count)
+        # The calls found plus the plugin load list: both are listed on the Page.
+        self._register(
+            scripting.section,
+            scripting.title,
+            lambda: scripting.hit_count + len(self._session.declarations("plugins")),
+        )
 
         self._fill_sidebar()
         self._select_section(self._restored(selected))
@@ -1145,8 +1159,20 @@ class MainWindow(Adw.ApplicationWindow):
                 return None
         return self._mapping
 
-    def _register(self, section: str, title: str, count: int) -> None:
+    def _register(self, section: str, title: str, count: Callable[[], int]) -> None:
         self._built.append(SidebarEntry(section=section, title=title, count=count))
+
+    def _sidebar_entry(self, entry: SidebarEntry) -> Gtk.ListBoxRow:
+        row, badge = _sidebar_row(entry.section, entry.title, entry.count())
+        self._badges[entry.section] = badge
+        return row
+
+    def _refresh_counts(self) -> None:
+        """Every sidebar count from its Page's list now, in place: no row is rebuilt, so the
+        selection and the scroll stay where the user left them."""
+        for entry in self._built:
+            if (badge := self._badges.get(entry.section)) is not None:
+                badge.set_label(str(entry.count()))
 
     def _restored(self, selected: str | None) -> str:
         """Which Page to select after a rebuild: the one that was showing, if it still is.
@@ -1167,7 +1193,7 @@ class MainWindow(Adw.ApplicationWindow):
         """Put the built Pages in the sidebar, in the order the active View wants them."""
         if self.view is View.CONFIG or not self._categories:
             for entry in self._built:
-                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
+                self._sidebar.append(self._sidebar_entry(entry))
             return
 
         known = {entry.section: entry for entry in self._built}
@@ -1181,7 +1207,7 @@ class MainWindow(Adw.ApplicationWindow):
                     # a kind that has not shipped yet, or a renamed id. Skipping the row is
                     # right; inventing one would put a sidebar entry in front of no Page.
                     continue
-                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
+                self._sidebar.append(self._sidebar_entry(entry))
                 listed.add(entry.section)
 
         # Anything built but not named by the mapping still gets a row. Entity Pages are the
@@ -1191,7 +1217,7 @@ class MainWindow(Adw.ApplicationWindow):
         if leftovers:
             self._sidebar.append(_category_heading(ORPHAN_CATEGORY_TITLE))
             for entry in leftovers:
-                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
+                self._sidebar.append(self._sidebar_entry(entry))
 
     # --- binds ---------------------------------------------------------------------------
 
@@ -1811,6 +1837,7 @@ class MainWindow(Adw.ApplicationWindow):
         # `user.lua` changes: the Scripting inventory re-reads with it.
         if self._scripting_page is not None:
             self._scripting_page.refresh()
+        self._refresh_counts()
 
         self.sync_banner()
         self._undo_action.set_enabled(self._session.can_undo)
@@ -2616,7 +2643,9 @@ class SidebarEntry:
 
     section: str
     title: str
-    count: int
+    count: Callable[[], int]
+    """The Page's count now: an Option Page's is fixed per build, an Entity Page's follows
+    its list (`MainWindow._refresh_counts`)."""
 
 
 def _view_from(value: str) -> View:
@@ -2660,7 +2689,7 @@ def _category_heading(title: str) -> Gtk.ListBoxRow:
     return row
 
 
-def _sidebar_row(section: str, title: str, count: int) -> Gtk.ListBoxRow:
+def _sidebar_row(section: str, title: str, count: int) -> tuple[Gtk.ListBoxRow, Gtk.Label]:
     """One Section in the sidebar, with how many Options are on its Page.
 
     The count is the design canvas's "43 options" chip moved to the sidebar, and it earns
@@ -2676,7 +2705,7 @@ def _sidebar_row(section: str, title: str, count: int) -> Gtk.ListBoxRow:
 
     row = Gtk.ListBoxRow(child=box, name=section)
     row.set_tooltip_text(section)
-    return row
+    return row, badge
 
 
 #: What each unhappy `ApplyOutcome` means to a person. The enum's own spelling is a wire
