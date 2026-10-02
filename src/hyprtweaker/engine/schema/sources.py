@@ -52,6 +52,30 @@ def parse_descriptions(text: str) -> list[dict[str, Any]]:
     return records
 
 
+def parse_animation_leaves(text: str) -> tuple[str, ...]:
+    """The animation tree's leaf names from `hyprctl -j animations`, sorted.
+
+    The payload is `[[animation nodes], [curves]]`. Only the first list is read: the curves
+    are live state, not config. Nodes whose name starts `__` (`__internal_fadeCTM`) are
+    implementation details the compositor reports and no config should name, so they are
+    dropped. The compositor lists nodes in hash-map order, which differs between runs;
+    sorting is what makes the generated file reproducible.
+    """
+    parsed = json.loads(text)
+    if (
+        not isinstance(parsed, list)
+        or not parsed
+        or not isinstance(parsed[0], list)
+        or not all(isinstance(node, dict) and "name" in node for node in parsed[0])
+    ):
+        raise ValueError("animations JSON is not a list of animation nodes and curves")
+
+    names = {str(node["name"]) for node in parsed[0] if not str(node["name"]).startswith("__")}
+    if not names:
+        raise ValueError("animations JSON has no animation nodes: it is empty")
+    return tuple(sorted(names, key=str.casefold))
+
+
 # --- 2. the Lua stub -------------------------------------------------------------------
 
 _STUB_TYPE_BLOCK = re.compile(

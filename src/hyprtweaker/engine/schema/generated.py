@@ -34,6 +34,12 @@ class GeneratedSchema:
     options: tuple[GeneratedOption, ...]
     provenance: dict[str, Any]
     """What the generator consumed, including any degradation, for the release-check PR."""
+    animation_leaves: tuple[str, ...] | None = None
+    """The animation tree's leaf names, sorted; `None` for a file generated without them.
+
+    Optional so a schema from before the block existed still loads and round-trips: the
+    app falls back to the shipped leaf list for it (`entities_catalog.animation_leaves`).
+    """
 
     def __post_init__(self) -> None:
         names = [option.name for option in self.options]
@@ -131,15 +137,17 @@ def _option_from_json(payload: dict[str, Any]) -> GeneratedOption:
 
 def dumps(schema: GeneratedSchema) -> str:
     """Serialise deterministically, options in declaration order."""
-    payload = {
+    payload: dict[str, Any] = {
         "format_version": SCHEMA_FORMAT_VERSION,
         "hyprland_version": schema.hyprland_version,
         "provenance": schema.provenance,
-        "options": [
-            _option_to_json(option)
-            for option in sorted(schema.options, key=lambda option: option.order)
-        ],
     }
+    if schema.animation_leaves is not None:
+        payload["animation_leaves"] = list(schema.animation_leaves)
+    payload["options"] = [
+        _option_to_json(option)
+        for option in sorted(schema.options, key=lambda option: option.order)
+    ]
     return json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
 
 
@@ -157,7 +165,24 @@ def loads(text: str) -> GeneratedSchema:
         hyprland_version=str(payload["hyprland_version"]),
         options=tuple(_option_from_json(record) for record in payload["options"]),
         provenance=dict(payload.get("provenance", {})),
+        animation_leaves=_leaves_from_json(payload.get("animation_leaves")),
     )
+
+
+def _leaves_from_json(block: object) -> tuple[str, ...] | None:
+    """The `animation_leaves` block: absent, or a non-empty list of distinct names."""
+    if block is None:
+        return None
+    if (
+        not isinstance(block, list)
+        or not block
+        or not all(isinstance(leaf, str) and leaf for leaf in block)
+        or len(set(block)) != len(block)
+    ):
+        raise ValueError(
+            f"animation_leaves must be a non-empty list of distinct leaf names, got {block!r}"
+        )
+    return tuple(block)
 
 
 def load(path: Path) -> GeneratedSchema:

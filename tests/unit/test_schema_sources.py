@@ -6,6 +6,7 @@ import pytest
 
 from hyprtweaker.engine.schema.sources import (
     lua_key_for,
+    parse_animation_leaves,
     parse_descriptions,
     parse_source,
     parse_stub_keys,
@@ -140,3 +141,31 @@ def test_descriptions_must_be_a_non_empty_list() -> None:
 def test_descriptions_entries_must_have_a_name() -> None:
     with pytest.raises(ValueError, match="malformed"):
         parse_descriptions('[{"default": 1}]')
+
+
+# --- animations ------------------------------------------------------------------------
+
+# Captured from `hyprctl -j animations` on Hyprland 0.56.2, trimmed to four nodes and two
+# curves. The tree comes back in hash-map order, and carries one internal node.
+ANIMATIONS_JSON = (
+    '[[{"name":"windowsIn","overridden":false,"bezier":"","enabled":true,"speed":0.0,"style":""},'
+    '{"name":"__internal_fadeCTM","overridden":false,"bezier":"","enabled":true,'
+    '"speed":0.0,"style":""},'
+    '{"name":"fade","overridden":false,"bezier":"","enabled":true,"speed":0.0,"style":""},'
+    '{"name":"global","overridden":false,"bezier":"","enabled":true,"speed":0.0,"style":""}],'
+    '[{"name":"linear","X0":0.0,"Y0":0.0,"X1":1.0,"Y1":1.0},'
+    '{"name":"default","X0":0.0,"Y0":0.75,"X1":0.15,"Y1":1.0}]]'
+)
+
+
+def test_the_animation_tree_is_its_leaf_names_sorted_without_internal_nodes_or_curves() -> None:
+    assert parse_animation_leaves(ANIMATIONS_JSON) == ("fade", "global", "windowsIn")
+
+
+def test_an_animation_payload_that_is_not_a_tree_and_a_curve_list_is_refused() -> None:
+    with pytest.raises(ValueError, match="animations"):
+        parse_animation_leaves('{"windows": []}')
+    with pytest.raises(ValueError, match="animations"):
+        parse_animation_leaves('[[{"enabled": true}], []]')
+    with pytest.raises(ValueError, match="empty"):
+        parse_animation_leaves("[[], []]")
