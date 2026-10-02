@@ -4,7 +4,7 @@ The per-release protocol that keeps the Schema and the curated Tasks view from r
 
 The Config view regenerates itself from the Schema; this protocol exists because the Overlay and the Tasks placement are curated by hand and drift silently otherwise.
 
-**Deliverable:** one PR containing the new Generated schema, the machine diff, the Overlay updates, and a summary comment. The release is **handled** when the CI overlay completeness test passes on the new schema and a human has reviewed the diff via the PR — Tasks placement, `help`, and `unit` are polish and may lag.
+**Deliverable:** one PR containing the new Generated schema and the Overlay updates, and a summary comment that carries the machine diff. The release is **handled** when the CI overlay completeness test passes on the new schema and a human has reviewed the diff via the PR — Tasks placement, `help`, and `unit` are polish and may lag.
 
 ## 1. Generate
 
@@ -17,13 +17,16 @@ Build the new version's Generated schema:
 
 Done when the file exists and the generator reported all three sources consumed (or the degradation is noted).
 
-Confirm it on the same machine with `HARNESS_DRM_CARD=/dev/dri/card0 pytest tests/integration/test_schema_reproducible.py`, which reruns the generator against a nested Hyprland of the installed version and fails if the committed schema is not what comes out. It is the only tier that can check this — CI has no Hyprland — so running it here is the check, not a formality.
+Confirm it on the same machine, from the repo root, with `env -u HYPRLAND_INSTANCE_SIGNATURE HARNESS_DRM_CARD=/dev/dri/card0 .venv/bin/pytest tests/integration/test_schema_reproducible.py -m hyprland`. It starts its own nested Hyprland of the installed version, reruns the generator against it and fails if the committed schema is not what comes out; name the file by path, because `test_ipc_live.py` beside it talks to whichever compositor the environment names. It is the only tier that can check this — CI has no Hyprland — so running it here is the check, not a formality.
 
 ## 2. Diff
 
 Compare against the previous newest schema, at five layers:
 
-1. **Schema diff** — classify every change: added / removed / **renamed** (heuristic: identical description + default across a removed/added pair — confirm against the release notes before recording) / retyped / range change / enum-map change / default change / new Section or subsection.
+1. **Schema diff** — `tools/diff_schema.py data/schema/hyprland-<ver>.json --predecessor data/schema/hyprland-<previous>.json -o <scratch>/hyprland-<ver>.diff.json` classifies every change: added / removed / renamed / retyped / range change / enum-map change / default change / new Section or subsection. It prints the count per class.
+   - **Renames** come in two classes. `renamed` is only what the Overlay's `renamed_from` maps, so a first run on a new release has none. `rename_candidates` lists each removed and added pair with an identical description and default; the pair also stays under `removed` and `added`. Confirm each candidate against the release notes, set `renamed_from` in step 3, then re-run the tool: the confirmed pairs move to `renamed`.
+   - A renamed Option is still compared for type, range, enum map and default under its new name.
+   - The tool reads Generated schemas only. A changed description or declaration order is not a class; read those in the PR's schema diff.
 2. **Stub API diff** — `hl.meta.lua` old vs new: entity constructors and their arg tables, the `hl.dsp.*` dispatcher table, `BindOptions` fields, rule match props and effects, `HL.EventName`.
 3. **Wiki diff** — `hyprwm/hyprland-wiki` `content/Configuring/**` at the matching point: re-run the restart-required regex (the `restart` overlay field is wiki prose only — nothing in source or IPC exports it), and note changed help anchors.
 4. **Entity catalogue diff** — `src/hyprtweaker/engine/entities_catalog.py`, the hand-curated half of the Entity surface (#70). Nothing in CI covers it, so it is the one layer that rots in silence: re-probe the new version and compare. The animation leaves are not in this layer: step 1's `tools/gen_schema.py` records them into the schema from `hyprctl -j animations`, and the completeness test fails the build on a tree the catalogue cannot resolve (`SHIPPED_ANIMATION_LEAVES` is only the fallback for a schema without the block). The `hl.device` key set, `GESTURE_DIRECTIONS`/`GESTURE_ACTIONS`, `PERMISSION_TYPES`/`PERMISSION_MODES` and the required-field rules against `Hyprland --verify-config` (a rejected key names itself); `GESTURE_DIRECTION_COVERS` by re-running the direction-pair sweep. Step 1 already stands up a Hyprland of `<ver>`, so all of it runs in that session.
@@ -38,7 +41,7 @@ Compare against the previous newest schema, at five layers:
    - The run's other tests are the catalogue diff. A drifted dispatcher fails by path with both shapes, for example `window.float: required keys ['window'] differ from the compositor's []` or `omits keys the compositor reads: ['action']`.
    - It needs `foot`. Name the file by path: a bare `tests/integration -m hyprland` also runs `test_ipc_live.py`.
 
-Output: `data/schema/hyprland-<ver>.diff.json` (machine, shipped beside the schema — the app's *New in \<version\>* grouping and Retired detection read it) plus a human summary for the PR.
+Output: `hyprland-<ver>.diff.json` (machine) in a scratch directory, plus a human summary for the PR; the PR comment carries both. The diff is for the PR's reviewer and is not committed to `data/schema/`: the app reads nothing from it. Its *New in \<version\>* grouping reads the `added_in` stamp in the schema (step 1), and Retired detection reads the running Hyprland's live option names.
 
 Done when every change in all five layers is classified — an unclassified change is a diff bug, not a skippable line.
 
@@ -64,5 +67,5 @@ Done when the CI overlay completeness test passes against the new schema locally
 ## 5. Ship
 
 - Enforce the support window: `data/schema/` carries **latest + previous** only — delete older schema files (git history keeps them).
-- Open the PR, base `main` (`docs/agents/issue-tracker.md` § Open a PR): schema + diff + overlay + engine-table updates, summary comment with per-class counts, options still unplaced in *New in \<ver\>* groups, and any follow-up issues opened. Its body carries `Closes #<release-check issue>`.
+- Open the PR, base `main` (`docs/agents/issue-tracker.md` § Open a PR): schema + overlay + engine-table updates, summary comment with the machine diff and its per-class counts, options still unplaced in *New in \<ver\>* groups, and any follow-up issues opened. Its body carries `Closes #<release-check issue>`.
 - Once CI is green, add the `ready-to-merge` label. The owner merges, and the merge closes the release-check issue.
