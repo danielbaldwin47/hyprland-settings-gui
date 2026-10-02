@@ -62,3 +62,15 @@ class TestSummaries:
     def test_layer_rule_summarises_the_same_way(self) -> None:
         rule = LayerRule(match={"namespace": "rofi"}, effects={"blur": True})
         assert rule_title(rule) == "namespace rofi → blur"
+
+
+def test_a_rule_row_names_matches_and_effects_in_words() -> None:
+    """#148 hand-test 16: rows read "class .* → no_blur" while the filter chips and the
+    editor say "No blur"; the summary uses the editor's words."""
+    from hyprtweaker.engine.model import WindowRule
+
+    rule = WindowRule(
+        match={"initial_class": "foot"}, effects={"no_blur": True, "border_size": 2}
+    )
+
+    assert rule_title(rule) == "initial class foot → no blur, border size 2"

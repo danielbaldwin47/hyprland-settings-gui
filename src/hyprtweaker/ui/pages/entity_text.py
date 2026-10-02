@@ -23,7 +23,7 @@ from hyprtweaker.engine.model.entities import Bind, LayerRule, MonitorRule, Wind
 from hyprtweaker.engine.presets import CaptureScope, Preset
 from hyprtweaker.engine.profiles import MonitorProfile
 from hyprtweaker.engine.rule_filter import value_text
-from hyprtweaker.engine.rules_catalog import is_negated, strip_negation
+from hyprtweaker.engine.rules_catalog import is_negated, prop_title, strip_negation
 from hyprtweaker.engine.triggers import (
     AmpMultiKey,
     Blocked,
@@ -222,20 +222,27 @@ def match_text(rule: Rule) -> str:
         negated = is_negated(value)
         shown = strip_negation(value) if isinstance(value, str) else value_text(value)
         prefix = "not " if negated else ""
-        parts.append(f"{prefix}{name} {shown}".strip())
+        parts.append(f"{prefix}{_words(name)} {shown}".strip())
     return " · ".join(parts)
+
+
+def _words(name: str) -> str:
+    """A match prop or effect as the editor titles it, in a sentence's case: `no_blur` reads
+    "no blur", as the filter chips and the editor say it (#148 hand-test 16)."""
+    return prop_title(name).lower()
 
 
 def effects_text(rule: Rule) -> str:
     """The Effects half: bools by bare name, everything else `name value`."""
     parts = []
     for name, value in rule.effects.items():
+        words = _words(name)
         if value is True:
-            parts.append(name)
+            parts.append(words)
         elif value is False:
-            parts.append(f"{name} off")
+            parts.append(f"{words} off")
         else:
-            parts.append(f"{name} {value_text(value)}")
+            parts.append(f"{words} {value_text(value)}")
     return ", ".join(parts)
 
 
