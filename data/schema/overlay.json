@@ -7,15 +7,15 @@
       "groups": [
         { "title": "Layout and gaps" },
         { "title": "Borders" },
-        {
-          "title": "Resizing",
-          "description": "Dragging a window's border with the mouse to resize it."
-        },
+        { "title": "Resizing", "description": "Resizing windows with the mouse." },
         {
           "title": "Snapping",
           "description": "Floating windows snap to nearby windows and monitor edges as you drag them."
         },
-        { "title": "Behaviour" }
+        {
+          "title": "Tearing and focus",
+          "description": "Screen tearing, moving focus between windows, and the language of Hyprland's messages."
+        }
       ]
     },
     "decoration": {
@@ -28,16 +28,16 @@
           "title": "Blurred surfaces",
           "description": "What else gets blurred besides windows: popups, input methods and the special workspace."
         },
-        { "title": "Shadow" },
-        { "title": "Glow", "description": "A soft light just inside each window's edge." },
+        { "title": "Shadows" },
         { "title": "Dimming" },
+        { "title": "Glow", "description": "A soft light just inside each window's edge." },
         { "title": "Screen effects" }
       ]
     },
     "animations": {
       "title": "Animations",
       "help_url": "https://wiki.hypr.land/Configuring/Variables/#animations",
-      "groups": [{ "title": "Behaviour" }]
+      "groups": [{ "title": "Playback" }]
     },
     "input": {
       "title": "Input",
@@ -50,8 +50,8 @@
           "title": "Scrolling",
           "description": "Mice and touchpads each take their own direction and speed."
         },
-        { "title": "Focus", "description": "How the window under the mouse takes keyboard focus." },
         { "title": "Touchpad" },
+        { "title": "Focus", "description": "How the window under the mouse takes keyboard focus." },
         { "title": "Touchscreen" },
         { "title": "Drawing tablet" },
         {
@@ -80,7 +80,7 @@
       "title": "Groups",
       "help_url": "https://wiki.hypr.land/Configuring/Variables/#group",
       "groups": [
-        { "title": "Behaviour" },
+        { "title": "Adding and removing" },
         {
           "title": "Dragging",
           "description": "What happens when you drag a window onto a group or its tab bar."
@@ -91,8 +91,8 @@
           "description": "The row of window tabs drawn above a group, which Hyprland calls the group bar."
         },
         { "title": "Tab titles" },
-        { "title": "Tab backgrounds" },
-        { "title": "Tab spacing" },
+        { "title": "Tab colours" },
+        { "title": "Tab sizing" },
         { "title": "Tab corners" }
       ]
     },
@@ -104,14 +104,14 @@
           "title": "Wallpaper and splash",
           "description": "What Hyprland draws when no wallpaper app is running, and the font it uses for its own text."
         },
+        { "title": "Displays and power" },
         { "title": "Focus and placement" },
-        { "title": "Window handling" },
+        { "title": "Windows and animation" },
         {
           "title": "Swallowing",
           "description": "A terminal hides while an app it launched is open, and comes back when the app closes."
         },
-        { "title": "Displays and power" },
-        { "title": "Input" },
+        { "title": "Mouse and keyboard" },
         { "title": "Session lock" },
         { "title": "Reloads and warnings" }
       ]
@@ -148,9 +148,8 @@
       "title": "Rendering",
       "help_url": "https://wiki.hypr.land/Configuring/Variables/#render",
       "groups": [
-        { "title": "Performance" },
+        { "title": "Performance and quality" },
         { "title": "Colour management" },
-        { "title": "Blur and textures" },
         {
           "title": "Colour pipeline",
           "description": "Experimental internals: leave them alone unless a colour problem needs them."
@@ -163,11 +162,14 @@
       "groups": [
         { "title": "Hiding" },
         {
+          "title": "Theme and drawing",
+          "description": "Cursor theme and size come from environment variables; these settings control how the cursor is loaded and drawn."
+        },
+        {
           "title": "Warping",
           "description": "Jumping the cursor to a window or monitor when focus moves."
         },
-        { "title": "Zoom" },
-        { "title": "Theme and drawing" },
+        { "title": "Zoom", "description": "Magnifies the screen around the cursor." },
         {
           "title": "Fullscreen VRR",
           "description": "How cursor movement behaves in fullscreen apps that use variable refresh rate."
@@ -197,14 +199,14 @@
       "groups": [
         {
           "title": "Single window",
-          "description": "How a window that is alone on its workspace is shaped."
+          "description": "Shapes a window that is alone on its workspace; pick the layout itself on the General page."
         }
       ]
     },
     "dwindle": {
       "title": "Dwindle layout",
       "help_url": "https://wiki.hypr.land/Configuring/Dwindle-Layout/",
-      "groups": [{ "title": "Split direction" }, { "title": "Split sizes" }, { "title": "Mouse" }]
+      "groups": [{ "title": "Split direction" }, { "title": "Sizes" }, { "title": "Mouse" }]
     },
     "master": {
       "title": "Master layout",
@@ -229,7 +231,7 @@
       "visibility": "hidden",
       "groups": [
         {
-          "title": "Colour management",
+          "title": "Colour protocol",
           "description": "A preview of newer colour-management protocol support."
         }
       ]
@@ -323,8 +325,8 @@
     },
     "general:no_focus_fallback": {
       "title": "Keep focus when no window is in that direction",
-      "group": "Behaviour",
-      "order": 1,
+      "group": "Tearing and focus",
+      "order": 2,
       "help": "Stops focus from jumping to another window when you move it in a direction that has no window."
     },
     "general:resize_on_border": {
@@ -350,8 +352,8 @@
     },
     "general:allow_tearing": {
       "title": "Allow tearing",
-      "group": "Behaviour",
-      "order": 3,
+      "group": "Tearing and focus",
+      "order": 1,
       "help": "Master switch for screen tearing. A window tears only when it asks to, or when a window rule marks it immediate."
     },
     "general:resize_corner": {
@@ -398,8 +400,8 @@
     },
     "general:modal_parent_blocking": {
       "title": "Block interaction with modal parents",
-      "group": "Behaviour",
-      "order": 2,
+      "group": "Tearing and focus",
+      "order": 3,
       "help": "Blocks clicks and typing in a window while one of its modal dialogs is open."
     },
     "general:locale": {
@@ -408,7 +410,7 @@
       "nullable": true,
       "null_label": "System locale",
       "null_value": "",
-      "group": "Behaviour",
+      "group": "Tearing and focus",
       "order": 4,
       "help": "Language of Hyprland's own messages, such as en_US or es. Leave it empty to follow the system."
     },
@@ -446,7 +448,7 @@
     },
     "decoration:shadow:enabled": {
       "title": "Drop shadow",
-      "group": "Shadow",
+      "group": "Shadows",
       "order": 1,
       "help": "Draws a soft shadow behind every window."
     },
@@ -454,7 +456,7 @@
       "title": "Shadow size",
       "unit": "px",
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
-      "group": "Shadow",
+      "group": "Shadows",
       "order": 2,
       "help": "How far a shadow reaches out from its window."
     },
@@ -463,21 +465,21 @@
       "widget": "segmented",
       "labels": { "1": "Softest", "2": "Soft", "3": "Sharp", "4": "Sharpest" },
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
-      "group": "Shadow",
+      "group": "Shadows",
       "order": 3,
       "help": "How quickly a shadow fades towards its outer edge. A sharper falloff keeps the shadow tight against the window."
     },
     "decoration:shadow:sharp": {
       "title": "Sharp shadow",
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
-      "group": "Shadow",
+      "group": "Shadows",
       "order": 4,
       "help": "Gives shadows a hard edge instead of a soft fade."
     },
     "decoration:shadow:color": {
       "title": "Shadow colour",
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
-      "group": "Shadow",
+      "group": "Shadows",
       "order": 5,
       "help": "Colour of window shadows. Its alpha sets how opaque the shadow is."
     },
@@ -487,7 +489,7 @@
       "null_label": "Same as shadow colour",
       "null_value": -1,
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
-      "group": "Shadow",
+      "group": "Shadows",
       "order": 6,
       "help": "Shadow colour of windows without focus. When unset, the normal shadow colour is used."
     },
@@ -495,14 +497,14 @@
       "title": "Shadow offset",
       "unit": "px",
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
-      "group": "Shadow",
+      "group": "Shadows",
       "order": 7,
       "help": "How far shadows shift from their window, horizontally and vertically."
     },
     "decoration:shadow:scale": {
       "title": "Shadow scale",
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
-      "group": "Shadow",
+      "group": "Shadows",
       "order": 8,
       "help": "Size of each shadow compared with its full size: 1 is full size, and lower values shrink it towards the window's centre."
     },
@@ -720,13 +722,13 @@
 
     "animations:enabled": {
       "title": "Animations",
-      "group": "Behaviour",
+      "group": "Playback",
       "order": 1,
       "help": "Turns all of Hyprland's animations on or off. Turn it off for instant window and workspace changes."
     },
     "animations:workspace_wraparound": {
       "title": "Wrap workspace animations",
-      "group": "Behaviour",
+      "group": "Playback",
       "order": 2,
       "help": "Slides between the first and last workspace as if they were neighbours."
     },
@@ -798,8 +800,8 @@
     },
     "input:resolve_binds_by_sym": {
       "title": "Match keybinds by symbol",
-      "group": "Typing",
-      "order": 4,
+      "group": "Keyboard layout",
+      "order": 7,
       "help": "With several layouts, matches a keybind against the symbol you type, not the key's place in the first layout."
     },
     "input:repeat_rate": {
@@ -843,13 +845,13 @@
       "title": "Pointer rotation",
       "unit": "deg",
       "group": "Pointer",
-      "order": 6,
+      "order": 5,
       "help": "Rotates a device's input by this many degrees clockwise. Devices that cannot be rotated ignore it."
     },
     "input:left_handed": {
       "title": "Swap left and right buttons",
       "group": "Pointer",
-      "order": 5,
+      "order": 4,
       "help": "Swaps the left and right mouse buttons."
     },
     "input:scroll_points": {
@@ -860,8 +862,8 @@
       "null_value": "",
       "visibility": "advanced",
       "depends_on": { "option": "input:accel_profile", "value": "custom" },
-      "group": "Pointer",
-      "order": 4,
+      "group": "Scrolling",
+      "order": 10,
       "help": "Custom scroll acceleration curve, written as a step and then the points. Used only when the pointer acceleration profile is custom."
     },
     "input:scroll_method": {
@@ -882,7 +884,6 @@
     },
     "input:scroll_button": {
       "title": "Scroll button",
-      "visibility": "advanced",
       "group": "Scrolling",
       "order": 6,
       "help": "Which mouse button scrolls while held, as a button code; 0 keeps the device's default. Find a code with the wev tool."
@@ -1198,50 +1199,50 @@
     "gestures:workspace_swipe_distance": {
       "title": "Swipe distance",
       "unit": "px",
-      "group": "Workspace swipe",
+      "group": "Swipe sensitivity",
       "order": 1,
       "help": "How far you drag on the touchpad, in pixels, to swipe one workspace."
     },
     "gestures:workspace_swipe_touch": {
       "title": "Swipe on touchscreens",
       "group": "Workspace swipe",
-      "order": 2,
+      "order": 1,
       "help": "Lets you swipe between workspaces from the edge of a touchscreen."
     },
     "gestures:workspace_swipe_invert": {
       "title": "Invert swipe direction",
       "group": "Workspace swipe",
-      "order": 3,
+      "order": 2,
       "help": "Reverses the direction of workspace swipes on the touchpad."
     },
     "gestures:workspace_swipe_touch_invert": {
       "title": "Invert touchscreen swipe direction",
       "group": "Workspace swipe",
-      "order": 4,
+      "order": 3,
       "help": "Reverses the direction of workspace swipes on a touchscreen."
     },
     "gestures:workspace_swipe_min_speed_to_force": {
       "title": "Minimum speed to force a switch",
       "group": "Swipe sensitivity",
-      "order": 2,
+      "order": 3,
       "help": "A swipe faster than this switches workspace even if it was short, ignoring the cancel ratio. 0 turns this off."
     },
     "gestures:workspace_swipe_cancel_ratio": {
       "title": "Cancel ratio",
       "group": "Swipe sensitivity",
-      "order": 1,
+      "order": 2,
       "help": "How much of the swipe distance you must cover to switch workspace. At 0.7, less than 70 percent snaps back."
     },
     "gestures:workspace_swipe_create_new": {
       "title": "Create a workspace by swiping past the end",
       "group": "Workspace swipe",
-      "order": 5,
+      "order": 4,
       "help": "Swiping right on the last workspace creates a new one."
     },
     "gestures:workspace_swipe_direction_lock": {
       "title": "Direction lock",
       "group": "Swipe sensitivity",
-      "order": 3,
+      "order": 4,
       "help": "Once a swipe passes the lock threshold, it can no longer change direction. Touchpad only."
     },
     "gestures:workspace_swipe_direction_lock_threshold": {
@@ -1249,19 +1250,19 @@
       "unit": "px",
       "depends_on": { "option": "gestures:workspace_swipe_direction_lock", "value": true },
       "group": "Swipe sensitivity",
-      "order": 4,
+      "order": 5,
       "help": "How far a swipe must travel, in pixels, before its direction locks. Touchpad only."
     },
     "gestures:workspace_swipe_forever": {
       "title": "Swipe through several workspaces",
       "group": "Workspace swipe",
-      "order": 6,
+      "order": 5,
       "help": "Lets a swipe carry past the neighbouring workspace to ones further away, instead of stopping at it."
     },
     "gestures:workspace_swipe_use_r": {
       "title": "Swipe through empty workspaces",
       "group": "Workspace swipe",
-      "order": 7,
+      "order": 6,
       "help": "Swipes step through every workspace number on this monitor, even empty ones, instead of only the workspaces that are open."
     },
     "gestures:close_max_timeout": {
@@ -1286,13 +1287,13 @@
 
     "group:insert_after_current": {
       "title": "Insert after the current window",
-      "group": "Behaviour",
+      "group": "Adding and removing",
       "order": 2,
       "help": "Opens a new window in a group right after the current tab instead of at the end."
     },
     "group:focus_removed_window": {
       "title": "Focus a window removed from a group",
-      "group": "Behaviour",
+      "group": "Adding and removing",
       "order": 3,
       "help": "Focuses a window right after you move it out of its group."
     },
@@ -1334,7 +1335,7 @@
     },
     "group:auto_group": {
       "title": "Group new windows automatically",
-      "group": "Behaviour",
+      "group": "Adding and removing",
       "order": 1,
       "help": "Puts each new window into the focused group automatically, unless that group is locked."
     },
@@ -1352,7 +1353,7 @@
     },
     "group:group_on_movetoworkspace": {
       "title": "Group when moving to a workspace",
-      "group": "Behaviour",
+      "group": "Adding and removing",
       "order": 4,
       "help": "Moving a window to a workspace that holds nothing but one unlocked group adds the window to that group."
     },
@@ -1433,7 +1434,7 @@
     "group:groupbar:gradients": {
       "title": "Gradient backgrounds",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab backgrounds",
+      "group": "Tab colours",
       "order": 5,
       "help": "Paints a gradient background behind each tab in the group bar."
     },
@@ -1441,7 +1442,7 @@
       "title": "Height",
       "unit": "px",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab spacing",
+      "group": "Tab sizing",
       "order": 1,
       "help": "Height of the group bar, in pixels."
     },
@@ -1449,7 +1450,7 @@
       "title": "Indicator gap",
       "unit": "px",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab spacing",
+      "group": "Tab sizing",
       "order": 3,
       "help": "Space between each tab's indicator and its title, in pixels."
     },
@@ -1457,7 +1458,7 @@
       "title": "Indicator height",
       "unit": "px",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab spacing",
+      "group": "Tab sizing",
       "order": 2,
       "help": "Height of each tab's indicator, the coloured strip below its title, in pixels."
     },
@@ -1581,28 +1582,28 @@
     "group:groupbar:col.active": {
       "title": "Active tab colour",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab backgrounds",
+      "group": "Tab colours",
       "order": 1,
       "help": "Colour of the focused tab's indicator in the group bar, and its background when Gradient backgrounds is on. The indicator uses only the first colour."
     },
     "group:groupbar:col.inactive": {
       "title": "Inactive tab colour",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab backgrounds",
+      "group": "Tab colours",
       "order": 2,
       "help": "Colour of the other tabs' indicators in the group bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first colour."
     },
     "group:groupbar:col.locked_active": {
       "title": "Locked active tab colour",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab backgrounds",
+      "group": "Tab colours",
       "order": 3,
       "help": "Colour of the focused tab's indicator in a locked group's bar, and its background when Gradient backgrounds is on. The indicator uses only the first colour."
     },
     "group:groupbar:col.locked_inactive": {
       "title": "Locked inactive tab colour",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab backgrounds",
+      "group": "Tab colours",
       "order": 4,
       "help": "Colour of the other tabs' indicators in a locked group's bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first colour."
     },
@@ -1610,7 +1611,7 @@
       "title": "Outer gaps",
       "unit": "px",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab spacing",
+      "group": "Tab sizing",
       "order": 5,
       "help": "Space between the group bar and its window, in pixels. Keep the upper gap adds the same space above the bar."
     },
@@ -1618,14 +1619,14 @@
       "title": "Inner gaps",
       "unit": "px",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab spacing",
+      "group": "Tab sizing",
       "order": 4,
       "help": "Space between neighbouring tabs in the group bar, in pixels."
     },
     "group:groupbar:keep_upper_gap": {
       "title": "Keep the upper gap",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab spacing",
+      "group": "Tab sizing",
       "order": 6,
       "help": "Adds the Outer gaps value again as space above the group bar. Turn it off to remove that gap."
     },
@@ -1633,7 +1634,7 @@
       "title": "Text offset",
       "unit": "px",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab spacing",
+      "group": "Tab sizing",
       "order": 7,
       "help": "Moves the titles up or down in the group bar, in pixels."
     },
@@ -1641,14 +1642,14 @@
       "title": "Text padding",
       "unit": "px",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab spacing",
+      "group": "Tab sizing",
       "order": 8,
       "help": "Space on each side of a title in the group bar, in pixels."
     },
     "group:groupbar:blur": {
       "title": "Blur the background",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab backgrounds",
+      "group": "Tab colours",
       "order": 6,
       "help": "Blurs what lies behind the group bar's tab indicators and gradient backgrounds."
     },
@@ -1725,7 +1726,7 @@
     "misc:name_vk_after_proc": {
       "title": "Name virtual keyboards after their process",
       "visibility": "advanced",
-      "group": "Input",
+      "group": "Mouse and keyboard",
       "order": 2,
       "help": "Names each virtual keyboard after the program that created it."
     },
@@ -1743,13 +1744,13 @@
     },
     "misc:animate_manual_resizes": {
       "title": "Animate manual resizes",
-      "group": "Window handling",
+      "group": "Windows and animation",
       "order": 4,
       "help": "Animates windows when you resize or move them by hand."
     },
     "misc:animate_mouse_windowdragging": {
       "title": "Animate window dragging",
-      "group": "Window handling",
+      "group": "Windows and animation",
       "order": 5,
       "help": "Animates a window as you drag it with the mouse. Some animation curves look odd with this on."
     },
@@ -1825,7 +1826,7 @@
     },
     "misc:close_special_on_empty": {
       "title": "Close the special workspace when empty",
-      "group": "Window handling",
+      "group": "Windows and animation",
       "order": 2,
       "help": "Closes the special workspace when its last window goes away."
     },
@@ -1837,7 +1838,7 @@
     },
     "misc:exit_window_retains_fullscreen": {
       "title": "Keep fullscreen when a window exits",
-      "group": "Window handling",
+      "group": "Windows and animation",
       "order": 1,
       "help": "Closing a fullscreen window makes the window that gets focus next fullscreen too."
     },
@@ -1858,7 +1859,7 @@
     },
     "misc:middle_click_paste": {
       "title": "Middle-click paste",
-      "group": "Input",
+      "group": "Mouse and keyboard",
       "order": 1,
       "help": "Middle-clicking pastes the primary selection, which is the text you last highlighted."
     },
@@ -1926,7 +1927,7 @@
     },
     "misc:size_limits_tiled": {
       "title": "Apply size limits to tiled windows",
-      "group": "Window handling",
+      "group": "Windows and animation",
       "order": 3,
       "help": "Applies the minimum and maximum size window rules to tiled windows, not only floating ones."
     },
@@ -2052,27 +2053,27 @@
 
     "opengl:nvidia_anti_flicker": {
       "title": "NVIDIA anti-flicker",
-      "visibility": "advanced",
       "group": "NVIDIA workarounds",
       "order": 1,
-      "help": "Reduces flicker on NVIDIA cards, at the cost of possible dropped frames on weaker GPUs. Ignored on other cards."
+      "help": "Reduces flicker on NVIDIA cards, at the cost of possible dropped frames on weaker GPUs. Ignored on other cards.",
+      "visibility": "advanced"
     },
 
     "render:direct_scanout": {
       "title": "Direct scanout",
-      "group": "Performance",
+      "group": "Performance and quality",
       "order": 1,
       "help": "Sends a lone fullscreen app's frames straight to the display, which can cut lag in games. Turn it off if the app shows glitches."
     },
     "render:expand_undersized_textures": {
       "title": "Expand undersized textures",
-      "group": "Blur and textures",
-      "order": 2,
+      "group": "Performance and quality",
+      "order": 6,
       "help": "While a window is still resizing, stretches its edge to fill the gap instead of scaling the whole picture."
     },
     "render:xp_mode": {
       "title": "XP mode",
-      "group": "Performance",
+      "group": "Performance and quality",
       "order": 4,
       "help": "Stops drawing the wallpaper and everything else that sits below windows."
     },
@@ -2105,7 +2106,7 @@
     },
     "render:new_render_scheduling": {
       "title": "New render scheduling",
-      "group": "Performance",
+      "group": "Performance and quality",
       "order": 2,
       "help": "Uses triple buffering when needed, which can improve the frame rate on underpowered machines."
     },
@@ -2135,7 +2136,7 @@
     "render:commit_timing_enabled": {
       "title": "Commit timing",
       "restart": "hyprland",
-      "group": "Performance",
+      "group": "Performance and quality",
       "order": 3,
       "help": "Supports the commit timing protocol, which lets apps schedule exactly when a frame appears."
     },
@@ -2148,8 +2149,8 @@
     },
     "render:use_shader_blur_blend": {
       "title": "Shader blur blending",
-      "group": "Blur and textures",
-      "order": 1,
+      "group": "Performance and quality",
+      "order": 5,
       "help": "Blends the blurred background in a shader. Experimental and glitchy on rotated screens; try it if blur goes missing with FP16 buffers."
     },
     "render:use_fp16": {
@@ -2245,7 +2246,7 @@
       "help": "Moves the cursor to the last focused window when you toggle a special workspace. Force does so even when Disable cursor warps is on."
     },
     "cursor:default_monitor": {
-      "title": "Startup monitor",
+      "title": "Monitor the cursor starts on",
       "widget": "monitor-picker",
       "nullable": true,
       "null_label": "Auto",
@@ -2256,7 +2257,6 @@
     },
     "cursor:zoom_factor": {
       "title": "Zoom factor",
-      "visibility": "advanced",
       "group": "Zoom",
       "order": 1,
       "help": "How much the screen is magnified around the cursor, like a magnifying glass. 1 means no zoom."
@@ -2337,7 +2337,6 @@
     },
     "ecosystem:enforce_permissions": {
       "title": "Enforce permissions",
-      "visibility": "advanced",
       "group": "Notices and permissions",
       "order": 3,
       "help": "Turns on permission control, so apps must be allowed to use features such as screen capture."
@@ -2401,7 +2400,7 @@
     },
     "debug:disable_scale_checks": {
       "title": "Disable scale checks",
-      "group": "Frame rendering",
+      "group": "Errors and crashes",
       "order": 5,
       "help": "Skips checking that monitor scales fit the pixel grid, which causes rounding errors."
     },
@@ -2485,13 +2484,13 @@
     "dwindle:force_split": {
       "title": "Force split direction",
       "group": "Split direction",
-      "order": 1,
+      "order": 2,
       "help": "Which side of a split a new window opens on. Left also means top in a stacked split, and Right means bottom."
     },
     "dwindle:preserve_split": {
       "title": "Preserve the split direction",
       "group": "Split direction",
-      "order": 2,
+      "order": 1,
       "help": "Keeps each split's direction, side by side or stacked, fixed whatever happens to the windows."
     },
     "dwindle:smart_split": {
@@ -2514,13 +2513,13 @@
     },
     "dwindle:special_scale_factor": {
       "title": "Special workspace scale",
-      "group": "Split sizes",
+      "group": "Sizes",
       "order": 4,
       "help": "Scales windows on the special workspace, from 0 to 1. 1 leaves them unscaled."
     },
     "dwindle:split_width_multiplier": {
       "title": "Split width multiplier",
-      "group": "Split sizes",
+      "group": "Sizes",
       "order": 3,
       "help": "A window splits side by side only when it is wider than its height times this number. Raise it on wide monitors to get stacked splits sooner."
     },
@@ -2532,13 +2531,13 @@
     },
     "dwindle:default_split_ratio": {
       "title": "Default split ratio",
-      "group": "Split sizes",
+      "group": "Sizes",
       "order": 1,
       "help": "How a new window shares space with its neighbour. 1 is an even 50/50 split; the range is 0.1 to 1.9."
     },
     "dwindle:split_bias": {
       "title": "Split bias",
-      "group": "Split sizes",
+      "group": "Sizes",
       "order": 2,
       "help": "Which window of a split gets the split ratio: the top or left one, or the current one."
     },
@@ -2717,7 +2716,7 @@
 
     "experimental:wp_cm_1_2": {
       "title": "Colour-management protocol v1.2",
-      "group": "Colour management",
+      "group": "Colour protocol",
       "order": 1,
       "help": "Offers apps a newer revision of the colour management protocol. Has no effect while Colour management is off."
     },

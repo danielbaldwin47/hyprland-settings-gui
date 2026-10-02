@@ -34,7 +34,7 @@ options = [
 
 [[general]]
 title = "Resizing"
-description = "Dragging a window's border with the mouse to resize it."
+description = "Resizing windows with the mouse."
 options = [
   "general:resize_on_border",
   "general:extend_border_grab_area",
@@ -54,11 +54,12 @@ options = [
 ]
 
 [[general]]
-title = "Behaviour"
+title = "Tearing and focus"
+description = "Screen tearing, moving focus between windows, and the language of Hyprland's messages."
 options = [
+  "general:allow_tearing",
   "general:no_focus_fallback",
   "general:modal_parent_blocking",
-  "general:allow_tearing",
   "general:locale",
 ]
 
@@ -104,7 +105,7 @@ options = [
 ]
 
 [[decoration]]
-title = "Shadow"
+title = "Shadows"
 options = [
   "decoration:shadow:enabled",
   "decoration:shadow:range",
@@ -117,6 +118,16 @@ options = [
 ]
 
 [[decoration]]
+title = "Dimming"
+options = [
+  "decoration:dim_inactive",
+  "decoration:dim_strength",
+  "decoration:dim_special",
+  "decoration:dim_around",
+  "decoration:dim_modal",
+]
+
+[[decoration]]
 title = "Glow"
 description = "A soft light just inside each window's edge."
 options = [
@@ -125,16 +136,6 @@ options = [
   "decoration:glow:render_power",
   "decoration:glow:color",
   "decoration:glow:color_inactive",
-]
-
-[[decoration]]
-title = "Dimming"
-options = [
-  "decoration:dim_inactive",
-  "decoration:dim_strength",
-  "decoration:dim_special",
-  "decoration:dim_around",
-  "decoration:dim_modal",
 ]
 
 [[decoration]]
@@ -156,6 +157,7 @@ options = [
   "input:kb_options",
   "input:kb_rules",
   "input:kb_file",
+  "input:resolve_binds_by_sym",
 ]
 
 [[input]]
@@ -164,7 +166,6 @@ options = [
   "input:repeat_rate",
   "input:repeat_delay",
   "input:numlock_by_default",
-  "input:resolve_binds_by_sym",
 ]
 
 [[input]]
@@ -173,7 +174,6 @@ options = [
   "input:sensitivity",
   "input:accel_profile",
   "input:force_no_accel",
-  "input:scroll_points",
   "input:left_handed",
   "input:rotation",
 ]
@@ -191,19 +191,7 @@ options = [
   "input:scroll_button_lock",
   "input:emulate_discrete_scroll",
   "input:off_window_axis_events",
-]
-
-[[input]]
-title = "Focus"
-description = "How the window under the mouse takes keyboard focus."
-options = [
-  "input:follow_mouse",
-  "input:follow_mouse_threshold",
-  "input:follow_mouse_shrink",
-  "input:mouse_refocus",
-  "input:focus_on_close",
-  "input:float_switch_override_focus",
-  "input:special_fallthrough",
+  "input:scroll_points",
 ]
 
 [[input]]
@@ -219,6 +207,19 @@ options = [
   "input:touchpad:middle_button_emulation",
   "input:touchpad:flip_x",
   "input:touchpad:flip_y",
+]
+
+[[input]]
+title = "Focus"
+description = "How the window under the mouse takes keyboard focus."
+options = [
+  "input:follow_mouse",
+  "input:follow_mouse_threshold",
+  "input:follow_mouse_shrink",
+  "input:mouse_refocus",
+  "input:focus_on_close",
+  "input:float_switch_override_focus",
+  "input:special_fallthrough",
 ]
 
 [[input]]
@@ -265,7 +266,7 @@ options = [
 # The Page is titled "Groups", and on the Tasks view these read "Groups · <title>".
 
 [[group]]
-title = "Behaviour"
+title = "Adding and removing"
 options = [
   "group:auto_group",
   "group:insert_after_current",
@@ -319,7 +320,7 @@ options = [
 ]
 
 [[group]]
-title = "Tab backgrounds"
+title = "Tab colours"
 options = [
   "group:groupbar:col.active",
   "group:groupbar:col.inactive",
@@ -330,7 +331,7 @@ options = [
 ]
 
 [[group]]
-title = "Tab spacing"
+title = "Tab sizing"
 options = [
   "group:groupbar:height",
   "group:groupbar:indicator_height",
@@ -370,6 +371,16 @@ options = [
 ]
 
 [[misc]]
+title = "Displays and power"
+options = [
+  "misc:vrr",
+  "misc:mouse_move_enables_dpms",
+  "misc:key_press_enables_dpms",
+  "misc:render_unfocused_fps",
+  "misc:screencopy_force_8b",
+]
+
+[[misc]]
 title = "Focus and placement"
 options = [
   "misc:focus_on_activate",
@@ -382,7 +393,7 @@ options = [
 ]
 
 [[misc]]
-title = "Window handling"
+title = "Windows and animation"
 options = [
   "misc:exit_window_retains_fullscreen",
   "misc:close_special_on_empty",
@@ -401,17 +412,7 @@ options = [
 ]
 
 [[misc]]
-title = "Displays and power"
-options = [
-  "misc:vrr",
-  "misc:mouse_move_enables_dpms",
-  "misc:key_press_enables_dpms",
-  "misc:render_unfocused_fps",
-  "misc:screencopy_force_8b",
-]
-
-[[misc]]
-title = "Input"
+title = "Mouse and keyboard"
 options = [
   "misc:middle_click_paste",
   "misc:name_vk_after_proc",
@@ -445,7 +446,7 @@ options = [
 # --- animations ------------------------------------------------------------------------------
 
 [[animations]]
-title = "Behaviour"
+title = "Playback"
 options = [
   "animations:enabled",
   "animations:workspace_wraparound",
@@ -456,7 +457,6 @@ options = [
 [[gestures]]
 title = "Workspace swipe"
 options = [
-  "gestures:workspace_swipe_distance",
   "gestures:workspace_swipe_touch",
   "gestures:workspace_swipe_invert",
   "gestures:workspace_swipe_touch_invert",
@@ -469,6 +469,7 @@ options = [
 title = "Swipe sensitivity"
 description = "How far and how fast a swipe has to go before Hyprland acts on it."
 options = [
+  "gestures:workspace_swipe_distance",
   "gestures:workspace_swipe_cancel_ratio",
   "gestures:workspace_swipe_min_speed_to_force",
   "gestures:workspace_swipe_direction_lock",
@@ -543,12 +544,14 @@ options = [
 # --- render ----------------------------------------------------------------------------------
 
 [[render]]
-title = "Performance"
+title = "Performance and quality"
 options = [
   "render:direct_scanout",
   "render:new_render_scheduling",
   "render:commit_timing_enabled",
   "render:xp_mode",
+  "render:use_shader_blur_blend",
+  "render:expand_undersized_textures",
 ]
 
 [[render]]
@@ -560,13 +563,6 @@ options = [
   "render:send_content_type",
   "render:ctm_animation",
   "render:icc_vcgt_enabled",
-]
-
-[[render]]
-title = "Blur and textures"
-options = [
-  "render:use_shader_blur_blend",
-  "render:expand_undersized_textures",
 ]
 
 [[render]]
@@ -593,6 +589,17 @@ options = [
 ]
 
 [[cursor]]
+title = "Theme and drawing"
+description = "Cursor theme and size come from environment variables; these settings control how the cursor is loaded and drawn."
+options = [
+  "cursor:enable_hyprcursor",
+  "cursor:sync_gsettings_theme",
+  "cursor:no_hardware_cursors",
+  "cursor:hotspot_padding",
+  "cursor:use_cpu_buffer",
+]
+
+[[cursor]]
 title = "Warping"
 description = "Jumping the cursor to a window or monitor when focus moves."
 options = [
@@ -606,21 +613,12 @@ options = [
 
 [[cursor]]
 title = "Zoom"
+description = "Magnifies the screen around the cursor."
 options = [
   "cursor:zoom_factor",
   "cursor:zoom_rigid",
   "cursor:zoom_detached_camera",
   "cursor:zoom_disable_aa",
-]
-
-[[cursor]]
-title = "Theme and drawing"
-options = [
-  "cursor:enable_hyprcursor",
-  "cursor:sync_gsettings_theme",
-  "cursor:no_hardware_cursors",
-  "cursor:hotspot_padding",
-  "cursor:use_cpu_buffer",
 ]
 
 [[cursor]]
@@ -645,7 +643,7 @@ options = [
 
 [[layout]]
 title = "Single window"
-description = "How a window that is alone on its workspace is shaped."
+description = "Shapes a window that is alone on its workspace; pick the layout itself on the General page."
 options = [
   "layout:single_window_aspect_ratio",
   "layout:single_window_aspect_ratio_tolerance",
@@ -656,15 +654,15 @@ options = [
 [[dwindle]]
 title = "Split direction"
 options = [
-  "dwindle:force_split",
   "dwindle:preserve_split",
+  "dwindle:force_split",
   "dwindle:smart_split",
   "dwindle:use_active_for_splits",
   "dwindle:permanent_direction_override",
 ]
 
 [[dwindle]]
-title = "Split sizes"
+title = "Sizes"
 options = [
   "dwindle:default_split_ratio",
   "dwindle:split_bias",
@@ -755,6 +753,7 @@ options = [
   "debug:error_limit",
   "debug:error_position",
   "debug:manual_crash",
+  "debug:disable_scale_checks",
 ]
 
 [[debug]]
@@ -774,7 +773,6 @@ options = [
   "debug:vfr",
   "debug:render_solitary_wo_damage",
   "debug:invalidate_fp16",
-  "debug:disable_scale_checks",
 ]
 
 [[debug]]
@@ -798,7 +796,7 @@ options = [
 # --- experimental (hidden tier) --------------------------------------------------------------
 
 [[experimental]]
-title = "Colour management"
+title = "Colour protocol"
 description = "A preview of newer colour-management protocol support."
 options = [
   "experimental:wp_cm_1_2",

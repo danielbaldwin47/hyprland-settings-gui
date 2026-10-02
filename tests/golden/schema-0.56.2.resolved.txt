@@ -84,7 +84,7 @@ input:rotation | int | int-range | - | - | default | - | min=0,max=359 | - | deg
 input:left_handed | bool | toggle | - | - | default | - | - | - | - | Swap left and right buttons
 input:scroll_points | string | float-list | null | None | advanced | input:accel_profile=custom | - | - | - | Custom scroll acceleration
 input:scroll_method | string | enum-string | null | Device default | default | - | - | 2fg=Two fingers/edge=Edge/on_button_down=While button held/no_scroll=Disabled | - | Scroll method
-input:scroll_button | int | int-range | - | - | advanced | - | min=0,max=300 | - | - | Scroll button
+input:scroll_button | int | int-range | - | - | default | - | min=0,max=300 | - | - | Scroll button
 input:scroll_button_lock | bool | toggle | - | - | default | - | - | - | - | Scroll button lock
 input:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Mouse scroll speed
 input:natural_scroll | bool | toggle | - | - | default | - | - | - | - | Mouse natural scrolling
@@ -274,8 +274,8 @@ cursor:no_warps | bool | toggle | - | - | default | - | - | - | - | Disable curs
 cursor:persistent_warps | bool | toggle | - | - | default | - | - | - | - | Persistent warps
 cursor:warp_on_change_workspace | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Warp on workspace change
 cursor:warp_on_toggle_special | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Warp on special workspace toggle
-cursor:default_monitor | string | monitor-picker | null | Auto | default | - | - | - | - | Startup monitor
-cursor:zoom_factor | float | float-range | - | - | advanced | - | min=1,max=10 | - | - | Zoom factor
+cursor:default_monitor | string | monitor-picker | null | Auto | default | - | - | - | - | Monitor the cursor starts on
+cursor:zoom_factor | float | float-range | - | - | default | - | min=1,max=10 | - | - | Zoom factor
 cursor:zoom_rigid | bool | toggle | - | - | default | - | - | - | - | Rigid zoom
 cursor:zoom_disable_aa | bool | toggle | - | - | default | - | - | - | - | Disable zoom antialiasing
 cursor:zoom_detached_camera | bool | toggle | - | - | default | - | - | - | - | Detached zoom camera
@@ -288,7 +288,7 @@ cursor:sync_gsettings_theme | bool | toggle | - | - | default | - | - | - | - | 
 cursor:warp_back_after_non_mouse_input | bool | toggle | - | - | default | - | - | - | - | Warp back after non-mouse input
 ecosystem:no_update_news | bool | toggle | - | - | default | - | - | - | - | Hide update news
 ecosystem:no_donation_nag | bool | toggle | - | - | default | - | - | - | - | Hide the donation reminder
-ecosystem:enforce_permissions | bool | toggle | - | - | advanced | - | - | - | - | Enforce permissions
+ecosystem:enforce_permissions | bool | toggle | - | - | default | - | - | - | - | Enforce permissions
 debug:overlay | bool | toggle | - | - | hidden | - | - | - | - | Debug overlay
 debug:damage_blink | bool | toggle | - | - | hidden | - | - | - | - | Blink on damage
 debug:gl_debugging | bool | toggle | - | - | hidden | - | - | - | - | OpenGL debugging

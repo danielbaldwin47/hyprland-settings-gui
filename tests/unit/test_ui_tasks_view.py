@@ -300,12 +300,12 @@ def fallback_page(mapping: TasksMapping, section: str, *, show_advanced: bool) -
 def test_an_uncurated_section_withholds_its_advanced_options_rather_than_dropping_them() -> (
     None
 ):
-    """#136: `cursor` has 20 default and 2 advanced options. With the switch off the page
-    shows the 20 and counts the 2, so the hint can say they exist; with it on, all 22 show."""
+    """#136: `cursor` has 21 default options and 1 advanced. With the switch off the page
+    shows the 21 and counts the 1, so the hint can say it exists; with it on, all 22 show."""
     off = fallback_page(uncurated("cursor"), "cursor", show_advanced=False)
     on = fallback_page(uncurated("cursor"), "cursor", show_advanced=True)
 
-    assert (off.option_count, off.withheld) == (20, 2)
+    assert (off.option_count, off.withheld) == (21, 1)
     assert (on.option_count, on.withheld) == (22, 0)
 
 
@@ -665,14 +665,14 @@ def test_a_same_page_curated_group_does_not_duplicate_an_unstamped_option() -> N
 
 
 def test_an_advanced_new_option_is_withheld_and_counted_until_advanced_is_on() -> None:
-    schema = stamped(cursor__zoom_factor="0.99.0")
+    schema = stamped(cursor__use_cpu_buffer="0.99.0")
 
     closed = cursor_page(schema, show_advanced=False)
     assert "New in 0.99.0" not in group_names(closed)
     assert closed.withheld == cursor_page(SCHEMA, show_advanced=False).withheld
 
     opened = cursor_page(schema, show_advanced=True)
-    assert group_names(opened)["New in 0.99.0"] == ["cursor:zoom_factor"]
+    assert group_names(opened)["New in 0.99.0"] == ["cursor:use_cpu_buffer"]
     assert opened.withheld == 0
 
 

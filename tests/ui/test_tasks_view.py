@@ -363,14 +363,14 @@ def test_a_fallback_page_with_only_advanced_options_says_so(tmp_path: Path) -> N
 
 
 def test_a_fallback_page_with_some_advanced_options_still_says_so(tmp_path: Path) -> None:
-    """The user who can see 20 cursor options must learn the other 2 exist."""
+    """The user who can see 21 cursor settings must learn the other one exists."""
     _session, window = build_window(tmp_path)
     uncurate(window, "cursor")
 
     page = next(page for page in window.pages if page.plan.section == "tasks.new.cursor")
-    assert len(page.rows) == 20
+    assert len(page.rows) == 21
     assert [title for title, _sub, _sens in hint_rows(window, "tasks.new.cursor")] == [
-        "2 advanced settings"
+        "1 advanced setting"
     ]
 
 
