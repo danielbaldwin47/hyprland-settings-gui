@@ -51,6 +51,12 @@ if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
 from .corpus import Rice, StagedRice, rice, rices, rices_with_ground_truth, stage  # noqa: E402
+from .guard import (  # noqa: E402
+    REQUIRE_VARIABLE,
+    GuardedInstance,
+    guarded,
+    session_compositor_reason,
+)
 from .nested import (  # noqa: E402
     HarnessUnavailable,
     NestedHyprland,
@@ -80,8 +86,10 @@ from .visual import (  # noqa: E402
 
 __all__ = [
     "HEADLESS_OUTPUT",
+    "REQUIRE_VARIABLE",
     "Canvas",
     "CompositorState",
+    "GuardedInstance",
     "HarnessUnavailable",
     "ImageComparison",
     "ListDelta",
@@ -94,6 +102,7 @@ __all__ = [
     "capture",
     "compare",
     "diff",
+    "guarded",
     "home_environment",
     "hyprland_binary",
     "make_home",
@@ -102,6 +111,7 @@ __all__ = [
     "rice",
     "rices",
     "rices_with_ground_truth",
+    "session_compositor_reason",
     "stage",
     "unavailable_reason",
     "write_determinism_preamble",

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 
 import pytest
@@ -39,9 +39,14 @@ for entry in (str(TESTS_INTEGRATION), str(ROOT / "src")):
     if entry not in sys.path:
         sys.path.insert(0, entry)
 
-from harness import HarnessUnavailable, unavailable_reason  # noqa: E402
-
-REQUIRE_VARIABLE = "HYPRTWEAKER_REQUIRE_HARNESS"
+from harness import (  # noqa: E402
+    REQUIRE_VARIABLE,
+    GuardedInstance,
+    HarnessUnavailable,
+    NestedHyprland,
+    guarded,
+    unavailable_reason,
+)
 
 
 # trylast, and scoped by path, for the reasons tests/ui/conftest.py documents: pytest hands
@@ -121,3 +126,44 @@ def artifacts(tmp_path: Path) -> Path:
     directory = tmp_path / "artifacts"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test in this tier inherits the session's compositor through the environment.
+
+    `Instance.current()` reads `HYPRLAND_INSTANCE_SIGNATURE`, and so does every default that
+    calls it: a `Session` built without `connect=`, or code under test that looks for "the
+    compositor we run under". The per-commit check bans the direct call under `tests/`; this
+    covers the indirect ones. A compositor comes from `guarded_hyprland` or a
+    `NestedHyprland`, never from the shell that started pytest.
+    """
+    monkeypatch.delenv("HYPRLAND_INSTANCE_SIGNATURE", raising=False)
+
+
+#: Enough config for a compositor to answer IPC; tests that need values write their own.
+GUARDED_CONFIG = "hl.config({ general = { gaps_in = 3 } })\n"
+
+
+@pytest.fixture(scope="module")
+def guarded_hyprland(tmp_path_factory: pytest.TempPathFactory) -> Iterator[GuardedInstance]:
+    """A nested Hyprland for one module, handed out only through the desktop guard.
+
+    Module-scoped: the tests that use it read, they do not reconfigure, so one compositor
+    serves them all. `HarnessUnavailable` is handled here rather than by
+    `pytest_runtest_call`, which does not see fixture setup.
+    """
+    home = tmp_path_factory.mktemp("guarded-home")
+    config = home / "hyprland.lua"
+    config.write_text(GUARDED_CONFIG)
+    nested = NestedHyprland(config, home=home, log=home / "nested.log")
+    try:
+        nested.start()
+    except HarnessUnavailable as unavailable:
+        if os.environ.get(REQUIRE_VARIABLE) == "1":
+            raise
+        pytest.skip(f"Harness tier: {unavailable}")
+    try:
+        yield guarded(nested.instance)
+    finally:
+        nested.stop()

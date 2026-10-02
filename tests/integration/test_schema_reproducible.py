@@ -9,20 +9,24 @@ running compositor of the matching version, its installed Lua stub, and the Hypr
 source at the release tag. That is the machine a release check runs on
 (`docs/agents/hyprland-release-check.md` step 1), which is exactly when it matters.
 
+The compositor is a nested one from `guarded_hyprland` (#201), and both `hyprctl` and the
+generator run with its guarded environment. Inheriting the shell's environment would read
+the owner's desktop session, since the generator runs `hyprctl` itself.
+
 Run it explicitly::
 
-    pytest tests/integration -m hyprland
+    HARNESS_DRM_CARD=/dev/dri/card0 pytest tests/integration/test_schema_reproducible.py
 """
 
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from harness import GuardedInstance
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
@@ -34,20 +38,21 @@ SCHEMA_DIR = ROOT / "data" / "schema"
 pytestmark = pytest.mark.hyprland
 
 
-def running_hyprland_version() -> str | None:
-    if shutil.which("hyprctl") is None:
-        return None
-    result = subprocess.run(["hyprctl", "version"], capture_output=True, text=True)
+def running_hyprland_version(hyprland: GuardedInstance) -> str | None:
+    result = subprocess.run(
+        ["hyprctl", "version"], capture_output=True, text=True, env=hyprland.env
+    )
     if result.returncode != 0:
         return None
     match = re.search(r"Hyprland (\d+(?:\.\d+)*)", result.stdout)
     return match.group(1) if match else None
 
 
-def test_the_generator_reproduces_the_committed_schema(tmp_path: Path) -> None:
-    version = running_hyprland_version()
-    if version is None:
-        pytest.skip("no running Hyprland on this machine")
+def test_the_generator_reproduces_the_committed_schema(
+    tmp_path: Path, guarded_hyprland: GuardedInstance
+) -> None:
+    version = running_hyprland_version(guarded_hyprland)
+    assert version is not None, "the nested Hyprland did not answer `hyprctl version`"
 
     committed = SCHEMA_DIR / f"hyprland-{version}.json"
     if not committed.is_file():
@@ -67,6 +72,7 @@ def test_the_generator_reproduces_the_committed_schema(tmp_path: Path) -> None:
         ],
         capture_output=True,
         text=True,
+        env=guarded_hyprland.env,
     )
     if result.returncode != 0:
         pytest.skip(f"generator could not run here: {result.stderr.strip()[:200]}")
