@@ -34,6 +34,7 @@ from hyprtweaker.engine.ipc import (  # noqa: E402
     CommandClient,
     EventStream,
     NoSuchOption,
+    fetch_live_hyprland,
     read_live_hyprland,
 )
 
@@ -123,3 +124,15 @@ def test_the_live_read_parses_the_real_version_and_descriptions(
     assert re.fullmatch(r"\d+\.\d+\.\d+", live.version)
     assert "general:gaps_in" in live.names
     assert len(live.names) == len(live.descriptions)
+
+
+def test_the_read_on_connect_matches_the_startup_read(
+    guarded_hyprland: GuardedInstance,
+) -> None:
+    """#214: a session whose startup read missed asks again over its `CommandClient`; the
+    two readers must describe the same compositor identically."""
+    startup = read_live_hyprland(lambda: guarded_hyprland.instance)
+    on_connect = asyncio.run(fetch_live_hyprland(CommandClient(guarded_hyprland.instance)))
+
+    assert startup is not None
+    assert on_connect == startup
