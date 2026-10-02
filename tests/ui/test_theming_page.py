@@ -645,6 +645,35 @@ def test_remove_names_every_file_it_puts_back_or_deletes_and_cancel_keeps_them(
     assert tree(tmp_path / "matugen") == files
 
 
+def test_a_hand_edit_keeps_its_bytes_through_cancel_and_leave_it_as_it_is(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """Finding 1 of the #153 review, through the Session's add_bridge and remove_bridge:
+    the user's edit of a tool's config is never overwritten without their choice."""
+    stub_tool("wallust")
+    session, _ = make_session(tmp_path)
+    page = build_page(session)
+    ask(page, "Switch to wallust")
+    answer(page.dialog, "agree")
+    config = tmp_path / "wallust/wallust.toml"
+    config.write_text(config.read_text() + "# mine\n", encoding="utf-8")
+    edited = config.read_bytes()
+
+    click(page, "Remove…")
+    answer(page.dialog, "agree")
+    assert page.dialog.get_heading() == "Files changed since setup"
+    answer(page.dialog, "cancel")
+    assert config.read_bytes() == edited
+    assert [entry.tool for entry in session.manifest().bridges] == ["wallust"]
+
+    click(page, "Remove…")
+    answer(page.dialog, "agree")
+    answer(page.dialog, "leave")
+
+    assert config.read_bytes() == edited
+    assert session.manifest().bridges == ()
+
+
 def test_noctalia_4_is_named_with_what_to_do(tmp_path: Path) -> None:
     """Finding 20 of the #153 review: noctalia 4 has no binary, so it was never shown."""
     put(tmp_path / "hypr/noctalia/noctalia-colors.conf", "")
