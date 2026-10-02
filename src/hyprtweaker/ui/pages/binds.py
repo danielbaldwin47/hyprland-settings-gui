@@ -45,6 +45,7 @@ from hyprtweaker.engine.triggers import (  # noqa: E402
     trigger_load_problem,
 )
 from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -702,7 +703,7 @@ class BindsPage:
     re-derive them all anyway, and a stale index is an edit landing on the wrong bind.
     """
 
-    section = "entity:binds"
+    section = entity_page_id("binds")
     """The stack name, namespaced `entity:` because Hyprland also has a `binds` Section
     (see `DeclarationKind.section`, #120)."""
 
