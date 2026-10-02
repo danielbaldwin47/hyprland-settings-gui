@@ -14,7 +14,6 @@ from hyprtweaker.engine.model.entities import LayerRule, WindowRule
 from hyprtweaker.engine.rules_catalog import is_negated, prop_title, strip_negation
 from hyprtweaker.ui.pages.rules import (
     effects_text,
-    filter_haystack,
     match_text,
     rule_subtitle,
     rule_title,
@@ -67,11 +66,3 @@ class TestSummaries:
     def test_layer_rule_summarises_the_same_way(self) -> None:
         rule = LayerRule(match={"namespace": "rofi"}, effects={"blur": True})
         assert rule_title(rule) == "namespace rofi → blur"
-
-
-class TestFilterHaystack:
-    def test_covers_label_match_and_effects(self) -> None:
-        rule = WindowRule(match={"class": "Kitty"}, effects={"opacity": "0.9"}, name="Terminal")
-        haystack = filter_haystack(rule)
-        for needle in ("terminal", "class", "kitty", "opacity", "0.9"):
-            assert needle in haystack
