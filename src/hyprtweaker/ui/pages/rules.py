@@ -17,6 +17,12 @@ match prop and per effect the list uses (#113): the vocabulary is derived from t
 every refresh, chips and text narrow together, and a chip whose rules are gone disappears
 and stops filtering rather than stranding the user on an empty list.
 
+**One row of chips per group.** A 332-rule rice uses about 75 chips, and wrapped they push
+the list off the screen. The chips that fit stay on the row, in order; the rest fold behind
+a "+N" chip whose popover holds them, and a chip picked there filters like any other. The
+"+N" chip looks pressed, and says "(1 on)", while a chip folded behind it is on, so an
+active filter is never out of sight.
+
 **Reorder has a keyboard route.** Alt+Up and Alt+Down on a row move it past the rule shown
 above or below it, the same keys as the Binds page, and focus follows the moved rule.
 """
@@ -32,7 +38,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, GObject, Graphene, Gsk, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import LayerRule, WindowRule  # noqa: E402
 from hyprtweaker.engine.rule_filter import (  # noqa: E402
@@ -235,6 +241,225 @@ class RuleRow:
         return True
 
 
+CHIP_SPACING = 6
+CHIP_CLASS = "hyprtweaker-chip"
+_chip_css_installed = False
+
+
+def chip_button(label: str = "", *, active: bool = False) -> Gtk.ToggleButton:
+    """A filter chip: a compact round toggle.
+
+    Adwaita's `pill` is a call-to-action button, 32 px of padding a side, so a row held
+    two or three chips and 55 of a big rice's effects folded away. This one is about half
+    as wide; its CSS rule is installed once, lazily, as `flash` does.
+    """
+    global _chip_css_installed
+    display = Gdk.Display.get_default()
+    if not _chip_css_installed and display is not None:
+        provider = Gtk.CssProvider()
+        provider.load_from_string(
+            f"button.{CHIP_CLASS} {{"
+            " padding: 2px 12px; min-height: 26px; border-radius: 9999px;"
+            " }"
+        )
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        _chip_css_installed = True
+    return Gtk.ToggleButton(label=label, active=active, css_classes=[CHIP_CLASS])
+
+
+def chips_that_fit(widths: list[int], width: int, more_width: int) -> int:
+    """How many chips, in order, fit on a line `width` wide: all of them, or as many as
+    leave room for the "+N" chip that stands for the rest."""
+    if sum(widths) + CHIP_SPACING * (len(widths) - 1) <= width:
+        return len(widths)
+    used = more_width
+    for count, chip_width in enumerate(widths):
+        used += chip_width + CHIP_SPACING
+        if used > width:
+            return count
+    return len(widths)
+
+
+def _at(x: int) -> Gsk.Transform:
+    return Gsk.Transform().translate(Graphene.Point().init(x, 0))
+
+
+class _OneLineLayout(Gtk.LayoutManager):
+    """Lays a chip line out on one row: the chips that fit, then the "+N" chip.
+
+    The split is decided here because only an allocation knows the width. A chip past it is
+    unmapped with `set_child_visible`, as `GtkPaned` hides a collapsed child, not removed,
+    so the page keeps one button per chip and its state. `on_fold` hears the new count from
+    an idle: it relabels the "+N" chip and refills the popover, and neither may change size
+    inside an allocation.
+    """
+
+    def __init__(self, more: Gtk.Widget, popover: Gtk.Popover, on_fold: Callable[[], None]):
+        super().__init__()
+        self._more = more
+        self._popover = popover
+        self._on_fold = on_fold
+        self.shown: int | None = None
+        """How many chips the row shows; `None` until the first allocation."""
+        self._reporting = False
+
+    def _chips(self, widget: Gtk.Widget) -> list[Gtk.Widget]:
+        chips = []
+        child = widget.get_first_child()
+        while child is not None:
+            if child is not self._more and child is not self._popover and child.get_visible():
+                chips.append(child)
+            child = child.get_next_sibling()
+        return chips
+
+    def do_measure(
+        self, widget: Gtk.Widget, orientation: Gtk.Orientation, _for_size: int
+    ) -> tuple[int, int, int, int]:
+        naturals = [chip.measure(orientation, -1)[1] for chip in self._chips(widget)]
+        more = self._more.measure(orientation, -1)[1]
+        if orientation == Gtk.Orientation.HORIZONTAL:
+            # As narrow as the "+N" chip alone, as wide as every chip on one row.
+            natural = sum(naturals) + CHIP_SPACING * max(len(naturals) - 1, 0)
+            return more, max(natural, more), -1, -1
+        tallest = max([*naturals, more])
+        return tallest, tallest, -1, -1
+
+    def do_allocate(self, widget: Gtk.Widget, width: int, height: int, _baseline: int) -> None:
+        chips = self._chips(widget)
+        widths = [chip.measure(Gtk.Orientation.HORIZONTAL, -1)[1] for chip in chips]
+        more_width = self._more.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
+        shown = chips_that_fit(widths, width, more_width)
+        x = 0
+        for index, (chip, chip_width) in enumerate(zip(chips, widths, strict=True)):
+            chip.set_child_visible(index < shown)
+            if index < shown:
+                chip.allocate(chip_width, height, -1, _at(x))
+                x += chip_width + CHIP_SPACING
+        self._more.set_child_visible(shown < len(chips))
+        if shown < len(chips):
+            self._more.allocate(more_width, height, -1, _at(x))
+            target = Gdk.Rectangle()
+            target.x, target.y, target.width, target.height = x, 0, more_width, height
+            self._popover.set_pointing_to(target)
+        self._popover.present()
+        if shown != self.shown:
+            self.shown = shown
+            if not self._reporting:
+                self._reporting = True
+                GLib.idle_add(self._report)
+
+    def _report(self) -> bool:
+        self._reporting = False
+        self._on_fold()
+        return GLib.SOURCE_REMOVE
+
+
+def _set_twin(twin: Gtk.ToggleButton, row_chip: Gtk.ToggleButton) -> None:
+    row_chip.set_active(twin.get_active())
+
+
+class ChipLine:
+    """One group's chips (Match or Effect): a single row, and a "+N" chip for the rest.
+
+    The row holds one toggle per chip; the page owns which chips exist and which are on.
+    The popover holds a twin toggle for each folded chip, and a twin's click sets its row
+    chip, so the filter has one source of truth whichever button the user pressed.
+    """
+
+    def __init__(self, on_fold: Callable[[], None]) -> None:
+        self.more = chip_button()
+        self.more.connect("clicked", self._on_more_clicked)
+
+        self._folded_box = Adw.WrapBox(
+            child_spacing=CHIP_SPACING,
+            line_spacing=CHIP_SPACING,
+            natural_line_length=480,
+            margin_top=6,
+            margin_bottom=6,
+            margin_start=6,
+            margin_end=6,
+        )
+        scroller = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            propagate_natural_height=True,
+            propagate_natural_width=True,
+            max_content_height=360,
+            child=self._folded_box,
+        )
+        self.popover = Gtk.Popover(child=scroller)
+        self.folded: dict[Chip, Gtk.ToggleButton] = {}
+        self._on = False
+
+        self.box = Gtk.Box(hexpand=True)
+        self.layout = _OneLineLayout(self.more, self.popover, on_fold)
+        self.box.set_layout_manager(self.layout)
+        self.box.append(self.more)
+        self.more.set_child_visible(False)
+        self.popover.set_parent(self.box)
+
+    def set_chips(self, buttons: list[Gtk.ToggleButton]) -> None:
+        """Replace the row's chips; the next allocation decides again what folds."""
+        child = self.box.get_first_child()
+        while child is not None:
+            following = child.get_next_sibling()
+            if child is not self.more and child is not self.popover:
+                self.box.remove(child)
+            child = following
+        for button in buttons:
+            button.insert_before(self.box, self.more)
+        self._drop_twins(set(self.folded))  # each twin sets a row chip that is now gone
+        self.layout.shown = None
+        self.box.queue_allocate()
+
+    def fold(
+        self, chips: list[Chip], buttons: dict[Chip, Gtk.ToggleButton], active: set[Chip]
+    ) -> None:
+        """Bring the popover in line with the chips the row could not show.
+
+        A twin still folded stays where it is, so a popover left open while the row
+        refolds (a "(1 on)" widens the "+N" chip) keeps the button under the user's
+        pointer and focus.
+        """
+        shown = len(chips) if self.layout.shown is None else self.layout.shown
+        wanted = chips[shown:]
+        self._drop_twins(set(self.folded).difference(wanted))
+        previous: Gtk.Widget | None = None
+        for chip in wanted:
+            twin = self.folded.get(chip)
+            if twin is None:
+                twin = chip_button(chip.title, active=chip in active)
+                twin.connect("toggled", _set_twin, buttons[chip])
+                self._folded_box.insert_child_after(twin, previous)
+                self.folded[chip] = twin
+            previous = twin
+        self.folded = {chip: self.folded[chip] for chip in wanted}
+        if not self.folded:
+            self.popover.popdown()
+        self.show_state(active)
+
+    def _drop_twins(self, chips: set[Chip]) -> None:
+        for chip in chips:
+            twin = self.folded.pop(chip)
+            self._folded_box.remove(twin)
+            release(twin)
+
+    def show_state(self, active: set[Chip]) -> None:
+        """The "+N" chip: how many chips it holds, and whether one of them is on."""
+        count = len(self.folded)
+        on = sum(chip in active for chip in self.folded)
+        self.more.set_label(f"+{count} ({on} on)" if on else f"+{count}")
+        self.more.set_tooltip_text(f"Show {count} more filters")
+        self._on = bool(on)
+        self.more.set_active(self._on)
+
+    def _on_more_clicked(self, _button: Gtk.ToggleButton) -> None:
+        # A click flips a toggle; this one's pressed look means "a folded chip is on".
+        self.more.set_active(self._on)
+        self.popover.popup()
+
+
 class RulesPage:
     """A Page listing one rule kind, rebuilt whenever the model's list moves.
 
@@ -267,23 +492,21 @@ class RulesPage:
 
         # One chip per match prop and effect the list uses; built by `_sync_chips`.
         self.chip_box = Adw.PreferencesGroup(visible=False)
-        self._chip_rows: dict[ChipGroup, Adw.WrapBox] = {}
+        self._chip_lines: dict[ChipGroup, ChipLine] = {}
         for chip_group, caption in ((ChipGroup.MATCH, "Match"), (ChipGroup.EFFECT, "Effect")):
-            wrap = Adw.WrapBox(child_spacing=6, line_spacing=6, hexpand=True)
+            chip_line = ChipLine(lambda group=chip_group: self._on_fold(group))
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, margin_bottom=6)
             line.append(
                 Gtk.Label(
                     label=caption,
                     css_classes=["dim-label", "caption-heading"],
                     xalign=0,
-                    yalign=0,
                     width_chars=6,
-                    margin_top=6,
                 )
             )
-            line.append(wrap)
+            line.append(chip_line.box)
             self.chip_box.add(line)
-            self._chip_rows[chip_group] = wrap
+            self._chip_lines[chip_group] = chip_line
         self._page.add(self.chip_box)
 
         self._group = Adw.PreferencesGroup(
@@ -347,25 +570,46 @@ class RulesPage:
         if vocabulary == self._chip_vocabulary:
             return
         self._chip_vocabulary = vocabulary
-        for chip_group, wrap in self._chip_rows.items():
-            for button in [b for c, b in self.chip_buttons.items() if c.group is chip_group]:
-                wrap.remove(button)
         self.chip_buttons = {}
         for chip in vocabulary:
-            button = Gtk.ToggleButton(label=chip.title, active=chip in self._active_chips)
-            button.add_css_class("pill")
+            button = chip_button(chip.title, active=chip in self._active_chips)
             button.connect("toggled", self._on_chip_toggled, chip)
-            self._chip_rows[chip.group].append(button)
             self.chip_buttons[chip] = button
         self.chip_box.set_visible(bool(vocabulary))
-        for chip_group, wrap in self._chip_rows.items():
-            wrap.get_parent().set_visible(any(c.group is chip_group for c in vocabulary))
+        for chip_group, chip_line in self._chip_lines.items():
+            chips = self._group_chips(chip_group)
+            chip_line.set_chips([self.chip_buttons[chip] for chip in chips])
+            chip_line.fold(chips, self.chip_buttons, self._active_chips)
+            chip_line.box.get_parent().set_visible(bool(chips))
+
+    def _group_chips(self, chip_group: ChipGroup) -> list[Chip]:
+        return [chip for chip in self._chip_vocabulary if chip.group is chip_group]
+
+    def _on_fold(self, chip_group: ChipGroup) -> None:
+        """The row's width changed what fits: refill that group's "+N" popover."""
+        self._chip_lines[chip_group].fold(
+            self._group_chips(chip_group), self.chip_buttons, self._active_chips
+        )
+
+    @property
+    def more_buttons(self) -> dict[ChipGroup, Gtk.ToggleButton]:
+        """Each group's "+N" chip, shown while some of its chips are folded."""
+        return {group: line.more for group, line in self._chip_lines.items()}
+
+    @property
+    def more_popovers(self) -> dict[ChipGroup, Gtk.Popover]:
+        return {group: line.popover for group, line in self._chip_lines.items()}
+
+    def folded_buttons(self, chip_group: ChipGroup) -> dict[Chip, Gtk.ToggleButton]:
+        """The chips folded into `chip_group`'s popover, each its row chip's twin."""
+        return dict(self._chip_lines[chip_group].folded)
 
     def _on_chip_toggled(self, button: Gtk.ToggleButton, chip: Chip) -> None:
         if button.get_active():
             self._active_chips.add(chip)
         else:
             self._active_chips.discard(chip)
+        self._chip_lines[chip.group].show_state(self._active_chips)
         self.refresh()
 
     def reveal(self, index: int) -> None:
