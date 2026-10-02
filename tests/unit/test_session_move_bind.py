@@ -146,7 +146,7 @@ class TestMoveBind:
 
         step = session.last_gesture
         assert isinstance(step, EntityStep)
-        assert step.title == "Binds reordered"
+        assert step.title == "Keybinds reordered"
 
         assert session.undo() is True
         assert commands(session) == ["a", "grow", "b", "w", "shrink", "e"]
