@@ -1183,3 +1183,28 @@ def test_restore_takes_the_restored_bytes_not_an_override_of_them(tmp_path: Path
     run_with_fake(
         scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
     )
+
+
+def test_a_user_lua_created_later_is_loaded_at_the_next_launch(tmp_path: Path) -> None:
+    """F24 of the #148 review: the Entrypoint is regenerated only when the Module set
+    changes, so a user.lua made after it stayed unloaded until some unrelated edit -- while
+    the app's own copy sends users there."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        first = await live_session(fake, tmp_path, runner)
+        first.set_option(BORDER_SIZE, 3)
+        await settle(first, runner)
+        await first.aclose()
+        entrypoint = ConfigPaths.rooted_at(tmp_path).entrypoint
+        assert 'require("user")' not in entrypoint.read_text()
+
+        (tmp_path / "hypr" / "user.lua").write_text("-- mine\n")
+        second = await live_session(fake, tmp_path, runner)
+        await settle(second, runner)
+
+        assert 'require("user")' in entrypoint.read_text()
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )

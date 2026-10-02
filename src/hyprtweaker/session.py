@@ -2884,7 +2884,37 @@ class Session:
         self._offline_sentence = None
         # A tool that ran while the app was closed may have written its file (S4).
         self.load_waiting_bridges()
+        self.load_new_user_lua()
         self._changed()
+
+    def load_new_user_lua(self) -> bool:
+        """Load a `user.lua` made after the Entrypoint was written, by regenerating it.
+
+        The Entrypoint is regenerated only when the Module set changes, so a `user.lua`
+        made later stayed unloaded until some unrelated edit, while the app's own copy
+        sends users there (F24 of the #148 review). Called when the session goes live,
+        after a foreign reload and when the Scripting page refreshes. Never over an
+        Entrypoint edited by hand: that is the user's to change, and its Banner says so.
+        Returns whether a regeneration was queued.
+        """
+        if not self.live or self._applier is None or self.entrypoint_edited:
+            return False
+        user = self._paths.user_lua
+        if not user.is_file():
+            return False
+        try:
+            text = self._paths.entrypoint.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        if f'require("{self._paths.require_path(user)}")' in text:
+            return False
+        return self._recovery_write(
+            lambda before: self._writer.regenerate_entrypoint(
+                self._model, before_replace=before
+            ),
+            self._manifest(),
+            "load user.lua",
+        )
 
     def _retire_and_restore(self, applier: Applier) -> None:
         """ADR-0012 §Retirement, once per start, before the session's first write.
@@ -3273,6 +3303,7 @@ class Session:
         await self._scan_drift(client, keep=keep)
         # A tool run from the user's own script may have written its first file (S4).
         self.load_waiting_bridges()
+        self.load_new_user_lua()
         self._changed()
 
     def _reread_binds(self) -> None:

@@ -441,6 +441,8 @@ class ScriptingPage:
 
     def refresh(self) -> None:
         """Rebuild the plugin list, read the files again, rebuild the inventory in place."""
+        # The inventory below lists user.lua: make sure Hyprland is loading it (F24).
+        self._session.load_new_user_lua()
         self._plugins.refresh()
         for group in self._inventory:
             self._page.remove(group)
