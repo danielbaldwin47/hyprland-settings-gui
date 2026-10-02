@@ -128,19 +128,6 @@ def artifacts(tmp_path: Path) -> Path:
     return directory
 
 
-@pytest.fixture(autouse=True)
-def no_ambient_instance(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No test in this tier inherits the session's compositor through the environment.
-
-    `Instance.current()` reads `HYPRLAND_INSTANCE_SIGNATURE`, and so does every default that
-    calls it: a `Session` built without `connect=`, or code under test that looks for "the
-    compositor we run under". The per-commit check bans the direct call under `tests/`; this
-    covers the indirect ones. A compositor comes from `guarded_hyprland` or a
-    `NestedHyprland`, never from the shell that started pytest.
-    """
-    monkeypatch.delenv("HYPRLAND_INSTANCE_SIGNATURE", raising=False)
-
-
 #: Enough config for a compositor to answer IPC; tests that need values write their own.
 GUARDED_CONFIG = "hl.config({ general = { gaps_in = 3 } })\n"
 

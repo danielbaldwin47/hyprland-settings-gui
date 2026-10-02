@@ -129,6 +129,26 @@ class ConfigPaths:
         return cls(hypr_dir=root / "hypr", state_dir=root / "state")
 
     @property
+    def config_home(self) -> Path:
+        """The config home the hypr dir sits in (`$XDG_CONFIG_HOME`, `~/.config`).
+
+        Every path the app touches outside the App dir and the state dir derives from this
+        or `state_home`, never from `Path.home()` or `~`: another tool's config is
+        `config_home / "<tool>"`. So a test, the widget probe and the sandbox, which point
+        these at a directory of their own, can never reach the owner's real files
+        (`tests/unit/test_no_home_lookup.py`, #233). Under `rooted_at(root)` it is `root`.
+        """
+        return self.hypr_dir.parent
+
+    @property
+    def state_home(self) -> Path:
+        """The state home the app's state dir sits in (`$XDG_STATE_HOME`, `~/.local/state`).
+
+        The same rule as `config_home`. Under `rooted_at(root)` it is `root`.
+        """
+        return self.state_dir.parent
+
+    @property
     def app_dir(self) -> Path:
         return self.hypr_dir / APP_DIR_NAME
 

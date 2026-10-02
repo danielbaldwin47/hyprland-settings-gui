@@ -542,6 +542,18 @@ class TestSource:
         assert [h.value for h in handlers(result)] == ["from-the-given-home"]
         assert [p.name for p in result.files] == ["hyprland.conf", "binds.conf"]
 
+    def test_a_tilde_source_never_reads_this_process_home_when_given_none(
+        self, tmp_path: Path
+    ) -> None:
+        """Hyprland with no `HOME` expands no `~`: this process's home is no stand-in (#233)."""
+        (Path.home() / "binds.conf").write_text("exec-once = from-this-process-home\n")
+        (tmp_path / "hyprland.conf").write_text("source = ~/binds.conf\n")
+
+        result = parse(tmp_path / "hyprland.conf", env={})
+
+        assert handlers(result) == []
+        assert DiagnosticCode.SOURCE_NO_MATCH in codes(result)
+
     def test_a_sourced_file_that_leaves_a_category_open_is_reported(
         self, tmp_path: Path
     ) -> None:
