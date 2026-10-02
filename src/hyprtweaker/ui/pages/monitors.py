@@ -132,6 +132,8 @@ class SaveProfileDialog(Adw.AlertDialog):
         )
         self._on_save = on_save
         self.entry = Gtk.Entry(placeholder_text="Docked", activates_default=True)
+        # A placeholder is not a name: a screen reader announced nothing (ruling A10).
+        self.entry.update_property([Gtk.AccessibleProperty.LABEL], ["Profile name"])
         self.set_extra_child(self.entry)
         self.add_response("cancel", "Cancel")
         self.add_response("save", "Save")
