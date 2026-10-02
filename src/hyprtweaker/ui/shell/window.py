@@ -1052,9 +1052,10 @@ class MainWindow(Adw.ApplicationWindow):
         being solved is *only* that two binds share a trigger, and the fix is a new
         trigger for one of them.
 
-        `enable` is the error row's "Fix trigger…" (#139): a bind imported disabled for a
-        dead keysym. Capture refuses a key xkb does not know, so whatever comes back is
-        loadable, and the user asked for the bind back, so it comes back enabled.
+        `enable` is the error row's "Fix trigger…" (#139): a disabled bind whose trigger
+        Hyprland cannot load, most often a dead keysym the Importer disabled. Capture refuses
+        what would not load, so whatever comes back is loadable (the Session would refuse it
+        otherwise, #199), and the user asked for the bind back, so it comes back enabled.
         """
         if self._binds_page is None:
             return

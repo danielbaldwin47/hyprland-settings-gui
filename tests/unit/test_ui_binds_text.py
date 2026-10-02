@@ -105,6 +105,18 @@ class TestBindBadge:
         assert badge is not None
         assert (badge.kind, badge.text) == (BadgeKind.ERROR, 'Unknown key "notakey"')
 
+    def test_a_disabled_bind_whose_trigger_cannot_load_offers_a_fix_not_enable(self) -> None:
+        """The Session refuses to enable it (#199): a one-click Enable would be a dead end."""
+        badge = bind_badge(exec_bind("SUPER + mouse:272 + Q", enabled=False))
+        assert badge is not None
+        assert (badge.kind, badge.text, badge.tooltip) == (
+            BadgeKind.ERROR,
+            "Trigger can't load",
+            "Mouse, wheel and switch triggers cannot be combined with other keys. "
+            "Use just one of: mouse:272. Hyprland can't load this trigger, so this keybind "
+            "stays commented out. Record a new trigger to use it.",
+        )
+
     def test_a_multi_key_bind_is_not_mistaken_for_a_dead_keysym(self) -> None:
         """`A&B` is one token xkb does not know; the multi-key reason must win."""
         badge = bind_badge(exec_bind("SUPER + A&B", enabled=False))

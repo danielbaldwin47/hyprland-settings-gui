@@ -173,6 +173,38 @@ def test_an_enabled_bind_with_a_dead_trigger_still_blocks() -> None:
     assert "'notakey' is not a key name xkb knows" in editor._error.get_text()
 
 
+def test_a_typed_ampersand_trigger_blocks_even_without_xkb(monkeypatch: Any) -> None:
+    """`A&B` fails the whole config on 0.56 whatever xkb says (#199): no validator is no
+    excuse to store it enabled."""
+    monkeypatch.setattr("hyprtweaker.engine.importer.binds.known_keysym", lambda _name: None)
+    monkeypatch.setattr("hyprtweaker.engine.triggers.known_keysym", lambda _name: None)
+    editor, saved = open_editor(
+        Bind(keys="SUPER + Q", dispatcher=DispatcherCall(path="exec_cmd", positional=("x",)))
+    )
+    editor._trigger.set_text("SUPER + A&B")
+    editor._save()
+
+    assert saved == []
+    assert editor._error.get_text() == (
+        "Hyprland can't load a multi-key trigger joined with &: enabled, this keybind "
+        "would stop your whole config from loading. Use a single key."
+    )
+
+
+@needs_xkb
+def test_a_dead_key_inside_a_multi_key_trigger_blocks() -> None:
+    """`validate_trigger` only warns about `SUPER + Q + notakey` (#198); the dead key in it
+    still fails the config, and the one load rule catches it (#199)."""
+    editor, saved = open_editor(
+        Bind(keys="SUPER + Q", dispatcher=DispatcherCall(path="exec_cmd", positional=("x",)))
+    )
+    editor._trigger.set_text("SUPER + Q + notakey")
+    editor._save()
+
+    assert saved == []
+    assert "'notakey' is not a key name xkb knows" in editor._error.get_text()
+
+
 def test_a_free_form_call_keeps_its_booleans_and_quoted_numbers_through_an_edit() -> None:
     """`movetoworkspacesilent` imports as `window.move{ workspace = "3", follow = false }`.
 
