@@ -100,7 +100,7 @@ def test_a_nullable_colour_shows_its_label_instead_of_a_black_swatch() -> None:
 
     assert isinstance(row.control, Gtk.Stack)
     assert row.control.get_visible_child_name() == "none"
-    assert row.control.get_visible_child().get_label() == "Same as the title colour"
+    assert row.control.get_visible_child().get_label() == "Same as the title color"
 
 
 def test_clicking_a_nullable_colours_placeholder_gives_it_a_value() -> None:
@@ -187,8 +187,8 @@ def test_a_nullable_gradient_shows_its_label_rather_than_a_white_stop_at_zero() 
 
     assert isinstance(row.control, Gtk.Stack)
     assert row.control.get_visible_child_name() == "none"
-    assert row.control.get_visible_child().get_label() == "Same as shadow colour"
-    assert row.chrome.summary_text == "Same as shadow colour"
+    assert row.control.get_visible_child().get_label() == "Same as shadow color"
+    assert row.chrome.summary_text == "Same as shadow color"
 
 
 def test_clicking_a_nullable_gradients_placeholder_gives_it_one_stop() -> None:

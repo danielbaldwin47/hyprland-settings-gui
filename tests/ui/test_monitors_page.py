@@ -845,7 +845,7 @@ def test_a_rebuild_keeps_open_displays_advanced_colour_and_focus() -> None:
     window.present()
     page.connected_rows[1].set_expanded(True)
     page.disconnected_rows[0].set_expanded(True)
-    row_titled(page.connected_rows[1], "Advanced colour").emit("activated")
+    row_titled(page.connected_rows[1], "Advanced color").emit("activated")
 
     def reserved() -> Any:
         return suffix_of(row_titled(page.connected_rows[1], "Reserved area"), _gap_field_type())
@@ -866,7 +866,7 @@ def test_a_rebuild_keeps_open_displays_advanced_colour_and_focus() -> None:
     assert not page.connected_rows[0].get_expanded()
     assert page.disconnected_rows[0].get_expanded()
     assert not page.catch_all_row.get_expanded()
-    assert row_titled(dock, "Colour preset").get_visible()
+    assert row_titled(dock, "Color preset").get_visible()
     assert window.get_focus().is_ancestor(reserved().sides["right"])
     window.destroy()
 
@@ -883,11 +883,11 @@ def test_advanced_colour_fields_route_by_the_breaking_set() -> None:
     from hyprtweaker.engine.model import UNSET
 
     row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", supports_hdr=1, cm="srgb")])
-    assert not row_titled(row, "Colour preset").get_visible()  # collapsed by default
-    row_titled(row, "Advanced colour").emit("activated")
-    assert row_titled(row, "Colour preset").get_visible()
+    assert not row_titled(row, "Color preset").get_visible()  # collapsed by default
+    row_titled(row, "Advanced color").emit("activated")
+    assert row_titled(row, "Color preset").get_visible()
 
-    choose(row_titled(row, "Colour preset"), "HDR")
+    choose(row_titled(row, "Color preset"), "HDR")
     choose(row_titled(row, "HDR support"), "Not set")
     choose(row_titled(row, "SDR transfer function"), "Gamma 2.2")
     brightness = suffix_of(row_titled(row, "SDR brightness"), Gtk.SpinButton)

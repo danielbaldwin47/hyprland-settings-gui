@@ -388,8 +388,8 @@ class ColourRows:
         self, fields: Mapping[str, Any], apply: Apply, *, editable: bool, shown: bool = False
     ) -> None:
         self._header = Adw.ActionRow(
-            title="Advanced colour",
-            subtitle="Colour management and HDR. Most displays need none of this.",
+            title="Advanced color",
+            subtitle="Color management and HDR. Most displays need none of this.",
             activatable=True,
         )
         self._arrow = Gtk.Image()
@@ -397,8 +397,8 @@ class ColourRows:
         eotf = fields.get("sdr_eotf")
         self._settings: tuple[Adw.PreferencesRow, ...] = (
             _choice_row(
-                "Colour preset",
-                "The colour space the display is driven in.",
+                "Color preset",
+                "The color space the display is driven in.",
                 "cm",
                 CM_PRESETS,
                 fields.get("cm"),
@@ -427,8 +427,8 @@ class ColourRows:
                 apply,
             ),
             _choice_row(
-                "Wide colour support",
-                "Override whether the display reports wide colour.",
+                "Wide color support",
+                "Override whether the display reports wide color.",
                 "supports_wide_color",
                 _ON_OFF,
                 _tri_state(fields.get("supports_wide_color")),

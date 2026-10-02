@@ -168,7 +168,7 @@ def test_an_uncurated_sections_groups_and_rows_follow_hyprlands_declaration_orde
 
 SNAPPING_FIRST = curated(
     "general",
-    {"Snapping": None, "Borders": "How thick borders are and what colour."},
+    {"Snapping": None, "Borders": "How thick borders are and what color."},
     {
         "Snapping": ["general:snap:respect_gaps", "general:snap:enabled"],
         "Borders": ["general:border_size"],
@@ -203,7 +203,7 @@ def test_a_curated_groups_description_reaches_the_page() -> None:
 
     assert [(group.title, group.description) for group in plan.groups[:3]] == [
         ("Snapping", ""),
-        ("Borders", "How thick borders are and what colour."),
+        ("Borders", "How thick borders are and what color."),
         ("Other settings", ""),
     ]
 

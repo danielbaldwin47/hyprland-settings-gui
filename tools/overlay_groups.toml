@@ -285,7 +285,7 @@ options = [
 ]
 
 [[group]]
-title = "Border colours"
+title = "Border colors"
 options = [
   "group:col.border_active",
   "group:col.border_inactive",
@@ -320,7 +320,7 @@ options = [
 ]
 
 [[group]]
-title = "Tab colours"
+title = "Tab colors"
 options = [
   "group:groupbar:col.active",
   "group:groupbar:col.inactive",
@@ -555,7 +555,7 @@ options = [
 ]
 
 [[render]]
-title = "Colour management"
+title = "Color management"
 options = [
   "render:cm_enabled",
   "render:cm_auto_hdr",
@@ -566,8 +566,8 @@ options = [
 ]
 
 [[render]]
-title = "Colour pipeline"
-description = "Experimental internals: leave them alone unless a colour problem needs them."
+title = "Color pipeline"
+description = "Experimental internals: leave them alone unless a color problem needs them."
 options = [
   "render:non_shader_cm",
   "render:non_shader_cm_interop",
@@ -698,8 +698,8 @@ options = [
 ]
 
 [[master]]
-title = "Centred master"
-description = "Used when the master area position is set to centre."
+title = "Centerd master"
+description = "Used when the master area position is set to center."
 options = [
   "master:slave_count_for_center_master",
   "master:center_master_fallback",
@@ -796,8 +796,8 @@ options = [
 # --- experimental (hidden tier) --------------------------------------------------------------
 
 [[experimental]]
-title = "Colour protocol"
-description = "A preview of newer colour-management protocol support."
+title = "Color protocol"
+description = "A preview of newer color-management protocol support."
 options = [
   "experimental:wp_cm_1_2",
 ]

@@ -85,13 +85,13 @@
           "title": "Dragging",
           "description": "What happens when you drag a window onto a group or its tab bar."
         },
-        { "title": "Border colours" },
+        { "title": "Border colors" },
         {
           "title": "Tab bar",
           "description": "The row of window tabs drawn above a group, which Hyprland calls the group bar."
         },
         { "title": "Tab titles" },
-        { "title": "Tab colours" },
+        { "title": "Tab colors" },
         { "title": "Tab sizing" },
         { "title": "Tab corners" }
       ]
@@ -117,7 +117,7 @@
       ]
     },
     "binds": {
-      "title": "Keybind behaviour",
+      "title": "Keybind behavior",
       "help_url": "https://wiki.hypr.land/Configuring/Variables/#binds",
       "groups": [
         { "title": "Workspaces" },
@@ -149,10 +149,10 @@
       "help_url": "https://wiki.hypr.land/Configuring/Variables/#render",
       "groups": [
         { "title": "Performance and quality" },
-        { "title": "Colour management" },
+        { "title": "Color management" },
         {
-          "title": "Colour pipeline",
-          "description": "Experimental internals: leave them alone unless a colour problem needs them."
+          "title": "Color pipeline",
+          "description": "Experimental internals: leave them alone unless a color problem needs them."
         }
       ]
     },
@@ -215,8 +215,8 @@
         { "title": "Size and position" },
         { "title": "New windows" },
         {
-          "title": "Centred master",
-          "description": "Used when the master area position is set to centre."
+          "title": "Centerd master",
+          "description": "Used when the master area position is set to center."
         },
         { "title": "Mouse and focus" }
       ]
@@ -231,8 +231,8 @@
       "visibility": "hidden",
       "groups": [
         {
-          "title": "Colour protocol",
-          "description": "A preview of newer colour-management protocol support."
+          "title": "Color protocol",
+          "description": "A preview of newer color-management protocol support."
         }
       ]
     },
@@ -287,28 +287,28 @@
       "help": "Space between workspaces, in pixels. It adds to the outer gaps."
     },
     "general:col.inactive_border": {
-      "title": "Inactive border colour",
+      "title": "Inactive border color",
       "group": "Borders",
       "order": 3,
-      "help": "Border colour of windows without focus. Use one colour, or several with an angle for a gradient."
+      "help": "Border color of windows without focus. Use one color, or several with an angle for a gradient."
     },
     "general:col.active_border": {
-      "title": "Active border colour",
+      "title": "Active border color",
       "group": "Borders",
       "order": 2,
-      "help": "Border colour of the window with focus. Use one colour, or several with an angle for a gradient."
+      "help": "Border color of the window with focus. Use one color, or several with an angle for a gradient."
     },
     "general:col.nogroup_border": {
-      "title": "Border colour for windows kept out of groups",
+      "title": "Border color for windows kept out of groups",
       "group": "Borders",
       "order": 5,
-      "help": "Border colour of a window without focus that a window rule keeps out of groups."
+      "help": "Border color of a window without focus that a window rule keeps out of groups."
     },
     "general:col.nogroup_border_active": {
-      "title": "Active border colour for windows kept out of groups",
+      "title": "Active border color for windows kept out of groups",
       "group": "Borders",
       "order": 4,
-      "help": "Border colour of the window with focus when a window rule keeps it out of groups."
+      "help": "Border color of the window with focus when a window rule keeps it out of groups."
     },
     "general:layout": {
       "title": "Layout",
@@ -477,21 +477,21 @@
       "help": "Gives shadows a hard edge instead of a soft fade."
     },
     "decoration:shadow:color": {
-      "title": "Shadow colour",
+      "title": "Shadow color",
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
       "group": "Shadows",
       "order": 5,
-      "help": "Colour of window shadows. Its alpha sets how opaque the shadow is."
+      "help": "Color of window shadows. Its alpha sets how opaque the shadow is."
     },
     "decoration:shadow:color_inactive": {
-      "title": "Inactive shadow colour",
+      "title": "Inactive shadow color",
       "nullable": true,
-      "null_label": "Same as shadow colour",
+      "null_label": "Same as shadow color",
       "null_value": -1,
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
       "group": "Shadows",
       "order": 6,
-      "help": "Shadow colour of windows without focus. When unset, the normal shadow colour is used."
+      "help": "Shadow color of windows without focus. When unset, the normal shadow color is used."
     },
     "decoration:shadow:offset": {
       "title": "Shadow offset",
@@ -506,13 +506,13 @@
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
       "group": "Shadows",
       "order": 8,
-      "help": "Size of each shadow compared with its full size: 1 is full size, and lower values shrink it towards the window's centre."
+      "help": "Size of each shadow compared with its full size: 1 is full size, and lower values shrink it towards the window's center."
     },
     "decoration:glow:enabled": {
       "title": "Inner glow",
       "group": "Glow",
       "order": 1,
-      "help": "Draws a coloured light just inside each window's edge."
+      "help": "Draws a colored light just inside each window's edge."
     },
     "decoration:glow:range": {
       "title": "Glow size",
@@ -532,21 +532,21 @@
       "help": "How quickly the glow fades as it reaches into the window. A sharper falloff keeps the glow tight against the edge."
     },
     "decoration:glow:color": {
-      "title": "Glow colour",
+      "title": "Glow color",
       "depends_on": { "option": "decoration:glow:enabled", "value": true },
       "group": "Glow",
       "order": 4,
-      "help": "Colour of the glow. Its alpha sets how strong the glow is."
+      "help": "Color of the glow. Its alpha sets how strong the glow is."
     },
     "decoration:glow:color_inactive": {
-      "title": "Inactive glow colour",
+      "title": "Inactive glow color",
       "nullable": true,
-      "null_label": "Same as glow colour",
+      "null_label": "Same as glow color",
       "null_value": -1,
       "depends_on": { "option": "decoration:glow:enabled", "value": true },
       "group": "Glow",
       "order": 5,
-      "help": "Glow colour of windows without focus. When unset, the normal glow colour is used."
+      "help": "Glow color of windows without focus. When unset, the normal glow color is used."
     },
     "decoration:dim_modal": {
       "title": "Dim parents of modal windows",
@@ -662,14 +662,14 @@
       "depends_on": { "option": "decoration:blur:enabled", "value": true },
       "group": "Blur",
       "order": 7,
-      "help": "Boosts the colour saturation of the blur. Set it to 0 to turn the boost off."
+      "help": "Boosts the color saturation of the blur. Set it to 0 to turn the boost off."
     },
     "decoration:blur:vibrancy_darkness": {
-      "title": "Blur vibrancy on dark colours",
+      "title": "Blur vibrancy on dark colors",
       "depends_on": { "option": "decoration:blur:enabled", "value": true },
       "group": "Blur",
       "order": 8,
-      "help": "How much the saturation boost also reaches dark colours, which it otherwise holds back."
+      "help": "How much the saturation boost also reaches dark colors, which it otherwise holds back."
     },
     "decoration:blur:special": {
       "title": "Blur the special workspace",
@@ -1001,7 +1001,7 @@
       "help": "Which mouse buttons a tap with one, two and three fingers sends."
     },
     "input:touchpad:clickfinger_behavior": {
-      "title": "Clickfinger behaviour",
+      "title": "Clickfinger behavior",
       "group": "Touchpad",
       "order": 3,
       "help": "Clicking with 1, 2 or 3 fingers sends a left, right or middle click, instead of depending on where you press."
@@ -1166,7 +1166,7 @@
       "labels": { "0": "Hardware default", "1": "Send a button event" },
       "group": "Drawing tablet",
       "order": 7,
-      "help": "Whether the pen's eraser button keeps its hardware behaviour or acts as an ordinary button. Set the button it sends under Eraser button code."
+      "help": "Whether the pen's eraser button keeps its hardware behavior or acts as an ordinary button. Set the button it sends under Eraser button code."
     },
     "input:tablettool:eraser_button_override": {
       "title": "Eraser button code",
@@ -1310,28 +1310,28 @@
       "help": "Lets you merge a group into another by dropping it on that group's bar. Needs Merge groups on drag on, and Drag windows into groups not Disabled."
     },
     "group:col.border_active": {
-      "title": "Active group border colour",
-      "group": "Border colours",
+      "title": "Active group border color",
+      "group": "Border colors",
       "order": 1,
-      "help": "Border colour of the group with focus. Use one colour, or several with an angle for a gradient."
+      "help": "Border color of the group with focus. Use one color, or several with an angle for a gradient."
     },
     "group:col.border_inactive": {
-      "title": "Inactive group border colour",
-      "group": "Border colours",
+      "title": "Inactive group border color",
+      "group": "Border colors",
       "order": 2,
-      "help": "Border colour of groups without focus. Use one colour, or several with an angle for a gradient."
+      "help": "Border color of groups without focus. Use one color, or several with an angle for a gradient."
     },
     "group:col.border_locked_inactive": {
-      "title": "Locked inactive group border colour",
-      "group": "Border colours",
+      "title": "Locked inactive group border color",
+      "group": "Border colors",
       "order": 4,
-      "help": "Border colour of a locked group without focus."
+      "help": "Border color of a locked group without focus."
     },
     "group:col.border_locked_active": {
-      "title": "Locked active group border colour",
-      "group": "Border colours",
+      "title": "Locked active group border color",
+      "group": "Border colors",
       "order": 3,
-      "help": "Border colour of a locked group with focus."
+      "help": "Border color of a locked group with focus."
     },
     "group:auto_group": {
       "title": "Group new windows automatically",
@@ -1434,7 +1434,7 @@
     "group:groupbar:gradients": {
       "title": "Gradient backgrounds",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab colours",
+      "group": "Tab colors",
       "order": 5,
       "help": "Paints a gradient background behind each tab in the group bar."
     },
@@ -1460,7 +1460,7 @@
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab sizing",
       "order": 2,
-      "help": "Height of each tab's indicator, the coloured strip below its title, in pixels."
+      "help": "Height of each tab's indicator, the colored strip below its title, in pixels."
     },
     "group:groupbar:stacked": {
       "title": "Stack titles vertically",
@@ -1543,69 +1543,69 @@
       "help": "Rounds only the outer ends of the gradients across the whole bar, not every tab's corners."
     },
     "group:groupbar:text_color": {
-      "title": "Title colour",
+      "title": "Title color",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab titles",
       "order": 5,
-      "help": "Colour of the window titles in the group bar."
+      "help": "Color of the window titles in the group bar."
     },
     "group:groupbar:text_color_inactive": {
-      "title": "Inactive title colour",
+      "title": "Inactive title color",
       "nullable": true,
-      "null_label": "Same as the title colour",
+      "null_label": "Same as the title color",
       "null_value": -1,
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab titles",
       "order": 6,
-      "help": "Title colour of windows without focus in the group bar. Unset uses the title colour."
+      "help": "Title color of windows without focus in the group bar. Unset uses the title color."
     },
     "group:groupbar:text_color_locked_active": {
-      "title": "Locked active title colour",
+      "title": "Locked active title color",
       "nullable": true,
-      "null_label": "Same as the title colour",
+      "null_label": "Same as the title color",
       "null_value": -1,
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab titles",
       "order": 7,
-      "help": "Title colour of the active window in a locked group. Unset uses the title colour."
+      "help": "Title color of the active window in a locked group. Unset uses the title color."
     },
     "group:groupbar:text_color_locked_inactive": {
-      "title": "Locked inactive title colour",
+      "title": "Locked inactive title color",
       "nullable": true,
-      "null_label": "Same as the inactive title colour",
+      "null_label": "Same as the inactive title color",
       "null_value": -1,
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab titles",
       "order": 8,
-      "help": "Title colour of the other windows in a locked group. Unset uses the inactive title colour."
+      "help": "Title color of the other windows in a locked group. Unset uses the inactive title color."
     },
     "group:groupbar:col.active": {
-      "title": "Active tab colour",
+      "title": "Active tab color",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab colours",
+      "group": "Tab colors",
       "order": 1,
-      "help": "Colour of the focused tab's indicator in the group bar, and its background when Gradient backgrounds is on. The indicator uses only the first colour."
+      "help": "Color of the focused tab's indicator in the group bar, and its background when Gradient backgrounds is on. The indicator uses only the first color."
     },
     "group:groupbar:col.inactive": {
-      "title": "Inactive tab colour",
+      "title": "Inactive tab color",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab colours",
+      "group": "Tab colors",
       "order": 2,
-      "help": "Colour of the other tabs' indicators in the group bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first colour."
+      "help": "Color of the other tabs' indicators in the group bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first color."
     },
     "group:groupbar:col.locked_active": {
-      "title": "Locked active tab colour",
+      "title": "Locked active tab color",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab colours",
+      "group": "Tab colors",
       "order": 3,
-      "help": "Colour of the focused tab's indicator in a locked group's bar, and its background when Gradient backgrounds is on. The indicator uses only the first colour."
+      "help": "Color of the focused tab's indicator in a locked group's bar, and its background when Gradient backgrounds is on. The indicator uses only the first color."
     },
     "group:groupbar:col.locked_inactive": {
-      "title": "Locked inactive tab colour",
+      "title": "Locked inactive tab color",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab colours",
+      "group": "Tab colors",
       "order": 4,
-      "help": "Colour of the other tabs' indicators in a locked group's bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first colour."
+      "help": "Color of the other tabs' indicators in a locked group's bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first color."
     },
     "group:groupbar:gaps_out": {
       "title": "Outer gaps",
@@ -1649,7 +1649,7 @@
     "group:groupbar:blur": {
       "title": "Blur the background",
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
-      "group": "Tab colours",
+      "group": "Tab colors",
       "order": 6,
       "help": "Blurs what lies behind the group bar's tab indicators and gradient backgrounds."
     },
@@ -1668,7 +1668,7 @@
       "help": "Hides the splash text drawn on the Hyprland background."
     },
     "misc:col.splash": {
-      "title": "Splash text colour",
+      "title": "Splash text color",
       "restart": "monitor-reload",
       "group": "Wallpaper and splash",
       "order": 6
@@ -1820,10 +1820,10 @@
       "help": "Blurs what shows through the lockscreen. Works only while Session lock X-ray is on."
     },
     "misc:background_color": {
-      "title": "Background colour",
+      "title": "Background color",
       "group": "Wallpaper and splash",
       "order": 2,
-      "help": "Colour shown behind everything when no wallpaper covers the screen. Needs the Hyprland logo hidden."
+      "help": "Color shown behind everything when no wallpaper covers the screen. Needs the Hyprland logo hidden."
     },
     "misc:close_special_on_empty": {
       "title": "Close the special workspace when empty",
@@ -1835,7 +1835,7 @@
       "title": "Focusing a window under a fullscreen one",
       "group": "Focus and placement",
       "order": 3,
-      "help": "What happens when something asks to focus a tiled window while another window is fullscreen or maximised."
+      "help": "What happens when something asks to focus a tiled window while another window is fullscreen or maximized."
     },
     "misc:exit_window_retains_fullscreen": {
       "title": "Keep fullscreen when a window exits",
@@ -1918,7 +1918,7 @@
       "title": "Force 8-bit screen capture",
       "group": "Displays and power",
       "order": 5,
-      "help": "Forces 8-bit colour in screen captures and recordings."
+      "help": "Forces 8-bit color in screen captures and recordings."
     },
     "misc:disable_scale_notification": {
       "title": "Hide the scale notification",
@@ -1965,7 +1965,7 @@
       "help": "Workspaces remember the one before them, so going to the previous workspace can cycle endlessly."
     },
     "binds:workspace_center_on": {
-      "title": "Centre the cursor on workspace switch",
+      "title": "Center the cursor on workspace switch",
       "widget": "segmented",
       "labels": { "0": "The workspace", "1": "The last active window" },
       "group": "Workspaces",
@@ -2078,28 +2078,28 @@
       "help": "Stops drawing the wallpaper and everything else that sits below windows."
     },
     "render:ctm_animation": {
-      "title": "Colour transform animation",
-      "group": "Colour management",
+      "title": "Color transform animation",
+      "group": "Color management",
       "order": 5,
-      "help": "Fades between colour filter changes, such as from hyprsunset, instead of jumping."
+      "help": "Fades between color filter changes, such as from hyprsunset, instead of jumping."
     },
     "render:cm_enabled": {
-      "title": "Colour management",
+      "title": "Color management",
       "restart": "hyprland",
-      "group": "Colour management",
+      "group": "Color management",
       "order": 1,
-      "help": "Runs Hyprland's colour management, which HDR tone mapping relies on. When off, apps also cannot tell Hyprland their colour space."
+      "help": "Runs Hyprland's color management, which HDR tone mapping relies on. When off, apps also cannot tell Hyprland their color space."
     },
     "render:send_content_type": {
       "title": "Send the content type",
-      "group": "Colour management",
+      "group": "Color management",
       "order": 4,
       "help": "Tells the monitor what kind of content is on screen so it can switch picture profile. This can cause a black screen during the switch."
     },
     "render:cm_auto_hdr": {
       "title": "Automatic HDR",
       "visibility": "advanced",
-      "group": "Colour management",
+      "group": "Color management",
       "order": 2,
       "help": "Switches to HDR mode by itself when a fullscreen app shows HDR content.",
       "labels": { "0": "Off", "1": "HDR", "2": "HDR with the display's primaries" }
@@ -2111,11 +2111,11 @@
       "help": "Uses triple buffering when needed, which can improve the frame rate on underpowered machines."
     },
     "render:non_shader_cm": {
-      "title": "Non-shader colour management",
+      "title": "Non-shader color management",
       "visibility": "advanced",
-      "group": "Colour pipeline",
+      "group": "Color pipeline",
       "order": 1,
-      "help": "Corrects a fullscreen window's colours with the display hardware instead of a shader. On demand does so only during direct scanout; Ignore skips the checks.",
+      "help": "Corrects a fullscreen window's colors with the display hardware instead of a shader. On demand does so only during direct scanout; Ignore skips the checks.",
       "labels": { "0": "Disable", "1": "Always", "2": "On demand", "3": "Ignore" }
     },
     "render:cm_sdr_eotf": {
@@ -2129,7 +2129,7 @@
         "srgb": "sRGB"
       },
       "visibility": "advanced",
-      "group": "Colour management",
+      "group": "Color management",
       "order": 3,
       "help": "Which gamma curve ordinary SDR apps are shown with."
     },
@@ -2143,9 +2143,9 @@
     "render:icc_vcgt_enabled": {
       "title": "Apply ICC VCGT tables",
       "visibility": "advanced",
-      "group": "Colour management",
+      "group": "Color management",
       "order": 6,
-      "help": "Sends the calibration curves of an ICC colour profile to the display hardware."
+      "help": "Sends the calibration curves of an ICC color profile to the display hardware."
     },
     "render:use_shader_blur_blend": {
       "title": "Shader blur blending",
@@ -2156,28 +2156,28 @@
     "render:use_fp16": {
       "title": "Use FP16 buffers",
       "visibility": "advanced",
-      "group": "Colour pipeline",
+      "group": "Color pipeline",
       "order": 3,
       "help": "Draws into experimental 16-bit floating-point buffers internally. Auto uses them only on a monitor not in plain sRGB, such as one in HDR."
     },
     "render:keep_unmodified_copy": {
       "title": "Keep an unmodified copy",
       "visibility": "advanced",
-      "group": "Colour pipeline",
+      "group": "Color pipeline",
       "order": 5,
       "help": "Keeps an unmodified SDR copy of each frame for screen sharing. Choose Enable if screenshots come out transparent."
     },
     "render:non_shader_cm_interop": {
-      "title": "Colour filters in fullscreen",
+      "title": "Color filters in fullscreen",
       "visibility": "advanced",
-      "group": "Colour pipeline",
+      "group": "Color pipeline",
       "order": 2,
-      "help": "Whether colour filters from tools such as hyprsunset stay active in fullscreen. Auto turns them off only for fullscreen photo, video and game content."
+      "help": "Whether color filters from tools such as hyprsunset stay active in fullscreen. Auto turns them off only for fullscreen photo, video and game content."
     },
     "render:fp16_sdr_tf": {
       "title": "FP16 SDR transfer function",
       "visibility": "advanced",
-      "group": "Colour pipeline",
+      "group": "Color pipeline",
       "order": 4
     },
 
@@ -2231,7 +2231,7 @@
       "title": "Persistent warps",
       "group": "Warping",
       "order": 4,
-      "help": "When a window regains focus, the cursor returns to where it was in that window instead of its centre."
+      "help": "When a window regains focus, the cursor returns to where it was in that window instead of its center."
     },
     "cursor:warp_on_change_workspace": {
       "title": "Warp on workspace change",
@@ -2265,7 +2265,7 @@
       "title": "Rigid zoom",
       "group": "Zoom",
       "order": 2,
-      "help": "Keeps the cursor centred in the zoomed view when it can, instead of letting it drift."
+      "help": "Keeps the cursor centerd in the zoomed view when it can, instead of letting it drift."
     },
     "cursor:zoom_disable_aa": {
       "title": "Disable zoom antialiasing",
@@ -2419,10 +2419,10 @@
       "help": "Where the config error bar appears on the screen."
     },
     "debug:colored_stdout_logs": {
-      "title": "Colour stdout logs",
+      "title": "Color stdout logs",
       "group": "Logging",
       "order": 3,
-      "help": "Colours the log lines printed to standard output."
+      "help": "Colors the log lines printed to standard output."
     },
     "debug:log_damage": {
       "title": "Log damage",
@@ -2432,7 +2432,7 @@
     },
     "debug:pass": { "title": "Render pass debugging", "group": "Overlays and tracing", "order": 4 },
     "debug:full_cm_proto": {
-      "title": "Full colour-management protocol",
+      "title": "Full color-management protocol",
       "restart": "hyprland",
       "group": "Protocol workarounds",
       "order": 4,
@@ -2475,7 +2475,7 @@
       "title": "Single window aspect ratio",
       "group": "Single window",
       "order": 1,
-      "help": "Pads a lone tiled window to this width-to-height ratio, so 4 and 3 on a 16:9 screen give a centred 4:3 window. A height of 0 turns it off."
+      "help": "Pads a lone tiled window to this width-to-height ratio, so 4 and 3 on a 16:9 screen give a centerd 4:3 window. A height of 0 turns it off."
     },
     "layout:single_window_aspect_ratio_tolerance": {
       "title": "Aspect ratio tolerance",
@@ -2605,33 +2605,33 @@
         "right": "Right",
         "top": "Top",
         "bottom": "Bottom",
-        "center": "Centre"
+        "center": "Center"
       },
       "group": "Size and position",
       "order": 2,
-      "help": "Which side of the screen the master area takes. Centre puts it in the middle with the stack on both sides, once enough windows are open."
+      "help": "Which side of the screen the master area takes. Center puts it in the middle with the stack on both sides, once enough windows are open."
     },
     "master:slave_count_for_center_master": {
       "title": "Stack windows before centring master",
-      "group": "Centred master",
+      "group": "Centerd master",
       "order": 1,
-      "help": "With a centred master, centres it only when at least this many other windows are open. 0 always centres it."
+      "help": "With a centerd master, centers it only when at least this many other windows are open. 0 always centers it."
     },
     "master:center_master_fallback": {
-      "title": "Centre master fallback",
+      "title": "Center master fallback",
       "widget": "enum-string",
       "known_values": { "values": ["left", "right", "top", "bottom"] },
       "labels": { "left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom" },
       "depends_on": { "option": "master:orientation", "value": "center" },
-      "group": "Centred master",
+      "group": "Centerd master",
       "order": 2,
-      "help": "Where the master goes when there are too few other windows to centre it."
+      "help": "Where the master goes when there are too few other windows to center it."
     },
     "master:center_ignores_reserved": {
-      "title": "Centre ignores the reserved area",
-      "group": "Centred master",
+      "title": "Center ignores the reserved area",
+      "group": "Centerd master",
       "order": 3,
-      "help": "Centres the master window on the whole monitor, ignoring areas reserved by bars."
+      "help": "Centers the master window on the whole monitor, ignoring areas reserved by bars."
     },
     "master:smart_resizing": {
       "title": "Smart resizing",
@@ -2674,7 +2674,7 @@
       "title": "Focus fit method",
       "group": "Focus and wrapping",
       "order": 3,
-      "help": "How a focused column is brought into view: centred, or moved only as far as needed to fit."
+      "help": "How a focused column is brought into view: centerd, or moved only as far as needed to fit."
     },
     "scrolling:follow_focus": {
       "title": "Follow focus",
@@ -2718,10 +2718,10 @@
     },
 
     "experimental:wp_cm_1_2": {
-      "title": "Colour-management protocol v1.2",
-      "group": "Colour protocol",
+      "title": "Color-management protocol v1.2",
+      "group": "Color protocol",
       "order": 1,
-      "help": "Offers apps a newer revision of the colour management protocol. Has no effect while Colour management is off."
+      "help": "Offers apps a newer revision of the color management protocol. Has no effect while Color management is off."
     },
 
     "input-capture:capture_modifiers": {

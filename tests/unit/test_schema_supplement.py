@@ -90,7 +90,7 @@ FLOAT = {
     "max": 1,
 }
 STRING = {"name": "misc:new_text", "description": "some text", "default": "hello"}
-COLOR = {"name": "group:new_color", "description": "a colour", "default": "ffffffff"}
+COLOR = {"name": "group:new_color", "description": "a color", "default": "ffffffff"}
 
 RECORDED_COLOR = {
     "current": "ff111111",

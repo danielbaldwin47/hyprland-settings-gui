@@ -138,7 +138,7 @@ class TestVariables:
     def test_the_longest_name_wins_and_no_delimiter_is_needed(self, tmp_path: Path) -> None:
         result = parse_text(
             tmp_path,
-            "$col = ff\n$colour = 00ff99\ngeneral {\n  c = $colourAND$col\n}\n",
+            "$col = ff\n$color = 00ff99\ngeneral {\n  c = $colorAND$col\n}\n",
         )
         assert assignments(result)["general:c"] == "00ff99ANDff"
 

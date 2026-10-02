@@ -263,7 +263,7 @@ def test_the_slot_holds_what_the_caller_adds(tmp_path: Path) -> None:
 
     window, session, archive = build(tmp_path)
     dialog = ThemeImportDialog(session, archive)
-    marker = Gtk.Label(label="colour conflict row goes here")
+    marker = Gtk.Label(label="color conflict row goes here")
     dialog.slot.append(marker)
     dialog.present(window)
     main_loop.settle("the dialog")

@@ -57,7 +57,7 @@ class Color:
 
     def __post_init__(self) -> None:
         if not 0 <= self.argb <= 0xFFFFFFFF:
-            raise ValueError(f"colour out of 32-bit range: {self.argb}")
+            raise ValueError(f"color out of 32-bit range: {self.argb}")
 
     @classmethod
     def parse(cls, raw: object) -> Color:
@@ -71,12 +71,12 @@ class Color:
         if isinstance(raw, Color):
             return raw
         if isinstance(raw, bool):
-            raise ValueError(f"not a colour: {raw!r}")
+            raise ValueError(f"not a color: {raw!r}")
         if isinstance(raw, int):
             return cls(raw)
 
         if not isinstance(raw, str):
-            raise ValueError(f"not a colour: {raw!r}")
+            raise ValueError(f"not a color: {raw!r}")
         value = raw.strip()
 
         if (match := _HEX8.match(value)) is not None:
@@ -101,7 +101,7 @@ class Color:
         if value.isdigit():
             return cls(int(value))
 
-        raise ValueError(f"not a colour: {raw!r}")
+        raise ValueError(f"not a color: {raw!r}")
 
     @classmethod
     def _from_css(cls, digits: str) -> Color:
@@ -112,14 +112,14 @@ class Color:
         if len(digits) == 8:
             rgba = int(digits, 16)
             return cls(((rgba & 0xFF) << 24) | (rgba >> 8))
-        raise ValueError(f"not a CSS colour: #{digits}")
+        raise ValueError(f"not a CSS color: #{digits}")
 
     @classmethod
     def _from_channels(cls, body: str, *, with_alpha: bool) -> Color:
         parts = [part.strip() for part in body.split(",")]
         expected = 4 if with_alpha else 3
         if len(parts) != expected:
-            raise ValueError(f"expected {expected} colour channels, got {len(parts)}")
+            raise ValueError(f"expected {expected} color channels, got {len(parts)}")
 
         red, green, blue = (_clamp_byte(float(part)) for part in parts[:3])
         # `rgba(r,g,b,a)` takes alpha as a 0..1 float, unlike the 0..255 channels.
@@ -130,7 +130,7 @@ class Color:
     def from_getoption(cls, payload: object) -> Color:
         """`getoption` reports a colour under the `int` key, already packed ARGB."""
         if isinstance(payload, bool) or not isinstance(payload, int):
-            raise ValueError(f"getoption colour is not an integer: {payload!r}")
+            raise ValueError(f"getoption color is not an integer: {payload!r}")
         return cls(payload & 0xFFFFFFFF)
 
     def __str__(self) -> str:
@@ -169,7 +169,7 @@ class Gradient:
 
     def __post_init__(self) -> None:
         if not self.colors:
-            raise ValueError("a gradient needs at least one colour")
+            raise ValueError("a gradient needs at least one color")
 
     @classmethod
     def parse(cls, raw: object) -> Gradient:
@@ -188,7 +188,7 @@ class Gradient:
                 angle = float(match.group(1))
                 tokens = tokens[:-1]
             if not tokens:
-                raise ValueError(f"gradient has an angle but no colours: {raw!r}")
+                raise ValueError(f"gradient has an angle but no colors: {raw!r}")
 
             return cls(tuple(Color.parse(token) for token in tokens), angle)
 
@@ -208,7 +208,7 @@ class Gradient:
         if isinstance(payload, dict):
             colors = payload.get("colors", ())
             if not isinstance(colors, list | tuple):
-                raise ValueError(f"getoption gradient colours are not a list: {colors!r}")
+                raise ValueError(f"getoption gradient colors are not a list: {colors!r}")
             angle = payload.get("angle", 0.0)
             if isinstance(angle, bool) or not isinstance(angle, int | float):
                 raise ValueError(f"getoption gradient angle is not a number: {angle!r}")

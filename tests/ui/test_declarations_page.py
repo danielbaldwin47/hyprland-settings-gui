@@ -136,7 +136,7 @@ def test_the_keybinds_page_and_the_binds_section_are_two_pages(tmp_path: Path) -
     assert window._content_page.get_title() == "Keybinds"
 
     window._select_section("binds")
-    assert window._content_page.get_title() == "Keybind behaviour"
+    assert window._content_page.get_title() == "Keybind behavior"
 
 
 def test_building_the_config_view_warns_about_no_duplicate_stack_child(

@@ -636,7 +636,7 @@ class RowFactory:
             hexpand=True,
         )
         editor = _editor_box()
-        editor.append(_field("Colours", stops))
+        editor.append(_field("Colors", stops))
         editor.append(_field("Angle (°)", angle, expand=True))
         # The two `color_inactive` gradients fall back to their related colour when unset,
         # and an editor opening on one opaque white stop at 0° would be stating a gradient
@@ -695,7 +695,7 @@ class RowFactory:
                     dialog=Gtk.ColorDialog(with_alpha=True, modal=True),
                     rgba=gdk_rgba(color),
                     valign=Gtk.Align.CENTER,
-                    tooltip_text=f"Colour {index + 1}",
+                    tooltip_text=f"Color {index + 1}",
                 )
                 button.connect(
                     "notify::rgba", lambda widget, _p, at=index: stop_changed(at, widget)
@@ -705,12 +705,12 @@ class RowFactory:
                     stops.append(
                         _icon_button(
                             "list-remove-symbolic",
-                            f"Remove colour {index + 1}",
+                            f"Remove color {index + 1}",
                             lambda _b, at=index: remove_stop(at),
                         )
                     )
             stops.append(
-                _icon_button("list-add-symbolic", "Add a colour", lambda _b: add_stop())
+                _icon_button("list-add-symbolic", "Add a color", lambda _b: add_stop())
             )
 
         def refresh() -> None:

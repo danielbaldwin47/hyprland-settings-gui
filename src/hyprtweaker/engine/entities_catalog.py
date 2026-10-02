@@ -476,7 +476,7 @@ DEVICE_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("scroll_button_lock", _BOOL, "Scroll button lock"),
     FieldSpec("scroll_points", _STR, "Scroll points"),
     FieldSpec("scroll_factor", _FLOAT, "Scroll factor"),
-    FieldSpec("clickfinger_behavior", _BOOL, "Clickfinger behaviour"),
+    FieldSpec("clickfinger_behavior", _BOOL, "Clickfinger behavior"),
     FieldSpec("middle_button_emulation", _BOOL, "Middle-button emulation"),
     FieldSpec("tap_to_click", _BOOL, "Tap to click"),
     FieldSpec("tap_and_drag", _BOOL, "Tap and drag"),

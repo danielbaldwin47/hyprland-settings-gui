@@ -827,7 +827,7 @@ class MonitorsPage:
         row.add_row(mirror)
 
         ten_bit = Adw.SwitchRow(
-            title="10-bit colour",
+            title="10-bit color",
             subtitle="Ask for 10 bits per channel; not every display honours it.",
             active=_int_or(fields.get("bitdepth", 8), 8) == 10,
         )

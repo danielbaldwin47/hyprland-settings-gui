@@ -55,13 +55,13 @@ class GradientRow(GrammarRow[Gradient]):
         self.add_button = Gtk.Button(
             icon_name="list-add-symbolic",
             valign=Gtk.Align.CENTER,
-            tooltip_text="Add a colour",
+            tooltip_text="Add a color",
         )
         self.add_button.add_css_class("flat")
         self.add_button.connect("clicked", self._on_add)
 
         colours = Adw.ActionRow(use_markup=False)
-        colours.set_title("Colours")
+        colours.set_title("Colors")
         colours.set_subtitle("Blended in order, along the angle")
         colours.add_suffix(self._stops)
         colours.add_suffix(self.add_button)
@@ -99,7 +99,7 @@ class GradientRow(GrammarRow[Gradient]):
         button.connect("notify::rgba", self._changed)
         remove = Gtk.Button(icon_name="list-remove-symbolic", valign=Gtk.Align.CENTER)
         remove.add_css_class("flat")
-        remove.set_tooltip_text("Remove this colour")
+        remove.set_tooltip_text("Remove this color")
         remove.connect("clicked", self._on_remove, button)
 
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -143,7 +143,7 @@ class GradientRow(GrammarRow[Gradient]):
         for remove in self.remove_buttons:
             remove.set_sensitive(count > 1)
         for number, button in enumerate(self.stop_buttons, start=1):
-            button.set_tooltip_text(f"Colour {number}")
+            button.set_tooltip_text(f"Color {number}")
 
     # --- the typed value ------------------------------------------------------------------
 

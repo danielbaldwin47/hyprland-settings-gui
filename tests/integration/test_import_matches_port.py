@@ -41,9 +41,9 @@ RICE = "end-4"
 APP_VERSION = "0.0.0-test"
 
 KNOWN_PORT_DIVERGENCES: dict[str, str] = {
-    "general:col.active_border": "port takes its colours from a theme module, not the .conf",
-    "general:col.inactive_border": "port takes its colours from a theme module, not the .conf",
-    "misc:background_color": "port takes its colours from a theme module, not the .conf",
+    "general:col.active_border": "port takes its colors from a theme module, not the .conf",
+    "general:col.inactive_border": "port takes its colors from a theme module, not the .conf",
+    "misc:background_color": "port takes its colors from a theme module, not the .conf",
     "gestures:workspace_swipe_cancel_ratio": "commented out in the port; falls back to default",
     "gestures:workspace_swipe_distance": "commented out in the port; falls back to default",
     "gestures:workspace_swipe_min_speed_to_force": (

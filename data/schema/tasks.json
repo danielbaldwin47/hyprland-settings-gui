@@ -139,7 +139,7 @@
         { "entity": "devices" },
         {
           "id": "input.shortcuts",
-          "title": "Shortcut behaviour",
+          "title": "Shortcut behavior",
           "sections": ["binds"]
         },
         { "entity": "binds" }

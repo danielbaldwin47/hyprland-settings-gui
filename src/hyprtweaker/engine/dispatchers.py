@@ -284,7 +284,7 @@ CATALOG: tuple[Dispatcher, ...] = (
     # --- window -----------------------------------------------------------------------
     Dispatcher(path="window.close", label="Close the window", args=(WINDOW,)),
     Dispatcher(path="window.kill", label="Force-kill the window", args=(WINDOW,)),
-    Dispatcher(path="window.center", label="Centre the window", args=(WINDOW,)),
+    Dispatcher(path="window.center", label="Center the window", args=(WINDOW,)),
     Dispatcher(path="window.float", label="Toggle floating", args=(WINDOW, ACTION)),
     Dispatcher(path="window.pin", label="Pin the window", args=(WINDOW, ACTION)),
     Dispatcher(path="window.pseudo", label="Toggle pseudo-tiling", args=(WINDOW, ACTION)),

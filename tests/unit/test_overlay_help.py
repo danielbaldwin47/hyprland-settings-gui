@@ -196,7 +196,7 @@ def test_xkb_options_are_the_one_allowed_use() -> None:
 
 
 def test_a_word_that_only_contains_a_banned_word_passes() -> None:
-    assert overlay_help.help_problems("Pick an optional border colour.", UPSTREAM) == []
+    assert overlay_help.help_problems("Pick an optional border color.", UPSTREAM) == []
 
 
 def test_three_sentences_fail() -> None:

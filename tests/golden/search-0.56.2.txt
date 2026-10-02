@@ -4,19 +4,19 @@ options indexed: 353
 ## query: border (14 hits)
 field | match | tier | key | title
 title | prefix | default | general.border_size | Border size
-title | prefix | default | general.col.nogroup_border | Border colour for windows kept out of groups
+title | prefix | default | general.col.nogroup_border | Border color for windows kept out of groups
 title | prefix | default | general.extend_border_grab_area | Border grab area
 title | prefix | default | decoration.border_part_of_window | Border counts as part of the window
-title | word-prefix | default | general.col.inactive_border | Inactive border colour
-title | word-prefix | default | general.col.active_border | Active border colour
-title | word-prefix | default | general.col.nogroup_border_active | Active border colour for windows kept out of groups
+title | word-prefix | default | general.col.inactive_border | Inactive border color
+title | word-prefix | default | general.col.active_border | Active border color
+title | word-prefix | default | general.col.nogroup_border_active | Active border color for windows kept out of groups
 title | word-prefix | default | general.resize_on_border | Resize windows by dragging their border
 title | word-prefix | default | general.hover_icon_on_border | Show the resize cursor on borders
 title | word-prefix | default | general.snap.border_overlap | Overlap borders when snapping
-title | word-prefix | default | group.col.border_active | Active group border colour
-title | word-prefix | default | group.col.border_inactive | Inactive group border colour
-title | word-prefix | default | group.col.border_locked_inactive | Locked inactive group border colour
-title | word-prefix | default | group.col.border_locked_active | Locked active group border colour
+title | word-prefix | default | group.col.border_active | Active group border color
+title | word-prefix | default | group.col.border_inactive | Inactive group border color
+title | word-prefix | default | group.col.border_locked_inactive | Locked inactive group border color
+title | word-prefix | default | group.col.border_locked_active | Locked active group border color
 
 ## query: size (20 hits)
 field | match | tier | key | title
@@ -46,15 +46,15 @@ field | match | tier | key | title
 title | prefix | default | group.auto_group | Group new windows automatically
 title | prefix | default | group.group_on_movetoworkspace | Group when moving to a workspace
 title | prefix | default | group.groupbar.enabled | Group bar
-title | word-prefix | default | general.col.nogroup_border | Border colour for windows kept out of groups
-title | word-prefix | default | general.col.nogroup_border_active | Active border colour for windows kept out of groups
+title | word-prefix | default | general.col.nogroup_border | Border color for windows kept out of groups
+title | word-prefix | default | general.col.nogroup_border_active | Active border color for windows kept out of groups
 title | word-prefix | default | group.focus_removed_window | Focus a window removed from a group
 title | word-prefix | default | group.merge_groups_on_drag | Merge groups on drag
 title | word-prefix | default | group.merge_groups_on_groupbar | Merge groups dropped on a group bar
-title | word-prefix | default | group.col.border_active | Active group border colour
-title | word-prefix | default | group.col.border_inactive | Inactive group border colour
-title | word-prefix | default | group.col.border_locked_inactive | Locked inactive group border colour
-title | word-prefix | default | group.col.border_locked_active | Locked active group border colour
+title | word-prefix | default | group.col.border_active | Active group border color
+title | word-prefix | default | group.col.border_inactive | Inactive group border color
+title | word-prefix | default | group.col.border_locked_inactive | Locked inactive group border color
+title | word-prefix | default | group.col.border_locked_active | Locked active group border color
 title | word-prefix | default | group.drag_into_group | Drag windows into groups
 title | word-prefix | default | group.merge_floated_into_tiled_on_groupbar | Merge floating windows into tiled groups
 title | word-prefix | default | group.groupbar.disable_when_only | Hide when the group has one window
@@ -80,14 +80,14 @@ key | prefix | default | group.groupbar.gradient_rounding | Gradient corner roun
 key | prefix | default | group.groupbar.gradient_rounding_power | Gradient rounding power
 key | prefix | default | group.groupbar.round_only_edges | Round only the outer edges
 key | prefix | default | group.groupbar.gradient_round_only_edges | Round only the outer gradient edges
-key | prefix | default | group.groupbar.text_color | Title colour
-key | prefix | default | group.groupbar.text_color_inactive | Inactive title colour
-key | prefix | default | group.groupbar.text_color_locked_active | Locked active title colour
-key | prefix | default | group.groupbar.text_color_locked_inactive | Locked inactive title colour
-key | prefix | default | group.groupbar.col.active | Active tab colour
-key | prefix | default | group.groupbar.col.inactive | Inactive tab colour
-key | prefix | default | group.groupbar.col.locked_active | Locked active tab colour
-key | prefix | default | group.groupbar.col.locked_inactive | Locked inactive tab colour
+key | prefix | default | group.groupbar.text_color | Title color
+key | prefix | default | group.groupbar.text_color_inactive | Inactive title color
+key | prefix | default | group.groupbar.text_color_locked_active | Locked active title color
+key | prefix | default | group.groupbar.text_color_locked_inactive | Locked inactive title color
+key | prefix | default | group.groupbar.col.active | Active tab color
+key | prefix | default | group.groupbar.col.inactive | Inactive tab color
+key | prefix | default | group.groupbar.col.locked_active | Locked active tab color
+key | prefix | default | group.groupbar.col.locked_inactive | Locked inactive tab color
 key | prefix | default | group.groupbar.gaps_out | Outer gaps
 key | prefix | default | group.groupbar.gaps_in | Inner gaps
 key | prefix | default | group.groupbar.keep_upper_gap | Keep the upper gap

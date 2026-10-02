@@ -4,10 +4,10 @@ general:gaps_in | css_gaps | css-gaps | - | - | default | - | - | - | px | Inner
 general:gaps_out | css_gaps | css-gaps | - | - | default | - | - | - | px | Outer gaps
 general:float_gaps | css_gaps | css-gaps | null | Same as outer gaps | default | - | - | - | px | Floating window gaps
 general:gaps_workspaces | int | int-range | - | - | default | - | min=0,max=100 | - | px | Workspace gaps
-general:col.inactive_border | gradient | gradient | - | - | default | - | - | - | - | Inactive border colour
-general:col.active_border | gradient | gradient | - | - | default | - | - | - | - | Active border colour
-general:col.nogroup_border | gradient | gradient | - | - | default | - | - | - | - | Border colour for windows kept out of groups
-general:col.nogroup_border_active | gradient | gradient | - | - | default | - | - | - | - | Active border colour for windows kept out of groups
+general:col.inactive_border | gradient | gradient | - | - | default | - | - | - | - | Inactive border color
+general:col.active_border | gradient | gradient | - | - | default | - | - | - | - | Active border color
+general:col.nogroup_border | gradient | gradient | - | - | default | - | - | - | - | Border color for windows kept out of groups
+general:col.nogroup_border_active | gradient | gradient | - | - | default | - | - | - | - | Active border color for windows kept out of groups
 general:layout | string | enum-string | - | - | default | - | - | dwindle=Dwindle/master=Master/scrolling=Scrolling/monocle=Monocle | - | Layout
 general:no_focus_fallback | bool | toggle | - | - | default | - | - | - | - | Keep focus when no window is in that direction
 general:resize_on_border | bool | toggle | - | - | default | - | - | - | - | Resize windows by dragging their border
@@ -31,15 +31,15 @@ decoration:shadow:enabled | bool | toggle | - | - | default | - | - | - | - | Dr
 decoration:shadow:range | int | int-range | - | - | default | decoration:shadow:enabled=True | min=0,max=100 | - | px | Shadow size
 decoration:shadow:render_power | int | segmented | - | - | default | decoration:shadow:enabled=True | min=1,max=4 | 1=Softest/2=Soft/3=Sharp/4=Sharpest | - | Shadow falloff
 decoration:shadow:sharp | bool | toggle | - | - | default | decoration:shadow:enabled=True | - | - | - | Sharp shadow
-decoration:shadow:color | gradient | gradient | - | - | default | decoration:shadow:enabled=True | - | - | - | Shadow colour
-decoration:shadow:color_inactive | gradient | gradient | null | Same as shadow colour | default | decoration:shadow:enabled=True | - | - | - | Inactive shadow colour
+decoration:shadow:color | gradient | gradient | - | - | default | decoration:shadow:enabled=True | - | - | - | Shadow color
+decoration:shadow:color_inactive | gradient | gradient | null | Same as shadow color | default | decoration:shadow:enabled=True | - | - | - | Inactive shadow color
 decoration:shadow:offset | vec2 | vec2 | - | - | default | decoration:shadow:enabled=True | - | - | px | Shadow offset
 decoration:shadow:scale | float | float-range | - | - | default | decoration:shadow:enabled=True | min=0,max=1 | - | - | Shadow scale
 decoration:glow:enabled | bool | toggle | - | - | default | - | - | - | - | Inner glow
 decoration:glow:range | int | int-range | - | - | default | decoration:glow:enabled=True | min=0,max=100 | - | px | Glow size
 decoration:glow:render_power | int | segmented | - | - | default | decoration:glow:enabled=True | min=1,max=4 | 1=Softest/2=Soft/3=Sharp/4=Sharpest | - | Glow falloff
-decoration:glow:color | gradient | gradient | - | - | default | decoration:glow:enabled=True | - | - | - | Glow colour
-decoration:glow:color_inactive | gradient | gradient | null | Same as glow colour | default | decoration:glow:enabled=True | - | - | - | Inactive glow colour
+decoration:glow:color | gradient | gradient | - | - | default | decoration:glow:enabled=True | - | - | - | Glow color
+decoration:glow:color_inactive | gradient | gradient | null | Same as glow color | default | decoration:glow:enabled=True | - | - | - | Inactive glow color
 decoration:dim_modal | bool | toggle | - | - | default | - | - | - | - | Dim parents of modal windows
 decoration:dim_inactive | bool | toggle | - | - | default | - | - | - | - | Dim inactive windows
 decoration:dim_strength | float | float-range | - | - | default | decoration:dim_inactive=True | min=0,max=1 | - | - | Dim strength
@@ -57,7 +57,7 @@ decoration:blur:noise | float | float-range | - | - | default | decoration:blur:
 decoration:blur:contrast | float | float-range | - | - | default | decoration:blur:enabled=True | min=0,max=2 | - | - | Blur contrast
 decoration:blur:brightness | float | float-range | - | - | default | decoration:blur:enabled=True | min=0,max=2 | - | - | Blur brightness
 decoration:blur:vibrancy | float | float-range | - | - | default | decoration:blur:enabled=True | min=0,max=1 | - | - | Blur vibrancy
-decoration:blur:vibrancy_darkness | float | float-range | - | - | default | decoration:blur:enabled=True | min=0,max=1 | - | - | Blur vibrancy on dark colours
+decoration:blur:vibrancy_darkness | float | float-range | - | - | default | decoration:blur:enabled=True | min=0,max=1 | - | - | Blur vibrancy on dark colors
 decoration:blur:special | bool | toggle | - | - | default | decoration:blur:enabled=True | - | - | - | Blur the special workspace
 decoration:blur:popups | bool | toggle | - | - | default | decoration:blur:enabled=True | - | - | - | Blur popups
 decoration:blur:popups_ignorealpha | float | float-range | - | - | default | decoration:blur:popups=True | min=0,max=1 | - | - | Popup blur alpha threshold
@@ -102,7 +102,7 @@ input:touchpad:natural_scroll | bool | toggle | - | - | default | - | - | - | - 
 input:touchpad:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Touchpad scroll speed
 input:touchpad:middle_button_emulation | bool | toggle | - | - | default | - | - | - | - | Middle button emulation
 input:touchpad:tap_button_map | string | enum-string | null | Device default | default | - | - | lrm=Left, right, middle/lmr=Left, middle, right | - | Tap button mapping
-input:touchpad:clickfinger_behavior | bool | toggle | - | - | default | - | - | - | - | Clickfinger behaviour
+input:touchpad:clickfinger_behavior | bool | toggle | - | - | default | - | - | - | - | Clickfinger behavior
 input:touchpad:tap-to-click | bool | toggle | - | - | default | - | - | - | - | Tap to click
 input:touchpad:drag_lock | int | segmented | - | - | default | - | min=0,max=2 | 0=Disabled/1=With timeout/2=Sticky | - | Drag lock
 input:touchpad:tap-and-drag | bool | toggle | - | - | default | - | - | - | - | Tap and drag
@@ -145,10 +145,10 @@ group:insert_after_current | bool | toggle | - | - | default | - | - | - | - | I
 group:focus_removed_window | bool | toggle | - | - | default | - | - | - | - | Focus a window removed from a group
 group:merge_groups_on_drag | bool | toggle | - | - | default | - | - | - | - | Merge groups on drag
 group:merge_groups_on_groupbar | bool | toggle | - | - | default | - | - | - | - | Merge groups dropped on a group bar
-group:col.border_active | gradient | gradient | - | - | default | - | - | - | - | Active group border colour
-group:col.border_inactive | gradient | gradient | - | - | default | - | - | - | - | Inactive group border colour
-group:col.border_locked_inactive | gradient | gradient | - | - | default | - | - | - | - | Locked inactive group border colour
-group:col.border_locked_active | gradient | gradient | - | - | default | - | - | - | - | Locked active group border colour
+group:col.border_active | gradient | gradient | - | - | default | - | - | - | - | Active group border color
+group:col.border_inactive | gradient | gradient | - | - | default | - | - | - | - | Inactive group border color
+group:col.border_locked_inactive | gradient | gradient | - | - | default | - | - | - | - | Locked inactive group border color
+group:col.border_locked_active | gradient | gradient | - | - | default | - | - | - | - | Locked active group border color
 group:auto_group | bool | toggle | - | - | default | - | - | - | - | Group new windows automatically
 group:drag_into_group | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Drag windows into groups
 group:merge_floated_into_tiled_on_groupbar | bool | toggle | - | - | default | - | - | - | - | Merge floating windows into tiled groups
@@ -174,14 +174,14 @@ group:groupbar:gradient_rounding | int | int-range | - | - | default | group:gro
 group:groupbar:gradient_rounding_power | float | float-range | - | - | default | group:groupbar:gradients=True | min=2,max=10 | - | - | Gradient rounding power
 group:groupbar:round_only_edges | bool | toggle | - | - | default | group:groupbar:enabled=True | - | - | - | Round only the outer edges
 group:groupbar:gradient_round_only_edges | bool | toggle | - | - | default | group:groupbar:gradients=True | - | - | - | Round only the outer gradient edges
-group:groupbar:text_color | color | color | - | - | default | group:groupbar:enabled=True | - | - | - | Title colour
-group:groupbar:text_color_inactive | color | color | null | Same as the title colour | default | group:groupbar:enabled=True | - | - | - | Inactive title colour
-group:groupbar:text_color_locked_active | color | color | null | Same as the title colour | default | group:groupbar:enabled=True | - | - | - | Locked active title colour
-group:groupbar:text_color_locked_inactive | color | color | null | Same as the inactive title colour | default | group:groupbar:enabled=True | - | - | - | Locked inactive title colour
-group:groupbar:col.active | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Active tab colour
-group:groupbar:col.inactive | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Inactive tab colour
-group:groupbar:col.locked_active | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Locked active tab colour
-group:groupbar:col.locked_inactive | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Locked inactive tab colour
+group:groupbar:text_color | color | color | - | - | default | group:groupbar:enabled=True | - | - | - | Title color
+group:groupbar:text_color_inactive | color | color | null | Same as the title color | default | group:groupbar:enabled=True | - | - | - | Inactive title color
+group:groupbar:text_color_locked_active | color | color | null | Same as the title color | default | group:groupbar:enabled=True | - | - | - | Locked active title color
+group:groupbar:text_color_locked_inactive | color | color | null | Same as the inactive title color | default | group:groupbar:enabled=True | - | - | - | Locked inactive title color
+group:groupbar:col.active | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Active tab color
+group:groupbar:col.inactive | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Inactive tab color
+group:groupbar:col.locked_active | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Locked active tab color
+group:groupbar:col.locked_inactive | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Locked inactive tab color
 group:groupbar:gaps_out | int | int-range | - | - | default | group:groupbar:enabled=True | min=0,max=20 | - | px | Outer gaps
 group:groupbar:gaps_in | int | int-range | - | - | default | group:groupbar:enabled=True | min=0,max=20 | - | px | Inner gaps
 group:groupbar:keep_upper_gap | bool | toggle | - | - | default | group:groupbar:enabled=True | - | - | - | Keep the upper gap
@@ -190,7 +190,7 @@ group:groupbar:text_padding | int | int-range | - | - | default | group:groupbar
 group:groupbar:blur | bool | toggle | - | - | default | group:groupbar:enabled=True | - | - | - | Blur the background
 misc:disable_hyprland_logo | bool | toggle | - | - | default | - | - | - | - | Hide the Hyprland logo
 misc:disable_splash_rendering | bool | toggle | - | - | default | - | - | - | - | Hide the splash text
-misc:col.splash | color | color | - | - | default | - | - | - | - | Splash text colour
+misc:col.splash | color | color | - | - | default | - | - | - | - | Splash text color
 misc:font_family | string | font-picker | - | - | default | - | - | - | - | Global font
 misc:splash_font_family | string | font-picker | null | Inherit the global font | default | - | - | - | - | Splash font
 misc:force_default_wallpaper | int | enum-map | - | - | default | - | min=-1,max=2 | -1=Random/0=Hyprland logo/1=Triangles/2=Anime illustration | - | Built-in wallpaper
@@ -211,7 +211,7 @@ misc:mouse_move_focuses_monitor | bool | toggle | - | - | default | - | - | - | 
 misc:allow_session_lock_restore | bool | toggle | - | - | default | - | - | - | - | Allow session lock restore
 misc:session_lock_xray | bool | toggle | - | - | default | - | - | - | - | Session lock X-ray
 misc:session_lock_blur | bool | toggle | - | - | default | - | - | - | - | Blur under the session lock
-misc:background_color | color | color | - | - | default | - | - | - | - | Background colour
+misc:background_color | color | color | - | - | default | - | - | - | - | Background color
 misc:close_special_on_empty | bool | toggle | - | - | default | - | - | - | - | Close the special workspace when empty
 misc:on_focus_under_fullscreen | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Focusing a window under a fullscreen one
 misc:exit_window_retains_fullscreen | bool | toggle | - | - | default | - | - | - | - | Keep fullscreen when a window exits
@@ -233,7 +233,7 @@ binds:scroll_event_delay | int | int-range | - | - | default | - | min=0,max=200
 binds:workspace_back_and_forth | bool | toggle | - | - | default | - | - | - | - | Workspace back and forth
 binds:hide_special_on_workspace_change | bool | toggle | - | - | default | - | - | - | - | Hide the special workspace on switch
 binds:allow_workspace_cycles | bool | toggle | - | - | default | - | - | - | - | Allow workspace cycles
-binds:workspace_center_on | int | segmented | - | - | default | - | min=0,max=1 | 0=The workspace/1=The last active window | - | Centre the cursor on workspace switch
+binds:workspace_center_on | int | segmented | - | - | default | - | min=0,max=1 | 0=The workspace/1=The last active window | - | Center the cursor on workspace switch
 binds:focus_preferred_method | int | segmented | - | - | default | - | min=0,max=1 | 0=History/1=Length | - | Directional focus method
 binds:ignore_group_lock | bool | toggle | - | - | default | - | - | - | - | Ignore group lock
 binds:movefocus_cycles_fullscreen | bool | toggle | - | - | default | - | - | - | - | Move focus cycles windows in fullscreen
@@ -250,19 +250,19 @@ opengl:nvidia_anti_flicker | bool | toggle | - | - | default | - | - | - | - | N
 render:direct_scanout | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Direct scanout
 render:expand_undersized_textures | bool | toggle | - | - | default | - | - | - | - | Expand undersized textures
 render:xp_mode | bool | toggle | - | - | default | - | - | - | - | XP mode
-render:ctm_animation | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Colour transform animation
-render:cm_enabled | bool | toggle | - | - | default | - | - | - | - | Colour management
+render:ctm_animation | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Color transform animation
+render:cm_enabled | bool | toggle | - | - | default | - | - | - | - | Color management
 render:send_content_type | bool | toggle | - | - | default | - | - | - | - | Send the content type
 render:cm_auto_hdr | int | enum-map | - | - | advanced | - | min=0,max=2 | 0=Off/1=HDR/2=HDR with the display's primaries | - | Automatic HDR
 render:new_render_scheduling | bool | toggle | - | - | default | - | - | - | - | New render scheduling
-render:non_shader_cm | int | enum-map | - | - | advanced | - | min=0,max=3 | 0=Disable/1=Always/2=On demand/3=Ignore | - | Non-shader colour management
+render:non_shader_cm | int | enum-map | - | - | advanced | - | min=0,max=3 | 0=Disable/1=Always/2=On demand/3=Ignore | - | Non-shader color management
 render:cm_sdr_eotf | string | enum-string | - | - | advanced | - | - | default=Default/gamma22=Gamma 2.2/gamma22force=Gamma 2.2 (forced)/srgb=sRGB | - | SDR transfer function
 render:commit_timing_enabled | bool | toggle | - | - | default | - | - | - | - | Commit timing
 render:icc_vcgt_enabled | bool | toggle | - | - | advanced | - | - | - | - | Apply ICC VCGT tables
 render:use_shader_blur_blend | bool | toggle | - | - | default | - | - | - | - | Shader blur blending
 render:use_fp16 | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Use FP16 buffers
 render:keep_unmodified_copy | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Keep an unmodified copy
-render:non_shader_cm_interop | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Colour filters in fullscreen
+render:non_shader_cm_interop | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Color filters in fullscreen
 render:fp16_sdr_tf | int | enum-map | - | - | advanced | - | min=0,max=1 | - | - | FP16 SDR transfer function
 cursor:invisible | bool | toggle | - | - | default | - | - | - | - | Hide the cursor
 cursor:no_hardware_cursors | int | enum-map | - | - | default | - | min=0,max=2 | 0=Use when possible/1=Never use/2=Automatic | - | Hardware cursors
@@ -301,10 +301,10 @@ debug:suppress_errors | bool | toggle | - | - | hidden | - | - | - | - | Suppres
 debug:disable_scale_checks | bool | toggle | - | - | hidden | - | - | - | - | Disable scale checks
 debug:error_limit | int | int-range | - | - | hidden | - | min=0,max=20 | - | - | Displayed error limit
 debug:error_position | int | enum-map | - | - | hidden | - | min=0,max=1 | - | - | Error position
-debug:colored_stdout_logs | bool | toggle | - | - | hidden | - | - | - | - | Colour stdout logs
+debug:colored_stdout_logs | bool | toggle | - | - | hidden | - | - | - | - | Color stdout logs
 debug:log_damage | bool | toggle | - | - | hidden | - | - | - | - | Log damage
 debug:pass | bool | toggle | - | - | hidden | - | - | - | - | Render pass debugging
-debug:full_cm_proto | bool | toggle | - | - | advanced | - | - | - | - | Full colour-management protocol
+debug:full_cm_proto | bool | toggle | - | - | advanced | - | - | - | - | Full color-management protocol
 debug:ds_handle_same_buffer | bool | toggle | - | - | hidden | - | - | - | - | Direct scanout of the same buffer
 debug:ds_handle_same_buffer_fifo | bool | toggle | - | - | hidden | - | - | - | - | Direct scanout of the same buffer (FIFO)
 debug:fifo_pending_workaround | bool | toggle | - | - | hidden | - | - | - | - | FIFO pending workaround
@@ -330,10 +330,10 @@ master:mfact | float | float-range | - | - | default | - | min=0,max=1 | - | - |
 master:new_status | string | enum-string | - | - | default | - | - | master=Becomes master/slave=Joins the stack/inherit=Inherit from focus | - | New window placement
 master:new_on_top | bool | toggle | - | - | default | - | - | - | - | New windows on top
 master:new_on_active | string | enum-string | - | - | default | - | - | before=Before/after=After/none=Use “new on top” | - | Place new windows relative to focus
-master:orientation | string | enum-string | - | - | default | - | - | left=Left/right=Right/top=Top/bottom=Bottom/center=Centre | - | Master area position
+master:orientation | string | enum-string | - | - | default | - | - | left=Left/right=Right/top=Top/bottom=Bottom/center=Center | - | Master area position
 master:slave_count_for_center_master | int | int-range | - | - | default | - | min=0,max=10 | - | - | Stack windows before centring master
-master:center_master_fallback | string | enum-string | - | - | default | master:orientation=center | - | left=Left/right=Right/top=Top/bottom=Bottom | - | Centre master fallback
-master:center_ignores_reserved | bool | toggle | - | - | default | - | - | - | - | Centre ignores the reserved area
+master:center_master_fallback | string | enum-string | - | - | default | master:orientation=center | - | left=Left/right=Right/top=Top/bottom=Bottom | - | Center master fallback
+master:center_ignores_reserved | bool | toggle | - | - | default | - | - | - | - | Center ignores the reserved area
 master:smart_resizing | bool | toggle | - | - | default | - | - | - | - | Smart resizing
 master:drop_at_cursor | bool | toggle | - | - | default | - | - | - | - | Drop at the cursor
 master:always_keep_position | bool | toggle | - | - | default | - | - | - | - | Always keep position
@@ -347,7 +347,7 @@ scrolling:explicit_column_widths | string | float-list | - | - | default | - | -
 scrolling:direction | string | enum-string | - | - | default | - | - | left=Left/right=Right/up=Up/down=Down | - | Scroll direction
 scrolling:wrap_focus | bool | toggle | - | - | default | - | - | - | - | Wrap focus
 scrolling:wrap_swapcol | bool | toggle | - | - | default | - | - | - | - | Wrap column swapping
-experimental:wp_cm_1_2 | bool | toggle | - | - | hidden | - | - | - | - | Colour-management protocol v1.2
+experimental:wp_cm_1_2 | bool | toggle | - | - | hidden | - | - | - | - | Color-management protocol v1.2
 input-capture:capture_modifiers | bool | toggle | - | - | hidden | - | - | - | - | Capture modifiers
 input-capture:enforce_barriers | bool | toggle | - | - | hidden | - | - | - | - | Enforce barriers
 quirks:prefer_hdr | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Prefer HDR

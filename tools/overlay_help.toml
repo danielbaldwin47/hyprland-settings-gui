@@ -56,27 +56,27 @@ help = "Space between workspaces, in pixels. It adds to the outer gaps."
 #   wiki:     border color for inactive windows
 #   candidate: short (33 chars)
 ["general:col.inactive_border"]
-help = "Border colour of windows without focus. Use one colour, or several with an angle for a gradient."
+help = "Border color of windows without focus. Use one color, or several with an angle for a gradient."
 
 # general:col.active_border: Active border colour [Borders] (gradient, default 'ffffffff 0deg')
 #   upstream: border color for the active window
 #   wiki:     border color for the active window
 #   candidate: short (34 chars)
 ["general:col.active_border"]
-help = "Border colour of the window with focus. Use one colour, or several with an angle for a gradient."
+help = "Border color of the window with focus. Use one color, or several with an angle for a gradient."
 
 # general:col.nogroup_border: Ungrouped border colour [Borders] (gradient, default 'ffffaaff 0deg')
 #   upstream: inactive border color for window that cannot be added to a group
 #   wiki:     inactive border color for window that cannot be added to a group (see `hl.dsp.window.deny_from_group` dispatcher)
 #   candidate: wiki is longer (113 chars)
 ["general:col.nogroup_border"]
-help = "Border colour of a window without focus that a window rule keeps out of groups."
+help = "Border color of a window without focus that a window rule keeps out of groups."
 
 # general:col.nogroup_border_active: Active ungrouped border colour [Borders] (gradient, default 'ffff00ff 0deg')
 #   upstream: active border color for window that cannot be added to a group
 #   wiki:     active border color for window that cannot be added to a group
 ["general:col.nogroup_border_active"]
-help = "Border colour of the window with focus when a window rule keeps it out of groups."
+help = "Border color of the window with focus when a window rule keeps it out of groups."
 
 # general:layout: Layout [Layout and gaps] (string, default 'dwindle')
 #   upstream: which layout to use. [dwindle/master/scrolling/monocle/lua:<name>]
@@ -239,13 +239,13 @@ help = "Gives shadows a hard edge instead of a soft fade."
 #   upstream: shadow's color. Alpha dictates shadow's opacity.
 #   wiki:     shadow's color. Alpha dictates shadow's opacity.
 ["decoration:shadow:color"]
-help = "Colour of window shadows. Its alpha sets how opaque the shadow is."
+help = "Color of window shadows. Its alpha sets how opaque the shadow is."
 
 # decoration:shadow:color_inactive: Inactive shadow colour [Shadow] (gradient, default 'ffffffff 0deg')
 #   upstream: inactive shadow color. (if not set, will fall back to col.shadow)
 #   wiki:     inactive shadow color. (if not set, will fall back to color)
 ["decoration:shadow:color_inactive"]
-help = "Shadow colour of windows without focus. When unset, the normal shadow colour is used."
+help = "Shadow color of windows without focus. When unset, the normal shadow color is used."
 
 # decoration:shadow:offset: Shadow offset [Shadow] (vec2, default [0, 0])
 #   upstream: shadow's rendering offset.
@@ -259,14 +259,14 @@ help = "How far shadows shift from their window, horizontally and vertically."
 #   wiki:     shadow's scale. [0.0 - 1.0]
 #   candidate: short (15 chars)
 ["decoration:shadow:scale"]
-help = "Size of each shadow compared with its full size: 1 is full size, and lower values shrink it towards the window's centre."
+help = "Size of each shadow compared with its full size: 1 is full size, and lower values shrink it towards the window's center."
 
 # decoration:glow:enabled: Inner glow [Glow] (bool, default False)
 #   upstream: enable inner glow on windows
 #   wiki:     enable inner glow on windows
 #   candidate: short (28 chars)
 ["decoration:glow:enabled"]
-help = "Draws a coloured light just inside each window's edge."
+help = "Draws a colored light just inside each window's edge."
 
 # decoration:glow:range: Glow size [Glow] (int, default 10)
 #   upstream: glow range (size) in layout px
@@ -286,13 +286,13 @@ help = "How quickly the glow fades as it reaches into the window. A sharper fall
 #   upstream: glow's color. Alpha dictates glow's opacity.
 #   wiki:     glow's color. Alpha dictates glow's opacity.
 ["decoration:glow:color"]
-help = "Colour of the glow. Its alpha sets how strong the glow is."
+help = "Color of the glow. Its alpha sets how strong the glow is."
 
 # decoration:glow:color_inactive: Inactive glow colour [Glow] (gradient, default 'ffffffff 0deg')
 #   upstream: inactive glow color. (if not set, will fall back to decoration:glow:color)
 #   wiki:     inactive glow color. (if not set, will fall back to color)
 ["decoration:glow:color_inactive"]
-help = "Glow colour of windows without focus. When unset, the normal glow colour is used."
+help = "Glow color of windows without focus. When unset, the normal glow color is used."
 
 # decoration:dim_modal: Dim parents of modal windows [Dimming] (bool, default True)
 #   upstream: enables dimming of parents of modal windows
@@ -405,13 +405,13 @@ help = "Brightness of the blurred area: 1 leaves it unchanged, lower darkens it 
 #   wiki:     Increase saturation of blurred colors. [0.0 - 1.0]
 #   candidate: short (38 chars)
 ["decoration:blur:vibrancy"]
-help = "Boosts the colour saturation of the blur. Set it to 0 to turn the boost off."
+help = "Boosts the color saturation of the blur. Set it to 0 to turn the boost off."
 
 # decoration:blur:vibrancy_darkness: Blur vibrancy on dark colours [Blur] (float, default 0)
 #   upstream: How strong the effect of vibrancy is on dark areas.
 #   wiki:     How strong the effect of `vibrancy` is on dark areas . [0.0 - 1.0]
 ["decoration:blur:vibrancy_darkness"]
-help = "How much the saturation boost also reaches dark colours, which it otherwise holds back."
+help = "How much the saturation boost also reaches dark colors, which it otherwise holds back."
 
 # decoration:blur:special: Blur the special workspace [Blurred surfaces] (bool, default False)
 #   upstream: whether to blur behind the special workspace (note: expensive)
@@ -875,7 +875,7 @@ help = "Where the responding part of the tablet starts, in millimetres."
 #   the combo already names its values (labels)
 #   candidate: too long for a Row (183 chars); lists values the combo shows: 0, 1
 ["input:tablettool:eraser_button_mode"]
-help = "Whether the pen's eraser button keeps its hardware behaviour or acts as an ordinary button. Set the button it sends under Eraser button code."
+help = "Whether the pen's eraser button keeps its hardware behavior or acts as an ordinary button. Set the button it sends under Eraser button code."
 
 # input:tablettool:eraser_button_override: Eraser button code [Drawing tablet] (int, default 0)
 #   upstream: Set a button to be button event when eraser_button_mode is set to 1. Has to be an int, cannot be a string. Must be a valid button (e.g. BTN_STYLUS) excluding fake buttons (e.g. BTN_TOOL_*) and keys (KEY_*). Check wev if you have any doubts regarding the ID. 0 means default.
@@ -1022,28 +1022,28 @@ help = "Lets you merge a group into another by dropping it on that group's bar. 
 #   wiki:     active group border color
 #   candidate: short (25 chars)
 ["group:col.border_active"]
-help = "Border colour of the group with focus. Use one colour, or several with an angle for a gradient."
+help = "Border color of the group with focus. Use one color, or several with an angle for a gradient."
 
 # group:col.border_inactive: Inactive group border colour [Border colours] (gradient, default '66777700 0deg')
 #   upstream: inactive group border color
 #   wiki:     inactive (out of focus) group border color
 #   candidate: short (27 chars)
 ["group:col.border_inactive"]
-help = "Border colour of groups without focus. Use one colour, or several with an angle for a gradient."
+help = "Border color of groups without focus. Use one color, or several with an angle for a gradient."
 
 # group:col.border_locked_inactive: Locked inactive group border colour [Border colours] (gradient, default '66ff5500 0deg')
 #   upstream: inactive locked group border color
 #   wiki:     inactive locked group border color
 #   candidate: short (34 chars)
 ["group:col.border_locked_inactive"]
-help = "Border colour of a locked group without focus."
+help = "Border color of a locked group without focus."
 
 # group:col.border_locked_active: Locked active group border colour [Border colours] (gradient, default '66775500 0deg')
 #   upstream: active locked group border color
 #   wiki:     active locked group border color
 #   candidate: short (32 chars)
 ["group:col.border_locked_active"]
-help = "Border colour of a locked group with focus."
+help = "Border color of a locked group with focus."
 
 # group:auto_group: Group new windows automatically [Behaviour] (bool, default True)
 #   upstream: automatically group new windows
@@ -1138,7 +1138,7 @@ help = "Space between each tab's indicator and its title, in pixels."
 #   wiki:     height of the groupbar indicator
 #   candidate: short (32 chars)
 ["group:groupbar:indicator_height"]
-help = "Height of each tab's indicator, the coloured strip below its title, in pixels."
+help = "Height of each tab's indicator, the colored strip below its title, in pixels."
 
 # group:groupbar:stacked: Stack titles vertically [Tab bar] (bool, default False)
 #   upstream: render the groupbar as a vertical stack
@@ -1216,55 +1216,55 @@ help = "Rounds only the outer ends of the gradients across the whole bar, not ev
 #   wiki:     color for window titles in the groupbar
 #   candidate: short (39 chars)
 ["group:groupbar:text_color"]
-help = "Colour of the window titles in the group bar."
+help = "Color of the window titles in the group bar."
 
 # group:groupbar:text_color_inactive: Inactive title colour [Tab titles] (color, default '-1')
 #   upstream: color for inactive windows' titles in the groupbar
 #   wiki:     color for inactive windows' titles in the groupbar (if unset, defaults to text_color)
 #   candidate: wiki is longer (85 chars)
 ["group:groupbar:text_color_inactive"]
-help = "Title colour of windows without focus in the group bar. Unset uses the title colour."
+help = "Title color of windows without focus in the group bar. Unset uses the title color."
 
 # group:groupbar:text_color_locked_active: Locked active title colour [Tab titles] (color, default '-1')
 #   upstream: color for the active window's title in a locked group
 #   wiki:     color for the active window's title in a locked group (if unset, defaults to text_color)
 #   candidate: wiki is longer (88 chars)
 ["group:groupbar:text_color_locked_active"]
-help = "Title colour of the active window in a locked group. Unset uses the title colour."
+help = "Title color of the active window in a locked group. Unset uses the title color."
 
 # group:groupbar:text_color_locked_inactive: Locked inactive title colour [Tab titles] (color, default '-1')
 #   upstream: color for inactive windows' titles in locked groups
 #   wiki:     color for inactive windows' titles in locked groups (if unset, defaults to text_color_inactive)
 #   candidate: wiki is longer (95 chars)
 ["group:groupbar:text_color_locked_inactive"]
-help = "Title colour of the other windows in a locked group. Unset uses the inactive title colour."
+help = "Title color of the other windows in a locked group. Unset uses the inactive title color."
 
 # group:groupbar:col.active: Active background [Tab backgrounds] (gradient, default '66ffff00 0deg')
 #   upstream: active group border color
 #   wiki:     active group bar background color
 #   candidate: short (25 chars)
 ["group:groupbar:col.active"]
-help = "Colour of the focused tab's indicator in the group bar, and its background when Gradient backgrounds is on. The indicator uses only the first colour."
+help = "Color of the focused tab's indicator in the group bar, and its background when Gradient backgrounds is on. The indicator uses only the first color."
 
 # group:groupbar:col.inactive: Inactive background [Tab backgrounds] (gradient, default '66777700 0deg')
 #   upstream: inactive (out of focus) group border color
 #   wiki:     inactive (out of focus) group bar background color
 ["group:groupbar:col.inactive"]
-help = "Colour of the other tabs' indicators in the group bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first colour."
+help = "Color of the other tabs' indicators in the group bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first color."
 
 # group:groupbar:col.locked_active: Locked active background [Tab backgrounds] (gradient, default '66ff5500 0deg')
 #   upstream: active locked group border color
 #   wiki:     active locked group bar background color
 #   candidate: short (32 chars)
 ["group:groupbar:col.locked_active"]
-help = "Colour of the focused tab's indicator in a locked group's bar, and its background when Gradient backgrounds is on. The indicator uses only the first colour."
+help = "Color of the focused tab's indicator in a locked group's bar, and its background when Gradient backgrounds is on. The indicator uses only the first color."
 
 # group:groupbar:col.locked_inactive: Locked inactive background [Tab backgrounds] (gradient, default '66775500 0deg')
 #   upstream: inactive locked group border color
 #   wiki:     inactive locked group bar background color
 #   candidate: short (34 chars)
 ["group:groupbar:col.locked_inactive"]
-help = "Colour of the other tabs' indicators in a locked group's bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first colour."
+help = "Color of the other tabs' indicators in a locked group's bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first color."
 
 # group:groupbar:gaps_out: Outer gaps [Tab spacing] (int, default 2)
 #   upstream: gap between gradients and window
@@ -1475,7 +1475,7 @@ help = "Blurs what shows through the lockscreen. Works only while Session lock X
 #   wiki:     change the background color. (requires enabled `disable_hyprland_logo`)
 #   candidate: short (28 chars); wiki is longer (71 chars)
 ["misc:background_color"]
-help = "Colour shown behind everything when no wallpaper covers the screen. Needs the Hyprland logo hidden."
+help = "Color shown behind everything when no wallpaper covers the screen. Needs the Hyprland logo hidden."
 
 # misc:close_special_on_empty: Close the special workspace when empty [Window handling] (bool, default True)
 #   upstream: close the special workspace if the last window is removed
@@ -1489,7 +1489,7 @@ help = "Closes the special workspace when its last window goes away."
 #   the combo already names its values (map)
 #   candidate: wiki is longer (280 chars)
 ["misc:on_focus_under_fullscreen"]
-help = "What happens when something asks to focus a tiled window while another window is fullscreen or maximised."
+help = "What happens when something asks to focus a tiled window while another window is fullscreen or maximized."
 
 # misc:exit_window_retains_fullscreen: Keep fullscreen when a window exits [Window handling] (bool, default False)
 #   upstream: if true, closing a fullscreen window makes the next focused window fullscreen
@@ -1567,7 +1567,7 @@ help = "How many missed checks before an app counts as not responding and the di
 #   wiki:     forces 8 bit screencopy
 #   candidate: short (23 chars)
 ["misc:screencopy_force_8b"]
-help = "Forces 8-bit colour in screen captures and recordings."
+help = "Forces 8-bit color in screen captures and recordings."
 
 # misc:disable_scale_notification: Hide the scale notification [Reloads and warnings] (bool, default False)
 #   upstream: disables notification popup when a monitor fails to set a suitable scale
@@ -1750,7 +1750,7 @@ help = "Stops drawing the wallpaper and everything else that sits below windows.
 #   the combo already names its values (map)
 #   candidate: wiki is longer (110 chars)
 ["render:ctm_animation"]
-help = "Fades between colour filter changes, such as from hyprsunset, instead of jumping."
+help = "Fades between color filter changes, such as from hyprsunset, instead of jumping."
 
 # render:cm_enabled: Colour management [Colour management] (bool, default True)
 #   upstream: Enable Color Management pipelines (requires restart to fully take effect)
@@ -1758,7 +1758,7 @@ help = "Fades between colour filter changes, such as from hyprsunset, instead of
 #   the wiki notes a restart is needed
 #   candidate: wiki is longer (116 chars)
 ["render:cm_enabled"]
-help = "Runs Hyprland's colour management, which HDR tone mapping relies on. When off, apps also cannot tell Hyprland their colour space."
+help = "Runs Hyprland's color management, which HDR tone mapping relies on. When off, apps also cannot tell Hyprland their color space."
 
 # render:send_content_type: Send the content type [Colour management] (bool, default True)
 #   upstream: Report content type to allow monitor profile autoswitch
@@ -1787,7 +1787,7 @@ help = "Uses triple buffering when needed, which can improve the frame rate on u
 #   the combo already names its values (map)
 #   candidate: short (25 chars); wiki is longer (123 chars)
 ["render:non_shader_cm"]
-help = "Corrects a fullscreen window's colours with the display hardware instead of a shader. On demand does so only during direct scanout; Ignore skips the checks."
+help = "Corrects a fullscreen window's colors with the display hardware instead of a shader. On demand does so only during direct scanout; Ignore skips the checks."
 
 # render:cm_sdr_eotf: SDR transfer function [Colour management] (string, default 'default')
 #   upstream: Default transfer function for displaying SDR apps.
@@ -1808,7 +1808,7 @@ help = "Supports the commit timing protocol, which lets apps schedule exactly wh
 #   upstream: Enable sending VCGT ramps to KMS with ICC profiles
 #   wiki:     Enable sending VCGT ramps to KMS with ICC profiles
 ["render:icc_vcgt_enabled"]
-help = "Sends the calibration curves of an ICC colour profile to the display hardware."
+help = "Sends the calibration curves of an ICC color profile to the display hardware."
 
 # render:use_shader_blur_blend: Shader blur blending [Blur and textures] (bool, default False)
 #   upstream: Use experimental blurred bg blending
@@ -1839,7 +1839,7 @@ help = "Keeps an unmodified SDR copy of each frame for screen sharing. Choose En
 #   the combo already names its values (map)
 #   candidate: wiki is longer (180 chars)
 ["render:non_shader_cm_interop"]
-help = "Whether colour filters from tools such as hyprsunset stay active in fullscreen. Auto turns them off only for fullscreen photo, video and game content."
+help = "Whether color filters from tools such as hyprsunset stay active in fullscreen. Auto turns them off only for fullscreen photo, video and game content."
 
 # render:fp16_sdr_tf: FP16 SDR transfer function [Colour pipeline] (int, default 0)
 #   upstream: Internal workbuffer transfer function for fp16 in SDR mode
@@ -1906,7 +1906,7 @@ help = "Stops Hyprland moving the cursor by itself, for example when focus chang
 #   wiki:     When a window is refocused, the cursor returns to its last position relative to that window, rather than to the centre.
 #   candidate: wiki is longer (119 chars)
 ["cursor:persistent_warps"]
-help = "When a window regains focus, the cursor returns to where it was in that window instead of its centre."
+help = "When a window regains focus, the cursor returns to where it was in that window instead of its center."
 
 # cursor:warp_on_change_workspace: Warp on workspace change [Warping] (int, default 0)
 #   upstream: Move the cursor to the last focused window after changing the workspace.
@@ -1943,7 +1943,7 @@ help = "How much the screen is magnified around the cursor, like a magnifying gl
 #   wiki:     whether the zoom should follow the cursor rigidly (cursor is always centered if it can be) or loosely
 #   candidate: wiki is longer (101 chars)
 ["cursor:zoom_rigid"]
-help = "Keeps the cursor centred in the zoomed view when it can, instead of letting it drift."
+help = "Keeps the cursor centerd in the zoomed view when it can, instead of letting it drift."
 
 # cursor:zoom_disable_aa: Disable zoom antialiasing [Zoom] (bool, default False)
 #   upstream: If enabled, when zooming, no antialiasing will be used
@@ -2122,7 +2122,7 @@ help = "Where the config error bar appears on the screen."
 #   wiki:     enables colors in the stdout logs.
 #   candidate: short (34 chars)
 ["debug:colored_stdout_logs"]
-help = "Colours the log lines printed to standard output."
+help = "Colors the log lines printed to standard output."
 
 # debug:log_damage: Log damage [Overlays and tracing] (bool, default False)
 #   upstream: enables logging the damage.
@@ -2193,7 +2193,7 @@ help = "Lets Hyprland discard the contents of unused FP16 buffers, which is fast
 #   wiki:     whenever only a single window is shown on a screen, add padding so that it conforms to the specified aspect ratio. A value like `4 3` on a 16:9 screen will make it a 4:3 window in the middle with padding to the sides.
 #   candidate: wiki is longer (217 chars)
 ["layout:single_window_aspect_ratio"]
-help = "Pads a lone tiled window to this width-to-height ratio, so 4 and 3 on a 16:9 screen give a centred 4:3 window. A height of 0 turns it off."
+help = "Pads a lone tiled window to this width-to-height ratio, so 4 and 3 on a 16:9 screen give a centerd 4:3 window. A height of 0 turns it off."
 
 # layout:single_window_aspect_ratio_tolerance: Aspect ratio tolerance [Single window] (float, default 0.1)
 #   upstream: Minimum distance for single_window_aspect_ratio to take effect.
@@ -2330,14 +2330,14 @@ help = "Places a new window just before or after the focused one, instead of at 
 #   the combo already names its values (labels)
 #   candidate: short (36 chars); wiki is longer (99 chars)
 ["master:orientation"]
-help = "Which side of the screen the master area takes. Centre puts it in the middle with the stack on both sides, once enough windows are open."
+help = "Which side of the screen the master area takes. Center puts it in the middle with the stack on both sides, once enough windows are open."
 
 # master:slave_count_for_center_master: Stack windows before centring master [Centred master] (int, default 2)
 #   upstream: when using orientation=center, make the master window centered only when at least this many slave windows are open.
 #   wiki:     when using orientation=center, make the master window centered only when at least this many slave windows are open. (Set 0 to always_center_master)
 #   candidate: wiki is longer (147 chars)
 ["master:slave_count_for_center_master"]
-help = "With a centred master, centres it only when at least this many other windows are open. 0 always centres it."
+help = "With a centerd master, centers it only when at least this many other windows are open. 0 always centers it."
 
 # master:center_master_fallback: Centre master fallback [Centred master] (string, default 'left')
 #   upstream: Set fallback for center master when slaves are less than slave_count_for_center_master
@@ -2345,13 +2345,13 @@ help = "With a centred master, centres it only when at least this many other win
 #   the combo already names its values (labels)
 #   candidate: wiki is longer (135 chars)
 ["master:center_master_fallback"]
-help = "Where the master goes when there are too few other windows to centre it."
+help = "Where the master goes when there are too few other windows to center it."
 
 # master:center_ignores_reserved: Centre ignores the reserved area [Centred master] (bool, default False)
 #   upstream: centers the master window on monitor ignoring reserved areas
 #   wiki:     (none)
 ["master:center_ignores_reserved"]
-help = "Centres the master window on the whole monitor, ignoring areas reserved by bars."
+help = "Centers the master window on the whole monitor, ignoring areas reserved by bars."
 
 # master:smart_resizing: Smart resizing [Mouse and focus] (bool, default True)
 #   upstream: if enabled, resizing direction will be determined by the mouse's position on the window.
@@ -2401,7 +2401,7 @@ help = "Default width of a new column, as a fraction of the screen from 0.1 to 1
 #   the combo already names its values (map)
 #   candidate: wiki is longer (95 chars)
 ["scrolling:focus_fit_method"]
-help = "How a focused column is brought into view: centred, or moved only as far as needed to fit."
+help = "How a focused column is brought into view: centerd, or moved only as far as needed to fit."
 
 # scrolling:follow_focus: Follow focus [Focus and wrapping] (bool, default True)
 #   upstream: when a window is focused, should the layout move to bring it into view automatically
@@ -2452,7 +2452,7 @@ help = "Swapping columns past the first or last wraps around to the other end."
 #   wiki:     allow wp-cm-v1 version 2
 #   candidate: short (24 chars)
 ["experimental:wp_cm_1_2"]
-help = "Offers apps a newer revision of the colour management protocol. Has no effect while Colour management is off."
+help = "Offers apps a newer revision of the color management protocol. Has no effect while Color management is off."
 
 
 # --- input-capture -----------------------------------------------------------------------------
