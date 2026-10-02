@@ -277,7 +277,7 @@ def test_a_transaction_without_a_journal_still_applies(tmp_path: Path) -> None:
     assert not paths.journal.exists()
 
 
-# --- a crash between the write and the commit ---------------------------------------------------
+# --- a crash between the write and the commit ----------------------------------------------
 
 
 async def crash_after_the_write(run: Awaitable[ApplyResult]) -> None:
