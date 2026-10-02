@@ -327,7 +327,7 @@ def _alive(pid: int) -> bool:
     """`pid` is a process still running: not gone, and not a zombie waiting to be reaped."""
     try:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except OSError:  # gone, or exiting as it is read (ProcessLookupError: F10, #148 review)
         return False
     return stat.rsplit(")", 1)[1].split()[0] not in {"Z", "X"}
 
