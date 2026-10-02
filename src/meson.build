@@ -146,6 +146,7 @@ package_sources = {
     'monitors.py',
     'plan.py',
     'rules.py',
+    'scripting.py',
     'tasks.py',
     'workspace_rules.py',
   ],

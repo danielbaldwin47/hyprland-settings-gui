@@ -121,6 +121,7 @@ from hyprtweaker.ui.pages.rules import (  # noqa: E402
     RulesPage,
     WindowRulesPage,
 )
+from hyprtweaker.ui.pages.scripting import ScriptingActions, ScriptingPage  # noqa: E402
 from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     ORPHAN_CATEGORY_TITLE,
     CategoryPlan,
@@ -295,6 +296,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._workspace_rules_page: WorkspaceRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
+        self._scripting_page: ScriptingPage | None = None
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -779,6 +781,11 @@ class MainWindow(Adw.ApplicationWindow):
         return tuple(self._declaration_pages.values())
 
     @property
+    def scripting_page(self) -> ScriptingPage | None:
+        """The Scripting Page, once built. The UI tier asserts against it."""
+        return self._scripting_page
+
+    @property
     def monitors_page(self) -> MonitorsPage | None:
         """The Displays Page, once built. The UI tier asserts against it."""
         return self._monitors_page
@@ -969,6 +976,15 @@ class MainWindow(Adw.ApplicationWindow):
             self._stack.add_named(_scrolled(page.page), page.section)
             self._register(page.section, page.title, len(page.entities))
             self._section_titles[page.section] = page.title
+
+        # The Scripting Page: a read-only inventory of the user's Lua (ADR-0018, #173).
+        self._scripting_page = ScriptingPage(
+            self._session, actions=ScriptingActions(open_file=self._launch_file)
+        )
+        scripting = self._scripting_page
+        self._stack.add_named(_scrolled(scripting.page), scripting.section)
+        self._section_titles[scripting.section] = scripting.title
+        self._register(scripting.section, scripting.title, scripting.hit_count)
 
         self._fill_sidebar()
         self._select_section(self._restored(selected))
@@ -1673,6 +1689,10 @@ class MainWindow(Adw.ApplicationWindow):
         """
         for page in self._pages:
             page.refresh()
+        # A foreign reload lands here, and Hyprland reloads when a `require`d file such as
+        # `user.lua` changes: the Scripting inventory re-reads with it.
+        if self._scripting_page is not None:
+            self._scripting_page.refresh()
 
         self.sync_banner()
         self._undo_action.set_enabled(self._session.can_undo)
@@ -1881,6 +1901,9 @@ class MainWindow(Adw.ApplicationWindow):
         path = self._session.file_for(problem)
         if path is None:
             return
+        self._launch_file(path)
+
+    def _launch_file(self, path: Path) -> None:
         Gtk.FileLauncher(file=Gio.File.new_for_path(str(path))).launch(self, None, None)
 
     # --- undo -------------------------------------------------------------------------------
@@ -2157,6 +2180,10 @@ class MainWindow(Adw.ApplicationWindow):
         if row is None:
             return
         section = row.get_name()
+        if self._scripting_page is not None and section == self._scripting_page.section:
+            # Showing the Page re-reads the files: "open in editor, save, come back" must
+            # not need a reload or a restart to show what was just written.
+            self._scripting_page.refresh()
         self._stack.set_visible_child_name(section)
         self._content_page.set_title(self._page_title(section))
         self._split.set_show_content(True)
