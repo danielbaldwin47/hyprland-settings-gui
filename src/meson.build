@@ -50,6 +50,7 @@ package_sources = {
     '__init__.py',
     'entries.py',
     'registry.py',
+    'wire.py',
   ],
   'hyprtweaker/engine/importer': [
     '__init__.py',

@@ -98,6 +98,7 @@ MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"
 REPORTS_DIR = "reports"
 BACKUPS_DIR = "backups"
+BRIDGE_BACKUPS_DIR = "bridge-backups"
 JOURNAL_NAME = "journal.jsonl"
 JOURNAL_PENDING_NAME = "journal-pending.json"
 SENTINEL_NAME = "migration-pending.json"
@@ -218,6 +219,17 @@ class ConfigPaths:
         directory that repo tracks.
         """
         return self.state_dir / BACKUPS_DIR
+
+    @property
+    def bridge_backups_dir(self) -> Path:
+        """Copies of a theming tool's files, one `<tool>-<timestamp>/` per wiring (#166).
+
+        Beside the Snapshots in the state dir (ADR-0005): what `wire` changed in another
+        tool's config is history the app owes the user a way back to, not config. Each holds
+        the originals by path and a `wire.json` saying what was written, so the way back
+        restores only a file that still holds exactly what the app wrote.
+        """
+        return self.state_dir / BRIDGE_BACKUPS_DIR
 
     @property
     def sentinel(self) -> Path:
