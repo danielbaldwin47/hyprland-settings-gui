@@ -912,6 +912,19 @@ class TestAnimationsAndCurves:
             "animation is kept"
         )
 
+    @pytest.mark.parametrize("line", ["windows, 1", "windows, 1,", "windows, 1, , ease"])
+    def test_an_enabled_animation_with_no_speed_is_left_to_the_default(
+        self, line: str, schema, tmp_path
+    ) -> None:
+        """Lua refuses an enabled animation without a speed ("missing required field
+        speed") and fails the whole Module, so the leaf keeps Hyprland's default (#205)."""
+        result = _map(f"animation = {line}\n", schema, tmp_path)
+        assert result.entities.animations == []
+        [item] = result.loss.of_class(LossClass.BREAKAGE)
+        assert item.message == (
+            "windows animation has no speed, so Hyprland's default animation is kept"
+        )
+
     def test_the_last_animation_for_a_leaf_wins(self, schema, tmp_path) -> None:
         result = _map(
             "animation = windows, 1, 4, ease\nanimation = windows, 1, 8, ease\n",
