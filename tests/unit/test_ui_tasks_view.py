@@ -229,13 +229,62 @@ def test_the_fallback_page_joins_the_system_category() -> None:
 def test_an_uncurated_hidden_section_gets_no_fallback_page_at_all() -> None:
     """`debug` is unhomed by design; a fallback Page for it would put "Crash Hyprland" one
     click from the default view, which ADR-0013 §5 forbids however the switch is set."""
-    sections = [
-        page.section
-        for category in plan_tasks_view(SCHEMA, MAPPING, show_advanced=True)
-        for page in category.option_pages
-    ]
+    for show_advanced in (True, False):
+        sections = [
+            page.section
+            for category in plan_tasks_view(SCHEMA, MAPPING, show_advanced=show_advanced)
+            for page in category.option_pages
+        ]
 
-    assert "tasks.new.debug" not in sections
+        assert "tasks.new.debug" not in sections
+
+
+def fallback_page(mapping: TasksMapping, section: str, *, show_advanced: bool) -> PagePlan:
+    return next(
+        page
+        for category in plan_tasks_view(SCHEMA, mapping, show_advanced=show_advanced)
+        for page in category.option_pages
+        if page.section == f"tasks.new.{section}"
+    )
+
+
+def test_an_uncurated_section_withholds_its_advanced_options_rather_than_dropping_them() -> (
+    None
+):
+    """#136: `cursor` has 20 default and 2 advanced options. With the switch off the page
+    shows the 20 and counts the 2, so the hint can say they exist; with it on, all 22 show."""
+    off = fallback_page(uncurated("cursor"), "cursor", show_advanced=False)
+    on = fallback_page(uncurated("cursor"), "cursor", show_advanced=True)
+
+    assert (off.option_count, off.withheld) == (20, 2)
+    assert (on.option_count, on.withheld) == (22, 0)
+
+
+def test_an_uncurated_all_advanced_section_keeps_a_page_that_counts_what_it_withholds() -> None:
+    """`opengl` is one advanced option. Skipping the page whole left no trace that it exists;
+    the page stays, empty of groups, and the count tells it to explain itself."""
+    off = fallback_page(uncurated("opengl"), "opengl", show_advanced=False)
+    on = fallback_page(uncurated("opengl"), "opengl", show_advanced=True)
+
+    assert (off.groups, off.withheld) == ((), 1)
+    assert (on.option_count, on.withheld) == (1, 0)
+
+
+def test_a_revealed_advanced_option_on_a_fallback_page_is_shown_not_withheld() -> None:
+    (option,) = SCHEMA.section("opengl")
+    page = next(
+        page
+        for category in plan_tasks_view(
+            SCHEMA,
+            uncurated("opengl"),
+            show_advanced=False,
+            revealed=frozenset({option.name}),
+        )
+        for page in category.option_pages
+        if page.section == "tasks.new.opengl"
+    )
+
+    assert (page.option_count, page.withheld) == (1, 0)
 
 
 # --- how a claim resolves ---------------------------------------------------------------------
