@@ -51,7 +51,8 @@ from ..importer.mapping import ImportResult, import_config
 from ..model import ConfigModel
 from ..model.values import lua_string
 from ..monitors_catalog import arrangement_mismatches
-from ..paths import ConfigPaths
+from ..paths import MONITOR_PROFILES_DIR, PRESETS_DIR, ConfigPaths
+from ..profiles import ACTIVE_NAME
 from ..schema import Schema
 from ..state.manifest import Manifest
 from ..tools import detached_environment, find_tool
@@ -852,6 +853,37 @@ class MigrationFlow:
         """
         return self._restore.name if self._restore is not None else BACKUP_NAME
 
+    @property
+    def app_data_note(self) -> str | None:
+        """What the preview says of the user's Presets and Monitor profiles, which carry
+        over into the imported config (R8), and of the active-profile pointer, which does
+        not; `None` with nothing of theirs in the App dir."""
+        presets = self._count(self.paths.presets_dir)
+        profiles = self._count(self.paths.monitor_profiles_dir)
+        if not presets and not profiles:
+            return None
+        kept = " and ".join(
+            f"{count} {noun}{'' if count == 1 else 's'}"
+            for count, noun in ((presets, "preset"), (profiles, "display profile"))
+            if count
+        )
+        said = [f"Kept from the app: {kept}."]
+        if (self.paths.monitor_profiles_dir / ACTIVE_NAME).is_file():
+            said.append(
+                "None of the profiles stays marked active, because the imported config "
+                "sets your displays."
+            )
+        said.append(
+            f"The app's previous folder is kept as ~/.config/hypr/{APP_DIR_BACKUP_NAME}."
+        )
+        return " ".join(said)
+
+    @staticmethod
+    def _count(directory: Path) -> int:
+        if not directory.is_dir():
+            return 0
+        return sum(1 for path in directory.glob("*.json") if path.name != ACTIVE_NAME)
+
     def _app_dir_backup_name(self) -> str | None:
         """The App dir the rescue moves back, or `None` when the switch displaces none."""
         if self._restore_app_dir is not None:
@@ -945,6 +977,16 @@ class MigrationFlow:
             stamp = self.now().strftime(backups.STAMP_FORMAT)
             target = app_dir.with_name(f"{APP_DIR_BACKUP_NAME}.{stamp}")
         os.replace(app_dir, target)
+        # What the user saved in the app is theirs, not the replaced config's (#148 fix
+        # review R8). Copied, so the moved-aside dir stays whole for Roll back.
+        for name in (PRESETS_DIR, MONITOR_PROFILES_DIR):
+            if (target / name).is_dir():
+                shutil.copytree(
+                    target / name,
+                    app_dir / name,
+                    symlinks=True,
+                    ignore=shutil.ignore_patterns(ACTIVE_NAME),
+                )
         for entry in bridges:
             output = self.paths.hypr_dir / entry.file
             kept = (

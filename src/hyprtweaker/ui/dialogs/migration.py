@@ -422,6 +422,8 @@ class MigrationDialog(Adw.Dialog):
             summary.add(_row("Report saved to", str(self._flow.report_path)))
         if is_omarchy_source(preview.detection.source):
             summary.add(_row(OMARCHY_ENDS, OMARCHY_ENDS_HELP))
+        if (note := self._flow.app_data_note) is not None:
+            summary.add(_row("Your presets and display profiles", note))
         column.append(summary)
 
         for group in _loss_groups(preview.loss, _MAX_ITEMS):

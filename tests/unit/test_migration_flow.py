@@ -1187,3 +1187,82 @@ class TestRollBackPutsEveryFileBack:
         assert "hyprtweaker.bak ~/.config/hypr/hyprtweaker" in flow.rescue_command
         assert "hyprland.lua.bak ~/.config/hypr/hyprland.lua" in flow.rescue_command
         assert preview.result.loss.rescue_line == flow.rescue_line
+
+
+def _listing(directory: Path) -> dict[str, str]:
+    return {
+        str(item.relative_to(directory)): hashlib.sha256(item.read_bytes()).hexdigest()
+        for item in sorted(directory.rglob("*"))
+        if item.is_file()
+    }
+
+
+class TestAnImportKeepsWhatTheUserSavedInTheApp:
+    """#148 fix review R8: an Import over an app config, then Keep, emptied the Presets and
+    Monitor profiles: the App dir moved aside whole. An Import replaces the config, not what
+    the user saved in the app. Presets and profiles carry over; the active-profile pointer
+    does not, since the imported config sets the displays. Roll back puts all of it back."""
+
+    def _app_user(self, paths: ConfigPaths, schema: Schema) -> Path:
+        source = _app_generated(paths, schema)
+        (paths.presets_dir / "nord" / "wall.png").parent.mkdir(parents=True)
+        (paths.presets_dir / "nord" / "wall.png").write_bytes(b"\x89PNG")
+        (paths.monitor_profiles_dir / "active.json").write_text('{"slug": "docked"}\n')
+        return source
+
+    def test_keep_carries_presets_and_profiles_but_not_the_active_pointer(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = self._app_user(paths, schema)
+        presets = _listing(paths.presets_dir)
+        profiles = _listing(paths.monitor_profiles_dir)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        flow.back_up()
+        run(flow.switch())
+        flow.keep()
+
+        assert _listing(paths.presets_dir) == presets
+        assert _listing(paths.monitor_profiles_dir) == {
+            name: digest for name, digest in profiles.items() if name != "active.json"
+        }
+        kept = paths.hypr_dir / "hyprtweaker.bak" / "monitor-profiles" / "active.json"
+        assert kept.read_text() == '{"slug": "docked"}\n'
+
+    def test_roll_back_puts_the_app_dir_back_as_it_was(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = self._app_user(paths, schema)
+        before = _listing(paths.app_dir)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        flow.back_up()
+        run(flow.switch())
+        flow.roll_back()
+
+        assert _listing(paths.app_dir) == before
+
+    def test_the_preview_says_what_carries_over_and_where_the_rest_is(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = self._app_user(paths, schema)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+
+        assert flow.app_data_note == (
+            "Kept from the app: 1 preset and 1 display profile. None of the profiles stays "
+            "marked active, because the imported config sets your displays. The app's "
+            "previous folder is kept as ~/.config/hypr/hyprtweaker.bak."
+        )
+
+    def test_nothing_is_said_without_an_app_dir(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        flow = flow_for(legacy, schema, FakeClient())
+        flow.detect()
+        flow.build_preview()
+
+        assert flow.app_data_note is None
