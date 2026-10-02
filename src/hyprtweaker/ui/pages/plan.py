@@ -7,12 +7,14 @@ cannot: it is unit-testable on a machine with no GTK, and "did an Option go miss
 question about a tuple rather than about a widget tree.
 
 **Grouping is data, not code** (prototype #8's finding, and the reason it is a finding:
-`input` renders 60 flat rows without one). The Overlay's curated `group` wins wherever it
-exists. Nothing carries one yet -- that curation is #82 -- so until then a Group is derived
-from the Option's own path: `decoration:blur:size` sits under "Blur", `decoration:rounding`
-sits in the Section's untitled lead Group. The stub tree gives sub-prefixes for free, which
-is worth having; what it cannot give is the cross-cutting Groups a person expects
-("Scrolling" spans `input:*` and `input:touchpad:*`), and that is exactly what #82 adds.
+`input` renders 60 flat rows without one). A Section declares its curated Groups in the
+Overlay, in display order, and each Option names its own in `group` (#157): that is how
+"Scrolling" spans `input:*` and `input:touchpad:*`, which no stub-tree prefix can say. An
+Option no curation names -- a plugin's, or one a release added before its release check --
+falls back to a Group derived from its own path: `decoration:blur:size` under "Blur",
+`decoration:rounding` in the Section's untitled lead Group, or under "Other settings" on a
+Section whose curated Groups are titled. `plan_groups` is the one place that order lives,
+and both Views call it.
 
 Nothing here imports `gi`.
 """
@@ -20,6 +22,7 @@ Nothing here imports `gi`.
 from __future__ import annotations
 
 import enum
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
 from hyprtweaker.engine.schema import (
@@ -29,6 +32,7 @@ from hyprtweaker.engine.schema import (
     Visibility,
     humanise,
 )
+from hyprtweaker.engine.schema.resolve import version_key
 
 
 class View(enum.StrEnum):
@@ -199,6 +203,53 @@ shipped schema described, inferred from that description alone (ADR-0012 §Pinni
 why the controls are plain, and that nothing about them is half-working."""
 
 
+OTHER_SETTINGS_TITLE = "Other settings"
+"""The heading for an uncurated Option with no sub-path on a Section whose Groups are curated.
+
+Only an Option a release added before its release check lands here (or a plugin's, whose
+Section no curation reaches): an untitled Group after titled ones reads as a rendering
+fault rather than as a heading."""
+
+
+def plan_groups(
+    schema: Schema, section: str, options: Iterable[ResolvedOption]
+) -> tuple[GroupPlan, ...]:
+    """The Groups `options`, all of one Section, form on a Page, in display order.
+
+    The order, in both Views: the Section's curated Groups in the order the Overlay declares
+    them, each with its curated description; then the Groups no curation names, derived from
+    the Options' paths, in the order their first Option is declared. Within a Group, curated
+    `group_order` leads and declaration order follows. Options in, Groups out, one Group per
+    Option: nothing is dropped and nothing is repeated, whatever the curation says.
+
+    `options` are the ones the caller shows here; a caller that closes the Page with
+    `New in <version>` Groups leaves those Options out and appends the Groups after these.
+    """
+    curated = schema.section_groups(section)
+    rank = {group.title: index for index, group in enumerate(curated)}
+    descriptions = {group.title: group.description or "" for group in curated}
+
+    grouped: dict[str, list[ResolvedOption]] = {}
+    for option in sorted(options, key=lambda option: option.order):
+        title = group_title(option) or (OTHER_SETTINGS_TITLE if curated else "")
+        grouped.setdefault(title, []).append(option)
+
+    def position(item: tuple[str, list[ResolvedOption]]) -> tuple[int, int]:
+        title, members = item
+        if title in rank:
+            return (0, rank[title])
+        return (1, members[0].order)
+
+    return tuple(
+        GroupPlan(
+            title=title,
+            options=tuple(sorted(members, key=_within_group)),
+            description=descriptions.get(title, ""),
+        )
+        for title, members in sorted(grouped.items(), key=position)
+    )
+
+
 def plan_section(
     schema: Schema,
     section: str,
@@ -206,37 +257,34 @@ def plan_section(
 ) -> PagePlan:
     """Plan one Section's Page.
 
-    Ordering is Hyprland's own declaration order throughout -- Groups appear in the order
-    their first Option is declared, and Options within a Group likewise. Upstream's grouping
-    intent comes free with that order and no curation should silently rewrite it; a curated
-    `order` is a position *within* a Group, which is why it only ever breaks the tie.
+    Groups appear in `plan_groups` order: the Section's curated Groups as the Overlay
+    declares them, then the Groups derived from uncurated Options' paths in the order their
+    first Option is declared. Curation shapes a Page and never reorders Sections: the
+    Section sequence is Hyprland's declaration order (`Schema.section_names`).
 
     Options a newer Hyprland added beyond the shipped schema close the Page in their own
-    `New in <version>` Group rather than joining a sub-path Group, so they stand out as
-    flagged (ADR-0012 §Pinning).
+    `New in <version>` Group, oldest version first, rather than joining a curated or
+    sub-path Group, so they stand out as flagged (ADR-0012 §Pinning).
     """
     options = schema.section(section)
     visible = [option for option in options if is_visible(option, disclosure)]
 
-    grouped: dict[str, list[ResolvedOption]] = {}
+    shown: list[ResolvedOption] = []
     newer: dict[str, list[ResolvedOption]] = {}
     for option in visible:
         flag = option.supplement
         if flag is not None and flag.kind is SupplementKind.NEWER_VERSION:
             newer.setdefault(flag.version, []).append(option)
         else:
-            grouped.setdefault(group_title(option), []).append(option)
+            shown.append(option)
 
-    groups = tuple(
-        GroupPlan(title=title, options=tuple(sorted(members, key=_within_group)))
-        for title, members in sorted(grouped.items(), key=lambda item: item[1][0].order)
-    ) + tuple(
+    groups = plan_groups(schema, section, shown) + tuple(
         GroupPlan(
             title=new_in_group_title(version),
             options=tuple(members),
             description=SUPPLEMENTED_GROUP_DESCRIPTION,
         )
-        for version, members in newer.items()
+        for version, members in sorted(newer.items(), key=lambda item: version_key(item[0]))
     )
 
     return PagePlan(

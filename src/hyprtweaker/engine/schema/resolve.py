@@ -27,6 +27,7 @@ from .types import (
     GeneratedOption,
     KnownValues,
     OverlayEntry,
+    OverlayGroup,
     Range,
     ResolvedOption,
     SectionOverlay,
@@ -310,6 +311,11 @@ class Schema:
         if overlay is not None and overlay.title:
             return overlay.title
         return derive_section_title(name)
+
+    def section_groups(self, name: str) -> tuple[OverlayGroup, ...]:
+        """The Section's curated Groups in display order; empty for an uncurated one."""
+        overlay = self.sections.get(name)
+        return overlay.groups if overlay is not None else ()
 
 
 def schema_dir() -> Path:

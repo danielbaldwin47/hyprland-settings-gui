@@ -8,10 +8,12 @@ GTK still assembles what this planned.
 
 from __future__ import annotations
 
-import pytest
-from _support import SAMPLE_VERSION, SCHEMA_DIR
+from dataclasses import replace
 
-from hyprtweaker.engine.schema import Visibility, load_schema, supplement
+import pytest
+from _support import SAMPLE_VERSION, SCHEMA_DIR, curated
+
+from hyprtweaker.engine.schema import ResolvedOption, Visibility, load_schema, supplement
 from hyprtweaker.ui.pages.plan import (
     Disclosure,
     PagePlan,
@@ -125,8 +127,13 @@ def test_a_page_is_titled_from_the_overlay_not_from_the_config_key() -> None:
     assert plan_section(SCHEMA, "input-capture").title == "Input capture"
 
 
-def test_sub_prefixed_options_group_under_their_own_heading() -> None:
-    plan = plan_section(SCHEMA, "decoration")
+UNCURATED_DECORATION = curated("decoration", {}, {})
+"""`decoration` as a Section with no curated Groups: what a Section looks like before its
+curation, and what a plugin's Options get."""
+
+
+def test_an_uncurated_sections_sub_prefixed_options_group_under_their_own_heading() -> None:
+    plan = plan_section(UNCURATED_DECORATION, "decoration")
     headings = [group.title for group in plan.groups]
 
     assert headings[0] == "", "the Section's own options lead, in an untitled group"
@@ -138,12 +145,15 @@ def test_sub_prefixed_options_group_under_their_own_heading() -> None:
 
 
 def test_a_col_prefix_reads_as_a_word_rather_than_as_a_config_key() -> None:
-    assert group_title(SCHEMA["general:col.active_border"]) == "Colors"
-    assert group_title(SCHEMA["group:groupbar:col.active"]) == "Groupbar · Colors"
+    def uncurated(name: str) -> ResolvedOption:
+        return replace(SCHEMA[name], group=None, group_order=None)
+
+    assert group_title(uncurated("general:col.active_border")) == "Colors"
+    assert group_title(uncurated("group:groupbar:col.active")) == "Groupbar · Colors"
 
 
-def test_groups_and_rows_follow_hyprlands_own_declaration_order() -> None:
-    plan = plan_section(SCHEMA, "decoration")
+def test_an_uncurated_sections_groups_and_rows_follow_hyprlands_declaration_order() -> None:
+    plan = plan_section(UNCURATED_DECORATION, "decoration")
 
     firsts = [group.options[0].order for group in plan.groups]
     assert firsts == sorted(firsts)
@@ -151,6 +161,90 @@ def test_groups_and_rows_follow_hyprlands_own_declaration_order() -> None:
     for group in plan.groups:
         orders = [option.order for option in group.options]
         assert orders == sorted(orders)
+
+
+# --- curated Groups (#157) -------------------------------------------------------------------
+
+
+SNAPPING_FIRST = curated(
+    "general",
+    {"Snapping": None, "Borders": "How thick borders are and what colour."},
+    {
+        "Snapping": ["general:snap:respect_gaps", "general:snap:enabled"],
+        "Borders": ["general:border_size"],
+    },
+)
+
+
+def test_curated_groups_lead_in_the_order_their_section_declares_them() -> None:
+    """Then the Groups no curation names, in the order their first Option is declared."""
+    plan = plan_section(SNAPPING_FIRST, "general")
+
+    assert [group.title for group in plan.groups] == [
+        "Snapping",
+        "Borders",
+        "Other settings",
+        "Colors",
+        "Snap",
+    ]
+
+
+def test_a_curated_group_lists_its_options_in_curated_order() -> None:
+    plan = plan_section(SNAPPING_FIRST, "general")
+
+    assert [option.name for option in plan.groups[0].options] == [
+        "general:snap:respect_gaps",
+        "general:snap:enabled",
+    ]
+
+
+def test_a_curated_groups_description_reaches_the_page() -> None:
+    plan = plan_section(SNAPPING_FIRST, "general")
+
+    assert [(group.title, group.description) for group in plan.groups[:3]] == [
+        ("Snapping", ""),
+        ("Borders", "How thick borders are and what colour."),
+        ("Other settings", ""),
+    ]
+
+
+def test_an_uncurated_option_of_a_curated_section_never_sits_in_an_untitled_group() -> None:
+    """An untitled Group after titled ones reads as a rendering fault, not a heading."""
+    plan = plan_section(SNAPPING_FIRST, "general")
+
+    other = next(group for group in plan.groups if group.title == "Other settings")
+    assert [option.name for option in other.options][:3] == [
+        "general:gaps_in",
+        "general:gaps_out",
+        "general:float_gaps",
+    ]
+    assert "" not in [group.title for group in plan.groups]
+
+
+def test_a_section_with_no_curated_groups_keeps_its_untitled_lead_group() -> None:
+    plan = plan_section(UNCURATED_DECORATION, "decoration")
+
+    assert plan.groups[0].title == ""
+    assert "Other settings" not in [group.title for group in plan.groups]
+
+
+def test_a_newer_hyprlands_options_follow_the_curated_and_uncurated_groups() -> None:
+    newer = supplement(
+        SNAPPING_FIRST,
+        ({"name": "general:new_gap", "description": "x", "default": 1},),
+        version="0.58.0",
+    )
+
+    titles = [group.title for group in plan_section(newer, "general").groups]
+
+    assert titles == [
+        "Snapping",
+        "Borders",
+        "Other settings",
+        "Colors",
+        "Snap",
+        "New in 0.58.0",
+    ]
 
 
 def test_option_count_is_what_the_page_actually_shows() -> None:

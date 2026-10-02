@@ -266,8 +266,17 @@ class OverlayEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class OverlayGroup:
+    """One curated Group a Section declares: the heading its Options name in `group`."""
+
+    title: str
+    description: str | None = None
+    """One sentence under the heading, when the title alone does not say what is in it."""
+
+
+@dataclass(frozen=True, slots=True)
 class SectionOverlay:
-    """Per-Section curation: a title, a wiki anchor, and a visibility floor.
+    """Per-Section curation: a title, a wiki anchor, a visibility floor and its Groups.
 
     The floor is how `debug`/`quirks`/`experimental`/`input-capture` become hidden without
     27 repeated per-option entries -- and it stays data, so a new dangerous section is an
@@ -277,6 +286,9 @@ class SectionOverlay:
     title: str | None = None
     help_url: str | None = None
     visibility: Visibility | None = None
+    groups: tuple[OverlayGroup, ...] = ()
+    """The Section's curated Groups in display order. Each Option's `group` names one of
+    them; the loader rejects a name its Section does not declare (#157)."""
 
 
 class SupplementKind(enum.StrEnum):
