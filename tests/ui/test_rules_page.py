@@ -138,7 +138,11 @@ def test_the_filter_narrows_without_renumbering(tmp_path: Path) -> None:
     assert len(page.rows) == 2
 
 
-def test_a_read_only_session_builds_rows_without_edit_controls(tmp_path: Path) -> None:
+def test_a_read_only_session_greys_out_the_row_controls(tmp_path: Path) -> None:
+    """Read-only is temporary (the Banner says why), so the controls show, insensitive,
+    as on the Workspaces page; only the move routes stay unwired (#159, #113)."""
+    from gi.repository import Gtk
+
     session, window = build_window(tmp_path)
 
     session.model.entities.window_rules.append(
@@ -147,9 +151,18 @@ def test_a_read_only_session_builds_rows_without_edit_controls(tmp_path: Path) -
     page = window.window_rules_page
     page.refresh()
 
-    # The session is offline, so the switch is insensitive and adds are refused.
-    assert page.rows[0].enabled_switch is not None
-    assert not page.rows[0].enabled_switch.get_sensitive()
+    # The session is offline: every control is there and none answers.
+    (row,) = page.rows
+    sensitive = [
+        widget.get_sensitive()
+        for widget in (row.enabled_switch, row.edit_button, row.remove_button)
+    ]
+    assert sensitive == [False, False, False]
+    assert not [
+        c
+        for c in row.widget.observe_controllers()
+        if isinstance(c, Gtk.DropTarget | Gtk.ShortcutController)
+    ]
     assert not session.add_rule("window", window_rule(match={"class": "x"}))
 
 

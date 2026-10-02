@@ -166,19 +166,28 @@ class RuleRow:
         self.enabled_switch: Gtk.Switch = switch
         self.widget.add_suffix(switch)
 
+        # Shown but insensitive on a read-only session, like the switch and the Workspaces
+        # page: the Banner says why, and the row still says what could be done once it is
+        # live. Only the move routes (drag, Alt+Up/Down) stay unwired.
+        self.edit_button = Gtk.Button(
+            icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER
+        )
+        self.edit_button.add_css_class("flat")
+        self.edit_button.set_tooltip_text("Edit this rule")
+        self.edit_button.set_sensitive(editable)
+        self.edit_button.connect("clicked", lambda _button: actions.edit(index))
+        self.widget.add_suffix(self.edit_button)
+
+        self.remove_button = Gtk.Button(
+            icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER
+        )
+        self.remove_button.add_css_class("flat")
+        self.remove_button.set_tooltip_text("Remove this rule")
+        self.remove_button.set_sensitive(editable)
+        self.remove_button.connect("clicked", lambda _button: actions.remove(index))
+        self.widget.add_suffix(self.remove_button)
+
         if editable:
-            edit = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER)
-            edit.add_css_class("flat")
-            edit.set_tooltip_text("Edit this rule")
-            edit.connect("clicked", lambda _button: actions.edit(index))
-            self.widget.add_suffix(edit)
-
-            remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
-            remove.add_css_class("flat")
-            remove.set_tooltip_text("Remove this rule")
-            remove.connect("clicked", lambda _button: actions.remove(index))
-            self.widget.add_suffix(remove)
-
             self._wire_drag(handle, actions)
             self._wire_keys(actions)
 

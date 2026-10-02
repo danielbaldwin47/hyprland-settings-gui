@@ -316,6 +316,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._workspace_rules_page: WorkspaceRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
+        self._shown_entities: dict[str, tuple[Any, ...]] = {}
+        """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
+        self._shown_live = False
+        """Whether the Entity Pages last drew their rows editable."""
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -1001,6 +1005,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._register(page.section, page.title, len(page.entities))
             self._section_titles[page.section] = page.title
 
+        self._shown_entities = self._entity_lists()
+        self._shown_live = bool(self._session.live)
         self._fill_sidebar()
         self._select_section(self._restored(selected))
         self.sync()
@@ -1202,9 +1208,7 @@ class MainWindow(Adw.ApplicationWindow):
         ).present(self)
 
     def _refresh_binds(self) -> None:
-        if self._binds_page is not None:
-            self._binds_page.refresh()
-        self.sync()
+        self._refresh_entity_pages(KEYBIND_KINDS)
 
     # --- rules ---------------------------------------------------------------------------
 
@@ -1282,10 +1286,7 @@ class MainWindow(Adw.ApplicationWindow):
                 page.reveal(to)
 
     def _refresh_rules(self, kind: str) -> None:
-        page = self._rules_page(kind)
-        if page is not None:
-            page.refresh()
-        self.sync()
+        self._refresh_entity_pages(frozenset({f"{kind}_rules"}))
 
     # --- workspace rules (#159) ---------------------------------------------------------
 
@@ -1337,9 +1338,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._workspace_rules_page.reveal(selector)
 
     def _refresh_workspace_rules(self) -> None:
-        if self._workspace_rules_page is not None:
-            self._workspace_rules_page.refresh()
-        self.sync()
+        self._refresh_entity_pages(frozenset({"workspace_rules"}))
 
     # --- declarative entities (#70) -------------------------------------------------------
 
@@ -1435,19 +1434,8 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _refresh_declarations(self, kind: str) -> None:
-        page = self._declaration_pages.get(kind)
-        if page is not None:
-            page.refresh()
-        if kind == "curves":
-            animations = self._declaration_pages.get("animations")
-            if animations is not None:
-                animations.refresh()
-        if kind == "devices":
-            # A per-device override badges the Options it shadows, so the Option Pages are
-            # now out of date about themselves.
-            for page_ in self._pages:
-                page_.refresh()
-        self.sync()
+        # A per-device override badges the Options it shadows: `sync` refreshes those.
+        self._refresh_entity_pages(frozenset({kind}))
 
     # --- monitors -------------------------------------------------------------------------
 
@@ -1699,12 +1687,7 @@ class MainWindow(Adw.ApplicationWindow):
         and `set_connected` rebuilds on either, so refreshing here first would pay for
         every edit twice.
         """
-        if self._monitors_page is None:
-            return
-        # The page is looked up when the answer lands: a rebuild in between replaces it and
-        # releases the old one.
-        self._session.fetch_monitors(self._set_connected)
-        self.sync()
+        self._refresh_entity_pages(frozenset({"monitors"}))
 
     def _set_connected(self, monitors: tuple[Mapping[str, Any], ...] | None) -> None:
         if self._monitors_page is not None:
@@ -1721,6 +1704,7 @@ class MainWindow(Adw.ApplicationWindow):
         """
         for page in self._pages:
             page.refresh()
+        self._draw_entity_pages(self._moved_entities())
 
         self.sync_banner()
         self._sync_undo_action()
@@ -2000,10 +1984,6 @@ class MainWindow(Adw.ApplicationWindow):
             # already moved the model and the Rows should not wait for the compositor to
             # confirm what the app is about to write.
             self.sync()
-            if isinstance(step, EntityStep):
-                # `sync` refreshes the Option Pages only; the lists just put back are shown
-                # by Entity Pages, which otherwise go on showing the undone edit.
-                self._refresh_entity_pages(step.kinds)
         elif offered and not self._session.undo_queued:
             # An entity step whose list changed since -- a hand edit was adopted. The session
             # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead. A
@@ -2017,18 +1997,80 @@ class MainWindow(Adw.ApplicationWindow):
         self._undo_action.set_enabled(self._session.can_undo or revertible)
 
     def _refresh_entity_pages(self, kinds: frozenset[str]) -> None:
-        """Re-render the Pages that show the Entity lists `kinds`."""
-        if kinds & KEYBIND_KINDS:
-            self._refresh_binds()
+        """Re-render the Pages that show the Entity lists `kinds`, then `sync` the rest.
+
+        For an edit the window made itself: those Pages are drawn even when their list did
+        not move (a monitor profile is not an Entity list, and its Page shows it).
+        """
+        self._draw_entity_pages(kinds)
+        self.sync()
+
+    def _moved_entities(self) -> frozenset[str]:
+        """The Entity lists that differ from what their Pages last drew: every one when the
+        session went live or read-only since, since each row's controls follow that."""
+        lists = self._entity_lists()
+        if bool(self._session.live) != self._shown_live:
+            return frozenset(lists)
+        return frozenset(
+            kind for kind, items in lists.items() if self._shown_entities.get(kind) != items
+        )
+
+    def _draw_entity_pages(self, kinds: frozenset[str]) -> None:
+        """Rebuild the Pages showing `kinds` from the model, and every sidebar count.
+
+        `sync` calls this with the lists that moved behind the window's back -- a foreign
+        reload adopting a hand edit, the startup load, an edit's cascade into another list
+        -- because rows are index-addressed: a stale row's Remove lands on another entity.
+        """
+        if not kinds:
+            return
+        if "curves" in kinds:
+            # The animations that named a curve may now carry a dangling reference, so their
+            # Page has to be rebuilt too -- the finding lives on a row nobody touched.
+            kinds |= {"animations"}
+        if kinds & KEYBIND_KINDS and self._binds_page is not None:
+            self._binds_page.refresh()
         for kind in ("window", "layer"):
-            if f"{kind}_rules" in kinds:
-                self._refresh_rules(kind)
-        if "workspace_rules" in kinds:
-            self._refresh_workspace_rules()
-        if "monitors" in kinds:
-            self._refresh_monitors()
+            rules_page = self._rules_page(kind)
+            if f"{kind}_rules" in kinds and rules_page is not None:
+                rules_page.refresh()
+        if "workspace_rules" in kinds and self._workspace_rules_page is not None:
+            self._workspace_rules_page.refresh()
+        if "monitors" in kinds and self._monitors_page is not None:
+            # The answer rebuilds the Page (`_refresh_monitors`).
+            self._session.fetch_monitors(self._set_connected)
         for kind in kinds & self._declaration_pages.keys():
-            self._refresh_declarations(kind)
+            self._declaration_pages[kind].refresh()
+
+        lists = self._entity_lists()
+        self._shown_entities.update((kind, lists[kind]) for kind in kinds if kind in lists)
+        self._shown_live = bool(self._session.live)
+        self._sync_entity_counts()
+
+    def _entity_lists(self) -> dict[str, tuple[Any, ...]]:
+        return {kind: tuple(items) for kind, items in self._session.model.entities.kinds()}
+
+    def _sync_entity_counts(self) -> None:
+        """Make each Entity Page's sidebar count say how many entities it lists now."""
+        counts: dict[str, int] = {}
+        if self._binds_page is not None:
+            counts[self._binds_page.section] = len(self._binds_page.binds)
+        for page in (self._window_rules_page, self._layer_rules_page):
+            if page is not None:
+                counts[page.section] = len(page.rules)
+        if self._workspace_rules_page is not None:
+            counts[self._workspace_rules_page.section] = len(self._workspace_rules_page.rules)
+        if self._monitors_page is not None:
+            counts[MonitorsPage.section] = len(self._monitors_page.rules)
+        for declarations in self._declaration_pages.values():
+            counts[declarations.section] = len(declarations.entities)
+        index = 0
+        while (row := self._sidebar.get_row_at_index(index)) is not None:
+            index += 1
+            count = counts.get(row.get_name())
+            badge = row.get_child().get_last_child() if count is not None else None
+            if isinstance(badge, Gtk.Label):
+                badge.set_label(str(count))
 
     def _on_undo(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         self._undo()

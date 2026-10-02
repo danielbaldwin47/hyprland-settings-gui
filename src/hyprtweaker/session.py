@@ -793,7 +793,7 @@ class Session:
     ) -> bool:
         """Change the Bind list and write it, returning whether the edit was accepted.
 
-        `mutate` is handed the live list because for Binds position *is* identity
+        `mutate` is handed the whole list because for Binds position *is* identity
         (ADR-0007): adding is an append at a chosen index, reordering is a move, and there
         is no key to address a bind by. Duplicates are legal, so nothing here de-duplicates.
 
@@ -801,19 +801,30 @@ class Session:
         model holding binds that were never written would show them in the list, survive a
         re-read, and get written later without the user asking again.
 
+        Also `False`, with nothing written, when the edit leaves an enabled Bind whose
+        Trigger cannot load (`trigger_load_problem`) that the list before did not hold:
+        Lua would fail the whole Module (ADR-0007). `mutate` runs on a copy so a refused
+        edit never touches the model. Disabling is never refused, and one already there is
+        carried along.
+
         On the undo stack as one Entity step titled `title` (`_commit_entity_edit`).
         """
-        return self._commit_entity_edit(
-            "binds", lambda: mutate(self._model.entities.binds), title=title
-        )
+        binds = self._model.entities.binds
+        edited = list(binds)
+        mutate(edited)
+        if any(
+            bind.enabled and bind not in binds and trigger_load_problem(bind.keys) is not None
+            for bind in edited
+        ):
+            return False
+
+        def store() -> None:
+            binds[:] = edited
+
+        return self._commit_entity_edit("binds", store, title=title)
 
     def add_bind(self, bind: Bind) -> bool:
-        """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes.
-
-        Refused when the Bind is enabled and its Trigger cannot load (`trigger_load_problem`).
-        """
-        if bind.enabled and trigger_load_problem(bind.keys) is not None:
-            return False
+        """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes."""
         return self.edit_binds(
             lambda binds: binds.append(bind), title=entity_title("binds", "added")
         )
@@ -823,10 +834,7 @@ class Session:
 
         In place rather than remove-and-append: position *is* identity, so a bind that
         jumped to the end of the list would change which of two duplicates fires first.
-        Refused when the Bind is enabled and its Trigger cannot load (`trigger_load_problem`).
         """
-        if bind.enabled and trigger_load_problem(bind.keys) is not None:
-            return False
 
         def swap(binds: list[Bind]) -> None:
             if 0 <= index < len(binds):
@@ -848,15 +856,10 @@ class Session:
 
         The conflict surface's "disable it" (ADR-0007, #66). In place because the point of
         `enabled` over deletion is exactly that nothing moves: every other bind keeps its
-        position, and re-enabling restores the world as it was.
-
-        Enabling is refused when the Bind's Trigger cannot load (`trigger_load_problem`);
-        disabling never is, so the conflict surface's "disable it" always works.
+        position, and re-enabling restores the world as it was. Enabling a Bind whose Trigger
+        cannot load is refused (`edit_binds`); disabling never is, so the conflict surface's
+        "disable it" always works.
         """
-        binds = self._model.entities.binds
-        target = binds[index] if 0 <= index < len(binds) else None
-        if enabled and target is not None and trigger_load_problem(target.keys) is not None:
-            return False
 
         def flip(binds: list[Bind]) -> None:
             if 0 <= index < len(binds):
