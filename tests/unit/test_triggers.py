@@ -23,6 +23,7 @@ from hyprtweaker.engine.triggers import (
     format_trigger,
     normalise_keysym,
     parse_trigger,
+    switch_trigger,
     trigger_load_problem,
     validate_trigger,
     wheel_token,
@@ -497,3 +498,41 @@ def test_captured_triggers_validate_clean() -> None:
     assert trigger is not None
     assert validate_trigger(str(trigger)) is None
     assert str(trigger) == "SHIFT + SUPER + Q"
+
+
+# --- picking a switch (#107) ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("when", "name", "expected"),
+    [
+        ("on", "Lid Switch", "switch:on:Lid Switch"),
+        ("off", "Lid Switch", "switch:off:Lid Switch"),
+        ("", "Lid Switch", "switch:Lid Switch"),
+        # Exact: case and inner spaces are the device's, never normalised.
+        ("on", "Tablet  Mode switch", "switch:on:Tablet  Mode switch"),
+    ],
+)
+def test_switch_trigger_spells_the_name_exactly(when: str, name: str, expected: str) -> None:
+    assert switch_trigger(name, when) == expected
+    assert trigger_load_problem(expected) is None
+
+
+@pytest.mark.parametrize("name", ["Foo + Bar", "Foo+Bar", "Foo & Bar"])
+def test_a_switch_name_holding_a_key_separator_is_refused_with_its_reason(name: str) -> None:
+    """`+` and `&` separate keys in a trigger, so the app cannot write such a name back as
+    the one switch it is: the bind would be read as two keys."""
+    problem = switch_trigger(name, "on")
+    assert isinstance(problem, TriggerProblem) and problem.blocking
+    assert name in problem.message
+
+
+def test_a_blank_switch_name_is_refused() -> None:
+    problem = switch_trigger("  ", "on")
+    assert isinstance(problem, TriggerProblem) and problem.blocking
+
+
+def test_a_switch_trigger_round_trips_through_parse_and_str() -> None:
+    assert (
+        str(parse_trigger(str(switch_trigger("Lid Switch", "off")))) == "switch:off:Lid Switch"
+    )
