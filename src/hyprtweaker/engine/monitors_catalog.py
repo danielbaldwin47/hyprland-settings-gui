@@ -23,7 +23,6 @@ from .model.entities import MonitorRule
 DISPLAY_BREAKING_FIELDS: frozenset[str] = frozenset(
     {
         "mode",
-        "modeline",
         "position",
         "scale",
         "transform",
@@ -36,8 +35,10 @@ DISPLAY_BREAKING_FIELDS: frozenset[str] = frozenset(
 """Monitor rule fields whose misapplication can black-screen the session (ADR-0008).
 
 Edits to these batch and apply behind the Confirm-or-revert countdown; everything else
-(vrr, reserved, sdr brightness/saturation) stays instant per ADR-0003. `modeline` rides
-along with `mode`: a wrong custom modeline is the most breaking value of all.
+(vrr, reserved, sdr brightness/saturation) stays instant per ADR-0003. A custom modeline
+is not a field of its own: it is a `mode` value (`mode = "modeline ..."`, Hyprland has no
+`modeline` key), so it rides the breaking lane as `mode` -- a wrong custom modeline is the
+most breaking value of all.
 """
 
 CATCH_ALL_OUTPUT = ""
@@ -57,6 +58,37 @@ TRANSFORM_NAMES: tuple[str, ...] = (
 
 SPECIAL_MODES: tuple[str, ...] = ("preferred", "highres", "highrr", "maxwidth")
 """The mode words Hyprland accepts besides a literal `WxH@Hz` (ADR-0008)."""
+
+MODELINE_PREFIX = "modeline "
+"""How a `mode` value spells a custom modeline: `"modeline <clock> <h...> <v...> [flags]"`."""
+
+CM_PRESETS: tuple[tuple[str, str], ...] = (
+    ("auto", "Automatic"),
+    ("srgb", "sRGB"),
+    ("dcip3", "DCI-P3"),
+    ("dp3", "Display P3"),
+    ("adobe", "Adobe RGB"),
+    ("wide", "Wide gamut (BT.2020)"),
+    ("edid", "From the display (EDID)"),
+    ("hdr", "HDR"),
+    ("hdredid", "HDR with the display's primaries"),
+)
+"""The `cm` presets as (value, label). The values are the nine `Hyprland --verify-config`
+0.56.2 accepts; any other spelling is "error applying field 'cm'" (checked during #193)."""
+
+SDR_EOTF_NAMES: tuple[tuple[str, str], ...] = (
+    ("default", "Follow the global setting"),
+    ("auto", "Automatic"),
+    ("srgb", "sRGB"),
+    ("gamma22", "Gamma 2.2"),
+    ("gamma22force", "Gamma 2.2, forced"),
+)
+"""The `sdr_eotf` transfer functions as (name, label): `NTransferFunction`'s five, by name.
+Lua takes names only; the numeric codes were the legacy `monitorv2` spelling."""
+
+LEGACY_SDR_EOTF_CODES: dict[str, str] = {"0": "default", "1": "srgb", "2": "gamma22"}
+"""The numeric `sdr_eotf` codes the legacy block accepted, and the transfer-function names
+they most likely meant. The Importer converts them and reports the guess."""
 
 _MODE = re.compile(r"^\s*(\d+)x(\d+)(?:@([\d.]+))?(?:Hz)?\s*$", re.IGNORECASE)
 _POSITION = re.compile(r"^\s*(-?\d+)x(-?\d+)\s*$")
@@ -119,6 +151,32 @@ def format_mode(width: int, height: int, refresh: float | None = None) -> str:
         return f"{width}x{height}"
     trimmed = f"{refresh:.2f}".rstrip("0").rstrip(".")
     return f"{width}x{height}@{trimmed}"
+
+
+def mode_sizes(available: Iterable[str]) -> list[tuple[int, int]]:
+    """The distinct sizes in an `availableModes` list, in the order the display gives them."""
+    sizes: list[tuple[int, int]] = []
+    for mode in available:
+        parsed = parse_mode(mode)
+        if parsed is not None and parsed[:2] not in sizes:
+            sizes.append(parsed[:2])
+    return sizes
+
+
+def mode_rates(available: Iterable[str], size: tuple[int, int]) -> list[float]:
+    """The refresh rates `availableModes` offers at `size`, highest first."""
+    rates = {
+        parsed[2]
+        for parsed in (parse_mode(mode) for mode in available)
+        if parsed is not None and parsed[:2] == size and parsed[2] is not None
+    }
+    return sorted(rates, reverse=True)
+
+
+def sdr_eotf_name(value: Any) -> str:
+    """An `sdr_eotf` value by name: a legacy numeric code becomes the name it meant."""
+    text = str(value).strip()
+    return LEGACY_SDR_EOTF_CODES.get(text, text)
 
 
 def parse_position(text: str) -> tuple[int, int] | None:

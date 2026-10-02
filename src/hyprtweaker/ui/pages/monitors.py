@@ -33,19 +33,23 @@ from hyprtweaker.engine.model.entities import MonitorRule  # noqa: E402
 from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     CATCH_ALL_OUTPUT,
     DISPLAY_BREAKING_FIELDS,
-    SPECIAL_MODES,
     TRANSFORM_NAMES,
     description_of,
     disconnected_rules,
     format_mode,
     format_position,
     logical_size,
-    parse_mode,
     preferred_identity,
     rule_for,
     snap_position,
 )
 from hyprtweaker.engine.profiles import MonitorProfile  # noqa: E402
+from hyprtweaker.ui.pages.monitor_rows import (  # noqa: E402
+    ModeRows,
+    ScaleRows,
+    colour_rows,
+    reserved_row,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -57,8 +61,6 @@ _VRR_CHOICES: tuple[tuple[str, int], ...] = (
     ("Fullscreen only", 2),
     ("Fullscreen video", 3),
 )
-
-_SCALE_PRESETS: tuple[str, ...] = ("auto", "1", "1.25", "1.5", "2")
 
 
 @dataclass(frozen=True, slots=True)
@@ -671,27 +673,15 @@ class MonitorsPage:
         )
         row.add_row(enabled)
 
-        modes = list(SPECIAL_MODES) + [str(m) for m in monitor.get("availableModes", ())]
-        resolution = Adw.ComboRow(
-            title="Resolution",
-            subtitle="What this display is asked to run, not merely what it runs now.",
-            model=Gtk.StringList.new(modes),
-        )
-        resolution.set_selected(_mode_index(modes, fields.get("mode"), monitor))
-        resolution.set_sensitive(editable)
-        resolution.connect("notify::selected", self._on_mode_selected, output, modes)
-        row.add_row(resolution)
+        def apply(changed: Mapping[str, Any]) -> None:
+            self._apply(output, changed)
 
-        scales = list(_SCALE_PRESETS)
         current_scale = fields.get("scale", monitor.get("scale", 1.0))
-        scale_text = _scale_text(current_scale)
-        if scale_text not in scales:
-            scales.append(scale_text)
-        scale = Adw.ComboRow(title="Scale", model=Gtk.StringList.new(scales))
-        scale.set_selected(scales.index(scale_text))
-        scale.set_sensitive(editable)
-        scale.connect("notify::selected", self._on_scale_selected, output, scales)
-        row.add_row(scale)
+        for setting in (
+            *ModeRows(monitor, fields, apply, editable=editable).rows,
+            *ScaleRows(current_scale, apply, editable=editable).rows,
+        ):
+            row.add_row(setting)
 
         rotation = Adw.ComboRow(
             title="Rotation", model=Gtk.StringList.new(list(TRANSFORM_NAMES))
@@ -726,7 +716,7 @@ class MonitorsPage:
         row.add_row(mirror)
 
         ten_bit = Adw.SwitchRow(
-            title="10-bit color",
+            title="10-bit colour",
             subtitle="Ask for 10 bits per channel; not every display honours it.",
             active=_int_or(fields.get("bitdepth", 8), 8) == 10,
         )
@@ -752,6 +742,9 @@ class MonitorsPage:
         )
         row.add_row(vrr)
 
+        row.add_row(reserved_row(fields.get("reserved"), apply, editable=editable))
+        for setting in colour_rows(fields, apply, editable=editable):
+            row.add_row(setting)
         return row
 
     def _on_match_by_selected(
@@ -767,27 +760,6 @@ class MonitorsPage:
         wanted = f"desc:{description}" if combo.get_selected() == 0 else connector
         if wanted != current:
             self._actions.rename(current, wanted)
-
-    def _on_mode_selected(
-        self, combo: Adw.ComboRow, _param: Any, output: str, modes: list[str]
-    ) -> None:
-        choice = modes[combo.get_selected()]
-        parsed = parse_mode(choice)
-        if parsed is None:
-            self._apply(output, {"mode": choice})  # preferred / highres / highrr / maxwidth
-        else:
-            width, height, refresh = parsed
-            self._apply(output, {"mode": format_mode(width, height, refresh)})
-
-    def _on_scale_selected(
-        self, combo: Adw.ComboRow, _param: Any, output: str, scales: list[str]
-    ) -> None:
-        choice = scales[combo.get_selected()]
-        if choice == "auto":
-            self._apply(output, {"scale": "auto"})
-            return
-        value = float(choice)
-        self._apply(output, {"scale": int(value) if value.is_integer() else value})
 
     # -- off-canvas rows --
 
@@ -824,9 +796,15 @@ class MonitorsPage:
             if value is not None:
                 widget.set_text(str(value))
             widget.set_sensitive(editable)
-            widget.connect(
-                "apply", lambda w: self._apply_text(output, key, w.get_text(), lane=lane)
-            )
+            refusal = Gtk.Label(css_classes=["error", "caption"], visible=False)
+            widget.add_suffix(refusal)
+
+            def applied(w: Adw.EntryRow) -> None:
+                message = self._apply_text(output, key, w.get_text(), lane=lane)
+                refusal.set_label(message or "")
+                refusal.set_visible(message is not None)
+
+            widget.connect("apply", applied)
             return widget
 
         row.add_row(entry("Mode", "mode"))
@@ -859,17 +837,21 @@ class MonitorsPage:
         text: str,
         *,
         lane: Callable[[str, Mapping[str, Any]], None],
-    ) -> None:
+    ) -> str | None:
+        """Write one raw field, or answer why not: the refusal the entry shows inline."""
         value: Any = text.strip()
         if not value:
-            return
+            return None
         if key == "scale" and value != "auto":
             try:
                 number = float(value)
             except ValueError:
-                return
+                return "Scale must be a number or auto"
+            if number < 0.25:  # Hyprland's parser rejects it (`--verify-config`)
+                return "Scale must be at least 0.25"
             value = int(number) if number.is_integer() else number
         self._apply(output, {key: value}, lane=lane)
+        return None
 
     # -- the apply seam --
 
@@ -919,42 +901,6 @@ def _logical(monitor: Mapping[str, Any]) -> tuple[int, int]:
         scale=monitor.get("scale", 1.0),
         transform=monitor.get("transform", 0),
     )
-
-
-def _mode_index(modes: list[str], rule_mode: Any, monitor: Mapping[str, Any]) -> int:
-    """Which combo entry describes this display: the rule's ask, else the live mode."""
-    if isinstance(rule_mode, str):
-        if rule_mode in modes:
-            return modes.index(rule_mode)
-        wanted = parse_mode(rule_mode)
-        if wanted is not None:
-            for index, mode in enumerate(modes):
-                have = parse_mode(mode)
-                if have is None or have[0] != wanted[0] or have[1] != wanted[1]:
-                    continue
-                if wanted[2] is None or abs((have[2] or 0) - wanted[2]) < 1:
-                    return index
-    current = (int(monitor.get("width", 0)), int(monitor.get("height", 0)))
-    refresh = float(monitor.get("refreshRate", 0.0))
-    for index, mode in enumerate(modes):
-        have = parse_mode(mode)
-        if (
-            have is not None
-            and (have[0], have[1]) == current
-            and (have[2] is None or abs(have[2] - refresh) < 1)
-        ):
-            return index
-    return 0
-
-
-def _scale_text(value: Any) -> str:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return "auto"
-    if number.is_integer():
-        return str(int(number))
-    return f"{number:g}"
 
 
 def _int_or(value: Any, fallback: int) -> int:

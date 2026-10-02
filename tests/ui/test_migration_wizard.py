@@ -14,6 +14,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import main_loop
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -372,7 +373,7 @@ class TestReadingAForeignLua:
 
         assert app_window.route_first_run().kind is ConfigKind.APP_GENERATED
         assert foreign_window.route_first_run().kind is ConfigKind.FOREIGN_LUA
-        _drain_main_loop()
+        main_loop.settle("the first-run offer's idle to present the wizard")
 
         assert app_window.get_visible_dialog() is None
         assert _page_title(foreign_window.get_visible_dialog()) == "Detect"
@@ -581,12 +582,3 @@ def _button(dialog, label: str):  # type: ignore[no-untyped-def]
 
 def _click(dialog, label: str) -> None:  # type: ignore[no-untyped-def]
     _button(dialog, label).emit("clicked")
-
-
-def _drain_main_loop() -> None:
-    """Run what `GLib.idle_add` queued, such as the first-run offer."""
-    from gi.repository import GLib
-
-    context = GLib.MainContext.default()
-    while context.iteration(False):
-        pass

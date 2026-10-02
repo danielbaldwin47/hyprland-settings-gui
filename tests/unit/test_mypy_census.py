@@ -12,9 +12,12 @@ code, and is not counted.
 from __future__ import annotations
 
 import ast
+import sys
 import tomllib
 from functools import cache
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -59,24 +62,23 @@ def imported(path: Path) -> set[str]:
 
 @cache
 def reaches_gi(name: str) -> bool:
-    return _reaches_gi(name, frozenset())
+    """Whether `name`'s import closure through `hyprtweaker.*` reaches `gi`.
 
-
-def _reaches_gi(name: str, seen: frozenset[str]) -> bool:
-    path = module_path(name)
-    if path is None:
-        return False
-    seen = seen | {name}
-    for target in imported(path):
-        if target == "gi" or target.startswith("gi."):
-            return True
-        if (
-            target.startswith("hyprtweaker")
-            and target not in seen
-            and module_path(target) is not None
-            and _reaches_gi(target, seen)
-        ):
-            return True
+    One `seen` set for the whole walk, so each module is read once: a set per path re-reads a
+    module once per route to it, which is exponential in the import graph.
+    """
+    seen = {name}
+    stack = [name]
+    while stack:
+        path = module_path(stack.pop())
+        if path is None:
+            continue
+        for target in imported(path):
+            if target == "gi" or target.startswith("gi."):
+                return True
+            if target.startswith("hyprtweaker") and target not in seen:
+                seen.add(target)
+                stack.append(target)
     return False
 
 
@@ -111,6 +113,28 @@ def test_every_gi_free_ui_module_is_in_the_mypy_files_list() -> None:
         "gi-free ui/ modules missing from [tool.mypy] files in pyproject.toml "
         "(and ADR-0011's list): " + ", ".join(missing)
     )
+
+
+def test_the_walk_reads_each_module_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once per module, not once per import path to it.
+
+    A walk that remembered only the path it came down re-read every module once per route to
+    it: exponential in the import graph, and in hash order, so a run of the suite stalled a
+    worker for minutes or not at all (fix/150-ui-spin). `plan.py` is gi-free, so the walk must
+    exhaust its whole closure, and that closure is reached by more than one route.
+    """
+    reads: list[Path] = []
+    read = imported
+
+    def counted(path: Path) -> set[str]:
+        reads.append(path)
+        return read(path)
+
+    monkeypatch.setattr(sys.modules[__name__], "imported", counted)
+
+    assert not reaches_gi.__wrapped__("hyprtweaker.ui.pages.plan")
+    assert len(reads) > 1, "the walk stopped at plan.py: the census proves nothing"
+    assert len(reads) == len(set(reads))
 
 
 def test_a_module_that_draws_is_not_counted_gi_free() -> None:

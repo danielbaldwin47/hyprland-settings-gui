@@ -24,6 +24,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..model.entities import MonitorRule
+from ..monitors_catalog import LEGACY_SDR_EOTF_CODES
 from .loss import LossClass, LossCode, LossContext, LossReport
 from .scalars import number as _number
 
@@ -48,10 +49,6 @@ _INT_FIELDS: frozenset[str] = frozenset(
 _FLOAT_FIELDS: frozenset[str] = frozenset(
     ["sdrsaturation", "sdrbrightness", "sdr_min_luminance", "min_luminance"]
 )
-
-#: The numeric `sdr_eotf` codes the legacy block accepted, and the transfer-function names
-#: they most likely meant. Reported, never silent -- see the module docstring.
-_SDR_EOTF: dict[str, str] = {"0": "default", "1": "srgb", "2": "gamma22"}
 
 
 def _reserved(values: list[str], notes: LossContext) -> dict[str, int]:
@@ -101,8 +98,8 @@ def _mode(raw: str, notes: LossContext) -> str:
 def _typed(key: str, raw: str, notes: LossContext) -> Any:
     if key == "sdr_eotf":
         stripped = raw.strip()
-        if stripped in _SDR_EOTF:
-            name = _SDR_EOTF[stripped]
+        if stripped in LEGACY_SDR_EOTF_CODES:
+            name = LEGACY_SDR_EOTF_CODES[stripped]
             notes.note(
                 LossCode.MONITOR_SHAPE,
                 f"sdr_eotf = {stripped} is a legacy numeric code; Lua takes a transfer "

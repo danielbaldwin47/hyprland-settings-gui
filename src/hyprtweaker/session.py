@@ -1010,14 +1010,23 @@ class Session:
         A merge because that is what `hl.monitor` itself does (`lua-api-surface.md` §3):
         the per-monitor rows each own one field, and a row that replaced the whole rule
         would erase every sibling's value on each toggle.
+
+        A field whose value is `UNSET` is removed after the merge: a row's "Not set" means
+        "not in my config", so the file must not gain an explicit default instead.
         """
-        return self._commit_entity_edit(
-            "monitor rules",
-            lambda: self._model.entities.add_monitor_rule(
-                MonitorRule(output=output, fields=dict(fields)), merge=True
-            ),
-            title="Monitor rule changed",
-        )
+
+        def patch() -> None:
+            rules = self._model.entities.monitors
+            existing = next((rule for rule in rules if rule.output == output), None)
+            merged = {**(existing.fields if existing is not None else {}), **fields}
+            kept = {key: value for key, value in merged.items() if value is not UNSET}
+            if existing is None and not kept:
+                return  # "not set" on a display with no rule: nothing to write
+            self._model.entities.add_monitor_rule(
+                MonitorRule(output=output, fields=kept), merge=False
+            )
+
+        return self._commit_entity_edit("monitor rules", patch, title="Monitor rule changed")
 
     def rename_monitor_rule(self, output: str, to: str) -> bool:
         """Change a rule's identity string, keeping its fields and position.
