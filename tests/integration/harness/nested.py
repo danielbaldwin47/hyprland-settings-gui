@@ -23,11 +23,12 @@ Three isolation rules, each of which has a way of going wrong:
    and probe-window call made through `env` carries both that and the new signature, so no
    command in this package can be delivered to the host by accident.
 
-**A host Wayland session is required.** Without a host compositor to nest into, backend
-creation fails outright (`CBackend::create() failed!`) even when a render node is handed to it
-explicitly, because the DRM backend wants a seat that the developer's own session already
-owns. So this tier runs *nested*, and `unavailable_reason` reports the missing session as a
-skip rather than letting the launch fail deep inside a test. The headless *output* created
+**Without a card, a host Wayland session is required.** Without a host compositor to nest
+into, backend creation fails outright (`CBackend::create() failed!`) even when a render node
+is handed to it explicitly, because the DRM backend wants a seat that the developer's own
+session already owns. So this tier runs *nested* or on a card (below), and
+`unavailable_reason` reports a machine with neither as a skip rather than letting the
+launch fail deep inside a test. The headless *output* created
 inside the nested compositor (see `visual.py`) is what makes rendering independent of the
 host's screen size -- that part needs no seat.
 

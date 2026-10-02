@@ -20,8 +20,8 @@ attached to every marked item.
 `HYPRTWEAKER_REQUIRE_HARNESS=1` turns the skip into a failure -- the same escape hatch
 `tests/ui/conftest.py` gives the UI tier. Any environment that is *supposed* to be able to
 host a compositor should not go green by quietly skipping everything. That variable is also
-what makes the tier safe to schedule the day it can be: an automated run that skips its whole
-point would otherwise report success (ADR-0011 tier 3, amended during #55; #89).
+what makes the nightly CI job honest: an automated run that skips its whole point would
+otherwise report success (ADR-0011 tier 3, amended during #55 and #195).
 """
 
 from __future__ import annotations
