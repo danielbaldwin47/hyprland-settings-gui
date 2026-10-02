@@ -32,6 +32,9 @@ from .types import (
     Visibility,
 )
 
+MINIMUM_HYPRLAND = "0.56"
+"""The first Hyprland with a Lua config, and so the oldest this app can write for."""
+
 SCHEMA_DIR_ENV = "HYPRTWEAKER_SCHEMA_DIR"
 OVERLAY_FILENAME = "overlay.json"
 _SCHEMA_FILENAME = re.compile(r"^hyprland-(\d+(?:\.\d+)*)\.json$")
@@ -299,19 +302,32 @@ def available_versions(directory: Path | None = None) -> tuple[str, ...]:
     return tuple(sorted(versions, key=version_key))
 
 
+def below_lua_floor(version: str) -> bool:
+    """Whether `version` predates the Lua config, so no Schema can describe it."""
+    return version_key(version) < version_key(MINIMUM_HYPRLAND)
+
+
 def select_version(wanted: str, available: tuple[str, ...]) -> str:
-    """Exact match, else the nearest lower version (ADR-0012 degradation)."""
+    """Exact match, else the nearest lower version (ADR-0012 degradation).
+
+    A Lua-config Hyprland older than every shipped schema gets the oldest one: ADR-0012's
+    Support window promises degradation for every version down to `MINIMUM_HYPRLAND`, and
+    the oldest schema is the nearest thing shipped. Its options the compositor lacks are
+    what "Not in this Hyprland" marks.
+    """
     if not available:
         raise FileNotFoundError("no generated schemas are shipped")
+    if below_lua_floor(wanted):
+        raise ValueError(
+            f"Hyprland {wanted} is older than {MINIMUM_HYPRLAND}, the first with a Lua config"
+        )
     if wanted in available:
         return wanted
 
     wanted_key = version_key(wanted)
     lower = [version for version in available if version_key(version) <= wanted_key]
     if not lower:
-        # Older than every shipped schema. Hyprland < 0.56 has no Lua config at all, so
-        # this is a misconfiguration rather than a degradation the app can absorb.
-        raise ValueError(f"Hyprland {wanted} is older than every shipped schema {available}")
+        return min(available, key=version_key)
     return max(lower, key=version_key)
 
 

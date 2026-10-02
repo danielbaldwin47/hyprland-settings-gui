@@ -25,8 +25,11 @@ APP_ID = "io.github.danielbaldwin47.Hyprtweaker.Test"
 CONF = "general {\n    gaps_in = 5\n}\n"
 
 
-def build_window(tmp_path: Path):  # type: ignore[no-untyped-def]
-    """A window over a session pointed at a throwaway config root, with no compositor."""
+def build_window(tmp_path: Path, live: object = None):  # type: ignore[no-untyped-def]
+    """A window over a session pointed at a throwaway config root, with no compositor.
+
+    `live` is the `LiveHyprland` the session believes is running, if any.
+    """
     import gi
 
     gi.require_version("Gtk", "4.0")
@@ -49,6 +52,7 @@ def build_window(tmp_path: Path):  # type: ignore[no-untyped-def]
         paths=ConfigPaths.rooted_at(tmp_path),
         app_version=APP_VERSION,
         connect=no_compositor,
+        read_live=lambda: live,
     )
     return MainWindow(session, application=app), session
 
@@ -79,6 +83,31 @@ class TestFirstRunRouting:
         assert detection.kind is ConfigKind.LEGACY_CONF
         assert not session.paths.entrypoint.exists()
         assert session.offline_reason
+
+    def test_a_hyprland_without_lua_gets_its_banner_not_the_offer(self, tmp_path: Path) -> None:
+        """Below 0.56 every config is hyprlang, and converting it would leave a Lua file
+        the running compositor cannot read: the Banner says what is needed instead (#176)."""
+        from hyprtweaker.engine.ipc import LiveHyprland
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+
+        live = LiveHyprland("0.55.0", ({"name": "general:border_size"},))
+        window, session = build_window(tmp_path, live)
+        window.route_first_run()
+        session.start()
+        window.sync()
+
+        assert window._banner.get_revealed()
+        assert window._banner.get_title() == (
+            "Hyprland 0.55.0 is running, and this app needs Hyprland 0.56 or newer"
+            " — settings are read-only."
+        )
+        assert window._banner.get_button_label() in ("", None)
+        assert session.live is False
+        assert not paths.entrypoint.exists()
 
     def test_routing_never_writes_over_a_foreign_lua(self, tmp_path: Path) -> None:
         """The outcome ADR-0009 forbids outright, asserted at the level that could do it."""

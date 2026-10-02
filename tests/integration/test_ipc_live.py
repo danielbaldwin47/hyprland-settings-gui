@@ -18,6 +18,7 @@ Run it explicitly::
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from hyprtweaker.engine.ipc import (  # noqa: E402
     CommandClient,
     EventStream,
     NoSuchOption,
+    read_live_hyprland,
 )
 
 pytestmark = pytest.mark.hyprland
@@ -90,3 +92,16 @@ def test_the_event_stream_connects_and_arms(guarded_hyprland: GuardedInstance) -
                 assert await reloaded.wait(timeout=0.1) is None
 
     asyncio.run(main())
+
+
+def test_the_live_read_parses_the_real_version_and_descriptions(
+    guarded_hyprland: GuardedInstance,
+) -> None:
+    """The blocking startup read (#176) against Hyprland's own `j/version` and
+    `j/descriptions` replies, whose shapes the unit tier can only script."""
+    live = read_live_hyprland(lambda: guarded_hyprland.instance)
+
+    assert live is not None
+    assert re.fullmatch(r"\d+\.\d+\.\d+", live.version)
+    assert "general:gaps_in" in live.names
+    assert len(live.names) == len(live.descriptions)

@@ -567,6 +567,11 @@ class MainWindow(Adw.ApplicationWindow):
         """
         session = self._session
         detection = self._detect()
+        if session.hyprland_too_old:
+            # Nothing to route: a fresh scaffold or a converted config would be a Lua file
+            # this compositor never reads. The Session's own Banner says what is needed.
+            self._offered = None
+            return detection
         self._offered = detection if detection.offers_import else None
 
         pending = sentinel_read(session.paths)

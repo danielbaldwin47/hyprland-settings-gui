@@ -65,7 +65,9 @@ from hyprtweaker.engine.ipc import (
     EventStream,
     Instance,
     IpcError,
+    LiveHyprland,
     NoInstance,
+    read_live_hyprland,
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.model.entities import (
@@ -106,7 +108,13 @@ from hyprtweaker.engine.profiles import (
     drift,
     matches,
 )
-from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
+from hyprtweaker.engine.schema import (
+    MINIMUM_HYPRLAND,
+    ResolvedOption,
+    Schema,
+    below_lua_floor,
+    load_schema,
+)
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
 from hyprtweaker.engine.writer.binds import parse_binds_module
@@ -302,15 +310,39 @@ class Session:
         paths: ConfigPaths | None = None,
         app_version: str,
         connect: Callable[[], Instance] = Instance.current,
+        read_live: Callable[[], LiveHyprland | None] | None = None,
     ) -> None:
         """`connect` names the compositor to talk to; by default, the one we run under.
 
         Injected for the same reason the Harness can drive the real `Applier`: an `Instance`
         is a frozen dataclass over a socket directory, so a nested Hyprland or a scripted
         pair of sockets is a first-class session and needs no monkeypatching.
+
+        `read_live` answers which Hyprland that is, before anything else here runs: the
+        model is built from the Schema for that version (ADR-0012 §Pinning). By default a
+        blocking read over `connect`, bounded at one second; tests that have no compositor
+        to ask, or want to pose as another version, hand in the answer. It runs whether or
+        not `schema` is injected, so `live_hyprland` means the same thing in every session.
         """
         self._spawn = spawn
-        self._schema = schema if schema is not None else load_schema()
+        self._live_hyprland = (
+            read_live() if read_live is not None else read_live_hyprland(connect)
+        )
+        live_version = self._live_hyprland.version if self._live_hyprland else None
+        self._unsupported_reason = (
+            f"Hyprland {live_version} is running, and this app needs Hyprland "
+            f"{MINIMUM_HYPRLAND} or newer"
+            if live_version is not None and below_lua_floor(live_version)
+            else None
+        )
+        """Why this session can never go live, or `None`. Set only for a Hyprland too old to
+        have a Lua config: no amount of reconnecting changes that, so `start` honours it."""
+        if schema is None:
+            # Below the floor, the oldest shipped Schema: the nearest to what is running,
+            # and a read-only session only displays it.
+            wanted = MINIMUM_HYPRLAND if self._unsupported_reason else live_version
+            schema = load_schema(wanted)
+        self._schema = schema
         self._paths = paths if paths is not None else ConfigPaths.default()
         self._app_version = app_version
         self._connect = connect
@@ -349,7 +381,7 @@ class Session:
         self._events: EventStream | None = None
         self._client: CommandClient | None = None
         self._applier: Applier | None = None
-        self._offline_reason: str | None = _NOT_CONNECTED_YET
+        self._offline_reason: str | None = self._unsupported_reason or _NOT_CONNECTED_YET
         self._closing = False
         self._pending_restart: set[str] = set()
         self._monitor_watchers: list[Callable[[], None]] = []
@@ -440,6 +472,27 @@ class Session:
     def live(self) -> bool:
         """Whether edits reach a running compositor. False means the Rows are read-only."""
         return self._offline_reason is None
+
+    @property
+    def live_hyprland(self) -> LiveHyprland | None:
+        """The running compositor's version and option descriptions, read once at startup.
+
+        `None` when there was no compositor, it did not answer, or its version is not a
+        release number. Not the same fact as `live`: a compositor can be described here and
+        still refuse every edit (one too old for a Lua config, or a socket that died later).
+        The Schema it selected is `schema.hyprland_version`, which can be older (ADR-0012
+        degradation).
+        """
+        return self._live_hyprland
+
+    @property
+    def hyprland_too_old(self) -> bool:
+        """Whether the running Hyprland predates the Lua config, so nothing here can apply.
+
+        Read-only for the whole run, whatever the config on disk: there is nothing to
+        convert a hyprlang config *to* on a compositor that only reads hyprlang.
+        """
+        return self._unsupported_reason is not None
 
     @property
     def offline_reason(self) -> str | None:
@@ -1385,7 +1438,14 @@ class Session:
     # --- lifecycle --------------------------------------------------------------------------
 
     def start(self) -> None:
-        """Connect, recover the model, and begin applying. Returns immediately."""
+        """Connect, recover the model, and begin applying. Returns immediately.
+
+        A Hyprland too old for a Lua config is not connected to at all: `_go_live` ends by
+        clearing the read-only reason, and this one has to outlive it.
+        """
+        if self._unsupported_reason is not None:
+            self.set_read_only(self._unsupported_reason)
+            return
         self._spawn(self._go_live())
 
     def set_read_only(self, reason: str) -> None:
