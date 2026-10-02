@@ -38,6 +38,8 @@ files = [
     "src/hyprtweaker/ui/rows/gesture.py",
     "src/hyprtweaker/ui/rows/state.py",
     "src/hyprtweaker/ui/search.py",
+    # Passes --strict on its own; listed so it stays that way (N8 of the #148 review).
+    "tools/diff_schema.py",
     "tools/curate_overlay.py",
     "tools/overlay_help.py",
     "tools/overlay_text.py",
