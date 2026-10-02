@@ -154,7 +154,7 @@ class TestBindBadge:
         assert badge is not None
         assert (badge.kind, badge.text) == (
             BadgeKind.LUA_FUNCTION,
-            "Defined by a Lua function in user.lua",
+            "Defined by a Lua function",
         )
 
     def test_a_bind_entering_an_empty_submap_warns_with_the_reason(self) -> None:
@@ -205,7 +205,7 @@ class TestBindBadge:
         function = bind_badge(Bind(keys="SUPER + A", dispatcher=None))
         assert multi is not None and function is not None
         assert multi.tooltip != function.tooltip
-        assert "user.lua" in function.tooltip
+        assert "Lua function" in function.tooltip  # N1: no longer claims user.lua
         assert "A&B" in multi.tooltip
 
 

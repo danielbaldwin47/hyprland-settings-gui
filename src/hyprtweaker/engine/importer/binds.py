@@ -200,7 +200,7 @@ def note_dead_keysyms(ctx: LossContext, dead: Sequence[str], *, disabled: bool) 
     """
     names = ", ".join(repr(name) for name in dead)
     consequence = (
-        "so this bind never fired in hyprlang and is imported commented out -- enabled, it "
+        "so this bind never fired in hyprlang and is imported commented out — enabled, it "
         "would fail the whole config at bind time rather than be ignored"
         if disabled
         else "so this unbind names a bind that never fired"
@@ -289,7 +289,7 @@ def _key_string(mods_field: str, key_field: str, ctx: LossContext, *, multikey: 
     if mods_field.strip() and not mods:
         ctx.note(
             LossCode.MODS_SPELLING,
-            f"modifier field {mods_field.strip()!r} matches no modifier -- hyprlang "
+            f"modifier field {mods_field.strip()!r} matches no modifier — hyprlang "
             "treated this as an error too",
         )
     elif mods and _respelled(mods_field, mods):

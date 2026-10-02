@@ -46,8 +46,7 @@ from .wire_consent import ConsentDialog  # noqa: E402
 Spawn = Callable[[Any], None]
 
 CONSENT_TEXT = (
-    "Reading your hyprland.lua means running it once: none of its commands run and no "
-    "files change."
+    "Reading {name} means running it once: none of its commands run and no files change."
 )
 """The consent page's promise (#190; wording decided in the #150 review, owner call 3).
 `Consent(evaluate=True)` is `Policy.BLOCK`, which is what makes it true: the config's
@@ -119,8 +118,8 @@ DETECTED_TITLES = {
 DETECTED_BODIES = {
     ConfigKind.LEGACY_CONF: (
         "It can be converted to the new Lua config. Your hyprland.conf is never changed, "
-        "moved or deleted -- if anything goes wrong, deleting the generated hyprland.lua "
-        "puts you back exactly where you are now."
+        "moved or deleted: if anything goes wrong, deleting the generated hyprland.lua "
+        "puts Hyprland back on it."
     ),
     ConfigKind.FOREIGN_LUA: (
         "It can be imported as your current settings. The original is kept beside it as "
@@ -354,7 +353,9 @@ class MigrationDialog(Adw.Dialog):
         page = _page("Read your config")
         # A file name is the user's own text and may hold `&` or `<`: escaped, not markup.
         title = GLib.markup_escape_text(f"Read {source.name}?")
-        group = Adw.PreferencesGroup(title=title, description=CONSENT_TEXT)
+        # Named, as the title is: it may be any .lua chosen to import (N1 of the #148 review).
+        description = GLib.markup_escape_text(CONSENT_TEXT.format(name=source.name))
+        group = Adw.PreferencesGroup(title=title, description=description)
         group.add(_row("File", str(source)))
         page.get_child().set_content(_column(group))
 
@@ -412,7 +413,7 @@ class MigrationDialog(Adw.Dialog):
         summary = Adw.PreferencesGroup(
             title="What this changes",
             description=(
-                "Nothing has been written yet. Reading this page costs you nothing -- you can "
+                "Nothing has been written yet. Reading this page costs you nothing — you can "
                 "still close the wizard and stay exactly as you are."
             ),
         )
@@ -655,7 +656,7 @@ class MigrationDialog(Adw.Dialog):
         if caveats:
             unverified = Adw.PreferencesGroup(
                 title="What this could not confirm",
-                description="Not failures -- things the switch cannot see from here.",
+                description="Not failures — things the switch cannot see from here.",
             )
             for note in caveats:
                 unverified.add(_row(note, ""))

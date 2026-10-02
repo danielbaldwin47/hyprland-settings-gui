@@ -168,8 +168,9 @@ def bind_badge(bind: Bind, *, empty_submaps: frozenset[str] = frozenset()) -> Bi
     if bind.dispatcher is None:
         return BindBadge(
             BadgeKind.LUA_FUNCTION,
-            "Defined by a Lua function in user.lua",
-            "This keybind's action is a Lua function in user.lua. Edit it there.",
+            "Defined by a Lua function",
+            "This keybind's action is a Lua function, so this app shows it but cannot edit "
+            "it. Change it in the file that defines it.",
         )
     problem = trigger_load_problem(bind.keys)
     if isinstance(problem, AmpMultiKey):

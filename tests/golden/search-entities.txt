@@ -7,7 +7,7 @@ title | prefix | bind | SUPER + Return | kitty | -
 title | prefix | bind | SUPER + notakey | firefox | Unknown key "notakey"
 title | prefix | bind | SUPER + A&B | rofi -show drun | Multi-key: Hyprland can't load it
 title | prefix | bind | SUPER + E | nautilus | Disabled
-title | prefix | bind | SUPER + F | Runs a Lua function | Defined by a Lua function in user.lua
+title | prefix | bind | SUPER + F | Runs a Lua function | Defined by a Lua function
 title | prefix | bind | SUPER + R | Switch to a submap (resize) | Submap has no enabled keybinds
 title | prefix | bind | SUPER + key code 10 | kitty --class scratch | -
 

@@ -207,7 +207,7 @@ def test_each_kind_is_findable_by_its_salient_text(
         ("notakey", 'Unknown key "notakey"'),
         ("a&b", "Multi-key: Hyprland can't load it"),
         ("nautilus", "Disabled"),
-        ("super + f", "Defined by a Lua function in user.lua"),
+        ("super + f", "Defined by a Lua function"),
         ("submap", "Submap has no enabled keybinds"),
         ("pavucontrol", "Disabled"),
         ("super + q", None),

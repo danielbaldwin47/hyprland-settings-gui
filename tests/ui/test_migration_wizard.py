@@ -395,8 +395,8 @@ class TestReadingAForeignLua:
 
         assert _page_title(dialog) == "Read your config"
         assert _descriptions(dialog) == [
-            "Reading your hyprland.lua means running it once: none of its commands run and "
-            "no files change."
+            "Reading hyprland.lua means running it once: none of its commands run and no "
+            "files change."
         ]
         assert "Could not read the configuration" not in _text_under(dialog)
         assert dialog.get_default_widget().get_label() == "Not now"

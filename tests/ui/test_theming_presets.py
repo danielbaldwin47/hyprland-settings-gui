@@ -413,7 +413,8 @@ def test_the_wallpaper_scope_is_insensitive_with_no_daemon_and_says_why(
     assert row.get_sensitive() is False
     assert group.dialog.checks[_scope("WALLPAPER")].get_active() is False
     assert row.get_subtitle() == (
-        "No wallpaper daemon is running. This app changes the wallpaper through awww or swww."
+        "No supported wallpaper program is running. This app changes the wallpaper "
+        "through awww or swww."
     )
 
 
@@ -594,7 +595,8 @@ def test_a_wallpaper_with_no_daemon_is_said_on_the_row_and_in_the_confirm(
     slug = _with_wallpaper(session, window, tmp_path)
     group = presets_of(window)
     reason = (
-        "No wallpaper daemon is running. This app changes the wallpaper through awww or swww."
+        "No supported wallpaper program is running. This app changes the wallpaper "
+        "through awww or swww."
     )
 
     assert group.rows[slug].get_subtitle() == (

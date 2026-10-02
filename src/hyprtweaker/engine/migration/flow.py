@@ -88,7 +88,7 @@ the new config is readable, so an immediate read answers about the config being 
 """
 
 _SWITCH_NOTES = (
-    "Environment variables and permissions apply at your next login, not now -- Hyprland "
+    "Environment variables and permissions apply at your next login, not now — Hyprland "
     "does not re-read them on a reload.",
     "Anything set to run at startup may have been started again by the switch.",
 )

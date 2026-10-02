@@ -96,7 +96,8 @@ def test_with_no_daemon_nothing_is_detected_and_nothing_runs(tmp_path: Path) -> 
 
     assert wallpapers.detect() is None
     assert wallpapers.absent_reason() == (
-        "No wallpaper daemon is running. This app changes the wallpaper through awww or swww."
+        "No supported wallpaper program is running. This app changes the wallpaper "
+        "through awww or swww."
     )
     assert tools.runs == []
 

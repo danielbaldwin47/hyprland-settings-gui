@@ -406,7 +406,7 @@ def validate_trigger(
 
 
 _LUA_REJECTS = (
-    "so this bind would never fire -- and Lua rejects the whole config rather than ignoring it."
+    "so this bind would never fire — and Lua rejects the whole config rather than ignoring it."
 )
 
 

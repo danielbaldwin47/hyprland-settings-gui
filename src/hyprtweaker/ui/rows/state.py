@@ -624,7 +624,7 @@ def _overridden_pill(option: ResolvedOption, context: RowContext) -> Pill | None
         # go edit a file that is not the culprit is worse than saying less. Naming
         # the file needs Ownership class, which the Banner has and a Row does not.
         "Something loaded after the app's own settings sets this too, so its "
-        "value wins -- usually your user.lua.",
+        "value wins — usually your user.lua.",
     )
 
 
@@ -745,7 +745,8 @@ def _advanced_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
         return None
     return Pill(
         ADVANCED_PILL,
-        "Shown because “Show advanced settings” is on."
+        "An advanced setting: shown when “Show advanced settings” is on, or when a search "
+        "finds it."
         if option.visibility is Visibility.ADVANCED
         else "A low-level setting: shown only here, in the Config view.",
     )

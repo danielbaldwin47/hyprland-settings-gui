@@ -154,8 +154,8 @@ class Wallpapers:
                     f"Start {name}-daemon to change the wallpaper from this app."
                 )
         return (
-            "No wallpaper daemon is running. This app changes the wallpaper through "
-            "awww or swww."
+            "No supported wallpaper program is running. This app changes the wallpaper "
+            "through awww or swww."
         )
 
     def _socket_of(self, name: str) -> bool:

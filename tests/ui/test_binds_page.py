@@ -259,7 +259,7 @@ def test_a_lua_function_bind_offers_no_controls(tmp_path: Path) -> None:
 
     row, _calls = editable_row(Bind(keys="SUPER + W", dispatcher=None))
 
-    assert row.badge_label.get_label() == "Defined by a Lua function in user.lua"
+    assert row.badge_label.get_label() == "Defined by a Lua function"
     assert (row.enable_button, row.edit_button, row.remove_button) == (None, None, None)
 
 

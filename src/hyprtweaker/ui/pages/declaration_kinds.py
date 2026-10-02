@@ -579,7 +579,7 @@ KINDS: tuple[DeclarationKind, ...] = (
         empty_hint="Add one to set something like XCURSOR_SIZE for every program.",
         note=(
             "Removing a variable here takes it out of the config, but Hyprland cannot "
-            "unset it in a running session -- that needs a restart."
+            "unset it in a running session — that needs a restart."
         ),
         fields=_ENV_FIELDS,
         to_form=_env_to_form,

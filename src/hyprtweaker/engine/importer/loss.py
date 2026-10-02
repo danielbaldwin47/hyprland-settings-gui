@@ -208,7 +208,7 @@ LOSS_CODES: dict[LossCode, LossSpec] = {
     ),
     LossCode.BARE_KEYCODE: LossSpec("Bare numeric keycode rewritten as code:N", LossClass.INFO),
     LossCode.UNKNOWN_KEYSYM: LossSpec(
-        "Key name is not a known keysym -- silently dead in hyprlang, a config error in Lua",
+        "Key name is not a known keysym — silently dead in hyprlang, a config error in Lua",
         LossClass.NEEDS_REVIEW,
     ),
     LossCode.MULTIKEY_BIND: LossSpec(
@@ -216,7 +216,7 @@ LOSS_CODES: dict[LossCode, LossSpec] = {
         LossClass.NEEDS_REVIEW,
     ),
     LossCode.MOUSE_BIND: LossSpec(
-        "Mouse bind expressed as a drag/resize dispatcher -- Lua has no mouse flag",
+        "Mouse bind expressed as a drag/resize dispatcher — Lua has no mouse flag",
         LossClass.INFO,
     ),
     LossCode.UNBIND_BY_STRING: LossSpec(
@@ -230,7 +230,7 @@ LOSS_CODES: dict[LossCode, LossSpec] = {
         "fullscreenstate -1 (keep current) is not representable in Lua", LossClass.BREAKAGE
     ),
     LossCode.TOGGLE_DEFAULT: LossSpec(
-        "Toggle action made explicit -- an omitted argument means off in hyprlang, "
+        "Toggle action made explicit — an omitted argument means off in hyprlang, "
         "toggle in Lua",
         LossClass.INFO,
     ),
@@ -263,7 +263,7 @@ LOSS_CODES: dict[LossCode, LossSpec] = {
     ),
     LossCode.DEVICE_FIELD: LossSpec("Per-device setting changed or dropped", LossClass.INFO),
     LossCode.PLUGIN_GUARD: LossSpec(
-        "Plugin option guarded -- Lua errors on keys of a plugin that is not loaded",
+        "Plugin option guarded — Lua errors on keys of a plugin that is not loaded",
         LossClass.NEEDS_REVIEW,
     ),
     LossCode.EXEC_TIMING: LossSpec(

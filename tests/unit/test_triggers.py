@@ -297,14 +297,14 @@ class TestTriggerLoadProblem:
         [
             (
                 "SUPER + notakey",
-                "'notakey' is not a key name xkb knows, so this bind would never fire -- "
+                "'notakey' is not a key name xkb knows, so this bind would never fire — "
                 "and Lua rejects the whole config rather than ignoring it. "
                 "Try capturing it instead.",
             ),
             (
                 "SUPER + notakey + alsonotakey",
                 "'notakey', 'alsonotakey' are not key names xkb knows, so this bind would "
-                "never fire -- and Lua rejects the whole config rather than ignoring it. "
+                "never fire — and Lua rejects the whole config rather than ignoring it. "
                 "Try capturing it instead.",
             ),
             (

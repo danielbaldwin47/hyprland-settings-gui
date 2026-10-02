@@ -402,8 +402,8 @@ def test_with_no_daemon_the_user_is_told_why_the_wallpaper_did_not_change(
         assert result == PresetApplied(applied=(BORDER_SIZE,), skipped=())
         assert session.model.get(BORDER_SIZE) == 3
         assert notes == [
-            "The wallpaper was not changed. No wallpaper daemon is running. This app "
-            "changes the wallpaper through awww or swww."
+            "The wallpaper was not changed. No supported wallpaper program is running. "
+            "This app changes the wallpaper through awww or swww."
         ]
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
