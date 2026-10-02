@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from _live_window import live_entity_window
 
 APP_VERSION = "0.0.0-test"
@@ -190,6 +191,34 @@ def test_an_auto_revert_toasts_and_withdraws_the_undo_offer(tmp_path: Path) -> N
     )
 
     assert window.undo_toast is None
+
+
+@pytest.mark.parametrize(
+    ("outcome", "restored", "title"),
+    [
+        ("config-errors", True, "Hyprland rejected the change — reverted."),
+        ("config-errors", False, "Hyprland rejected the change, and it could not be reverted."),
+        ("write-failed", True, "The change could not be saved — reverted."),
+        ("write-failed", False, "The change could not be saved, and it could not be reverted."),
+    ],
+)
+def test_the_revert_toast_says_what_refused_the_change(
+    outcome: str, restored: bool, title: str
+) -> None:
+    """#227: a write the disk refused is reverted too, and Hyprland never saw it."""
+    from hyprtweaker.engine.apply import ApplyOutcome
+    from hyprtweaker.session import AutoRevert
+    from hyprtweaker.ui.shell.window import _revert_summary
+
+    revert = AutoRevert(
+        keys=(ROUNDING,),
+        modules=("options/general.lua",),
+        errors=(),
+        restored=restored,
+        outcome=ApplyOutcome(outcome),
+    )
+
+    assert _revert_summary(revert) == title
 
 
 def test_the_error_dialog_shows_the_lines_verbatim(tmp_path: Path) -> None:

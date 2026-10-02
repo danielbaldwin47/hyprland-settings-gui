@@ -2786,7 +2786,13 @@ def _revert_summary(revert: AutoRevert) -> str:
     """ADR-0016's toast line, or the honest version when the restore did not land.
 
     "Reverted" is a claim about the config on disk, and claiming it over a file that is still
-    broken would send the user away from the one screen that could tell them so."""
+    broken would send the user away from the one screen that could tell them so. A write the
+    disk refused is said as that: Hyprland never saw it."""
+    cause = (
+        "The change could not be saved"
+        if revert.outcome is ApplyOutcome.WRITE_FAILED
+        else "Hyprland rejected the change"
+    )
     if revert.restored:
-        return "Hyprland rejected the change — reverted."
-    return "Hyprland rejected the change, and it could not be reverted."
+        return f"{cause} — reverted."
+    return f"{cause}, and it could not be reverted."
