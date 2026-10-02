@@ -12,7 +12,9 @@ The **Theming module** is a Tasks-view page that fronts the color-generation bac
 
 ### Backends
 
-Both **matugen and wallust are GUI-driven in v1** — backend tabs at the top of the page, each exposing its own parameters (scheme type, mode, contrast, … for matugen; wallust's equivalents). Exactly one backend is active at a time. Browsing the inactive tab never switches colors; switching is an explicit confirm on that tab. The module edits the backend's own config (the Template pack stanza, ADR-0006) and triggers regeneration against the current wallpaper; it never replaces the user's wallpaper script, which keeps working because it just runs the tool.
+Both **matugen and wallust are GUI-driven in v1** — backend tabs at the top of the page, each exposing its own parameters (scheme type, mode, contrast, … for matugen; wallust's equivalents). Exactly one backend is active at a time. Browsing the inactive tab never switches colors; switching is an explicit confirm on that tab. The module triggers regeneration against the current wallpaper; it never replaces the user's wallpaper script, which keeps working because it just runs the tool.
+
+*Amended in the review of spec #153:* the backend's own config is written once, at Set up, with consent: the Template pack stanza (ADR-0006), shown file by file before anything changes, with a copy kept and a Remove that puts it back. matugen's mode, scheme and contrast are flags of the Regenerate command and are written to no file; they last until the app closes (persisting them is #237).
 
 ### Color source
 
@@ -32,7 +34,7 @@ On disk: `~/.config/hypr/hyprtweaker/presets/<slug>.json` — app data, never `r
 
 ### Wallpaper
 
-Wallpaper is one more capture-scope checkbox, and apply-preview offers **change / keep mine**. Applying sets the image via a detected wallpaper daemon (swww or hyprpaper, one IPC call) — the app never configures the daemon, keeping the out-of-scope line intact. No supported daemon detected → the checkbox is insensitive with a hint. If a Wallpaper color source is active and the preset changes the wallpaper, colors regenerate from the new image — no special case.
+Wallpaper is one more capture-scope checkbox, and apply-preview offers **change / keep mine**. Applying sets the image via a detected wallpaper daemon (awww or swww, one client call; hyprpaper is detected and named but not driven in v1, *amended in the review of spec #153*) — the app never configures the daemon, keeping the out-of-scope line intact. No supported daemon detected → the checkbox is insensitive with a hint. If a Wallpaper color source is active and the preset changes the wallpaper, colors regenerate from the new image — no special case.
 
 ### Badge deep-link
 

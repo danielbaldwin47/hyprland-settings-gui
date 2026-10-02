@@ -40,6 +40,8 @@ State pills: at most two, the two highest-ranked in the precedence table in `ui/
    | Not in this Hyprland, unset | read-only | none (nothing to reset) |
    | New in \<ver\>, Plugin option | editable | when modified |
    | Didn't apply, Overridden, Pending restart, Restart, Per-device, Advanced | editable | when modified |
+   | Set by \<tool\> (spec #153: a theming tool's loading Bridge module sets it; the subtitle says so, and the pill opens the tool on the Theming page) | editable: the value is kept and applies once the tool no longer sets it | when modified |
+   | Not confirmed (review of spec #153: a timed-out apply; it hides Didn't apply and Overridden until the next reading of the key) | editable | when modified |
 
    A read-only session and an unmet `depends_on` still dim every Row as before; a read-only session also disables the reset arrow.
 
