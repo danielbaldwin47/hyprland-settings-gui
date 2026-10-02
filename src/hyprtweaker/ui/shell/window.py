@@ -101,6 +101,7 @@ from hyprtweaker.ui.pages.monitors import (  # noqa: E402
     ProfileActions,
 )
 from hyprtweaker.ui.pages.plan import (  # noqa: E402
+    Disclosure,
     PagePlan,
     View,
     is_visible,
@@ -885,20 +886,14 @@ class MainWindow(Adw.ApplicationWindow):
         curated mapping, which *can* drift and is allowed to (ADR-0012) -- so a mapping that
         will not load falls back to the Config arrangement rather than to an empty window.
         """
+        disclosure = Disclosure(
+            show_advanced=self.show_advanced, view=self.view, revealed=self._revealed
+        )
         mapping = None if self.view is View.CONFIG else self._load_mapping()
         if mapping is None:
-            return (), plan_config_view(
-                self._session.schema,
-                show_advanced=self.show_advanced,
-                revealed=self._revealed,
-            )
+            return (), plan_config_view(self._session.schema, disclosure)
 
-        categories = plan_tasks_view(
-            self._session.schema,
-            mapping,
-            show_advanced=self.show_advanced,
-            revealed=self._revealed,
-        )
+        categories = plan_tasks_view(self._session.schema, mapping, disclosure)
         pages = tuple(page for category in categories for page in category.option_pages)
         return categories, pages
 
@@ -1766,7 +1761,7 @@ class MainWindow(Adw.ApplicationWindow):
         here: the rule about which tiers a View admits is ADR-0013's and lives there, and a
         second copy of it in the shell is one that would not be updated together with it.
         """
-        return is_visible(option, show_advanced=True, view=self.view)
+        return is_visible(option, Disclosure(show_advanced=True, view=self.view))
 
     def reveal_option(self, name: str, *, flash_row: bool = False) -> None:
         """Show the Row for one Option and put the keyboard on it.
