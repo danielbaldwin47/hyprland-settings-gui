@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
 from collections.abc import Coroutine
 from dataclasses import replace
 from pathlib import Path
@@ -21,7 +22,7 @@ import pytest
 from _support import SAMPLE_APP_VERSION, sample_schema
 
 from hyprtweaker.engine.importer.loss import LossCode, LossReport
-from hyprtweaker.engine.importer.lua.sandbox import Consent, lua_binary
+from hyprtweaker.engine.importer.lua.sandbox import Cancelled, Consent, lua_binary
 from hyprtweaker.engine.migration import sentinel as sentinels
 from hyprtweaker.engine.migration.detect import ConfigKind
 from hyprtweaker.engine.migration.flow import (
@@ -868,6 +869,33 @@ def _foreign_lua(paths: ConfigPaths, source: str) -> MigrationFlow:
     flow = flow_for(paths, sample_schema())
     flow.detect()
     return flow
+
+
+@pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter on this machine")
+class TestAReadOffTheMainLoop:
+    """The wizard reads in a worker and holds the result on the main loop (#216)."""
+
+    def test_a_read_is_the_flow_s_preview_only_once_held(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(paths, "hl.config({ general = { gaps_in = 7 } })\n")
+
+        preview = flow.read_preview(consent=Consent(evaluate=True))
+
+        assert flow.preview is None
+        flow.hold(preview)
+        assert flow.preview is not None
+        assert flow.preview.model.get("general:gaps_in") == CssGaps(7, 7, 7, 7)
+        assert flow.step is Step.BACK_UP
+
+    def test_a_cancelled_read_leaves_the_flow_where_it_was(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(paths, "hl.config({ general = { gaps_in = 7 } })\n")
+        cancel = threading.Event()
+        cancel.set()
+
+        with pytest.raises(Cancelled):
+            flow.read_preview(consent=Consent(evaluate=True), cancel=cancel)
+
+        assert flow.preview is None
+        assert flow.step is Step.PREVIEW
 
 
 @pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter on this machine")

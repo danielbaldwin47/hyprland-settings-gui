@@ -12,6 +12,9 @@ module scope makes collection itself fail on a machine with no display.
 from __future__ import annotations
 
 import sys
+import threading
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import main_loop
@@ -24,6 +27,12 @@ APP_VERSION = "0.0.0-test"
 APP_ID = "io.github.danielbaldwin47.Hyprtweaker.Test"
 
 CONF = "general {\n    gaps_in = 5\n}\n"
+
+READING = "Reading"
+"""The progress page's title, shown while a read runs (#216)."""
+
+READER_THREAD = "hyprtweaker: reading a config"
+"""The name the wizard gives its read worker, so a test can see that none is left."""
 
 
 def build_window(tmp_path: Path, live: object = None):  # type: ignore[no-untyped-def]
@@ -300,7 +309,7 @@ class TestReadingAForeignLua:
         assert "Could not read the configuration" not in _text_under(dialog)
         assert dialog.get_default_widget().get_label() == "Not now"
 
-        _click(dialog, "Read it")
+        _read(dialog, "Read it")
 
         assert _page_title(dialog) == "Preview"
         assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(7)
@@ -332,7 +341,7 @@ class TestReadingAForeignLua:
         window, _ = build_window(tmp_path)
         dialog = window.show_migration()
         _click(dialog, "Convert...")
-        _click(dialog, "Read it")
+        _read(dialog, "Read it")
 
         assert _page_title(dialog) == "Commands"
         assert _row_titles(dialog) == [command]
@@ -341,7 +350,7 @@ class TestReadingAForeignLua:
         assert not run.has_css_class("suggested-action")
         assert not marker.exists()
 
-        _click(dialog, "Run them and read")
+        _read(dialog, "Run them and read")
 
         assert marker.exists()
         assert _page_title(dialog) == "Preview"
@@ -355,7 +364,7 @@ class TestReadingAForeignLua:
         window, session = build_window(tmp_path)
         first = window.show_migration()
         _click(first, "Convert...")
-        _click(first, "Read it")
+        _read(first, "Read it")
         assert _page_title(first) == "Preview"
         first.close()
 
@@ -400,7 +409,7 @@ class TestImportAChosenFile:
 
         assert _page_title(dialog) == "Read your config"
         assert str(chosen) in _text_under(dialog)
-        _click(dialog, "Read it")
+        _read(dialog, "Read it")
         assert _page_title(dialog) == "Preview"
         assert dialog._flow.preview.detection.source == chosen
         assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(7)
@@ -438,7 +447,7 @@ class TestTheCommandsPage:
         window, _ = build_window(tmp_path)
         dialog = window.show_migration()
         _click(dialog, "Convert...")
-        _click(dialog, "Read it")
+        _read(dialog, "Read it")
         assert _page_title(dialog) == "Commands"
         return dialog
 
@@ -516,10 +525,9 @@ class TestTheCommandsPage:
             ("a.lua -> b.lua", "Moves or renames this file"),
         ]
 
-    def test_a_click_queued_behind_a_read_runs_nothing_twice(self, tmp_path: Path) -> None:
-        """A read blocks the window for up to a minute, so a second click can queue behind
-        it. The pressed button is spent until the page settles, and the Run button arrives
-        unclickable, so a click aimed at "Read it" cannot land on it."""
+    def test_a_second_click_while_a_read_runs_starts_nothing(self, tmp_path: Path) -> None:
+        """One read at a time: a second press of the button that started it, before its
+        page has gone, does not start another read or run the commands twice."""
         marker = tmp_path / "ran"
         _foreign_root(
             tmp_path,
@@ -534,13 +542,23 @@ class TestTheCommandsPage:
         read.emit("clicked")
         read.emit("clicked")
 
-        assert dialog._view.get_navigation_stack().get_n_items() == 3
+        assert [_title(page) for page in _stack(dialog)] == [
+            "Detect",
+            "Read your config",
+            READING,
+        ]
+        _wait_for_the_read(dialog, "Read it")
+        assert [_title(page) for page in _stack(dialog)] == [
+            "Detect",
+            "Read your config",
+            "Commands",
+        ]
         run = _button(dialog, "Run them and read")
-        assert run.get_sensitive() is False
 
         run.emit("clicked")
         run.emit("clicked")
 
+        _wait_for_the_read(dialog, "Run them and read")
         assert marker.read_text(encoding="utf-8") == "x\n"
         assert _page_title(dialog) == "Preview"
 
@@ -560,6 +578,183 @@ class TestTheCommandsPage:
         assert "Read <mine> & co.lua?" in shown
 
 
+NEVER_ENDS = "hl.config({ general = { gaps_in = 7 } })\nwhile true do end\n"
+"""A config that only stops when it is stopped: a read the user has to cancel."""
+
+
+class HeldRead:
+    """`MigrationFlow.read_preview`, held until the test releases it, then read for real.
+
+    A read whose length the test controls, with no sleeping: while held, it gives up when
+    the wizard sets its cancel token (as the real read does), unless `ignore_cancel` makes
+    it the read that finishes just as the wizard closes.
+    """
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.ignore_cancel = False
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from hyprtweaker.engine.importer.lua.sandbox import Cancelled
+        from hyprtweaker.engine.migration.flow import MigrationFlow
+
+        real = MigrationFlow.read_preview
+
+        def held(flow, *args, cancel=None, **kwargs):  # type: ignore[no-untyped-def]
+            self.started.set()
+            deadline = time.monotonic() + main_loop.SETTLE_SECONDS
+            while not self.release.wait(0.005):
+                if cancel is not None and cancel.is_set() and not self.ignore_cancel:
+                    raise Cancelled("cancelled while held")
+                if time.monotonic() > deadline:
+                    raise AssertionError("the held read was never released")
+            return real(flow, *args, **kwargs)
+
+        monkeypatch.setattr(MigrationFlow, "read_preview", held)
+
+
+@pytest.fixture
+def held_read(monkeypatch: pytest.MonkeyPatch) -> Iterator[HeldRead]:
+    held = HeldRead()
+    held.install(monkeypatch)
+    yield held
+    held.release.set()
+    for thread in _readers():
+        thread.join(main_loop.SETTLE_SECONDS)
+
+
+class TestAReadOffTheMainLoop:
+    """Reading runs the config, which can take up to a minute: the wizard reads in a
+    worker behind a progress page, and Cancel or Close stops the read (#216)."""
+
+    def _on_consent(self, tmp_path: Path, source: str = FOREIGN_LUA):  # type: ignore[no-untyped-def]
+        _foreign_root(tmp_path, source)
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+        return dialog
+
+    def test_the_window_stays_live_behind_a_progress_page_until_the_read_ends(
+        self, tmp_path: Path, held_read: HeldRead
+    ) -> None:
+        from gi.repository import Adw, GLib
+
+        dialog = self._on_consent(tmp_path)
+        consent = _visible(dialog)
+
+        _click(dialog, "Read it")
+        assert held_read.started.wait(main_loop.SETTLE_SECONDS)
+
+        turns: list[int] = []
+        GLib.timeout_add(1, lambda: turns.append(1) or len(turns) < 3)
+        main_loop.wait_until(lambda: len(turns) == 3, "three main-loop turns during the read")
+        assert _page_title(dialog) == READING
+        status = _status(dialog)
+        assert status.get_title() == "Reading your config…"
+        assert status.get_description() in (None, "")
+        assert isinstance(status.get_paintable(), Adw.SpinnerPaintable)
+        assert [b.get_label() for b in _action_buttons(dialog)] == ["Cancel"]
+        assert {
+            label: button.is_sensitive() for label, button in _buttons_on(consent).items()
+        } == {"Read it": False, "Not now": False}
+        assert dialog._flow.preview is None
+
+        held_read.release.set()
+        _wait_for_the_read(dialog, "Read it")
+
+        assert _page_title(dialog) == "Preview"
+        assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(7)
+        assert [_title(page) for page in _stack(dialog)] == [
+            "Detect",
+            "Read your config",
+            "Preview",
+        ]
+
+    def test_a_long_read_says_it_can_take_up_to_a_minute(
+        self, tmp_path: Path, held_read: HeldRead, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from hyprtweaker.ui.dialogs import migration
+
+        monkeypatch.setattr(migration, "LONG_READ_SECONDS", 0.0)
+        dialog = self._on_consent(tmp_path)
+
+        _click(dialog, "Read it")
+
+        main_loop.wait_until(
+            lambda: _status(dialog).get_description() == "This can take up to a minute.",
+            "the progress page's second line",
+        )
+
+    def test_cancel_stops_the_read_and_returns_to_the_page_it_came_from(
+        self, tmp_path: Path
+    ) -> None:
+        dialog = self._on_consent(tmp_path, NEVER_ENDS)
+        _click(dialog, "Read it")
+        assert _page_title(dialog) == READING
+
+        _click(dialog, "Cancel")
+
+        assert _page_title(dialog) == "Read your config"
+        main_loop.wait_until(lambda: not _readers(), "the cancelled read's worker to end")
+        assert dialog._flow.preview is None
+        assert {
+            label: button.is_sensitive()
+            for label, button in _buttons_on(_visible(dialog)).items()
+        } == {"Read it": True, "Not now": True}
+        assert dialog.get_default_widget().get_label() == "Not now"
+        main_loop.settle("anything the cancelled read left queued")
+        assert _page_title(dialog) == "Read your config"
+        assert dialog._flow.preview is None
+
+    def test_cancel_on_the_commands_page_read_returns_to_the_commands_page(
+        self, tmp_path: Path
+    ) -> None:
+        # Read blocked, the pipe is faked and comes back empty; run for real, it never ends.
+        dialog = self._on_consent(
+            tmp_path,
+            'if io.popen("echo 5"):read("*a") ~= "" then while true do end end\n',
+        )
+        _read(dialog, "Read it")
+        assert _page_title(dialog) == "Commands"
+        blocked = dialog._flow.preview
+
+        _click(dialog, "Run them and read")
+        assert _page_title(dialog) == READING
+        _click(dialog, "Cancel")
+
+        assert _page_title(dialog) == "Commands"
+        main_loop.wait_until(lambda: not _readers(), "the cancelled read's worker to end")
+        assert _button(dialog, "Run them and read").is_sensitive()
+        assert dialog.get_default_widget().get_label() == "Not now"
+        assert dialog._flow.preview is blocked  # the cancelled read held nothing
+
+    def test_closing_the_wizard_mid_read_stops_the_read(self, tmp_path: Path) -> None:
+        dialog = self._on_consent(tmp_path, NEVER_ENDS)
+        _click(dialog, "Read it")
+
+        dialog.close()
+
+        main_loop.wait_until(lambda: not _readers(), "the read's worker to end on close")
+        main_loop.settle("the closed wizard's release")
+        assert dialog._flow.preview is None
+
+    def test_a_read_that_ends_as_the_wizard_closes_is_dropped(
+        self, tmp_path: Path, held_read: HeldRead
+    ) -> None:
+        held_read.ignore_cancel = True
+        dialog = self._on_consent(tmp_path)
+        _click(dialog, "Read it")
+        dialog.close()
+        main_loop.settle("the closed wizard's release")
+
+        held_read.release.set()
+
+        main_loop.wait_until(lambda: not _readers(), "the late read's worker to end")
+        main_loop.settle("the late read's result reaching the main loop")
+        assert dialog._flow.preview is None
+
+
 def test_reading_without_lua_stops_on_a_page_that_says_what_to_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -571,7 +766,7 @@ def test_reading_without_lua_stops_on_a_page_that_says_what_to_install(
     dialog = window.show_migration()
     _click(dialog, "Convert...")
 
-    _click(dialog, "Read it")
+    _read(dialog, "Read it")
 
     assert _page_title(dialog) == "Stopped"
     assert _descriptions(dialog) == [
@@ -762,3 +957,47 @@ def _button(dialog, label: str):  # type: ignore[no-untyped-def]
 
 def _click(dialog, label: str) -> None:  # type: ignore[no-untyped-def]
     _button(dialog, label).emit("clicked")
+
+
+def _readers() -> list[threading.Thread]:
+    """The wizard's read workers still running in this process."""
+    return [thread for thread in threading.enumerate() if thread.name == READER_THREAD]
+
+
+def _wait_for_the_read(dialog, label: str) -> None:  # type: ignore[no-untyped-def]
+    main_loop.wait_until(
+        lambda: _page_title(dialog) != READING and not _readers(),
+        f"the read {label!r} started to reach its page and its worker to end",
+    )
+
+
+def _read(dialog, label: str) -> None:  # type: ignore[no-untyped-def]
+    """Press `label`, which reads the config in a worker, and wait for where it lands."""
+    _click(dialog, label)
+    _wait_for_the_read(dialog, label)
+
+
+def _stack(dialog) -> list:  # type: ignore[type-arg]
+    stack = dialog._view.get_navigation_stack()
+    return [stack.get_item(i) for i in range(stack.get_n_items())]
+
+
+def _title(page) -> str:  # type: ignore[no-untyped-def]
+    return str(page.get_title())
+
+
+def _buttons_on(page) -> dict[str, object]:  # type: ignore[no-untyped-def]
+    from gi.repository import Gtk
+
+    return {
+        widget.get_label(): widget
+        for widget in _walk(page)
+        if isinstance(widget, Gtk.Button) and widget.get_label()
+    }
+
+
+def _status(dialog):  # type: ignore[no-untyped-def]
+    from gi.repository import Adw
+
+    (status,) = _of_type(dialog, Adw.StatusPage)
+    return status
