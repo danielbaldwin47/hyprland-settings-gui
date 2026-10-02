@@ -115,7 +115,7 @@
         "scrolling": "Scrolling",
         "monocle": "Monocle"
       },
-      "help": "Which tiling layout to use. Custom Lua layouts are selectable as lua:<name>."
+      "help": "Which tiling layout to use. Layouts your Lua files register are listed too, marked “Lua layout”."
     },
     "general:no_focus_fallback": { "title": "Never refocus after closing a window" },
     "general:resize_on_border": { "title": "Resize windows by dragging their border" },

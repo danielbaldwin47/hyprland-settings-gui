@@ -135,6 +135,40 @@ def test_a_rename_notice_lists_old_and_new_names(tmp_path: Path) -> None:
     assert seen(tmp_path) == (), "a rename notice records nothing"
 
 
+def test_a_quiet_retirement_whose_value_was_lost_never_says_hyprland_removed_it(
+    tmp_path: Path,
+) -> None:
+    """Spec #152 review finding 3: a plugin that is not loaded, or a setting the startup
+    read missed, was not removed from Hyprland; the notice says what the app did."""
+    from hyprtweaker.engine.state.retirement import UnkeptNotice
+    from hyprtweaker.ui.dialogs.notices import notice_title
+
+    _, window = build_window(tmp_path)
+    one = UnkeptNotice("0.56.2", ("plugin:hyprbars:bar_height",), removed=False)
+    two = UnkeptNotice("0.56.2", ("plugin:hyprbars:bar_height", RESIZE), removed=False)
+
+    toast = window.show_notice(one)
+    dialog = window.notice_details(two)
+    toast.dismiss()
+
+    assert toast.get_title() == (
+        "The app stopped writing a setting you had set and could not keep its value"
+    )
+    assert notice_title(two) == (
+        "The app stopped writing 2 settings you had set and could not keep their values"
+    )
+    assert dialog.get_heading() == "Settings the app stopped writing"
+    assert dialog.get_body() == (
+        "Hyprland did not report these settings when the app started, so it no longer "
+        "writes them. A plugin that is not loaded is one reason. The app could not read "
+        "their values back, so if you need them, set them again."
+    )
+    assert rows(dialog) == [
+        ("plugin:hyprbars:bar_height", ""),
+        ("Resize windows by dragging their border", RESIZE),
+    ]
+
+
 def test_a_value_the_app_could_not_keep_is_named_and_says_what_to_do(tmp_path: Path) -> None:
     """#150 review finding 4: without Lua the app cannot read a removed setting's value
     back, so the toast says it is gone and Details tells the user how to get it back."""

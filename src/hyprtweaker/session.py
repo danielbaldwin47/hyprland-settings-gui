@@ -1923,10 +1923,12 @@ class Session:
         if found or restored:
             self._spawn(self._write_retirement(applier, restored))
 
-        notices: list[Notice] = list(retirement.unannounced(remaining))
-        for extra in (UnkeptNotice.of(found, values), RenamedNotice.of(restored)):
-            if extra is not None:
-                notices.append(extra)
+        notices: list[Notice] = [
+            *retirement.unannounced(remaining),
+            *UnkeptNotice.of(found, values),
+        ]
+        if (renamed := RenamedNotice.of(restored)) is not None:
+            notices.append(renamed)
         for notice in notices:
             if self.on_notice is not None:
                 self.on_notice(notice)
@@ -2200,12 +2202,12 @@ class Session:
             self._load_monitors()
 
     def _reread_declarations(self) -> None:
-        """Adopt hand edits to the six declarative Modules, gated like the others.
+        """Adopt hand edits to the seven declarative Modules, gated like the others.
 
-        One gate over all six and one load for all six, for `_reread_rules`'s reason:
+        One gate over all seven and one load for all seven, for `_reread_rules`'s reason:
         `_load_declarations` splices misfiled entities to the kind they are, so re-reading
         one file without the others would drop whatever it found belonging to a list the
-        other five own.
+        other six own.
         """
         changed = False
         for module in self.DECLARATION_MODULES:
@@ -2349,14 +2351,14 @@ class Session:
     """The seven Modules `_load_declarations` reads: the six of #70 and `plugins.lua` (#174)."""
 
     def _load_declarations(self) -> bool:
-        """Read the six declarative Entity Modules into the model.
+        """Read the seven declarative Entity Modules into the model.
 
         The same shape as `_load_rules` and `_load_monitors`, one tier wider: every file
         feeds every list, so an entity someone hand-moved into the wrong Module comes back
         as what it is rather than vanishing -- and vanishing is not cosmetic here, because a
         list the model believes is empty is a Module the Writer prunes.
 
-        All six are adopted together or none is. Six files is where that rule starts to
+        All seven are adopted together or none is. Seven files is where that rule starts to
         look expensive, and it is exactly where it starts to matter: a single unparseable
         `gestures.lua` must not license the Writer to delete a user's `env.lua`, which is
         the one Module whose contents Hyprland will not restore on the next reload.
@@ -2833,6 +2835,7 @@ class Session:
         # The restore re-read the model itself, so the Rows have moved; and its own reload's
         # errors are the current truth about the config, replacing the ones it was answering.
         self._observe(result)
+        self._repoll_if_timed_out(result)
         # After the observation, which clears the field: this notice is about what the
         # restore just did, so it has to survive the restore's own reload and nothing later.
         self._rescued, self._pending_rescue = self._pending_rescue, ()
@@ -2967,6 +2970,7 @@ class Session:
         if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
             _log.error("could not %s: %s", what, result.detail)
         self._observe(result)
+        self._repoll_if_timed_out(result)
         self._report(result)
         self._changed()
 

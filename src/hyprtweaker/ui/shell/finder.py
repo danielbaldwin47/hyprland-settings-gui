@@ -315,7 +315,7 @@ def _result_header(
     """A group heading above the first row of each group, and nothing above the rest.
 
     Asked of the hits' groups rather than of the rows: each hit knows its group (ADR-0017's
-    Settings, then Rules & entities), and a row only knows where it sits.
+    Settings, then Keybinds, rules & displays), and a row only knows where it sits.
     """
     index = row.get_index()
     group = groups[index] if 0 <= index < len(groups) else None

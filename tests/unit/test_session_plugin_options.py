@@ -11,13 +11,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from _fake_hyprland import FakeHyprland, run_with_fake
 from _support import Runner, sample_schema, section_conversation, session_for
 
+from hyprtweaker.engine.importer.lua import sandbox
 from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import SupplementKind
 from hyprtweaker.engine.state import Manifest, RetiredValue, RetireReason
+from hyprtweaker.engine.state.retirement import UnkeptNotice
 from hyprtweaker.session import Notice
 
 BAR_HEIGHT = {"name": "plugin:hyprbars:bar_height", "description": "bar height", "default": 15}
@@ -135,5 +138,25 @@ def test_while_the_plugin_is_not_loaded_its_setting_is_kept_quietly_and_comes_ba
         assert await start(fake, tmp_path, described(BAR_HEIGHT)) == []
         assert "bar_height = 20" in plugin_module(tmp_path).read_text()
         assert kept(tmp_path) == {}
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_plugin_setting_whose_value_cannot_be_kept_is_not_called_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec #152 review finding 3: with no Lua to read its Module back, the value of a
+    setting whose plugin is not loaded is lost, and the user hears so -- but Hyprland
+    removed nothing, so the notice must not say it did."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await set_with_plugin_loaded(fake, tmp_path)
+        monkeypatch.setattr(sandbox, "lua_binary", lambda: None)
+
+        notices = await start(fake, tmp_path, described())
+
+        assert notices == [
+            UnkeptNotice("0.56.2", ("plugin:hyprbars:bar_height",), removed=False)
+        ]
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))

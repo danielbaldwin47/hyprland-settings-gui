@@ -32,6 +32,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from hyprtweaker.engine.entities_catalog import field_text  # noqa: E402
+from hyprtweaker.engine.scripting import layout_label  # noqa: E402
 from hyprtweaker.engine.workspace_catalog import (  # noqa: E402
     BUILTIN_LAYOUTS,
     LAYOUT_OPTS,
@@ -285,9 +286,12 @@ class WorkspaceFieldRows:
             # A held layout the compositor does not list joins the choices: opening a rule
             # must not quietly change its layout to the first one in the list.
             choices = (*self._layouts, *([opening] if opening not in self._layouts else []))
+            # Spelled as the Layout row spells them: every Lua layout offered here is one
+            # the user's files register, so only the held one may read "(not found)".
+            labels = [layout_label(each, found=each in self._layouts) for each in choices]
             combo = Adw.ComboRow(
                 title=spec.title,
-                model=Gtk.StringList.new(list(choices)),
+                model=Gtk.StringList.new(labels),
                 selected=choices.index(opening),
             )
             combo.connect("notify::selected", lambda *_: self._touch(row))

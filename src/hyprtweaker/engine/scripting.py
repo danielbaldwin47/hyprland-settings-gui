@@ -10,7 +10,10 @@ Best-effort by design. A call made through another name (`local on = hl.on`), bu
 loop, or spelled `hl["on"]` is not a hit; where the file names one of the four functions
 without calling it, the scan reports an `IndirectUse` so the Page can point at the line.
 A string or comment that never closes stops the scan of that file and is reported as
-`UnfinishedText`; every hit before it is kept.
+`UnfinishedText`; every hit before it is kept. Only these two files are read: each
+`require`, `dofile` or `loadfile` in them is reported as a `LoadsFile`, since the calls in
+the file it loads are never seen. No content makes the scan raise: a file the scanner
+cannot follow is reported as an `UnsearchedFile`, and the other file is still read.
 
 Read by the Scripting Page and by the layout pickers (`discovered_layouts`, #175), and by
 nothing that writes: a miss or a crash here cannot change a byte the Writer emits.
@@ -19,12 +22,15 @@ nothing that writes: a miss or a crash here cannot change a byte the Writer emit
 from __future__ import annotations
 
 import enum
+import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 from hyprtweaker.engine.paths import ConfigPaths
+
+_log = logging.getLogger(__name__)
 
 
 class CallKind(enum.StrEnum):
@@ -70,7 +76,24 @@ class UnfinishedText:
     line: int
 
 
-ScanGap = IndirectUse | UnfinishedText
+@dataclass(frozen=True, slots=True)
+class LoadsFile:
+    """`require`, `dofile` or `loadfile` on `line`: the file it loads is not read, so the
+    calls in it are not listed."""
+
+    path: Path
+    line: int
+
+
+@dataclass(frozen=True, slots=True)
+class UnsearchedFile:
+    """The scanner failed on this file, so nothing in it is listed. A bug of the scanner's,
+    never the user's: Lua may well accept the file."""
+
+    path: Path
+
+
+ScanGap = IndirectUse | UnfinishedText | LoadsFile | UnsearchedFile
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +111,7 @@ class ScriptingScan:
 
 
 def scan_scripting(paths: ConfigPaths) -> ScriptingScan:
-    """Scan `user.lua`, then `legacy.lua`. Never raises for I/O or decoding problems."""
+    """Scan `user.lua`, then `legacy.lua`. Never raises, whatever the files hold."""
     hits: list[ScriptingHit] = []
     unreadable: list[Path] = []
     gaps: list[ScanGap] = []
@@ -102,7 +125,12 @@ def scan_scripting(paths: ConfigPaths) -> ScriptingScan:
             continue
         # Replacement rather than refusal: Lua is byte-oriented, and a stray Latin-1 byte
         # in a comment is no reason to hide every call in the file.
-        file_hits, file_gaps = _scan_text(data.decode("utf-8", errors="replace"), path)
+        try:
+            file_hits, file_gaps = _scan_text(data.decode("utf-8", errors="replace"), path)
+        except Exception:  # the user's own file: no content may break a page or a picker
+            _log.exception("scanning %s failed", path)
+            gaps.append(UnsearchedFile(path=path))
+            continue
         hits.extend(file_hits)
         gaps.extend(file_gaps)
     return ScriptingScan(hits=tuple(hits), unreadable=tuple(unreadable), gaps=tuple(gaps))
@@ -115,7 +143,27 @@ def discovered_layouts(paths: ConfigPaths) -> tuple[str, ...]:
         for hit in scan_scripting(paths).hits
         if hit.kind is CallKind.LAYOUT and hit.name
     }
-    return tuple(f"lua:{name}" for name in sorted(names))
+    return tuple(f"{LUA_LAYOUT}{name}" for name in sorted(names))
+
+
+LUA_LAYOUT = "lua:"
+"""The prefix Hyprland gives a layout a Lua file registers: `lua:<name>`."""
+
+LAYOUT_OPTION = "general:layout"
+"""The Option whose choices include the discovered layouts (ADR-0018 §Custom layouts)."""
+
+
+def layout_label(value: str, *, found: bool) -> str:
+    """A layout choice in words, the same in every picker that offers one (#175).
+
+    `lua:foo` reads "foo (Lua layout)" when the user's files register it, and "foo (not
+    found)" when they do not: the value is kept, but no file registers it. Any other value
+    (a built-in, or a plugin's layout) reads as itself.
+    """
+    if not value.startswith(LUA_LAYOUT):
+        return value
+    name = value.removeprefix(LUA_LAYOUT)
+    return f"{name} (Lua layout)" if found else f"{name} (not found)"
 
 
 # --- tokens -----------------------------------------------------------------------------
@@ -146,7 +194,8 @@ _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _NUMBER = re.compile(
     r"0[xX][0-9a-fA-F]*(?:\.[0-9a-fA-F]*)?(?:[pP][+-]?\d+)?"
     r"|\d+\.?\d*(?:[eE][+-]?\d+)?"
-    r"|\.\d+(?:[eE][+-]?\d+)?"
+    r"|\.\d+(?:[eE][+-]?\d+)?",
+    re.ASCII,  # Lua's digits are 0-9: `²` or `٣` is no number, and falls to an operator
 )
 _LONG_OPEN = re.compile(r"\[(=*)\[")
 _OPS = ("...", "..", "::", "==", "~=", "<=", ">=", "//", "<<", ">>")
@@ -195,9 +244,7 @@ def _tokens(source: str) -> Iterator[_Token]:
         elif (match := _NAME.match(source, pos)) is not None:
             yield _Token(_Tok.NAME, match.group(), line)
             pos = match.end()
-        elif char.isdigit() or (char == "." and source[pos + 1 : pos + 2].isdigit()):
-            number = _NUMBER.match(source, pos)
-            assert number is not None  # a digit, or a dot before one, always matches
+        elif (number := _NUMBER.match(source, pos)) is not None:
             yield _Token(_Tok.NUMBER, number.group(), line)
             pos = number.end()
         else:
@@ -257,6 +304,7 @@ _PATHS: dict[tuple[str, ...], CallKind] = {
     ("layout", "register"): CallKind.LAYOUT,
     ("plugin", "load"): CallKind.PLUGIN_LOAD,
 }
+_LOADERS = {"require", "dofile", "loadfile"}
 _OPENERS = {"(", "{", "[", "function", "if", "do", "repeat"}
 _CLOSERS = {")", "}", "]", "end", "until"}
 
@@ -275,10 +323,15 @@ def _scan_text(source: str, path: Path) -> tuple[list[ScriptingHit], list[ScanGa
     hits: list[ScriptingHit] = []
     found: list[ScanGap] = []
     for index, token in enumerate(tokens):
-        if token.kind is not _Tok.NAME or token.text != "hl":
+        if token.kind is not _Tok.NAME or token.text not in ("hl", *_LOADERS):
             continue
         if index > 0 and (_is(tokens[index - 1], ".") or _is(tokens[index - 1], ":")):
             continue  # `x.hl` is some other table's field
+        if token.text in _LOADERS:
+            # `{ require = 1 }` or `local require = f` names a key or a local, not a load.
+            if not (index + 1 < len(tokens) and _is(tokens[index + 1], "=")):
+                found.append(LoadsFile(path=path, line=token.line))
+            continue
         matched = _match_path(tokens, index + 1)
         if matched is None:
             continue
@@ -419,12 +472,16 @@ def _timer_text(opts: _Arg) -> str:
 
 
 __all__ = [
+    "LUA_LAYOUT",
     "CallKind",
     "IndirectUse",
+    "LoadsFile",
     "ScanGap",
     "ScriptingHit",
     "ScriptingScan",
     "UnfinishedText",
+    "UnsearchedFile",
     "discovered_layouts",
+    "layout_label",
     "scan_scripting",
 ]

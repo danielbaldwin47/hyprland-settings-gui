@@ -16,7 +16,9 @@ license=(GPL-3.0-or-later)
 # python-gobject>=3.50 is the floor meson.build checks by capability (`import gi.events`)
 # and MINIMUM_PYGOBJECT states (tests/unit/test_packaging.py keeps the three equal).
 # zstd: Theme archive compression falls back to the `zstd` binary below Python 3.14.
-depends=(python 'python-gobject>=3.50' gtk4 libadwaita glib2 hicolor-icon-theme zstd)
+# lua: the app runs `lua` to read its own Modules back, and `luac` (same package) gates
+# every write's syntax.
+depends=(python 'python-gobject>=3.50' gtk4 libadwaita glib2 hicolor-icon-theme zstd lua)
 makedepends=(git meson)
 checkdepends=(python-pytest desktop-file-utils appstream)
 optdepends=('hyprland: the compositor being configured')
@@ -40,7 +42,8 @@ build() {
 
 check() {
   # -Dtests=enabled: a missing pytest or validator fails here, so "no tests ran" can
-  # never read as a pass. The UI tier starts its own private Xvfb, or skips without one.
+  # never read as a pass. The UI tier needs Xvfb and dbus-daemon, which checkdepends do
+  # not pull in, so in a clean chroot it always skips; the unit and static tiers still run.
   meson configure build -Dtests=enabled
   meson test -C build --print-errorlogs
 }

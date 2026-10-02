@@ -53,6 +53,13 @@ def test_the_pkgbuild_depends_on_zstd_for_theme_archives() -> None:
     assert "zstd" in pkgbuild_array("depends")
 
 
+def test_the_pkgbuild_depends_on_lua_to_read_and_write_its_modules() -> None:
+    """The app runs `lua` to read its own Modules back (`importer/lua/sandbox.py`), and
+    without it every entity write refuses as an installation problem; the same package
+    ships `luac` for the syntax gate. Spec #152 review finding 9."""
+    assert "lua" in pkgbuild_array("depends")
+
+
 def test_the_pkgbuild_meson_and_metainfo_agree_on_the_license() -> None:
     meson_license = re.search(r"license:\s*'([^']+)'", TOP_MESON.read_text())
     metainfo = ElementTree.parse(METAINFO).getroot()
