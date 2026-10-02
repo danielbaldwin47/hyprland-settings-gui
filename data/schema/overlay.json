@@ -491,7 +491,7 @@
       "depends_on": { "option": "decoration:shadow:enabled", "value": true },
       "group": "Shadows",
       "order": 6,
-      "help": "Shadow color of windows without focus. When unset, the normal shadow color is used."
+      "help": "Shadow color of windows without focus."
     },
     "decoration:shadow:offset": {
       "title": "Shadow offset",
@@ -546,7 +546,7 @@
       "depends_on": { "option": "decoration:glow:enabled", "value": true },
       "group": "Glow",
       "order": 5,
-      "help": "Glow color of windows without focus. When unset, the normal glow color is used."
+      "help": "Glow color of windows without focus."
     },
     "decoration:dim_modal": {
       "title": "Dim parents of modal windows",
@@ -592,7 +592,8 @@
     "decoration:border_part_of_window": {
       "title": "Border counts as part of the window",
       "group": "Corners and opacity",
-      "order": 6
+      "order": 6,
+      "help": "Treats the border as part of the window rather than as something drawn around it."
     },
     "decoration:blur:enabled": {
       "title": "Blur",
@@ -833,7 +834,7 @@
       "labels": { "adaptive": "Adaptive", "flat": "Flat", "custom": "Custom" },
       "group": "Pointer",
       "order": 2,
-      "help": "How the pointer speeds up as you move the device faster. Device default keeps the device's own profile."
+      "help": "How the pointer speeds up as you move it faster; Device default keeps the device's own. Custom needs acceleration points this app cannot set yet."
     },
     "input:force_no_accel": {
       "title": "Disable pointer acceleration",
@@ -1557,7 +1558,7 @@
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab titles",
       "order": 6,
-      "help": "Title color of windows without focus in the group bar. Unset uses the title color."
+      "help": "Title color of windows without focus in the group bar."
     },
     "group:groupbar:text_color_locked_active": {
       "title": "Locked active title color",
@@ -1567,7 +1568,7 @@
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab titles",
       "order": 7,
-      "help": "Title color of the active window in a locked group. Unset uses the title color."
+      "help": "Title color of the active window in a locked group."
     },
     "group:groupbar:text_color_locked_inactive": {
       "title": "Locked inactive title color",
@@ -1577,7 +1578,7 @@
       "depends_on": { "option": "group:groupbar:enabled", "value": true },
       "group": "Tab titles",
       "order": 8,
-      "help": "Title color of the other windows in a locked group. Unset uses the inactive title color."
+      "help": "Title color of the other windows in a locked group."
     },
     "group:groupbar:col.active": {
       "title": "Active tab color",
@@ -1655,7 +1656,7 @@
     },
 
     "misc:disable_hyprland_logo": {
-      "title": "Hide the Hyprland logo",
+      "title": "Hide the built-in wallpaper",
       "group": "Wallpaper and splash",
       "order": 3,
       "help": "Hides the random Hyprland logo or anime picture drawn on the desktop background."
@@ -1869,7 +1870,7 @@
       "unit": "fps",
       "group": "Displays and power",
       "order": 4,
-      "help": "Caps the frame rate, in frames per second, of windows kept rendering in the background by the render_unfocused window rule."
+      "help": "Caps the frame rate, in frames per second, of windows the Render unfocused window rule keeps rendering in the background."
     },
     "misc:disable_xdg_env_checks": {
       "title": "Skip XDG environment checks",
@@ -2436,7 +2437,8 @@
       "restart": "hyprland",
       "group": "Protocol workarounds",
       "order": 4,
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "help": "Tells apps that every color management feature is supported."
     },
     "debug:ds_handle_same_buffer": {
       "title": "Direct scanout of the same buffer",
@@ -2554,7 +2556,8 @@
     "master:allow_small_split": {
       "title": "Allow small splits",
       "group": "Size and position",
-      "order": 3
+      "order": 3,
+      "help": "Lets you add more master windows by splitting the master area horizontally."
     },
     "master:special_scale_factor": {
       "title": "Special workspace scale",

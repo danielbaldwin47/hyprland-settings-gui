@@ -245,7 +245,7 @@ help = "Color of window shadows. Its alpha sets how opaque the shadow is."
 #   upstream: inactive shadow color. (if not set, will fall back to col.shadow)
 #   wiki:     inactive shadow color. (if not set, will fall back to color)
 ["decoration:shadow:color_inactive"]
-help = "Shadow color of windows without focus. When unset, the normal shadow color is used."
+help = "Shadow color of windows without focus."
 
 # decoration:shadow:offset: Shadow offset [Shadow] (vec2, default [0, 0])
 #   upstream: shadow's rendering offset.
@@ -292,7 +292,7 @@ help = "Color of the glow. Its alpha sets how strong the glow is."
 #   upstream: inactive glow color. (if not set, will fall back to decoration:glow:color)
 #   wiki:     inactive glow color. (if not set, will fall back to color)
 ["decoration:glow:color_inactive"]
-help = "Glow color of windows without focus. When unset, the normal glow color is used."
+help = "Glow color of windows without focus."
 
 # decoration:dim_modal: Dim parents of modal windows [Dimming] (bool, default True)
 #   upstream: enables dimming of parents of modal windows
@@ -336,7 +336,7 @@ help = "Path to a GLSL shader file applied to the whole screen after everything 
 #   upstream: whether the border should be treated as a part of the window.
 #   wiki:     whether the window border should be a part of the window
 ["decoration:border_part_of_window"]
-skip = "upstream line is accurate but the wider effect is not stated anywhere; nothing safe to add"
+help = "Treats the border as part of the window rather than as something drawn around it."
 
 # decoration:blur:enabled: Blur [Blur] (bool, default True)
 #   upstream: enable kawase window background blur
@@ -557,7 +557,7 @@ help = "Pointer speed for mice and touchpads. Lower values slow the pointer down
 #   the combo already names its values (labels)
 #   candidate: lists values the combo shows: adaptive, flat, custom; wiki is longer (365 chars)
 ["input:accel_profile"]
-help = "How the pointer speeds up as you move the device faster. Device default keeps the device's own profile."
+help = "How the pointer speeds up as you move it faster; Device default keeps the device's own. Custom needs acceleration points this app cannot set yet."
 
 # input:force_no_accel: Disable pointer acceleration [Pointer] (bool, default False)
 #   upstream: Force no cursor acceleration.
@@ -1223,21 +1223,21 @@ help = "Color of the window titles in the group bar."
 #   wiki:     color for inactive windows' titles in the groupbar (if unset, defaults to text_color)
 #   candidate: wiki is longer (85 chars)
 ["group:groupbar:text_color_inactive"]
-help = "Title color of windows without focus in the group bar. Unset uses the title color."
+help = "Title color of windows without focus in the group bar."
 
 # group:groupbar:text_color_locked_active: Locked active title colour [Tab titles] (color, default '-1')
 #   upstream: color for the active window's title in a locked group
 #   wiki:     color for the active window's title in a locked group (if unset, defaults to text_color)
 #   candidate: wiki is longer (88 chars)
 ["group:groupbar:text_color_locked_active"]
-help = "Title color of the active window in a locked group. Unset uses the title color."
+help = "Title color of the active window in a locked group."
 
 # group:groupbar:text_color_locked_inactive: Locked inactive title colour [Tab titles] (color, default '-1')
 #   upstream: color for inactive windows' titles in locked groups
 #   wiki:     color for inactive windows' titles in locked groups (if unset, defaults to text_color_inactive)
 #   candidate: wiki is longer (95 chars)
 ["group:groupbar:text_color_locked_inactive"]
-help = "Title color of the other windows in a locked group. Unset uses the inactive title color."
+help = "Title color of the other windows in a locked group."
 
 # group:groupbar:col.active: Active background [Tab backgrounds] (gradient, default '66ffff00 0deg')
 #   upstream: active group border color
@@ -1523,7 +1523,7 @@ help = "Middle-clicking pastes the primary selection, which is the text you last
 #   wiki:     the maximum limit for render_unfocused windows' fps in the background (see also [Window-Rules](../Window-Rules/#dynamic-effects) - `render_unfocused`)
 #   candidate: wiki is longer (150 chars)
 ["misc:render_unfocused_fps"]
-help = "Caps the frame rate, in frames per second, of windows kept rendering in the background by the render_unfocused window rule."
+help = "Caps the frame rate, in frames per second, of windows the Render unfocused window rule keeps rendering in the background."
 
 # misc:disable_xdg_env_checks: Skip XDG environment checks [Reloads and warnings] (bool, default False)
 #   upstream: disable the warning if XDG environment is externally managed
@@ -2143,7 +2143,7 @@ skip = "no source explains what render pass debugging prints"
 #   wiki:     claims support for all cm proto features (requires restart)
 #   the wiki notes a restart is needed
 ["debug:full_cm_proto"]
-skip = "internal compatibility switch; no plain-language effect is documented"
+help = "Tells apps that every color management feature is supported."
 
 # debug:ds_handle_same_buffer: Direct scanout of the same buffer [Protocol workarounds] (bool, default True)
 #   upstream: Special case for DS with unmodified buffer
@@ -2287,7 +2287,7 @@ help = "Drops a window you drag with a mouse bind more precisely, depending on w
 #   upstream: enable adding additional master windows in a horizontal split style
 #   wiki:     enable adding additional master windows in a horizontal split style
 ["master:allow_small_split"]
-skip = "no source explains what a horizontal split style is for master windows"
+help = "Lets you add more master windows by splitting the master area horizontally."
 
 # master:special_scale_factor: Special workspace scale [Size and position] (float, default 1)
 #   upstream: the scale of the special workspace windows.

@@ -188,7 +188,7 @@ group:groupbar:keep_upper_gap | bool | toggle | - | - | default | group:groupbar
 group:groupbar:text_offset | int | int-range | - | - | default | group:groupbar:enabled=True | min=-20,max=20 | - | px | Text offset
 group:groupbar:text_padding | int | int-range | - | - | default | group:groupbar:enabled=True | min=0,max=22 | - | px | Text padding
 group:groupbar:blur | bool | toggle | - | - | default | group:groupbar:enabled=True | - | - | - | Blur the background
-misc:disable_hyprland_logo | bool | toggle | - | - | default | - | - | - | - | Hide the Hyprland logo
+misc:disable_hyprland_logo | bool | toggle | - | - | default | - | - | - | - | Hide the built-in wallpaper
 misc:disable_splash_rendering | bool | toggle | - | - | default | - | - | - | - | Hide the splash text
 misc:col.splash | color | color | - | - | default | - | - | - | - | Splash text color
 misc:font_family | string | font-picker | - | - | default | - | - | - | - | Global font
