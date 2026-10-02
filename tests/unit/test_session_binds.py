@@ -94,6 +94,32 @@ class TestAddAndReplace:
         assert applier.commits == 2
 
 
+class TestEditBinds:
+    """The refusal lives in `edit_binds`, so every Bind edit, wrapped or not, meets it."""
+
+    @pytest.mark.parametrize("bind", [DEAD, AMP], ids=["dead-keysym", "ampersand"])
+    def test_an_edit_that_stores_a_new_unloadable_bind_is_refused(
+        self, tmp_path: Path, bind: Bind
+    ) -> None:
+        session, applier = live_session(tmp_path)
+        assert session.add_bind(PLAIN)
+
+        assert session.edit_binds(lambda binds: binds.insert(0, bind)) is False
+
+        assert session.model.entities.binds == [PLAIN]
+        assert applier.commits == 1, "only the add wrote"
+
+    def test_an_edit_that_carries_an_unloadable_bind_along_is_not(self, tmp_path: Path) -> None:
+        """Enabled and unloadable already: the edit did not put it there, so it stands."""
+        session, applier = live_session(tmp_path)
+        session.model.entities.binds[:] = [DEAD, PLAIN]
+
+        assert session.edit_binds(lambda binds: binds.reverse()) is True
+
+        assert session.model.entities.binds == [PLAIN, DEAD]
+        assert applier.commits == 1
+
+
 def test_a_refused_enable_leaves_the_written_binds_lua_alone(tmp_path: Path) -> None:
     """Against a scripted compositor, so the file the Writer produced is what is compared."""
 
