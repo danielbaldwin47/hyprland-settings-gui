@@ -2139,12 +2139,12 @@ class Session:
             self._load_monitors()
 
     def _reread_declarations(self) -> None:
-        """Adopt hand edits to the six declarative Modules, gated like the others.
+        """Adopt hand edits to the seven declarative Modules, gated like the others.
 
-        One gate over all six and one load for all six, for `_reread_rules`'s reason:
+        One gate over all seven and one load for all seven, for `_reread_rules`'s reason:
         `_load_declarations` splices misfiled entities to the kind they are, so re-reading
         one file without the others would drop whatever it found belonging to a list the
-        other five own.
+        other six own.
         """
         changed = False
         for module in self.DECLARATION_MODULES:
@@ -2288,14 +2288,14 @@ class Session:
     """The seven Modules `_load_declarations` reads: the six of #70 and `plugins.lua` (#174)."""
 
     def _load_declarations(self) -> bool:
-        """Read the six declarative Entity Modules into the model.
+        """Read the seven declarative Entity Modules into the model.
 
         The same shape as `_load_rules` and `_load_monitors`, one tier wider: every file
         feeds every list, so an entity someone hand-moved into the wrong Module comes back
         as what it is rather than vanishing -- and vanishing is not cosmetic here, because a
         list the model believes is empty is a Module the Writer prunes.
 
-        All six are adopted together or none is. Six files is where that rule starts to
+        All seven are adopted together or none is. Seven files is where that rule starts to
         look expensive, and it is exactly where it starts to matter: a single unparseable
         `gestures.lua` must not license the Writer to delete a user's `env.lua`, which is
         the one Module whose contents Hyprland will not restore on the next reload.
