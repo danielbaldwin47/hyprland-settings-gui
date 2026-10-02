@@ -125,6 +125,7 @@ from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
 
 IMPORT_ACTION = "import-config"
+IMPORT_LABEL = "Import..."
 EXPORT_ACTION = "export-config"
 REPORT_ACTION = "import-report"
 
@@ -444,17 +445,45 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append_section("View", views)
 
         interop = Gio.Menu()
-        interop.append("Import...", f"win.{IMPORT_ACTION}")
+        interop.append(IMPORT_LABEL, f"win.{IMPORT_ACTION}")
         interop.append("Export...", f"win.{EXPORT_ACTION}")
         interop.append("Last import report", f"win.{REPORT_ACTION}")
         # A section of its own: Import and Export are about somebody else's config coming in
         # or this one going out, which is a different kind of act from changing a setting.
         menu.append_section(None, interop)
+        # The popover is built here rather than left to the button, so its entries exist to
+        # be given a tooltip: a menu model has no attribute for one.
+        popover = Gtk.PopoverMenu.new_from_model(menu)
+        if self._session.hyprland_too_old:
+            self._explain_unavailable_import(popover)
         return Gtk.MenuButton(
             icon_name="open-menu-symbolic",
-            menu_model=menu,
+            popover=popover,
             tooltip_text="Main menu",
         )
+
+    def _explain_unavailable_import(self, popover: Gtk.PopoverMenu) -> None:
+        """Say why Import is greyed out, in the Banner's own sentence (#101).
+
+        Below Hyprland 0.56 the compositor reads hyprlang only, so the wizard would write a
+        Lua file it cannot load. The action is disabled in `_install_actions`; this is the
+        half that tells the user why, on the entry they are looking at.
+        """
+        pending: list[Gtk.Widget] = [popover]
+        while pending:
+            widget = pending.pop()
+            # `GtkModelButton` is private API and reports no action name, so the entry is
+            # found by the label this menu gave it.
+            if (
+                type(widget).__name__ == "GtkModelButton"
+                and widget.get_property("text") == IMPORT_LABEL
+            ):
+                widget.set_tooltip_text(self._session.health.title)
+                return
+            child = widget.get_first_child()
+            while child is not None:
+                pending.append(child)
+                child = child.get_next_sibling()
 
     def _install_actions(self) -> None:
         advanced = Gio.SimpleAction.new_stateful(
@@ -488,6 +517,8 @@ class MainWindow(Adw.ApplicationWindow):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", handler)
             self.add_action(action)
+        # Never reachable below Hyprland 0.56, for the whole run: that does not change.
+        self.lookup_action(IMPORT_ACTION).set_enabled(not self._session.hyprland_too_old)
 
         search = Gio.SimpleAction.new(SEARCH_ACTION, None)
         search.connect("activate", self._on_search_action)
@@ -629,6 +660,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._spawn(flow.roll_back_live(pending))
 
     def _on_import(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        if self._session.hyprland_too_old:
+            return
         import_dialog(self, self.show_migration)
 
     def _on_export(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
