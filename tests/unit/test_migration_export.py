@@ -183,6 +183,31 @@ class TestHonestAboutGaps:
         assert paths.require_path(bridge) in result.inlined
         assert not result.missing
 
+    def test_a_native_path_bridge_is_inlined_and_its_line_runs_after_it(
+        self, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """noctalia 5's module only returns a table; its Entrypoint line is what applies it,
+        so the export has to carry the line, not only the file (#163)."""
+        from hyprtweaker.engine.bridge import DMS, NOCTALIA
+        from hyprtweaker.engine.state import Manifest
+
+        (paths.hypr_dir / "noctalia.lua").write_text("return { apply_theme = 1 }\n")
+        (paths.hypr_dir / "dms").mkdir()
+        (paths.hypr_dir / "dms/colors.lua").write_text("-- dms\n")
+        manifest = Manifest.load(paths.manifest, app_version="x", schema_version="y")
+        manifest = manifest.add_bridge(NOCTALIA, present={"noctalia.lua"})
+        manifest = manifest.add_bridge(DMS, present={"dms/colors.lua"})
+        Writer(paths, app_version=SAMPLE_APP_VERSION).record_bridges(model, manifest.bridges)
+        written(paths, model)
+
+        result = render(model, paths, app_version=SAMPLE_APP_VERSION)
+
+        assert result.inlined[-2:] == ("noctalia", "dms.colors")
+        assert '-- <<< noctalia\nrequire("noctalia").apply_theme()\n' in result.text
+        assert "-- <<< dms.colors\n-- >>>" in result.text or result.text.endswith(
+            "-- <<< dms.colors\n"
+        )
+
     @pytest.mark.skipif(os.geteuid() == 0, reason="root reads unreadable files anyway")
     def test_a_require_that_cannot_be_read_is_reported_not_dropped_silently(
         self, paths: ConfigPaths, model: ConfigModel
