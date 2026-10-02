@@ -28,7 +28,7 @@ A scheduled watcher (weekly cron, e.g. a GitHub Action polling `hyprwm/Hyprland`
 
 ### Done bar: CI completeness + reviewed diff
 
-A release is **handled** when the CI overlay completeness test passes on the new schema (every added option has widget, nullability, title and its flagged heuristics covered) and the diff PR is human-reviewed. Tasks placement (`group`/`order`), `help`, and `unit` are polish that may lag — until curated, added options live in *New in \<version\>* groups, which is a designed degradation (#7), not a defect. New entity kinds are out of the protocol's scope and become their own issues.
+A release is **handled** when the CI overlay completeness test passes on the new schema (every added option has widget, nullability, title and its flagged heuristics covered) and the diff PR is human-reviewed. `unit` is polish that may lag. `help` (or a `skip` reason) may not: `tests/unit/test_overlay_help.py` fails while an added option is undecided (amended in the #148 review, F31). A `group` may lag for the release that adds the option only — it lives in *New in \<version\>* meanwhile, a designed degradation (#7) — and the completeness test fails the next release's check if it is still ungrouped (`docs/agents/hyprland-release-check.md`). New entity kinds are out of the protocol's scope and become their own issues.
 
 ## Consequences
 
