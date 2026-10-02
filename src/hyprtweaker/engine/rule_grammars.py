@@ -19,8 +19,8 @@ string for the active+inactive pair has no table form, so it stays text.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 
 from hyprtweaker.engine.model.values import Color, Gradient
