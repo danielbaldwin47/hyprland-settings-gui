@@ -27,6 +27,11 @@ MAY_LOOK_UP_HOME = {
         "the XDG fallback (`~/.config`, `~/.local/state`) that every `ConfigPaths` path, "
         "and so every path outside the App dir, derives from"
     ),
+    ("engine/tools.py", "_search_dirs"): (
+        "a `~/...` PATH entry is read against the HOME of the environment mapping the lookup "
+        "is given -- the one the tool then runs with, fenced in every test -- never the "
+        "process's own (ruling A8 of the #148 review)"
+    ),
 }
 """(module, function) pairs allowed to look the home up, and why."""
 
