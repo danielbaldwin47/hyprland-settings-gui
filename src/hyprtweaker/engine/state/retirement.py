@@ -36,10 +36,10 @@ from typing import Any, Protocol
 
 from ..importer.lua.sandbox import Consent, LuaUnavailable, evaluate
 from ..model.values import parse_lua
-from ..schema import ResolvedOption, Schema
+from ..schema import ResolvedOption, Schema, is_plugin_option
 from ..schema.resolve import version_key
 from ..schema.sources import lua_key_for
-from .manifest import Manifest, RetiredValue
+from .manifest import Manifest, RetiredValue, RetireReason
 
 
 class LiveNames(Protocol):
@@ -68,6 +68,9 @@ class Retirement:
     retired_in: str
     """The running compositor's version, or the loaded schema's when there is no snapshot."""
 
+    reason: RetireReason = RetireReason.REMOVED
+    """Why it cannot be emitted; a quiet reason is kept and restored but never announced."""
+
 
 def emittable(name: str, schema: Schema, live: LiveNames | None) -> bool:
     """Whether the app may write `name`: the schema holds it and nothing live contradicts it.
@@ -93,15 +96,35 @@ def detect(
     filtering is exactly what would hide a name the schema dropped. Two triggers, one rule:
     (a) the loaded schema lacks the name -- the app's update shipped a schema without it, or
     a downgrade; (b) the schema holds it but a compositor at or past the schema's release
-    does not.
+    does not. `reason_for` says which of them the user is told about.
     """
     retired_in = live.version if live is not None else schema.hyprland_version
     return tuple(
-        Retirement(name, module, retired_in)
+        Retirement(name, module, retired_in, reason_for(name, schema, live))
         for module, record in sorted(manifest.modules.items())
         for name in record.options
         if not emittable(name, schema, live)
     )
+
+
+def reason_for(name: str, schema: Schema, live: LiveNames | None) -> RetireReason:
+    """Why `name`, which `emittable` refuses, is retired: the one place a reason is chosen.
+
+    Only the running compositor's own word that it lacks the name makes it `REMOVED`. A
+    name it still describes is missing from the loaded schema alone: the startup read
+    missed a Hyprland newer than every shipped schema, so the supplement that would have
+    held the name is not loaded (#214). The value is kept all the same, since the first
+    write drops the key, and the next start that reads the compositor restores it.
+
+    A plugin's setting the compositor does not describe belongs to a plugin that is not
+    loaded (#175), or to one this start could not ask about: kept quietly either way, and
+    back on the first start that finds the plugin loaded.
+    """
+    if live is not None and name in live.names:
+        return RetireReason.NOT_IN_SCHEMA
+    if is_plugin_option(name):
+        return RetireReason.PLUGIN_NOT_LOADED
+    return RetireReason.REMOVED
 
 
 def capture(
@@ -141,7 +164,7 @@ def retire(
     would claim a restore it cannot deliver. A name retired again replaces its old entry.
     """
     kept = {
-        each.name: RetiredValue(each.retired_in, values[each.name])
+        each.name: RetiredValue(each.retired_in, values[each.name], each.reason)
         for each in found
         if each.name in values
     }
@@ -262,8 +285,8 @@ class RenamedNotice:
 
 @dataclass(frozen=True, slots=True)
 class UnkeptNotice:
-    """This start's notice for Options a release removed whose values `capture` could not
-    read (no Lua, or a Module deleted or hand-edited): the write drops them, and the user
+    """This start's notice for Options the app stopped writing whose values `capture` could
+    not read (no Lua, or a Module deleted or hand-edited): the write drops them, and the user
     is told so rather than finding them gone. Nothing records it: once the keys are gone,
     the next start detects nothing."""
 
@@ -271,12 +294,28 @@ class UnkeptNotice:
     names: tuple[str, ...]
     """Colon-form names, sorted."""
 
+    removed: bool = True
+    """Whether a release removed them (`RetireReason.REMOVED`). A quiet reason -- a plugin
+    not loaded, a startup read that missed a newer Hyprland -- removed nothing, and its
+    notice must not say a release did."""
+
     @classmethod
-    def of(cls, found: Sequence[Retirement], values: Mapping[str, Any]) -> UnkeptNotice | None:
-        """The notice for the found names `values` lacks, or `None` when every one was
-        read. One start detects under one release, so one notice covers them."""
-        lost = sorted(each.name for each in found if each.name not in values)
-        return cls(found[0].retired_in, tuple(lost)) if lost else None
+    def of(
+        cls, found: Sequence[Retirement], values: Mapping[str, Any]
+    ) -> tuple[UnkeptNotice, ...]:
+        """A notice for the removed names `values` lacks, then one for the quiet ones; none
+        when every value was read. One start detects under one release."""
+        notices: list[UnkeptNotice] = []
+        for removed in (True, False):
+            lost = [
+                each
+                for each in found
+                if each.name not in values and each.reason.announced is removed
+            ]
+            if lost:
+                names = tuple(sorted(each.name for each in lost))
+                notices.append(cls(lost[0].retired_in, names, removed=removed))
+        return tuple(notices)
 
 
 def unannounced(manifest: Manifest) -> tuple[RetiredNotice, ...]:
@@ -284,11 +323,12 @@ def unannounced(manifest: Manifest) -> tuple[RetiredNotice, ...]:
 
     Read from `retired`, not from this start's `detect`: once the first write has dropped
     the keys, `detect` finds nothing, and a notice the user closed the app before seeing
-    would never come back. Oldest release first.
+    would never come back. Oldest release first. A value kept for a quiet reason is not
+    news: its Option was not removed, so it raises no notice at all.
     """
     by_release: dict[str, list[str]] = {}
     for name, entry in manifest.retired.items():
-        if entry.retired_in not in manifest.retired_notices:
+        if entry.reason.announced and entry.retired_in not in manifest.retired_notices:
             by_release.setdefault(entry.retired_in, []).append(name)
     return tuple(
         RetiredNotice(release, tuple(sorted(names)))
@@ -303,7 +343,9 @@ def _config_tables(path: Path, timeout: float) -> tuple[Mapping[str, Any], ...]:
     if not path.is_file():
         return ()
     try:
-        recording = evaluate(path, consent=Consent(evaluate=True), timeout=timeout)
+        recording = evaluate(
+            path, consent=Consent(evaluate=True), timeout=timeout, assume_plugins_loaded=True
+        )
     except LuaUnavailable:
         return ()
     return tuple(

@@ -31,6 +31,7 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +130,32 @@ class ModuleRecord:
         )
 
 
+class RetireReason(StrEnum):
+    """Why the app stopped writing an Option, which decides whether the user is told.
+
+    Every reason is kept and restored the same way (`state/retirement.py`); only `REMOVED`
+    is news. The quiet ones describe an Option the user's Hyprland may well still have,
+    where a "removed" notice or pill would be false."""
+
+    REMOVED = "removed"
+    """A Hyprland release, or the schema the app loaded for it, no longer has the Option.
+    Announced once per release (`RetiredNotice`) and badged `Retired in <ver>` on its Row."""
+
+    NOT_IN_SCHEMA = "not_in_schema"
+    """The loaded schema lacks it but the running Hyprland still describes it: the startup
+    read missed a compositor newer than every shipped schema, so its supplement is not
+    loaded (#214). The next start that reads it loads the supplement and restores it."""
+
+    PLUGIN_NOT_LOADED = "plugin_not_loaded"
+    """A `plugin:*` Option the running Hyprland does not describe because the plugin is not
+    loaded now (#175). Restored once the plugin is loaded again."""
+
+    @property
+    def announced(self) -> bool:
+        """Whether the user is told: a Retired notice, and the Row's `Retired in` pill."""
+        return self is RetireReason.REMOVED
+
+
 @dataclass(frozen=True, slots=True)
 class RetiredValue:
     """One retired Option's kept value: what it was, and the release that removed it."""
@@ -143,8 +170,12 @@ class RetiredValue:
     Raw rather than typed, because typing needs the Option's schema entry and a retired
     Option may have none; restoring parses it against whichever Option takes it back."""
 
+    reason: RetireReason = RetireReason.REMOVED
+    """Why it was retired. Added without a `FORMAT_VERSION` bump: an entry written before
+    the key existed, or with a reason this build does not know, reads as `REMOVED`."""
+
     def as_json(self) -> dict[str, Any]:
-        return {"retired_in": self.retired_in, "value": self.value}
+        return {"retired_in": self.retired_in, "value": self.value, "reason": self.reason}
 
 
 def _retired_from_json(payload: Any) -> dict[str, RetiredValue]:
@@ -152,12 +183,18 @@ def _retired_from_json(payload: Any) -> dict[str, RetiredValue]:
     if not isinstance(payload, dict):
         return {}
     return {
-        str(name): RetiredValue(entry["retired_in"], entry["value"])
+        str(name): RetiredValue(entry["retired_in"], entry["value"], _reason(entry))
         for name, entry in payload.items()
         if isinstance(entry, dict)
         and isinstance(entry.get("retired_in"), str)
         and "value" in entry
     }
+
+
+def _reason(entry: dict[str, Any]) -> RetireReason:
+    reason = entry.get("reason")
+    known = {member.value for member in RetireReason}
+    return RetireReason(reason) if reason in known else RetireReason.REMOVED
 
 
 def _list(payload: Any) -> list[Any]:

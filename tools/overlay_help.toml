@@ -84,7 +84,7 @@ help = "Border colour of the window with focus when a window rule keeps it out o
 #   the combo already names its values (labels)
 #   candidate: lists values the combo shows: dwindle, master, scrolling, monocle
 ["general:layout"]
-help = "Which tiling layout to use. Custom Lua layouts are selectable as lua:<name>."
+help = "Which tiling layout to use. Layouts your Lua files register are listed too, marked “Lua layout”."
 
 # general:no_focus_fallback: Never refocus after closing a window [Behaviour] (bool, default False)
 #   upstream: if true, will not fall back to the next available window when moving focus in a direction where no window was found

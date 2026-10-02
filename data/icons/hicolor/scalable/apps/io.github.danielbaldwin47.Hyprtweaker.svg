@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Placeholder app icon (ADR-0019): three sliders on a rounded tile. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#33c7de"/>
+      <stop offset="1" stop-color="#1a7fb3"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="12" width="112" height="108" rx="24" fill="#135f86"/>
+  <rect x="8" y="8" width="112" height="108" rx="24" fill="url(#tile)"/>
+  <g stroke="#ffffff" stroke-width="8" stroke-linecap="round" opacity="0.55">
+    <line x1="30" y1="36" x2="98" y2="36"/>
+    <line x1="30" y1="62" x2="98" y2="62"/>
+    <line x1="30" y1="88" x2="98" y2="88"/>
+  </g>
+  <g fill="#ffffff">
+    <circle cx="76" cy="36" r="11"/>
+    <circle cx="46" cy="62" r="11"/>
+    <circle cx="66" cy="88" r="11"/>
+  </g>
+</svg>

@@ -73,13 +73,15 @@ jobs:
       # against the masked one in the ui-smoke job below.
       - env:
           HYPRTWEAKER_REQUIRE_LUAC: '1'
-          # This job runs `tests/unit` only, so it does not see the
-          # Hyprland-gated test in `tests/ui` that the global ceiling counts:
-          # 12 of those intentional skips, plus 3 module-level `importorskip`s
-          # for gi (test_ui_binds_text, test_ui_rules_text,
-          # test_ui_declaration_text) which this runner lacks. Their tests run
-          # for real in the ui-smoke job, where gi exists.
-          SKIP_CEILING: '15'
+          # This job runs `tests/unit` only. Its own intentional skips are 12
+          # (10 corpus rices without binds in test_writer_binds_corpus, 2
+          # parametrized doc-skips in test_no_hyprctl_spawn), plus 2
+          # module-level `importorskip`s for gi (test_ui_binds_text,
+          # test_ui_declaration_text) which this runner lacks: 14, and the
+          # ceiling sits one above them. Their tests run for real in the ui-smoke job, where
+          # gi exists. test_ui_rules_text has none: it imports only gi-free
+          # names (`ui/pages/entity_text.py`, #220).
+          SKIP_CEILING: '14'
         run: |
           set -o pipefail
           pytest tests/unit -n auto -v 2>&1 | tee pytest-out.log
@@ -99,7 +101,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
-            libgtk-4-1 libadwaita-1-0 xvfb lua5.4
+            libgtk-4-1 libadwaita-1-0 xvfb dbus lua5.4
       - name: Create venv with system gi visible
         run: |
           python3 -m venv --system-site-packages .venv
@@ -115,7 +117,8 @@ jobs:
         # Same skip ceiling: the UI tier itself must contribute zero skips
         # (HYPRTWEAKER_REQUIRE_UI hard-fails a dead GTK env).
         # No xvfb-run: the UI tier starts an Xvfb of its own in each worker
-        # (tests/ui/conftest.py), the same path a developer's desktop run takes.
+        # and a dbus-daemon (tests/ui/conftest.py), the same path a developer's desktop
+        # run takes.
         run: |
           set -o pipefail
           .venv/bin/python -m pytest tests/ui tests/unit -n auto -v 2>&1 | tee pytest-out.log
@@ -127,15 +130,20 @@ jobs:
   build:
     name: meson build + install
     if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: meson.build refuses PyGObject < 3.50 (`import gi.events`),
+    # and noble (24.04) ships python3-gi 3.48. resolute (26.04) ships 3.56.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - name: Install build deps
+        # desktop-file-utils and appstream: `meson test` validates the desktop entry and
+        # the metainfo, and -Dtests=enabled requires both validators.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 \
-            libgtk-4-1 libadwaita-1-0 lua5.4
+            libgtk-4-1 libadwaita-1-0 lua5.4 desktop-file-utils appstream
+          apt-cache policy python3-gi
       # Deliberately no actions/setup-python here: this job must use the system
       # python3 that apt's python3-gi belongs to, so `meson setup`'s gi check and
       # the installed launcher both exercise the interpreter a package would use.
@@ -160,6 +168,13 @@ jobs:
       - name: The installed launcher runs, and the install is complete
         run: |
           test -x _install/usr/bin/hyprtweaker
+          # The App id's desktop entry, metainfo and icons (ADR-0019).
+          APP_ID=io.github.danielbaldwin47.Hyprtweaker
+          for file in applications/$APP_ID.desktop metainfo/$APP_ID.metainfo.xml \
+              icons/hicolor/scalable/apps/$APP_ID.svg \
+              icons/hicolor/symbolic/apps/$APP_ID-symbolic.svg; do
+            test -f "_install/usr/share/$file" || { echo "not installed: $file"; exit 1; }
+          done
           # Locate the install by finding it, not by predicting it: Debian puts
           # it in dist-packages while sysconfig reports site-packages, so every
           # formula for this path is wrong on some distro.

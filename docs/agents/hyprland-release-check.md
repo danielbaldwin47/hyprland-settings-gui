@@ -39,6 +39,7 @@ Compare against the previous newest schema, at five layers:
 
    - The run writes the probed shapes to `tests/golden/dispatcher-probe-<ver>.json`; `diff` it against the previous version's file for the record diff. Commit the new record: the unit tier checks the catalogue against the newest record in `tests/golden/`.
    - The run's other tests are the catalogue diff. A drifted dispatcher fails by path with both shapes, for example `window.float: required keys ['window'] differ from the compositor's []` or `omits keys the compositor reads: ['action']`.
+   - `test_the_unseen_keys_still_do_nothing` re-fires the keys the catalogue leaves out because nothing changed when they were fired (`window` on the group dispatchers, `layout_aware` on the fullscreen ones). It fails by path and key when one starts to act: give it an `ArgSpec` and an effect probe in `tests/integration/harness/dispatcher_probe.py`, so the next record holds it.
    - It needs `foot`. Name the file by path: a bare `tests/integration -m hyprland` also runs `test_ipc_live.py`.
 
 Output: `hyprland-<ver>.diff.json` (machine) in a scratch directory, plus a human summary for the PR; the PR comment carries both. The diff is for the PR's reviewer and is not committed to `data/schema/`: the app reads nothing from it. Its *New in \<version\>* grouping reads the `added_in` stamp in the schema (step 1), and Retired detection reads the running Hyprland's live option names.
@@ -57,7 +58,7 @@ Update `data/schema/overlay.json`:
 - **Restart-list change** → update `restart` fields, hand-verified against the wiki prose.
 - **Stub API changes** (new dispatcher, new match prop, new effect, changed arg table) → update the engine's typed tables. A **new entity kind** is out of this protocol's scope: open a `ready-for-human` issue for it and say so in the PR.
 - **Entity catalogue changes** → update `entities_catalog.py` in the same PR. A leaf or field the app does not know is not a cosmetic gap: an unknown `hl.device` key is a hard error that takes the whole Module down, and a leaf the catalogue lacks is one the user cannot set. Unknown values already degrade to *shown, flagged* (ADR-0012's rule for Options, applied to Entities), so the PR is a curation update, never a rescue.
-- **Dispatcher catalogue changes** → edit the entries layer 5 named in `dispatchers.py`, then rerun its command without `UPDATE_GOLDEN=1` until all three tests pass. A curated entry lists every key the probe saw the compositor read; a shape `ArgSpec` cannot state in full keeps the raw table, with a `free_form_reason` the bind editor shows the user as one plain sentence. Commit the new record.
+- **Dispatcher catalogue changes** → edit the entries layer 5 named in `dispatchers.py`, then rerun its command without `UPDATE_GOLDEN=1` until all four tests pass. A curated entry lists every key the probe saw act (read or changed state); a key fired with no effect stays off the form, with its verdict in the comment above the entry (the editor keeps a saved copy); a shape `ArgSpec` cannot state in full keeps the raw table, with a `free_form_reason` the bind editor shows the user as one plain sentence. Commit the new record.
 
 Done when the curation tests pass against the new schema locally: `tests/unit/test_overlay_completeness.py`, `tests/unit/test_overlay_help.py` and `tests/unit/test_curate_overlay.py`.
 

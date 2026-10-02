@@ -20,6 +20,8 @@ Each app release ships Generated schemas for the current and the previous Hyprla
 
 When a release removes an option the user has set, the app **stops emitting it and keeps the value**: the model marks it Retired-in-\<ver\>, the value persists in the Manifest, the Row is badged, and a one-time notice lists the release's retired options. If the option returns (downgrade, or a rename mapped by `renamed_from`) the value is restored — renames migrate silently with an Info notice. Emitting a removed key is a config error under Lua, and silently discarding user state is worse than carrying it.
 
+An option the app cannot emit although the running Hyprland still has it is **kept quietly**: captured and restored exactly as above, but never badged and never announced, because nothing was removed. The Manifest's retired entry records why (`RetireReason`): `removed` is announced; `not_in_schema` is a name the loaded schema lacks while the compositor still describes it, as when the startup read missed a Hyprland newer than every shipped schema and its supplement is not loaded (#214); `plugin_not_loaded` is a plugin's option while the plugin is not loaded (#175).
+
 ### Trigger: watcher → agent → PR
 
 A scheduled watcher (weekly cron, e.g. a GitHub Action polling `hyprwm/Hyprland` releases) opens a `Release check: Hyprland <ver>` issue labelled `ready-for-agent` per release. An agent runs the protocol in `docs/agents/hyprland-release-check.md` — regenerate, five-layer diff (schema / stub API / wiki / Entity catalogue / dispatcher catalogue), curate, verify — and opens one PR. A human reviews and merges.

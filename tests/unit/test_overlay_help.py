@@ -118,7 +118,8 @@ def test_the_overlay_carries_exactly_the_help_table() -> None:
 def test_general_layout_keeps_the_voice_reference() -> None:
     """Its text is the reference every other entry is held to, and the search test finds it."""
     assert _table()["general:layout"].help == (
-        "Which tiling layout to use. Custom Lua layouts are selectable as lua:<name>."
+        "Which tiling layout to use. "
+        "Layouts your Lua files register are listed too, marked “Lua layout”."
     )
 
 

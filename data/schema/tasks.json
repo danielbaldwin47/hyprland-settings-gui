@@ -6,7 +6,7 @@
     "one-line diff rather than a patch. `hyprtweaker.ui.pages.tasks` is the reader.",
     "",
     "A destination is either an option Page -- `id`, `title`, and what it claims -- or an",
-    "`entity` reference naming a Page the shell already builds (binds, the rule lists,",
+    "`entity` reference (the bare kind, `binds`; `entity_page_id` adds the stack prefix) naming a Page the shell already builds (binds, the rule lists,",
     "Displays, and the seven declarative Pages of #70). Entities are referenced rather than",
     "described because their content comes from the model, not from the Schema.",
     "",
@@ -24,7 +24,7 @@
     "Overlay raises to the advanced tier (HDR and logging, review of spec #154) are homed on",
     "Rendering, beside the settings they go with.",
     "",
-    "Counts, so a curator can check them: 23 destinations in all -- 12 option Pages and 11",
+    "Counts, so a curator can check them: 25 destinations in all -- 12 option Pages and 13",
     "entity references. That is more rows than the canvas's 19 because its consolidated",
     "Pages are split here: an Entity Page comes from the model and cannot be merged into an",
     "option Page, so 'Animations' is a Page of `animations` options *beside* the Animation",
@@ -64,8 +64,8 @@
           "title": "Animations",
           "sections": ["animations"]
         },
-        { "entity": "entity:animations" },
-        { "entity": "entity:curves" },
+        { "entity": "animations" },
+        { "entity": "curves" },
         {
           "id": "look.layouts",
           "title": "Layouts",
@@ -82,9 +82,9 @@
           "title": "Windows & Groups",
           "sections": ["group", "misc"]
         },
-        { "entity": "entity:window_rules" },
-        { "entity": "entity:layer_rules" },
-        { "entity": "entity:workspace_rules" }
+        { "entity": "window_rules" },
+        { "entity": "layer_rules" },
+        { "entity": "workspace_rules" }
       ]
     },
     {
@@ -134,34 +134,34 @@
           "title": "Gestures",
           "sections": ["gestures"]
         },
-        { "entity": "entity:gestures" },
-        { "entity": "entity:devices" },
+        { "entity": "gestures" },
+        { "entity": "devices" },
         {
           "id": "input.shortcuts",
           "title": "Shortcut behaviour",
           "sections": ["binds"]
         },
-        { "entity": "entity:binds" }
+        { "entity": "binds" }
       ]
     },
     {
       "id": "system",
       "title": "System",
       "pages": [
-        { "entity": "entity:monitors" },
+        { "entity": "monitors" },
         {
           "id": "system.cursor",
           "title": "Cursor",
           "sections": ["cursor"]
         },
-        { "entity": "entity:env" },
-        { "entity": "entity:autostart" },
+        { "entity": "env" },
+        { "entity": "autostart" },
         {
           "id": "system.ecosystem",
           "title": "Popups & permissions",
           "sections": ["ecosystem"]
         },
-        { "entity": "entity:permissions" },
+        { "entity": "permissions" },
         {
           "id": "system.rendering",
           "title": "Rendering",
@@ -207,7 +207,8 @@
               "options": ["debug:disable_logs", "debug:overlay"]
             }
           ]
-        }
+        },
+        { "entity": "scripting" }
       ]
     }
   ]

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hyprtweaker
+GenericName=Hyprland Settings
+Comment=Change Hyprland settings without editing config files
+Exec=hyprtweaker
+Icon=io.github.danielbaldwin47.Hyprtweaker
+Terminal=false
+Categories=Settings;
+Keywords=Hyprland;Wayland;compositor;
+StartupNotify=true

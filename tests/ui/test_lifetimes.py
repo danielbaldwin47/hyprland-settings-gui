@@ -345,3 +345,48 @@ def test_a_monitors_answer_after_a_rebuild_lands_on_the_new_page(tmp_path: Path)
 
     assert [row.get_title() for row in window.monitors_page.connected_rows] == ["DP-1"]
     window.close()
+
+
+def test_a_scripting_page_refresh_releases_the_plugin_rows_and_groups_it_replaced(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The merger's `release(group)` in `ScriptingPage.refresh` (spec #152 review finding
+    6): a `PluginRow`'s switch, step and drop handlers are its own bound methods, the cycle
+    #219 found, and each refresh replaces every row and every inventory group."""
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.model.entities import PluginLoad
+
+    session = offline_session(tmp_path)
+    session.paths.user_lua.parent.mkdir(parents=True, exist_ok=True)
+    session.paths.user_lua.write_text('hl.on("workspace.active", f)\nhl.timer(f, {})\n')
+    window = wired_window(session)
+    monkeypatch.setattr(type(session), "live", property(lambda _self: True))
+    session.model.entities.plugins.extend(
+        [PluginLoad("/usr/lib/libhyprbars.so"), PluginLoad("/usr/lib/hyprexpo.so")]
+    )
+    page = window.scripting_page
+
+    def inventory() -> list[Any]:
+        found, stack = [], [page.page]
+        while stack:
+            widget = stack.pop()
+            if isinstance(widget, Adw.PreferencesGroup) and widget is not page.plugins.group:
+                found.append(widget)
+            child = widget.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        return found
+
+    refs = []
+    for _ in range(TIMES):
+        page.refresh()
+        refs.extend(weakref.ref(row) for row in page.plugins.rows)
+        refs.extend(weakref.ref(row.widget) for row in page.plugins.rows)
+        refs.extend(weakref.ref(group) for group in inventory())
+    page.refresh()
+
+    # Per refresh: two rows and their widgets, the lead group and two kinds' groups.
+    assert len(refs) == TIMES * 7
+    assert collected(refs) == [True] * len(refs)

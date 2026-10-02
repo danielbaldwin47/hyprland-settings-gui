@@ -33,9 +33,10 @@ from .modules import (
     render_module,
 )
 from .syntax import LuaSyntaxError, gate, gate_available
-from .writer import ModuleSet, ProtectedFile, Writer, WriteResult
+from .writer import BeforeReplace, ModuleSet, ProtectedFile, Writer, WriteResult
 
 __all__ = [
+    "BeforeReplace",
     "LuaSyntaxError",
     "LuaTree",
     "ModuleSet",

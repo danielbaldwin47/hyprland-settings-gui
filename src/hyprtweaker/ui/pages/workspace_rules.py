@@ -26,6 +26,7 @@ from gi.repository import Adw, Gtk  # noqa: E402
 from hyprtweaker.engine.model.entities import WorkspaceRule  # noqa: E402
 from hyprtweaker.engine.rule_filter import value_text  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
@@ -95,7 +96,7 @@ class WorkspaceRuleRow:
 class WorkspaceRulesPage:
     """The Workspaces Page, rebuilt from the session's list on every `refresh`."""
 
-    section = "entity:workspace_rules"
+    section = entity_page_id("workspace_rules")
     title = "Workspaces"
     empty_title = "No workspace rules yet"
     empty_hint = "Add one to give a workspace its own layout, gaps or monitor."

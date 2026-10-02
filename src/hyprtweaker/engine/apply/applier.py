@@ -23,11 +23,11 @@ from types import TracebackType
 from ..ipc import CommandClient, EventStream
 from ..model import ConfigModel
 from ..state import Journal, LastKnownGood
-from ..writer import Writer
+from ..writer import BeforeReplace, Writer
 from .foreign import ForeignReloadWatch
 from .preview import EvalPreview
 from .queue import DEBOUNCE_SECONDS, ApplyQueue, Transaction
-from .restore import ReloadTransaction, RestoreTransaction
+from .restore import EntrypointTransaction, RestoreTransaction
 from .result import ApplyResult
 from .transaction import RELOAD_TIMEOUT_SECONDS, ApplyTransaction
 
@@ -203,16 +203,22 @@ class Applier:
             journal=self._journal,
         )
 
-    def reload_only(self, options: Sequence[str] = ()) -> ReloadTransaction:
-        """Build a write-free reload, for a recovery that has already changed a file."""
-        return ReloadTransaction(
+    def recover_entrypoint(
+        self, write: Callable[[BeforeReplace | None], bool], options: Sequence[str] = ()
+    ) -> EntrypointTransaction:
+        """Build an Entrypoint rewrite and its reload, journalled, for `restore_now`."""
+        return EntrypointTransaction(
             model=self._model,
             client=self._client,
             reloader=self._transaction.reloader,
+            write=write,
+            journal=self._journal,
             options=options,
         )
 
-    async def restore_now(self, restore: RestoreTransaction | ReloadTransaction) -> ApplyResult:
+    async def restore_now(
+        self, restore: RestoreTransaction | EntrypointTransaction
+    ) -> ApplyResult:
         """Run a recovery operation ahead of anything waiting.
 
         Quieted like an Apply transaction: `eval` clears `configerrors`, and a preview tick

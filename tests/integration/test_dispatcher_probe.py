@@ -29,7 +29,13 @@ from pathlib import Path
 
 import pytest
 from harness import REQUIRE_VARIABLE, HarnessUnavailable, NestedHyprland
-from harness.dispatcher_probe import ProbeRecord, probe_dispatchers, verify_catalog
+from harness.dispatcher_probe import (
+    ProbeRecord,
+    Verdict,
+    probe_dispatchers,
+    probe_unseen,
+    verify_catalog,
+)
 
 pytestmark = pytest.mark.hyprland
 
@@ -41,6 +47,8 @@ CONFIG = "hl.config({ general = { gaps_in = 3 } })\n"
 class Probed:
     nested: NestedHyprland
     record: ProbeRecord
+    unseen: list[Verdict]
+    unseen_skipped: str
 
 
 @pytest.fixture(scope="module")
@@ -63,7 +71,9 @@ def probed(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Probed]:
             raise
         pytest.skip(f"Harness tier: {unavailable}")
     try:
-        yield Probed(nested, probe_dispatchers(nested))
+        record = probe_dispatchers(nested)
+        unseen, unseen_skipped = probe_unseen(nested)
+        yield Probed(nested, record, unseen, unseen_skipped)
     finally:
         nested.stop()
 
@@ -87,6 +97,27 @@ def test_every_effect_probe_ran(probed: Probed) -> None:
     assert [e.key for e in probed.record.effects if not e.confirmed] == [], (
         "an effect probe could not confirm its key; the record would drop it silently"
     )
+
+
+def test_the_unseen_keys_still_do_nothing(probed: Probed) -> None:
+    """The keys the catalog leaves out because no effect could be read back (#211).
+
+    Each was fired at grouped and fullscreen windows and changed nothing. When one starts to
+    act, this fails: curate it with an `ArgSpec` and let the next record hold its effect.
+    """
+    assert probed.unseen_skipped == ""
+    assert [(v.path, v.key) for v in probed.unseen if v.acted] == [], (
+        "a key the catalog leaves out now acts; give it a row in engine/dispatchers.py and "
+        "an effect probe in harness/dispatcher_probe.py"
+    )
+    assert [(v.path, v.key) for v in probed.unseen] == [
+        ("group.lock_active", "window"),
+        ("window.deny_from_group", "window"),
+        ("group.lock", "window"),
+        ("group.move_window", "window"),
+        ("window.fullscreen", "layout_aware"),
+        ("window.fullscreen_state", "layout_aware"),
+    ]
 
 
 def test_the_catalog_agrees_with_the_compositor(probed: Probed) -> None:

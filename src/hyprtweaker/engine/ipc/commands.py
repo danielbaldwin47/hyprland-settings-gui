@@ -191,6 +191,16 @@ class CommandClient:
             raise MalformedReply(f"workspacerules answered {payload!r}")
         return len(payload)
 
+    async def version(self) -> Any:
+        """`j/version`, parsed but unchecked: `live.fetch_live_hyprland` reads its shape, as
+        the blocking startup read does, so both answer the same thing for the same reply."""
+        return _parse_json(await self._request("version", json_output=True), "version")
+
+    async def descriptions(self) -> Any:
+        """`j/descriptions`, parsed but unchecked, for the same reason as `version`."""
+        reply = await self._request("descriptions", json_output=True)
+        return _parse_json(reply, "descriptions")
+
     async def clients(self) -> tuple[Mapping[str, Any], ...]:
         """Every open window, as Hyprland describes it. The Pick-a-window helper (#67).
 
@@ -269,6 +279,24 @@ class CommandClient:
         return tuple(
             entry
             for entry in entries
+            if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
+        )
+
+    async def loaded_plugins(self) -> tuple[str, ...]:
+        """The names of the plugins loaded right now, in `plugin list` order (#174).
+
+        A loaded plugin is reported by the name it gives itself, with its author, version,
+        description and a handle -- never its path -- so the name is all a caller can match
+        on. A plain read: unlike `eval`, it does not clear `configerrors`. An entry with no
+        string `name` is dropped.
+        """
+        reply = await self._request("plugin list", json_output=True)
+        payload = _parse_json(reply, "plugin list")
+        if not isinstance(payload, list):
+            raise MalformedReply(f"plugin list answered {payload!r}")
+        return tuple(
+            entry["name"]
+            for entry in payload
             if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
         )
 

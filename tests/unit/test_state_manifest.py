@@ -17,6 +17,7 @@ from hyprtweaker.engine.state import (
     Manifest,
     ModuleRecord,
     RetiredValue,
+    RetireReason,
     content_hash,
     is_damaged,
 )
@@ -113,6 +114,7 @@ class TestRetiredValues:
             retired={
                 "general:col.active_border": RetiredValue("0.57.0", gradient),
                 "decoration:rounding": RetiredValue("0.58.1", 10),
+                "general:new_size": RetiredValue("0.59.0", 7, RetireReason.NOT_IN_SCHEMA),
             },
         )
         path = tmp_path / "manifest.json"
@@ -131,8 +133,8 @@ class TestRetiredValues:
         )
 
         assert manifest.as_json()["retired"] == {
-            "decoration:rounding": {"retired_in": "0.58.1", "value": 10},
-            "misc:z_last": {"retired_in": "0.57.0", "value": "text"},
+            "decoration:rounding": {"retired_in": "0.58.1", "value": 10, "reason": "removed"},
+            "misc:z_last": {"retired_in": "0.57.0", "value": "text", "reason": "removed"},
         }
         assert list(manifest.as_json()["retired"]) == ["decoration:rounding", "misc:z_last"]
 
@@ -164,6 +166,24 @@ class TestRetiredValues:
 
         assert Manifest.load(path, **VERSIONS).retired == {
             "a:kept": RetiredValue("0.57.0", False)
+        }
+
+    def test_a_missing_or_unknown_reason_reads_as_removed(self, tmp_path: Path) -> None:
+        """Additive key (#214): an entry written before it, or by a newer build with a reason
+        this one does not know, is the announced kind it always was."""
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            f'{{"format_version": {FORMAT_VERSION}, "retired": {{'
+            '"a:before": {"retired_in": "0.57.0", "value": 1}, '
+            '"a:unknown": {"retired_in": "0.57.0", "value": 2, "reason": "eclipsed"}, '
+            '"a:quiet": {"retired_in": "0.59.0", "value": 3, "reason": "not_in_schema"}}}',
+            encoding="utf-8",
+        )
+
+        assert Manifest.load(path, **VERSIONS).retired == {
+            "a:before": RetiredValue("0.57.0", 1),
+            "a:unknown": RetiredValue("0.57.0", 2),
+            "a:quiet": RetiredValue("0.59.0", 3, RetireReason.NOT_IN_SCHEMA),
         }
 
     def test_a_retired_table_of_the_wrong_type_reads_as_none(self, tmp_path: Path) -> None:

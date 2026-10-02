@@ -20,6 +20,7 @@ from typing import Any
 
 from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
+from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, load_schema
 
 SCHEMA = load_schema()
@@ -50,6 +51,9 @@ class FakeSession:
         self.retired: dict[str, str] = {}
         self.model = ConfigModel(SCHEMA)
         self.applied: list[str] = []
+        self.paths = ConfigPaths.rooted_at(Path("/nonexistent/hyprtweaker-fake-session"))
+        """Where the Layout Row looks for Lua layouts (ADR-0018): a root with no files, so
+        it offers the shipped layouts only."""
 
     def unknown_to_version(self, option: ResolvedOption) -> bool:
         return option.name in self.unknown

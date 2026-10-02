@@ -43,7 +43,7 @@ from .resolve import (
     select_version,
     stamp_added_in,
 )
-from .supplement import newer_than_shipped, supplement
+from .supplement import is_plugin_option, newer_than_shipped, supplement
 from .types import (
     CurationFlag,
     Dependency,
@@ -93,6 +93,7 @@ __all__ = [
     "derive_title",
     "diff_schemas",
     "humanise",
+    "is_plugin_option",
     "load_schema",
     "newer_than_shipped",
     "resolve_option",

@@ -40,65 +40,23 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, GLib, GObject, Graphene, Gsk, Gtk  # noqa: E402
 
-from hyprtweaker.engine.model.entities import LayerRule, WindowRule  # noqa: E402
 from hyprtweaker.engine.rule_filter import (  # noqa: E402
     Chip,
     ChipGroup,
     chips_for,
     filter_rules,
-    value_text,
 )
-from hyprtweaker.engine.rules_catalog import is_negated, strip_negation  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import (  # noqa: E402
+    Rule,
+    rule_subtitle,
+    rule_title,
+)
+from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
-
-Rule = WindowRule | LayerRule
-
-
-def match_text(rule: Rule) -> str:
-    """The Match half of a row's auto-summary: `class kitty · not title ^(x)$`."""
-    parts = []
-    for name, value in rule.match.items():
-        negated = is_negated(value)
-        shown = strip_negation(value) if isinstance(value, str) else value_text(value)
-        prefix = "not " if negated else ""
-        parts.append(f"{prefix}{name} {shown}".strip())
-    return " · ".join(parts)
-
-
-def effects_text(rule: Rule) -> str:
-    """The Effects half: bools by bare name, everything else `name value`."""
-    parts = []
-    for name, value in rule.effects.items():
-        if value is True:
-            parts.append(name)
-        elif value is False:
-            parts.append(f"{name} off")
-        else:
-            parts.append(f"{name} {value_text(value)}")
-    return ", ".join(parts)
-
-
-def rule_title(rule: Rule) -> str:
-    """The row title: the Label when there is one, else the auto-summary (ADR-0008)."""
-    if rule.name:
-        return rule.name
-    match = match_text(rule) or "any"
-    effects = effects_text(rule)
-    return f"{match} → {effects}" if effects else match
-
-
-def rule_subtitle(rule: Rule) -> str:
-    """Under a Label, the summary the Label replaced; under a summary, nothing."""
-    if not rule.name:
-        return ""
-    match = match_text(rule) or "any"
-    effects = effects_text(rule)
-    return f"{match} → {effects}" if effects else match
-
 
 REORDER_HINT = "Drag to reorder, or press Alt+Up or Alt+Down"
 
@@ -477,7 +435,7 @@ class RulesPage:
     """
 
     kind = "window"
-    section = "entity:window_rules"
+    section = entity_page_id("window_rules")
     title = "Window rules"
     empty_hint = "Add one with the button above, or import an existing config."
 
@@ -621,24 +579,42 @@ class RulesPage:
         self._chip_lines[chip.group].show_state(self._active_chips)
         self.refresh()
 
-    def reveal(self, index: int) -> None:
-        """Focus and flash the row of the rule at model `index`, as the Binds page does.
-
-        A move rebuilds every row, so without this the focus is lost with the old row and
-        a second Alt+Up or Alt+Down lands on nothing.
-        """
-        for row in self._rows:
-            if row.index == index:
-                row.widget.grab_focus()
-                flash(row.widget)
-                return
-
     def _on_filter_changed(self, entry: Gtk.SearchEntry) -> None:
         self._apply_filter(entry.get_text())
 
     def _apply_filter(self, text: str) -> None:
-        self._filter_text = text.strip().lower()
+        folded = text.strip().lower()
+        if folded == self._filter_text:
+            # The entry's debounced `search-changed` arriving after a programmatic change
+            # (`reveal`, `set_filter`): rebuilding again would drop the row just flashed.
+            return
+        self._filter_text = folded
         self.refresh()
+
+    def reveal(self, index: int) -> Gtk.Widget | None:
+        """Bring the row for the rule at `index` into view and flash it -- a search hit, or
+        the rule just moved (a move rebuilds every row, so focus follows it for the next
+        Alt+Up or Alt+Down).
+
+        A filter text or chip that hides the rule is cleared first: a hit that lands on "No
+        rules match this filter" is a dead end. One that shows it stays, so moving a rule in
+        a filtered list keeps the filter. Navigate + flash as `BindsPage.reveal`; returns
+        the row for an explicit scroll, or `None` when the list has no rule at `index`.
+        """
+        shown = any(row.index == index for row in self._rows)
+        if not shown and (self._filter_text or self._active_chips):
+            self._active_chips.clear()
+            for button in self.chip_buttons.values():
+                button.set_active(False)
+            self._filter_text = ""
+            self._filter.set_text("")
+            self.refresh()
+        for row in self._rows:
+            if row.index == index:
+                row.widget.grab_focus()
+                flash(row.widget)
+                return row.widget
+        return None
 
     def refresh(self) -> None:
         """Rebuild the list from the model, applying the filter.
@@ -691,7 +667,7 @@ class WindowRulesPage(RulesPage):
     and `title` off the class, so a parameterised constructor would not do."""
 
     kind = "window"
-    section = "entity:window_rules"
+    section = entity_page_id("window_rules")
     title = "Window rules"
 
 
@@ -699,5 +675,5 @@ class LayerRulesPage(RulesPage):
     """The layer-rule instantiation -- ADR-0008's "same list model and editor shell"."""
 
     kind = "layer"
-    section = "entity:layer_rules"
+    section = entity_page_id("layer_rules")
     title = "Layer rules"

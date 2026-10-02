@@ -39,7 +39,7 @@ from hyprtweaker.engine.importer.mapping import ImportResult  # noqa: E402
 from hyprtweaker.engine.model import ConfigModel  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind, DispatcherCall, EntitySet  # noqa: E402
 from hyprtweaker.engine.paths import ConfigPaths  # noqa: E402
-from hyprtweaker.engine.schema import load_schema  # noqa: E402
+from hyprtweaker.engine.schema import SupplementKind, load_schema, supplement  # noqa: E402
 from hyprtweaker.engine.writer import Writer  # noqa: E402
 
 SCHEMA_DIR = ROOT / "data" / "schema"
@@ -538,3 +538,48 @@ def test_a_border_color_hyprland_cannot_read_is_rejected(tmp_path: Path) -> None
     )
 
     assert rejected is not None
+
+
+def write_plugin_setting(root: Path) -> ConfigPaths:
+    """A plugin's setting as the Writer writes it (#175), for a plugin that is not loaded."""
+    paths = ConfigPaths.rooted_at(root)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    record = {"name": "plugin:hyprbars:bar_height", "description": "x", "default": 15}
+    schema = supplement(
+        load_schema("0.56.2", SCHEMA_DIR),
+        [record],
+        version="0.56.2",
+        kind=SupplementKind.PLUGIN,
+    )
+    model = ConfigModel(schema)
+    model.set("plugin:hyprbars:bar_height", 20)
+    model.set("general:gaps_in", 7)
+    Writer(paths, app_version="0.0.0-test").write(model)
+    return paths
+
+
+def test_a_plugin_setting_without_its_plugin_is_a_config_hyprland_accepts(
+    tmp_path: Path,
+) -> None:
+    """Settled for #175: the app never causes a config error by setting a plugin's option."""
+    paths = write_plugin_setting(tmp_path)
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert "config ok" in result.stdout
+
+
+def test_the_same_setting_unguarded_is_rejected(tmp_path: Path) -> None:
+    """Guards the test above: accepted because of the guard, not because nothing checks."""
+    paths = write_plugin_setting(tmp_path)
+    module = paths.app_dir / "options" / "plugin.lua"
+    module.write_text("hl.config({ plugin = { hyprbars = { bar_height = 20 } } })\n")
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    assert "unknown config key 'plugin.hyprbars.bar_height'" in result.stdout + result.stderr

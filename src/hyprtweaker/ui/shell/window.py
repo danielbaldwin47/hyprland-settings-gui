@@ -66,6 +66,7 @@ from hyprtweaker.engine.model.entities import (  # noqa: E402
     KEYBIND_KINDS,
     Bind,
     LayerRule,
+    PluginLoad,
     WindowRule,
     WorkspaceRule,
     entity_title,
@@ -74,6 +75,7 @@ from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking 
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
+from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
@@ -124,10 +126,16 @@ from hyprtweaker.ui.pages.rules import (  # noqa: E402
     RulesPage,
     WindowRulesPage,
 )
+from hyprtweaker.ui.pages.scripting import (  # noqa: E402
+    PluginActions,
+    ScriptingActions,
+    ScriptingPage,
+)
 from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     ORPHAN_CATEGORY_TITLE,
     CategoryPlan,
     TasksMapping,
+    entity_page_id,
     load_tasks_mapping,
     plan_tasks_view,
 )
@@ -137,8 +145,18 @@ from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
 )
 from hyprtweaker.ui.release import release  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
-from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
+from hyprtweaker.ui.search import (  # noqa: E402
+    EntityHit,
+    EntityKind,
+    Hit,
+    OptionHit,
+    SearchIndex,
+    resolve,
+)
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
+
+ENTITY_CHANGED = "That item changed. Results updated."
+"""The toast for a search hit whose entity was removed or rewritten since it was listed."""
 
 IMPORT_ACTION = "import-config"
 IMPORT_LABEL = "Import..."
@@ -258,6 +276,28 @@ whose Row has no home in the active View. One action means those three cannot di
 a search-driven switch is remembered exactly like a manual one, which is what the ADR asks
 for ("one mechanism, no temporary hidden state")."""
 
+THEME_ACTION = "theme"
+"""The Theme override: System, Light or Dark, three radio items in the primary menu.
+
+This app's own colour scheme, set on its `Adw.StyleManager` and nowhere else: the desktop's
+GTK settings and portal are never written, and never read to decide anything here. Hyprland
+boxes often run without the portal that makes "follow the system" reliable (ADR-0019), so
+the user can force the ground they can read. Remembered in the Prefs file."""
+
+_SCHEMES = {
+    "system": Adw.ColorScheme.DEFAULT,
+    "light": Adw.ColorScheme.FORCE_LIGHT,
+    "dark": Adw.ColorScheme.FORCE_DARK,
+}
+"""Each Theme override name, in menu order, and the colour scheme it asks for."""
+
+FORGET_REMEMBERED_ACTION = "forget-remembered"
+"""Clear every "remember my choice" answer (ADR-0014), so each such dialog asks again.
+
+Without it, a remembered answer is a one-way door (UX critique 4, #79). Hidden while
+nothing is remembered: the action is disabled then, and the menu item hides with it
+(`hidden-when`), since a greyed item cannot say why it is grey."""
+
 
 class MainWindow(Adw.ApplicationWindow):
     """The Config view over one `Session`."""
@@ -289,6 +329,10 @@ class MainWindow(Adw.ApplicationWindow):
 
         Read at construction rather than per-use so a `$XDG_STATE_HOME` that disappears
         mid-session cannot change the view out from under the user."""
+        # Before the first present: the window's first frame is already the chosen ground.
+        Adw.StyleManager.get_default().set_color_scheme(
+            _SCHEMES[_theme_from(self._prefs.theme)]
+        )
         self._view = _view_from(self._prefs.view)
         """The active sidebar arrangement, and the source of truth for it.
 
@@ -316,6 +360,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._workspace_rules_page: WorkspaceRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
+        self._scripting_page: ScriptingPage | None = None
         self._shown_entities: dict[str, tuple[Any, ...]] = {}
         """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
         self._shown_live = False
@@ -333,12 +378,14 @@ class MainWindow(Adw.ApplicationWindow):
         Held because it outranks the health Banner: "settings can't be saved yet, Convert..."
         is more use to someone on an unmigrated box than "no compositor", and it is the only
         Banner state with a way out on its own button."""
-        self._index = SearchIndex.build(session.schema)
-        """The finder's index, built once here (ADR-0017 §Index build).
+        self._index = SearchIndex.build(session.schema, session)
+        """The finder's index (ADR-0017 §Index build): its Options built here, its Entities
+        on the first query and whenever a query finds the model moved since.
 
-        At construction rather than on first Ctrl+F: the build is one pass over the Schema
-        and the alternative is a first search that stutters, which is the one search the
-        user judges the feature by."""
+        The Options at construction rather than on first Ctrl+F: the build is one pass over
+        the Schema and the alternative is a first search that stutters, which is the one
+        search the user judges the feature by. The Entities are read from the session at
+        query time, so startup pays nothing for them and no edit has to announce itself."""
         self._revealed: frozenset[str] = frozenset()
         """The Options a search hit has earned a place for on this visit (the One-off reveal).
 
@@ -508,6 +555,20 @@ class MainWindow(Adw.ApplicationWindow):
         views.append("Config", f"win.{VIEW_ACTION}('{View.CONFIG.value}')")
         menu.append_section("View", views)
 
+        themes = Gio.Menu()
+        for name in _SCHEMES:
+            themes.append(name.capitalize(), f"win.{THEME_ACTION}('{name}')")
+        menu.append_section("Theme", themes)
+        # Its own unlabelled section right below Theme rather than inside it: forgetting a
+        # dialog answer is not a colour, and under the "Theme" heading it would read as one.
+        remembered = Gio.Menu()
+        forget = Gio.MenuItem.new(
+            "Forget remembered choices", f"win.{FORGET_REMEMBERED_ACTION}"
+        )
+        forget.set_attribute_value("hidden-when", GLib.Variant.new_string("action-disabled"))
+        remembered.append_item(forget)
+        menu.append_section(None, remembered)
+
         interop = Gio.Menu()
         interop.append(IMPORT_LABEL, f"win.{IMPORT_ACTION}")
         interop.append("Export...", f"win.{EXPORT_ACTION}")
@@ -568,6 +629,20 @@ class MainWindow(Adw.ApplicationWindow):
         view.connect("activate", self._on_choose_view)
         self.add_action(view)
         self._view_action = view
+
+        theme = Gio.SimpleAction.new_stateful(
+            THEME_ACTION,
+            GLib.VariantType.new("s"),
+            GLib.Variant.new_string(_theme_from(self._prefs.theme)),
+        )
+        theme.connect("activate", self._on_choose_theme)
+        self.add_action(theme)
+
+        forget = Gio.SimpleAction.new(FORGET_REMEMBERED_ACTION, None)
+        forget.connect("activate", self._on_forget_remembered)
+        forget.set_enabled(bool(self._prefs.remembered))
+        self.add_action(forget)
+        self._forget_action = forget
 
         undo = Gio.SimpleAction.new(UNDO_ACTION, None)
         undo.connect("activate", self._on_undo)
@@ -807,6 +882,11 @@ class MainWindow(Adw.ApplicationWindow):
         return tuple(self._declaration_pages.values())
 
     @property
+    def scripting_page(self) -> ScriptingPage | None:
+        """The Scripting Page, once built. The UI tier asserts against it."""
+        return self._scripting_page
+
+    @property
     def monitors_page(self) -> MonitorsPage | None:
         """The Displays Page, once built. The UI tier asserts against it."""
         return self._monitors_page
@@ -878,9 +958,23 @@ class MainWindow(Adw.ApplicationWindow):
         A failed write is deliberately silent: `$XDG_STATE_HOME` being read-only means the
         choice will not survive a restart, which is not worth a toast over the Row the user
         is looking at, and `PrefsStore.save` has already declined to raise.
+
+        The one path every preference change takes, a dialog's remembered answer included
+        (#170), so "Forget remembered choices" turns sensitive the moment there is one.
         """
         self._prefs = prefs
         self._prefs_store.save(prefs)
+        self._forget_action.set_enabled(bool(prefs.remembered))
+
+    def _on_choose_theme(self, action: Gio.SimpleAction, parameter: Any) -> None:
+        theme = _theme_from(parameter.get_string())
+        action.set_state(GLib.Variant.new_string(theme))
+        Adw.StyleManager.get_default().set_color_scheme(_SCHEMES[theme])
+        self._remember(self._prefs.with_theme(theme))
+
+    def _on_forget_remembered(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        self._remember(self._prefs.without_any_remembered())
+        self._toasts.add_toast(Adw.Toast(title="Remembered choices forgotten"))
 
     @property
     def visible_section(self) -> str | None:
@@ -1005,6 +1099,23 @@ class MainWindow(Adw.ApplicationWindow):
             self._register(page.section, page.title, len(page.entities))
             self._section_titles[page.section] = page.title
 
+        # The Scripting Page: the plugin load list (#174) above a read-only inventory of the
+        # user's Lua (ADR-0018, #173).
+        self._scripting_page = ScriptingPage(
+            self._session,
+            actions=ScriptingActions(open_file=self._launch_file),
+            plugin_actions=PluginActions(
+                add=self._add_plugin,
+                remove=self._remove_plugin,
+                enable=self._set_plugin_enabled,
+                move=self._move_plugin,
+            ),
+        )
+        scripting = self._scripting_page
+        self._stack.add_named(_scrolled(scripting.page), scripting.section)
+        self._section_titles[scripting.section] = scripting.title
+        self._register(scripting.section, scripting.title, self._scripting_count())
+
         self._shown_entities = self._entity_lists()
         self._shown_live = bool(self._session.live)
         self._fill_sidebar()
@@ -1052,6 +1163,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _register(self, section: str, title: str, count: int) -> None:
         self._built.append(SidebarEntry(section=section, title=title, count=count))
+
+    def _scripting_count(self) -> int:
+        """The Scripting Page lists the calls found and the plugin load list: both count."""
+        page = self._scripting_page
+        hits = page.hit_count if page is not None else 0
+        return hits + len(self._session.declarations("plugins"))
 
     def _restored(self, selected: str | None) -> str:
         """Which Page to select after a rebuild: the one that was showing, if it still is.
@@ -1315,12 +1432,11 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _layout_choices(self) -> tuple[str, ...]:
-        """The layouts the layout row offers, from the schema (the compositor's Lua
-        layouts join as #175 discovers them)."""
-        option = self._session.schema.get("general:layout")
-        return layout_choices(
-            option.known_values.values if option and option.known_values else ()
-        )
+        """The layouts the layout row offers: the schema's own, without its `lua:<name>`
+        placeholder, then the Lua layouts the user's files register (#175)."""
+        option = self._session.schema.get(LAYOUT_OPTION)
+        known = option.known_values.values if option and option.known_values else ()
+        return (*layout_choices(known), *discovered_layouts(self._session.paths))
 
     def _add_workspace_rule(self) -> None:
         self.workspace_rule_editor().present(self)
@@ -1704,10 +1820,19 @@ class MainWindow(Adw.ApplicationWindow):
         """
         for page in self._pages:
             page.refresh()
+        # A foreign reload lands here, and Hyprland reloads when a `require`d file such as
+        # `user.lua` changes: the Scripting inventory re-reads with it, its plugin list too.
+        if self._scripting_page is not None:
+            self._scripting_page.refresh()
         self._draw_entity_pages(self._moved_entities())
+        # Always, not only when an Entity list moved: the Scripting count follows `user.lua`.
+        self._sync_entity_counts()
 
         self.sync_banner()
         self._sync_undo_action()
+        # A result list on screen follows the model too: an undo or a foreign reload must
+        # not leave a row that opens something no longer there (settled S2b).
+        self._finder.requery()
 
     def sync_banner(self) -> None:
         """Make the one Banner agree with `Session.health`, and nothing else.
@@ -1777,6 +1902,9 @@ class MainWindow(Adw.ApplicationWindow):
             self._refresh_chrome_for(name)
         self._sync_undo_action()
         self.sync_banner()
+        # The transaction's reload may have loaded or unloaded a plugin: ask again (#174).
+        if self._scripting_page is not None:
+            self._scripting_page.plugins.refresh()
 
         if not result.ok:
             self._dismiss_undo()
@@ -1913,7 +2041,68 @@ class MainWindow(Adw.ApplicationWindow):
         path = self._session.file_for(problem)
         if path is None:
             return
+        self._launch_file(path)
+
+    def _launch_file(self, path: Path) -> None:
         Gtk.FileLauncher(file=Gio.File.new_for_path(str(path))).launch(self, None, None)
+
+    # --- plugins (#174) -------------------------------------------------------------------
+
+    def _add_plugin(self) -> None:
+        """Pick a `.so` and append it. hyprpm is out of scope: the file must exist already."""
+        shared = Gtk.FileFilter(name="Plugins (.so)")
+        shared.add_suffix("so")
+        anything = Gtk.FileFilter(name="All files")
+        anything.add_pattern("*")
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(shared)
+        filters.append(anything)
+        dialog = Gtk.FileDialog(title="Add plugin", filters=filters, default_filter=shared)
+
+        def finished(source: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
+            try:
+                chosen = source.open_finish(result)
+            except GLib.Error:
+                return  # cancelled
+            if chosen is not None and chosen.get_path():
+                self.add_plugin_path(chosen.get_path())
+
+        dialog.open(self, None, finished)
+
+    def add_plugin_path(self, path: str) -> None:
+        """Append `path`, or say why not: a second entry for one `.so` is refused."""
+        plugin = PluginLoad(path)
+        if any(each.path == path for each in self._session.declarations("plugins")):
+            name = path.rsplit("/", 1)[-1] or path
+            self._toasts.add_toast(Adw.Toast(title=f"{name} is already in the list"))
+            return
+        if self._session.add_declaration("plugins", plugin):
+            self._refresh_plugins()
+
+    def _remove_plugin(self, index: int) -> None:
+        if self._session.remove_declaration("plugins", index):
+            self._refresh_plugins()
+
+    def _set_plugin_enabled(self, index: int, enabled: bool) -> None:
+        def flip(items: list[Any]) -> None:
+            if 0 <= index < len(items):
+                items[index] = replace(items[index], enabled=enabled)
+
+        verb = "enabled" if enabled else "disabled"
+        if self._session.edit_declarations(
+            "plugins", flip, title=entity_title("plugins", verb)
+        ):
+            self._refresh_plugins()
+
+    def _move_plugin(self, index: int, to: int) -> None:
+        if self._session.move_declaration("plugins", index, to):
+            self._refresh_plugins()
+            if self._scripting_page is not None:
+                self._scripting_page.plugins.focus(to)
+
+    def _refresh_plugins(self) -> None:
+        # `sync` refreshes the Scripting Page, its plugin list included.
+        self.sync()
 
     # --- undo -------------------------------------------------------------------------------
 
@@ -2041,6 +2230,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.fetch_monitors(self._set_connected)
         for kind in kinds & self._declaration_pages.keys():
             self._declaration_pages[kind].refresh()
+        # "plugins" needs nothing here: its list is on the Scripting Page, which `sync`
+        # rebuilds every time, and `_refresh_entity_pages` ends in `sync`.
 
         lists = self._entity_lists()
         self._shown_entities.update((kind, lists[kind]) for kind in kinds if kind in lists)
@@ -2064,6 +2255,8 @@ class MainWindow(Adw.ApplicationWindow):
             counts[MonitorsPage.section] = len(self._monitors_page.rules)
         for declarations in self._declaration_pages.values():
             counts[declarations.section] = len(declarations.entities)
+        if self._scripting_page is not None:
+            counts[self._scripting_page.section] = self._scripting_count()
         index = 0
         while (row := self._sidebar.get_row_at_index(index)) is not None:
             index += 1
@@ -2150,7 +2343,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.start_search()
 
     def open_hit(self, hit: Hit) -> None:
-        """Navigate to a search result: the active View first, Config only if it must.
+        """Navigate to a search result: an Option's Row, or an Entity's row on its Page."""
+        if isinstance(hit, EntityHit):
+            self._open_entity_hit(hit)
+        else:
+            self._open_option_hit(hit)
+
+    def _open_option_hit(self, hit: OptionHit) -> None:
+        """Navigate to an Option's Row: the active View first, Config only if it must.
 
         ADR-0017's navigation rule, in the order it states it. A hit resolves against the
         View the user chose; the switch to Config happens only when the Row has no home
@@ -2168,6 +2368,68 @@ class MainWindow(Adw.ApplicationWindow):
         self._revealed = frozenset({hit.name})
         self.rebuild()
         self.reveal_option(hit.name, flash_row=True)
+
+    def _open_entity_hit(self, hit: EntityHit) -> None:
+        """Open the hit's Page and flash its row -- or say it changed, never land elsewhere.
+
+        The hit is re-resolved first (settled S2b): the entity may have moved since the
+        results were listed, or be gone. Gone is said in a toast over a refreshed list, so
+        the user sees why nothing opened and what the list holds now; a reveal by the old
+        position would open a different bind, which is worse than opening nothing.
+
+        Every Entity Page is in both Views, so there is no View fallback here. An Option's
+        One-off reveal still standing ends, as any navigation ends it. The reveal waits a
+        low-priority turn for the reason `reveal_option` gives: a `GtkStack` lays out only
+        its visible child, so the Page has no geometry to scroll until then.
+        """
+        position = resolve(hit, self._session)
+        if position is None:
+            self._entity_changed()
+            return
+        self._end_one_off_reveal()
+        key: int | str = position
+        if hit.kind is EntityKind.MONITOR_RULE:
+            key = self._session.monitor_rules[position].output
+        elif hit.kind is EntityKind.MONITOR_PROFILE:
+            key = self._session.monitor_profiles()[position][0]
+        self._select_section(entity_page_id(hit.kind.page_kind))
+        GLib.idle_add(self._reveal_entity, hit.kind, key, priority=GLib.PRIORITY_LOW)
+
+    def _reveal_entity(self, kind: EntityKind, key: int | str) -> bool:
+        """Flash the entity's row on its Page and scroll it into view explicitly.
+
+        Explicitly because the Pages reveal by focus, and an insensitive row -- every row
+        of a read-only session -- cannot take focus, so focus alone would scroll nowhere.
+        """
+        row = self._entity_row(kind, key)
+        if row is None:
+            self._entity_changed()
+        else:
+            _scroll_when_laid_out(row)
+        return False
+
+    def _entity_row(self, kind: EntityKind, key: int | str) -> Gtk.Widget | None:
+        """The Page's reveal for one entity: its row, flashed, or `None` when it has none."""
+        match kind:
+            case EntityKind.BIND:
+                page = self._binds_page
+                return page.reveal(key) if page is not None and isinstance(key, int) else None
+            case EntityKind.WINDOW_RULE | EntityKind.LAYER_RULE:
+                rules = self._rules_page(
+                    "window" if kind is EntityKind.WINDOW_RULE else "layer"
+                )
+                return rules.reveal(key) if rules is not None and isinstance(key, int) else None
+            case EntityKind.MONITOR_RULE:
+                monitors = self._monitors_page
+                return monitors.reveal_rule(str(key)) if monitors is not None else None
+            case EntityKind.MONITOR_PROFILE:
+                monitors = self._monitors_page
+                return monitors.reveal_profile(str(key)) if monitors is not None else None
+
+    def _entity_changed(self) -> None:
+        """A hit whose entity is gone: refresh the list and say so, rather than fail quietly."""
+        self._finder.requery()
+        self._toasts.add_toast(Adw.Toast(title=ENTITY_CHANGED, timeout=4))
 
     def _end_one_off_reveal(self) -> None:
         """The visit is over: the user navigated somewhere themselves.
@@ -2271,6 +2533,10 @@ class MainWindow(Adw.ApplicationWindow):
         if row is None:
             return
         section = row.get_name()
+        if self._scripting_page is not None and section == self._scripting_page.section:
+            # Showing the Page re-reads the files: "open in editor, save, come back" must
+            # not need a reload or a restart to show what was just written.
+            self._scripting_page.refresh()
         self._stack.set_visible_child_name(section)
         self._content_page.set_title(self._page_title(section))
         self._split.set_show_content(True)
@@ -2374,6 +2640,28 @@ def _scroll_into_view(row: Gtk.Widget) -> None:
     adjustment.set_value(min(max(target, adjustment.get_lower()), highest))
 
 
+def _scroll_when_laid_out(row: Gtk.Widget) -> None:
+    """`_scroll_into_view`, once the row has been allocated.
+
+    An Entity Page shown for the first time has no geometry until the frame after the
+    switch, and an idle can run before that frame: the scroll then measures a zero-height
+    page and stays at the top while the flash plays off screen (probed over end-4's 197
+    binds). A row with a height has been laid out; one without waits for the frame clock,
+    which ticks only while the row is mapped -- on the Page the hit just opened.
+    """
+    if row.get_height() > 0:
+        _scroll_into_view(row)
+        return
+
+    def tick(widget: Gtk.Widget, _clock: object) -> bool:
+        if widget.get_height() == 0:
+            return GLib.SOURCE_CONTINUE
+        _scroll_into_view(widget)
+        return GLib.SOURCE_REMOVE
+
+    row.add_tick_callback(tick)
+
+
 def _dependents(schema: Schema) -> dict[str, tuple[str, ...]]:
     """Controlling Option -> the Options whose `depends_on` names it.
 
@@ -2442,6 +2730,15 @@ def _view_from(value: str) -> View:
         return View(value)
     except ValueError:
         return View.TASKS
+
+
+def _theme_from(value: str) -> str:
+    """A stored or action-supplied Theme override name, degraded to System if unrecognised.
+
+    As `_view_from` for views: a name from a newer app or a hand edit opens the app in the
+    platform's own scheme rather than failing to start.
+    """
+    return value if value in _SCHEMES else "system"
 
 
 def _category_heading(title: str) -> Gtk.ListBoxRow:
