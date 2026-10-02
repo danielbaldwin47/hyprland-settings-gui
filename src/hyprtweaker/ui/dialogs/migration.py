@@ -133,7 +133,8 @@ OMARCHY_ENDS = (
     "Omarchy's theme menu and Omarchy updates will no longer change your Hyprland settings"
 )
 OMARCHY_ENDS_HELP = (
-    "Change colours here instead. Restoring the back-up this wizard makes puts you back."
+    "Change colors on the Theming page, or set up a color tool there. Restoring the backup "
+    "this wizard makes puts you back."
 )
 """What switching an Omarchy config costs, on the Preview page (#234)."""
 

@@ -844,8 +844,19 @@ class MainWindow(Adw.ApplicationWindow):
         flow = self.migration_flow()
         if response == "keep":
             flow.keep()
-        else:
-            self._spawn(flow.roll_back_live(pending))
+            return
+        flow.roll_back(pending)
+        self._spawn(flow.reload_restored())
+        if flow.rollback_notes:
+            # A theming tool's file left as the user changed it, or one that could not be
+            # put back, is said here as the wizard's own Roll back says it (finding 21).
+            GLib.idle_add(self._show_rollback_notes, flow.rollback_notes)
+
+    def _show_rollback_notes(self, notes: tuple[str, ...]) -> bool:
+        dialog = Adw.AlertDialog(heading="Rolled back", body="\n\n".join(notes))
+        dialog.add_response("ok", "OK")
+        dialog.present(self)
+        return GLib.SOURCE_REMOVE
 
     def _on_import(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         if self._session.hyprland_too_old:

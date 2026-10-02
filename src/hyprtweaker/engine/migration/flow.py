@@ -744,6 +744,10 @@ class MigrationFlow:
     async def roll_back_live(self, marker: sentinels.Sentinel | None = None) -> None:
         """Roll back and make the running session read the restored config."""
         self.roll_back(marker)
+        await self.reload_restored()
+
+    async def reload_restored(self) -> None:
+        """Make the running session read the config a rollback put back."""
         if self.client is not None:
             await self.client.reload_full_reset()
 

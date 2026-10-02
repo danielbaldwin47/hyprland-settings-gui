@@ -394,7 +394,8 @@ OMARCHY_ROW = (
     "Omarchy's theme menu and Omarchy updates will no longer change your Hyprland settings"
 )
 OMARCHY_ROW_HELP = (
-    "Change colours here instead. Restoring the back-up this wizard makes puts you back."
+    "Change colors on the Theming page, or set up a color tool there. Restoring the backup "
+    "this wizard makes puts you back."
 )
 
 
@@ -417,6 +418,8 @@ class TestWhatSwitchingAnOmarchyConfigEnds:
         self, tmp_path: Path
     ) -> None:
         entrypoint = _omarchy_root(tmp_path)
+        omarchy = entrypoint.parent / "default" / "hypr" / "omarchy.lua"
+        before = (entrypoint.read_bytes(), omarchy.read_bytes())
         window, _ = build_window(tmp_path)
         dialog = window.show_migration()
         _click(dialog, "Convert...")
@@ -424,11 +427,11 @@ class TestWhatSwitchingAnOmarchyConfigEnds:
 
         assert _page_title(dialog) == "Preview"
         assert (OMARCHY_ROW, OMARCHY_ROW_HELP) in _rows(dialog)
-        assert "Switch" not in OMARCHY_ROW  # information, not a gate: Back up stays offered
+        # Information, not a gate: Back up stays offered.
         assert "Back up and convert" in [
             button.get_label() for button in _action_buttons(dialog)
         ]
-        assert "default/hypr/omarchy.lua" not in entrypoint.read_text(encoding="utf-8")
+        assert (entrypoint.read_bytes(), omarchy.read_bytes()) == before
 
     def test_another_config_is_not_told_anything_about_omarchy(self, tmp_path: Path) -> None:
         _foreign_root(tmp_path)
@@ -1266,3 +1269,40 @@ class TestBridgeSetup:
         )
 
         assert _page_title(dialog) == "Back up"
+
+
+def test_a_relaunched_roll_back_says_which_tool_file_it_left(tmp_path: Path) -> None:
+    """Finding 21 of the #153 review: the relaunched app's Roll back dropped its notes, so a
+    tool config left as the user changed it was never mentioned."""
+    from datetime import UTC, datetime
+
+    from hyprtweaker.engine.bridge.wire import WireConsent, plan_wire, wire
+    from hyprtweaker.engine.migration import sentinel as sentinels
+    from hyprtweaker.engine.paths import ConfigPaths
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    config = paths.config_home / "matugen/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text("[config]\n", encoding="utf-8")
+    plan = plan_wire("matugen", paths=paths)
+    wire(plan, WireConsent(plan), register=lambda _t: True, unregister=lambda _t: True)
+    config.write_text(config.read_text(encoding="utf-8") + "# mine\n", encoding="utf-8")
+    edited = config.read_bytes()
+    sentinels.write(paths, kind="legacy-conf", bridge_tools=("matugen",), now=datetime.now(UTC))
+    window, _ = build_window(tmp_path)
+
+    window.route_first_run()
+    offer = window.get_visible_dialog()
+    assert offer.get_heading() == "A configuration switch was not finished"
+    offer.emit("response", "roll-back")
+    offer.force_close()
+    main_loop.settle("the notes to show")
+
+    said = window.get_visible_dialog()
+    assert said.get_heading() == "Rolled back"
+    assert said.get_body() == (
+        f"{tmp_path}/matugen/config.toml changed after matugen was set up, so it was left "
+        f"as it is. The copy from before setup is in {tmp_path}/state/bridge-backups/."
+    )
+    assert config.read_bytes() == edited
+    said.force_close()
