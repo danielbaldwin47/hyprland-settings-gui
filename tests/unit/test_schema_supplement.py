@@ -9,6 +9,7 @@ keys a type prints.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -121,10 +122,13 @@ def test_added_options_follow_every_shipped_one_in_declaration_order() -> None:
     assert [option.order for option in schema.section("general")] == [0, 8, 9]
 
 
-def test_the_shipped_curation_is_kept() -> None:
-    schema = supplement(shipped(), (BOOL,), version="0.58.0")
+def test_the_shipped_curation_and_animation_leaves_are_kept() -> None:
+    base = replace(shipped(), animation_leaves=("border", "windowsIn"))
+
+    schema = supplement(base, (BOOL,), version="0.58.0")
 
     assert schema.section_title("general") == "General"
+    assert schema.animation_leaves == ("border", "windowsIn")
 
 
 @pytest.mark.parametrize(
