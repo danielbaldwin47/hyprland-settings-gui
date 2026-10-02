@@ -87,11 +87,16 @@ class MatchProp:
 
 @dataclass(frozen=True, slots=True)
 class Effect:
-    """One typed effect: the spec-table key, its Lua value type, and its picker shelf."""
+    """One typed effect: the spec-table key, its Lua value type, and its picker shelf.
+
+    `grammar` names the string grammar a STRING effect carries, when the editor has a
+    helper widget for it (`rule_grammars`, ADR-0008). The type alone cannot say which
+    helper: every one of them is `STRING`. `None` is a plain text effect."""
 
     name: str
     type: EffectType
     category: str
+    grammar: str | None = None
 
 
 WINDOW_MATCH_PROPS: tuple[MatchProp, ...] = (
@@ -134,7 +139,7 @@ WINDOW_EFFECTS: tuple[Effect, ...] = (
     Effect("center", EffectType.BOOL, _PLACEMENT),
     Effect("fullscreen", EffectType.BOOL, _PLACEMENT),
     Effect("maximize", EffectType.BOOL, _PLACEMENT),
-    Effect("fullscreen_state", EffectType.STRING, _PLACEMENT),
+    Effect("fullscreen_state", EffectType.STRING, _PLACEMENT, grammar="fullscreen_state"),
     Effect("pseudo", EffectType.BOOL, _PLACEMENT),
     Effect("pin", EffectType.BOOL, _PLACEMENT),
     Effect("move", EffectType.STRING, _PLACEMENT),
@@ -158,7 +163,7 @@ WINDOW_EFFECTS: tuple[Effect, ...] = (
     Effect("scroll_touchpad", EffectType.FLOAT, _FOCUS),
     Effect("scrolling_width", EffectType.FLOAT, _FOCUS),
     # Appearance -- how the window is drawn.
-    Effect("opacity", EffectType.STRING, _APPEARANCE),
+    Effect("opacity", EffectType.STRING, _APPEARANCE, grammar="opacity"),
     Effect("opaque", EffectType.BOOL, _APPEARANCE),
     Effect("border_color", EffectType.STRING, _APPEARANCE),
     Effect("border_size", EffectType.INT, _APPEARANCE),
@@ -176,7 +181,7 @@ WINDOW_EFFECTS: tuple[Effect, ...] = (
     # Behavior -- what the window is allowed or made to do.
     Effect("keep_aspect_ratio", EffectType.BOOL, _BEHAVIOR),
     Effect("idle_inhibit", EffectType.STRING, _BEHAVIOR),
-    Effect("suppress_event", EffectType.STRING, _BEHAVIOR),
+    Effect("suppress_event", EffectType.STRING, _BEHAVIOR, grammar="suppress_event"),
     Effect("no_close_for", EffectType.INT, _BEHAVIOR),
     Effect("no_max_size", EffectType.BOOL, _BEHAVIOR),
     Effect("sync_fullscreen", EffectType.BOOL, _BEHAVIOR),
