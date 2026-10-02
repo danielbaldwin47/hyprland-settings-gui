@@ -138,6 +138,7 @@ from hyprtweaker.engine.paths import (
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
 )
+from hyprtweaker.engine.presets import MAX_NAME as MAX_PRESET_NAME
 from hyprtweaker.engine.presets import (
     CaptureScope,
     ColorChoice,
@@ -1995,6 +1996,11 @@ class Session:
         name = name.strip()
         if not name:
             done(PresetNotSaved("Give the preset a name."))
+            return
+        if len(name) > MAX_PRESET_NAME:
+            done(
+                PresetNotSaved(f"A preset's name can be at most {MAX_PRESET_NAME} characters.")
+            )
             return
         chosen = frozenset(scopes)
         if not chosen:

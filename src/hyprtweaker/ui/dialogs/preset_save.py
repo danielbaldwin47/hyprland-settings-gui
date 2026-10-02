@@ -22,7 +22,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gtk  # noqa: E402
 
-from hyprtweaker.engine.presets import CaptureScope  # noqa: E402
+from hyprtweaker.engine.presets import MAX_NAME, CaptureScope  # noqa: E402
 
 HEADING = "Save current as preset"
 BODY = "A preset keeps the look you choose, so you can switch back to it later."
@@ -61,7 +61,9 @@ class SavePresetDialog(Adw.AlertDialog):
         self.set_heading(HEADING)
         self.set_body(problem or BODY)
         self._on_save = on_save
-        self.entry = Gtk.Entry(placeholder_text="Nord", activates_default=True, text=name)
+        self.entry = Gtk.Entry(
+            placeholder_text="Nord", activates_default=True, text=name, max_length=MAX_NAME
+        )
         self.entry.update_property([Gtk.AccessibleProperty.LABEL], [NAME_HINT])
         self.entry.connect("changed", self._on_changed)
         self.checks: dict[CaptureScope, Gtk.CheckButton] = {}

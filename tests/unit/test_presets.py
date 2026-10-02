@@ -190,3 +190,35 @@ def test_a_write_leaves_no_scratch_file(tmp_path: Path) -> None:
 
     assert sorted(p.name for p in (tmp_path / "presets").iterdir()) == ["a.json"]
     assert store.load("a") == preset(name="Again")
+
+
+def test_one_parser_reads_a_preset_or_answers_none_and_never_raises() -> None:
+    """Finding 27 of the #153 review: one total parser for the App dir and theme files."""
+    from hyprtweaker.engine.presets import ParsedPreset, parse_preset
+
+    good = {
+        "format": 1,
+        "name": "Nord",
+        "created": "2026-10-02T09:30:00+00:00",
+        "scopes": ["gaps-layout", "not-a-scope"],
+        "options": {"general:border_size": 3, "general:gaps_in": [1, 2]},
+    }
+    parsed = parse_preset(good)
+    assert isinstance(parsed, ParsedPreset)
+    assert dict(parsed.preset.options) == {"general:border_size": 3}
+    assert parsed.dropped == ("general:gaps_in",)
+    assert parsed.newer is False
+    for broken in (
+        None,
+        [],
+        {**good, "format": "1"},
+        {**good, "format": True},
+        {**good, "name": 3},
+        {**good, "name": "N" * 121},
+        {**good, "created": "yesterday"},
+        {**good, "created": None},
+        {**good, "options": []},
+        {**good, "scopes": 7, "options": {f"k{n}": n for n in range(2001)}},
+    ):
+        assert parse_preset(broken) is None, broken
+    assert parse_preset({**good, "scopes": 7}) is not None

@@ -34,7 +34,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from .bridge import Several, Wallpaper
 from .model.values import display_text
@@ -176,10 +176,14 @@ class PresetStore:
     def load(self, slug: str) -> Preset | None:
         try:
             data = json.loads((self._dir / f"{slug}.json").read_text(encoding="utf-8"))
-            return preset_from_json(data)
-        except (OSError, ValueError, TypeError, LookupError, AttributeError) as error:
-            _log.debug("presets/%s.json is not a readable preset: %s", slug, error)
+        except (OSError, ValueError, RecursionError) as error:
+            _log.debug("presets/%s.json is not readable: %s", slug, error)
             return None
+        parsed = parse_preset(data)
+        if parsed is None:
+            _log.debug("presets/%s.json is not a preset", slug)
+            return None
+        return parsed.preset
 
     def write(self, slug: str, preset: Preset) -> None:
         """Write `preset` as `<slug>.json`, replacing any file of that slug.
@@ -276,32 +280,75 @@ def preset_to_json(preset: Preset) -> dict[str, Any]:
     }
 
 
-def preset_from_json(data: Any) -> Preset | None:
-    """`preset_to_json` read back: `None` for a wrong-typed field; raises `LookupError`,
-    `ValueError`, `TypeError` or `AttributeError` for a missing or malformed one."""
-    fmt = data["format"]
+MAX_NAME: Final = 120
+"""Characters a Preset's name may have: its slug stays far under a file name's 255 bytes."""
+
+MAX_OPTIONS: Final = 2000
+"""Settings a Preset may hold: more than any Hyprland has, few enough that a preview of
+every one is still a page, not a freeze (finding 8 of the #153 review)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedPreset:
+    """A Preset read from JSON, and what reading it set aside."""
+
+    preset: Preset
+    newer: bool
+    """Written by a newer format: only the keys this one knows were read."""
+    dropped: tuple[str, ...] = ()
+    """Option names whose value was not one a Preset stores (a list, an object)."""
+
+
+def parse_preset(data: Any) -> ParsedPreset | None:
+    """`preset_to_json` read back, from a file in the App dir or a theme file alike.
+
+    Total: anything that is not a Preset -- a wrong type, a missing field, a name or a list
+    of settings past `MAX_NAME` or `MAX_OPTIONS` -- is `None`, never an exception. A value
+    no Option holds is set aside in `dropped`, not fatal.
+    """
+    if not isinstance(data, dict):
+        return None
+    fmt = data.get("format")
     if not isinstance(fmt, int) or isinstance(fmt, bool) or fmt < 1:
+        return None
+    name, options, created = data.get("name"), data.get("options"), data.get("created")
+    if not isinstance(name, str) or not name or len(name) > MAX_NAME:
+        return None
+    if not isinstance(options, dict) or len(options) > MAX_OPTIONS:
+        return None
+    if not isinstance(created, str):
+        return None
+    try:
+        when = datetime.fromisoformat(created)
+    except ValueError:
         return None
     if fmt > FORMAT:
         _log.warning(
-            "preset %r is format %d; reading the keys format %d knows",
-            data.get("name"),
-            fmt,
-            FORMAT,
+            "preset %r is format %d; reading the keys format %d knows", name, fmt, FORMAT
         )
-    name, options = data["name"], data["options"]
-    if not isinstance(name, str) or not name or not isinstance(options, dict):
-        return None
     known = {scope.value for scope in CaptureScope}
-    return Preset(
+    scopes = data.get("scopes", ())
+    kept = {str(key): value for key, value in options.items() if _storable(value)}
+    preset = Preset(
         name=name,
-        created=datetime.fromisoformat(data["created"]),
-        scopes=frozenset(CaptureScope(raw) for raw in data.get("scopes", ()) if raw in known),
-        options={str(key): value for key, value in options.items()},
+        created=when,
+        scopes=frozenset(
+            CaptureScope(raw)
+            for raw in (scopes if isinstance(scopes, list) else ())
+            if isinstance(raw, str) and raw in known
+        ),
+        options=kept,
         app_version=_text(data.get("app_version")),
         hyprland_version=_text(data.get("hyprland_version")),
         wallpaper=_text(data.get("wallpaper")),
     )
+    dropped = tuple(str(key) for key in options if str(key) not in kept)
+    return ParsedPreset(preset, fmt > FORMAT, dropped)
+
+
+def _storable(value: Any) -> bool:
+    """What `stored_value` can have written: a JSON scalar, never a list or an object."""
+    return value is None or isinstance(value, bool | int | float | str)
 
 
 def _text(value: Any) -> str | None:

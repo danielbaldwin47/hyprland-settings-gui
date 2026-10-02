@@ -399,6 +399,21 @@ def hostile_cases(tmp_path: Path) -> dict[str, tuple[bytes, str]]:
             theme_bytes([entry("preset.json", preset_json(format=None))]),
             "This theme file's settings are damaged, so nothing was imported.",
         ),
+        "name too long": (
+            theme_bytes([entry("preset.json", preset_json(name="N" * 121))]),
+            "This theme file's settings are damaged, so nothing was imported.",
+        ),
+        "too many settings": (
+            theme_bytes(
+                [
+                    entry(
+                        "preset.json",
+                        preset_json(options={f"general:key_{n}": n for n in range(2001)}),
+                    )
+                ]
+            ),
+            "This theme file's settings are damaged, so nothing was imported.",
+        ),
         "no name": (
             theme_bytes([entry("preset.json", preset_json(name=""))]),
             "This theme file's settings are damaged, so nothing was imported.",

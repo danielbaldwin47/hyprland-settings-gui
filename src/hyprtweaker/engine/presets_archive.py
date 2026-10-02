@@ -50,10 +50,9 @@ from types import ModuleType
 from typing import IO, Any, Final, Protocol
 
 from .presets import (
-    FORMAT,
     WALLPAPER_EXTENSIONS,
     Preset,
-    preset_from_json,
+    parse_preset,
     preset_to_json,
 )
 
@@ -531,34 +530,19 @@ def _theme(members: dict[str, bytes]) -> ArchiveRead:
 
 
 def _preset(raw: bytes) -> tuple[Preset, bool, tuple[str, ...]] | ArchiveRefused:
+    """The archive's settings, through the one parser the App dir's Presets use."""
     try:
         data = json.loads(raw.decode("utf-8"), parse_constant=_not_json)
     except (UnicodeDecodeError, ValueError, RecursionError):
         return ArchiveRefused(DAMAGED_SETTINGS)
-    fmt = data.get("format") if isinstance(data, dict) else None
-    if not isinstance(fmt, int) or isinstance(fmt, bool) or fmt < 1:
+    parsed = parse_preset(data)
+    if parsed is None:
         return ArchiveRefused(DAMAGED_SETTINGS)
-    options = data.get("options")
-    dropped: tuple[str, ...] = ()
-    if isinstance(options, dict):
-        dropped = tuple(key for key, value in options.items() if not _scalar(value))
-        data["options"] = {key: value for key, value in options.items() if _scalar(value)}
-    try:
-        preset = preset_from_json(data)
-    except (LookupError, ValueError, TypeError, AttributeError):
-        preset = None
-    if preset is None:
-        return ArchiveRefused(DAMAGED_SETTINGS)
-    return replace(preset, wallpaper=None), fmt > FORMAT, dropped
+    return replace(parsed.preset, wallpaper=None), parsed.newer, parsed.dropped
 
 
 def _not_json(constant: str) -> Any:
     raise ValueError(f"{constant} is not JSON")
-
-
-def _scalar(value: Any) -> bool:
-    """What a stored value can be (`stored_value`): a list or an object no Option holds."""
-    return value is None or isinstance(value, bool | int | float | str)
 
 
 # --- images --------------------------------------------------------------------------------

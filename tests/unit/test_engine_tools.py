@@ -152,13 +152,11 @@ def test_a_tool_that_overruns_its_timeout_is_stopped_and_named(
 
 
 def _alive(pid: int) -> bool:
+    """Whether `pid` runs: a zombie, or one gone between two reads, does not."""
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        return "zombie" not in Path(f"/proc/{pid}/status").read_text().lower()
+    except FileNotFoundError:
         return False
-    return Path(f"/proc/{pid}").exists() and "zombie" not in (
-        Path(f"/proc/{pid}/status").read_text().lower()
-    )
 
 
 def test_a_hook_left_running_in_the_background_does_not_hold_the_run(
