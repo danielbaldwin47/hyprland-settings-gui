@@ -423,6 +423,45 @@ def test_reveal_focuses_the_named_row(tmp_path: Path) -> None:
     window.binds_page.reveal(99)  # out of range must be a no-op, not an error
 
 
+def press(widget: Any, accelerator: str) -> None:
+    """Fire `widget`'s shortcut for `accelerator`, as the key press would."""
+    from gi.repository import Gtk
+
+    for controller in widget.observe_controllers():
+        if isinstance(controller, Gtk.ShortcutController):
+            for each in controller:
+                if each.get_trigger().to_string() == accelerator:
+                    each.get_action().activate(Gtk.ShortcutActionFlags(0), widget, None)
+                    return
+    raise AssertionError(f"{widget!r} has no {accelerator} shortcut")
+
+
+def test_alt_down_twice_moves_the_same_bind_twice_and_focus_follows_it(tmp_path: Path) -> None:
+    """Review of #151, finding 11: keyboard reorder is the only non-pointer route, so the
+    moved bind's rebuilt row must hold the focus for the next Alt+Down."""
+    import main_loop
+    from _live_window import live_entity_window
+
+    session, window, applier = live_entity_window(tmp_path)
+    session.model.entities.binds.extend(
+        exec_bind(f"SUPER + {key}", f"app-{key}") for key in ("A", "B", "C")
+    )
+    page = window.binds_page
+    page.refresh()
+    window.present()
+    window._select_section(page.section)
+    main_loop.settle("the Binds page to map")
+    page.rows[0].widget.grab_focus()
+
+    press(window.get_focus(), "<Alt>Down")
+    applier.settle()
+    press(window.get_focus(), "<Alt>Down")
+    applier.settle()
+
+    assert [row.bind.keys for row in page.rows] == ["SUPER + B", "SUPER + C", "SUPER + A"]
+    assert window.get_focus() is page.rows[2].widget
+
+
 def test_an_ampersand_in_a_trigger_or_command_is_shown_as_written(tmp_path: Path) -> None:
     """`A&B` and `a && b` are text, not Pango markup: parsed as markup they render blank."""
     from gi.repository import Gtk

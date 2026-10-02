@@ -570,6 +570,45 @@ def test_the_page_hands_each_row_the_neighbours_it_is_shown_next_to(tmp_path: Pa
     assert [row.neighbours for row in page.rows] == [(None, 2), (0, None)]
 
 
+def press(widget: Any, accelerator: str) -> None:
+    """Fire `widget`'s shortcut for `accelerator`, as the key press would."""
+    from gi.repository import Gtk
+
+    for controller in widget.observe_controllers():
+        if isinstance(controller, Gtk.ShortcutController):
+            for each in controller:
+                if each.get_trigger().to_string() == accelerator:
+                    each.get_action().activate(Gtk.ShortcutActionFlags(0), widget, None)
+                    return
+    raise AssertionError(f"{widget!r} has no {accelerator} shortcut")
+
+
+def test_alt_down_twice_moves_the_same_rule_twice_and_focus_follows_it(tmp_path: Path) -> None:
+    """Review of #151, finding 11: the refresh rebuilds every row, so the moved rule's new
+    row takes the focus, or the second Alt+Down would land on nothing."""
+    import main_loop
+    from _live_window import live_entity_window
+
+    session, window, applier = live_entity_window(tmp_path)
+    session.model.entities.window_rules.extend(
+        window_rule(match={"class": name}, effects={"float": True}) for name in "abc"
+    )
+    page = window.window_rules_page
+    page.refresh()
+    window.present()
+    window._select_section(page.section)
+    main_loop.settle("the Rules page to map")
+    page.rows[0].widget.grab_focus()
+
+    press(window.get_focus(), "<Alt>Down")
+    applier.settle()
+    press(window.get_focus(), "<Alt>Down")
+    applier.settle()
+
+    assert [row.rule.match["class"] for row in page.rows] == ["b", "c", "a"]
+    assert window.get_focus() is page.rows[2].widget
+
+
 # --- matches N, and the implicit anchors, in the editor (#113) ----------------------------
 
 

@@ -18,7 +18,7 @@ every refresh, chips and text narrow together, and a chip whose rules are gone d
 and stops filtering rather than stranding the user on an empty list.
 
 **Reorder has a keyboard route.** Alt+Up and Alt+Down on a row move it past the rule shown
-above or below it, the same keys as the Binds page.
+above or below it, the same keys as the Binds page, and focus follows the moved rule.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from hyprtweaker.engine.rule_filter import (  # noqa: E402
     value_text,
 )
 from hyprtweaker.engine.rules_catalog import is_negated, strip_negation  # noqa: E402
+from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
@@ -366,6 +367,18 @@ class RulesPage:
         else:
             self._active_chips.discard(chip)
         self.refresh()
+
+    def reveal(self, index: int) -> None:
+        """Focus and flash the row of the rule at model `index`, as the Binds page does.
+
+        A move rebuilds every row, so without this the focus is lost with the old row and
+        a second Alt+Up or Alt+Down lands on nothing.
+        """
+        for row in self._rows:
+            if row.index == index:
+                row.widget.grab_focus()
+                flash(row.widget)
+                return
 
     def _on_filter_changed(self, entry: Gtk.SearchEntry) -> None:
         self._apply_filter(entry.get_text())
