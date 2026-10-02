@@ -843,11 +843,14 @@ class RowFactory:
         """A weight name from a combo, or a number typed after choosing "Custom".
 
         Hyprland takes either (`"bold"` or `700`), so the Row writes what the user chose: a
-        name as the name, a number as the number. The names are the Overlay's `labels`,
-        which name exactly `FONT_WEIGHT_NAMES` in weight order.
+        name as the name, a number as the number. The names are Hyprland's own
+        (`FONT_WEIGHT_NAMES`, in weight order); the Overlay's `labels` only spell them for
+        display, so a label for a name Hyprland lacks never reaches the combo.
 
         One `Gtk.Box` is the Row's single control (ADR-0013 §3), so the dependency badge dims
         the combo and the spinner together. The spinner shows only while "Custom" is chosen.
+        A box is not focusable, so the Row names the combo as its activatable widget: a click
+        on the Row body opens the combo, as on every other combo Row.
 
         **What a held value shows, never rewriting it.** A name, or a number equal to a
         name's weight, selects that name: a held `700` reads "Bold" and stays `700`. Any
@@ -859,9 +862,10 @@ class RowFactory:
         spinner's own bounds are wide on purpose: a spin button clamps out-of-range text to
         its bound, which would write `1000` for a typed `1200` without a word.
         """
-        names = list(option.labels or {})
+        names = list(FONT_WEIGHT_NAMES)
+        shown = option.labels or {}
         low, high = FONT_WEIGHT_RANGE[0], FONT_WEIGHT_RANGE[-1]
-        strings = Gtk.StringList.new([*(option.labels or {}).values(), _CUSTOM])
+        strings = Gtk.StringList.new([*(shown.get(n, humanise(n)) for n in names), _CUSTOM])
         dropdown = Gtk.DropDown(model=strings, valign=Gtk.Align.CENTER)
         spin = Gtk.SpinButton(
             adjustment=Gtk.Adjustment(
@@ -887,6 +891,7 @@ class RowFactory:
         control.append(dropdown)
         control.append(spin)
         row, chrome = self._row(option, control)
+        row.set_activatable_widget(dropdown)
 
         unlisted: str | None = None  # a held name the list lacks, offered before "Custom"
         last_good = _NORMAL_WEIGHT  # what the spinner goes back to after a refusal
@@ -914,7 +919,7 @@ class RowFactory:
                 spin.add_css_class("error")
 
         def refresh() -> None:
-            held = FontWeight.parse(shown_value(option, self._session.value_of(option)))
+            held = self._typed(option, FontWeight(_NORMAL_WEIGHT))
             named = next(
                 (
                     i
@@ -959,7 +964,7 @@ class RowFactory:
             if number == last_good:
                 return  # the spinner's own echo of a restore, or no change at all
             if number not in FONT_WEIGHT_RANGE:
-                refuse(f"{number} is not a weight.\nUse {low} to {high}.")
+                refuse(f"{number} is out of range.\nUse a weight from {low} to {high}.")
                 show_number(last_good)
                 return
             refuse(None)

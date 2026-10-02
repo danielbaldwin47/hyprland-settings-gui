@@ -578,12 +578,90 @@ def test_typing_a_weight_out_of_range_is_refused_and_says_why() -> None:
     assert session.applied == []
     assert spin.get_value() == 550
     assert refusal(row).get_visible()
-    assert refusal(row).get_text() == "1200 is not a weight.\nUse 100 to 1000."
+    assert refusal(row).get_text() == "1200 is out of range.\nUse a weight from 100 to 1000."
 
     type_into(spin, "650")
 
     assert session.model.get(WEIGHT_ACTIVE) == FontWeight(650)
     assert not refusal(row).get_visible()
+
+
+def test_stepping_past_the_top_weight_is_refused_and_says_why() -> None:
+    from gi.repository import Gtk
+
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 1000)
+    row = build_row(WEIGHT_ACTIVE, session)
+    _dropdown, spin = weight_parts(row)
+
+    spin.spin(Gtk.SpinType.STEP_FORWARD, 0)
+
+    assert session.applied == []
+    assert spin.get_value() == 1000
+    assert refusal(row).get_text() == "1010 is out of range.\nUse a weight from 100 to 1000."
+
+
+class HeldSession(PreviewSession):
+    """A session whose model holds a raw value no edit could have written."""
+
+    def __init__(self, held: Any) -> None:
+        super().__init__()
+        self.held = held
+
+    def value_of(self, option: Any) -> Any:
+        return self.held if option.name == WEIGHT_ACTIVE else super().value_of(option)
+
+
+def test_a_font_weight_row_survives_a_held_value_that_is_no_weight() -> None:
+    """An explicit null, an empty string or a float opens on Normal, not a dead Page."""
+    for held in (None, "", 1.5):
+        dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, HeldSession(held)))
+
+        assert chosen(dropdown) == "Normal", held
+        assert not spin.get_visible(), held
+
+
+def test_the_weight_names_come_from_hyprlands_table_not_the_labels() -> None:
+    """A label the table lacks cannot break the combo; a name with no label still shows."""
+    from dataclasses import replace
+
+    from gi.repository import Adw
+
+    from hyprtweaker.ui.rows.factory import RowFactory
+
+    option = SCHEMA[WEIGHT_ACTIVE]
+    stray = replace(option, labels={"bold": "Bold", "extrablack": "Extra black"})
+    Adw.init()
+    session = PreviewSession()
+    dropdown, _spin = weight_parts(RowFactory(session).build(stray))  # type: ignore[arg-type]
+
+    assert "Extra black" not in choices(dropdown)
+    assert choices(dropdown)[:2] == ["Thin", "Ultralight"]
+    choose(dropdown, "Bold")
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight("bold")
+
+
+def test_activating_a_font_weight_row_activates_its_combo() -> None:
+    """Clicking the Row body opens the combo, as it does on every other combo Row."""
+    row = build_row(WEIGHT_ACTIVE, PreviewSession())
+    dropdown, _spin = weight_parts(row)
+
+    assert row.widget.get_activatable_widget() is dropdown
+
+
+def test_a_reset_font_weight_row_shows_the_default_again() -> None:
+    """After the reset arrow, the next refresh (the window's `sync`) shows Normal again."""
+    session = PreviewSession()
+    row = build_row(WEIGHT_ACTIVE, session)
+    dropdown, spin = weight_parts(row)
+    choose(dropdown, "Custom")
+    type_into(spin, "550")
+
+    row.chrome.reset.emit("clicked")
+    row.refresh()
+
+    assert chosen(dropdown) == "Normal"
+    assert not spin.get_visible()
 
 
 def test_a_font_weight_row_hyprland_lacks_wears_its_pill_and_still_writes() -> None:
@@ -605,8 +683,9 @@ def test_a_font_weight_row_hyprland_lacks_wears_its_pill_and_still_writes() -> N
 # --- the Row contract still holds for all of them ---------------------------------------------
 
 
-def test_every_widget_type_builds_an_editable_row() -> None:
-    """No type is read-only (#194): a widget the factory has no branch for fails here."""
+def test_every_widget_type_builds_a_row_with_a_control_not_a_read_only_label() -> None:
+    """No type is read-only (#194): a widget the factory has no branch for raises here, and
+    one that fell back to a plain label of its value fails the assertion."""
     from gi.repository import Gtk
 
     from hyprtweaker.engine.schema import Widget
@@ -649,3 +728,4 @@ def test_the_suffix_strip_reads_in_the_same_order_on_both_row_types() -> None:
         assert strip.index(row.chrome.summary) < strip.index(row.chrome.help), name
         assert strip.index(row.chrome.dependency_badge) < strip.index(row.chrome.reset), name
         assert strip[-1] is row.chrome.help, name
+
