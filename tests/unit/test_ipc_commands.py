@@ -201,6 +201,26 @@ def test_a_layers_reply_of_the_wrong_shape_is_malformed() -> None:
     run(scenario)
 
 
+def test_workspace_rule_count_is_the_length_of_the_live_rule_list() -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        assert await client.workspace_rule_count() == 2
+        assert fake.requests == ["j/workspacerules"]
+
+        fake.conversation["j/workspacerules"] = "[]"
+        assert await client.workspace_rule_count() == 0
+
+    run(scenario)
+
+
+def test_a_workspacerules_reply_of_the_wrong_shape_is_malformed() -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        fake.conversation["j/workspacerules"] = '{"rules": []}'
+        with pytest.raises(MalformedReply):
+            await client.workspace_rule_count()
+
+    run(scenario)
+
+
 # --- eval ---------------------------------------------------------------------------------
 
 
