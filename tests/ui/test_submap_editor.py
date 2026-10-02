@@ -10,13 +10,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from started_app import presented
+
 
 def build(**kwargs: Any) -> tuple[Any, list[tuple[str, str]]]:
     from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor
 
     done: list[tuple[str, str]] = []
-    dialog = SubmapEditor(
-        on_done=lambda name, reset_target: done.append((name, reset_target)), **kwargs
+    dialog = presented(
+        SubmapEditor(
+            on_done=lambda name, reset_target: done.append((name, reset_target)), **kwargs
+        )
     )
     return dialog, done
 

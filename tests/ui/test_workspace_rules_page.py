@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
 SECTION = "entity:workspace_rules"
@@ -50,7 +51,7 @@ def build_window(tmp_path: Path, *, live: bool = False, rules: tuple[Any, ...] =
         session._applier = StubApplier()
         session._offline_reason = None
     session.model.entities.workspace_rules.extend(rules)
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     return session, MainWindow(session, application=app)
 
 

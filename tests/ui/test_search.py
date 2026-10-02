@@ -28,6 +28,7 @@ from typing import Any
 
 import main_loop
 import pytest
+from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
 
@@ -67,7 +68,7 @@ def window(state_dir: Path) -> Iterator[Any]:
         app_version=APP_VERSION,
         connect=no_compositor,
     )
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     built = MainWindow(session, application=app)
     AT_STARTUP["entity entries"] = built._index.entity_count
     # Mapped, because one assertion below is about *mapping* and nothing else can stand in

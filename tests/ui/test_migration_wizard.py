@@ -16,12 +16,12 @@ from pathlib import Path
 
 import main_loop
 import pytest
+from started_app import started_application
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 APP_VERSION = "0.0.0-test"
-APP_ID = "io.github.danielbaldwin47.Hyprtweaker.Test"
 
 CONF = "general {\n    gaps_in = 5\n}\n"
 
@@ -43,7 +43,7 @@ def build_window(tmp_path: Path, live: object = None):  # type: ignore[no-untype
     from hyprtweaker.ui.shell.window import MainWindow
 
     Adw.init()
-    app = Adw.Application(application_id=APP_ID)
+    app = started_application()
 
     def no_compositor():  # type: ignore[no-untyped-def]
         raise NoInstance("no compositor in the test tier")

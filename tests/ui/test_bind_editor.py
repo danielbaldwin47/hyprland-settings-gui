@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from started_app import presented
 
 from hyprtweaker.engine.dispatchers import CATALOG, Dispatcher, lookup
 from hyprtweaker.engine.importer.keysyms import validator_available
@@ -43,7 +44,7 @@ def add_flow_saving(entry: Dispatcher | None) -> tuple[Any, list[Bind]]:
 
     Adw.init()
     saved: list[Bind] = []
-    editor = BindEditor(on_done=saved.append)
+    editor = presented(BindEditor(on_done=saved.append))
     editor._choose(entry)
     return editor, saved
 
@@ -110,7 +111,7 @@ def open_editor(bind: Bind) -> tuple[Any, list[Bind]]:
 
     Adw.init()
     saved: list[Bind] = []
-    return BindEditor(on_done=saved.append, bind=bind), saved
+    return presented(BindEditor(on_done=saved.append, bind=bind)), saved
 
 
 @needs_xkb

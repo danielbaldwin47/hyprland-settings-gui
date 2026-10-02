@@ -12,6 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from started_app import presented, started_application
+
 APP_VERSION = "0.0.0-test"
 
 
@@ -33,7 +35,7 @@ def build_window(tmp_path: Path) -> Any:
         app_version=APP_VERSION,
         connect=no_compositor,
     )
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     return session, MainWindow(session, application=app)
 
 
@@ -109,8 +111,10 @@ def test_the_window_picker_shows_a_title_with_an_ampersand(tmp_path: Path) -> No
 
     build_window(tmp_path)
     payload = ({"class": "mpv", "title": "Tom & Jerry <1940>"},)
-    editor = RuleEditor(
-        kind="window", on_done=lambda _rule: None, fetch_targets=lambda done: done(payload)
+    editor = presented(
+        RuleEditor(
+            kind="window", on_done=lambda _rule: None, fetch_targets=lambda done: done(payload)
+        )
     )
     editor._open_picker()
 
@@ -172,7 +176,7 @@ def test_the_editor_collects_the_rule_the_widgets_describe(tmp_path: Path) -> No
     build_window(tmp_path)  # Adw.init and a display check ride along
     collected: list[Any] = []
 
-    editor = RuleEditor(kind="window", on_done=collected.append)
+    editor = presented(RuleEditor(kind="window", on_done=collected.append))
     editor._set_match_text("class", "^(kitty)$")
     editor._label_entry.set_text("terminal")
     editor._save()
@@ -190,7 +194,7 @@ def test_the_editor_requires_at_least_one_match(tmp_path: Path) -> None:
     build_window(tmp_path)
     collected: list[Any] = []
 
-    editor = RuleEditor(kind="window", on_done=collected.append)
+    editor = presented(RuleEditor(kind="window", on_done=collected.append))
     editor._save()
 
     assert collected == []
@@ -204,7 +208,9 @@ def test_the_editor_rejects_an_invalid_regex_and_a_taken_label(tmp_path: Path) -
     build_window(tmp_path)
     collected: list[Any] = []
 
-    editor = RuleEditor(kind="window", on_done=collected.append, taken_names=("pip",))
+    editor = presented(
+        RuleEditor(kind="window", on_done=collected.append, taken_names=("pip",))
+    )
     editor._set_match_text("class", "^(unclosed")
     editor._save()
     assert collected == []
@@ -224,7 +230,7 @@ def test_negation_round_trips_through_the_toggle(tmp_path: Path) -> None:
     collected: list[Any] = []
 
     original = window_rule(match={"class": "negative:^(kitty)$"}, effects={"float": True})
-    editor = RuleEditor(kind="window", on_done=collected.append, rule=original)
+    editor = presented(RuleEditor(kind="window", on_done=collected.append, rule=original))
 
     # The row shows the stripped value with the toggle on, and collects the prefix back.
     _prop, entry, negate = editor._match_rows["class"]
@@ -247,7 +253,7 @@ def test_unknown_effects_pass_through_untouched(tmp_path: Path) -> None:
         match={"class": "x"},
         effects={"plugin:hy3:tab": "on", "border_color": table_value},
     )
-    editor = RuleEditor(kind="window", on_done=collected.append, rule=original)
+    editor = presented(RuleEditor(kind="window", on_done=collected.append, rule=original))
     editor._save()
 
     effects = collected[0].effects
@@ -267,7 +273,7 @@ def test_a_table_valued_effect_edits_into_the_string_grammar(tmp_path: Path) -> 
     collected: list[Any] = []
 
     original = window_rule(match={"class": "x"}, effects={"size": ["50%", "50%"]})
-    editor = RuleEditor(kind="window", on_done=collected.append, rule=original)
+    editor = presented(RuleEditor(kind="window", on_done=collected.append, rule=original))
 
     row = next(entry for entry in editor._effect_entries if entry.name == "size")
     assert isinstance(row.widget, Adw.EntryRow)
@@ -279,7 +285,9 @@ def test_a_table_valued_effect_edits_into_the_string_grammar(tmp_path: Path) -> 
 
     # Edited: the saved value is the string grammar, not a repr.
     editor2_collected: list[Any] = []
-    editor2 = RuleEditor(kind="window", on_done=editor2_collected.append, rule=original)
+    editor2 = presented(
+        RuleEditor(kind="window", on_done=editor2_collected.append, rule=original)
+    )
     row2 = next(entry for entry in editor2._effect_entries if entry.name == "size")
     row2.widget.set_text("40% 60%")
     editor2._save()
@@ -294,7 +302,7 @@ def test_a_blank_effect_refuses_to_save(tmp_path: Path) -> None:
     collected: list[Any] = []
 
     original = window_rule(match={"class": "x"}, effects={"animation": "popin 80%"})
-    editor = RuleEditor(kind="window", on_done=collected.append, rule=original)
+    editor = presented(RuleEditor(kind="window", on_done=collected.append, rule=original))
     row = next(entry for entry in editor._effect_entries if entry.name == "animation")
     row.widget.set_text("")
     editor._save()
@@ -310,7 +318,7 @@ def test_the_editor_edits_in_place_keeping_enabled(tmp_path: Path) -> None:
     collected: list[Any] = []
 
     original = window_rule(match={"class": "kitty"}, effects={"float": True}, enabled=False)
-    editor = RuleEditor(kind="window", on_done=collected.append, rule=original)
+    editor = presented(RuleEditor(kind="window", on_done=collected.append, rule=original))
     editor._save()
 
     assert collected[0].enabled is False
@@ -340,7 +348,7 @@ def test_pick_a_window_prefills_the_match(tmp_path: Path) -> None:
     def fetch(done: Any) -> None:
         done(payload)
 
-    editor = RuleEditor(kind="window", on_done=collected.append, fetch_targets=fetch)
+    editor = presented(RuleEditor(kind="window", on_done=collected.append, fetch_targets=fetch))
     editor._open_picker()
     # One row per window, built from the payload the fetch seam answered with.
     titles = [row.get_title() for row in editor._picker_rows]
@@ -367,7 +375,7 @@ def test_pick_a_layer_prefills_the_namespace(tmp_path: Path) -> None:
     def fetch(done: Any) -> None:
         done(payload)
 
-    editor = RuleEditor(kind="layer", on_done=collected.append, fetch_targets=fetch)
+    editor = presented(RuleEditor(kind="layer", on_done=collected.append, fetch_targets=fetch))
     editor._open_picker()
     # Namespaces are de-duplicated: two rofi surfaces are one choice.
     assert [row.get_title() for row in editor._picker_rows] == ["rofi", "waybar"]
@@ -761,11 +769,13 @@ def captured_windows() -> tuple[Any, ...]:
 def editor_over(payload: Any, *, rule: Any = None, kind: str = "window") -> Any:
     from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
 
-    return RuleEditor(
-        kind=kind,
-        on_done=lambda _rule: None,
-        rule=rule,
-        fetch_targets=lambda done: done(payload),
+    return presented(
+        RuleEditor(
+            kind=kind,
+            on_done=lambda _rule: None,
+            rule=rule,
+            fetch_targets=lambda done: done(payload),
+        )
     )
 
 
@@ -829,11 +839,13 @@ def test_no_compositor_means_no_badge_not_zero(tmp_path: Path) -> None:
     from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
 
     build_window(tmp_path)
-    offline = RuleEditor(
-        kind="window",
-        on_done=lambda _rule: None,
-        rule=window_rule(match={"class": "kitty"}),
-        fetch_targets=None,
+    offline = presented(
+        RuleEditor(
+            kind="window",
+            on_done=lambda _rule: None,
+            rule=window_rule(match={"class": "kitty"}),
+            fetch_targets=None,
+        )
     )
     silent = editor_over(None, rule=window_rule(match={"class": "kitty"}))
 
@@ -853,11 +865,13 @@ def test_the_badge_waits_for_the_answer(tmp_path: Path) -> None:
 
     build_window(tmp_path)
     pending: list[Any] = []
-    editor = RuleEditor(
-        kind="window",
-        on_done=lambda _rule: None,
-        rule=window_rule(match={"class": r"probe\.fs"}),
-        fetch_targets=pending.append,
+    editor = presented(
+        RuleEditor(
+            kind="window",
+            on_done=lambda _rule: None,
+            rule=window_rule(match={"class": r"probe\.fs"}),
+            fetch_targets=pending.append,
+        )
     )
     assert badge(editor) is None
 
@@ -876,11 +890,13 @@ def test_one_fetch_serves_every_edit(tmp_path: Path) -> None:
         asked.append(1)
         done(captured_windows())
 
-    editor = RuleEditor(
-        kind="window",
-        on_done=lambda _rule: None,
-        rule=window_rule(match={"class": "probe"}),
-        fetch_targets=fetch,
+    editor = presented(
+        RuleEditor(
+            kind="window",
+            on_done=lambda _rule: None,
+            rule=window_rule(match={"class": "probe"}),
+            fetch_targets=fetch,
+        )
     )
     for text in ("p", "pr", "probe.*"):
         editor._set_match_text("class", text)
@@ -922,10 +938,12 @@ def test_a_regex_entry_shows_the_anchors_hyprland_applies_without_storing_them(
 
     build_window(tmp_path)
     collected: list[Any] = []
-    editor = RuleEditor(
-        kind="window",
-        on_done=collected.append,
-        rule=window_rule(match={"class": "kitty", "tag": "demo", "float": True}),
+    editor = presented(
+        RuleEditor(
+            kind="window",
+            on_done=collected.append,
+            rule=window_rule(match={"class": "kitty", "tag": "demo", "float": True}),
+        )
     )
 
     assert "^(" in shown(editor._match_rows["class"][1])
@@ -962,10 +980,12 @@ def test_an_already_anchored_regex_does_not_wear_the_marks_twice(tmp_path: Path)
     from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
 
     build_window(tmp_path)
-    editor = RuleEditor(
-        kind="window",
-        on_done=lambda _rule: None,
-        rule=window_rule(match={"class": "^(kitty)$", "title": "kitty"}),
+    editor = presented(
+        RuleEditor(
+            kind="window",
+            on_done=lambda _rule: None,
+            rule=window_rule(match={"class": "^(kitty)$", "title": "kitty"}),
+        )
     )
     anchored = editor._match_rows["class"][1]
 

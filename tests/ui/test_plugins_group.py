@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from _live_window import live_entity_window
+from started_app import started_application
 
 BARS = "/usr/lib/hyprland-plugins/libhyprbars.so"
 EXPO = "/usr/lib/hyprland-plugins/hyprexpo.so"
@@ -360,7 +361,7 @@ def test_a_read_only_session_shows_the_list_but_offers_no_edit(tmp_path: Path) -
         connect=no_compositor,
     )
     session.model.entities.plugins.append(plugin(BARS))
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     window = MainWindow(session, application=app)
     group = group_of(window)
 
