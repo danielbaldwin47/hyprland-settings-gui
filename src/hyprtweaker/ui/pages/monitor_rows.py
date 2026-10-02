@@ -48,6 +48,13 @@ NOT_SET = "Not set"
 FRACTIONAL_WARNING = "Fractional scales can look blurry in apps that don't support them."
 
 _CUSTOM_MODELINE = "Custom modeline"
+_MODE_LABELS: dict[str, str] = {
+    "preferred": "Display's preferred",
+    "highres": "Highest resolution",
+    "highrr": "Highest refresh rate",
+    "maxwidth": "Widest resolution",
+}
+"""What Resolution shows for each of Hyprland's mode words; the word is what is saved."""
 _CUSTOM_SCALE = "Custom"
 _SCALE_PRESETS: tuple[str, ...] = ("auto", "1", "1.25", "1.5", "2")
 
@@ -188,7 +195,9 @@ class ModeRows:
 
 
 def _size_label(entry: str | Size) -> str:
-    return entry if isinstance(entry, str) else f"{entry[0]}x{entry[1]}"
+    if isinstance(entry, str):
+        return _MODE_LABELS.get(entry, entry)
+    return f"{entry[0]}x{entry[1]}"
 
 
 def _rate_label(rate: float | None) -> str:

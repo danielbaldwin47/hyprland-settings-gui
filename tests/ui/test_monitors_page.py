@@ -647,10 +647,10 @@ def test_resolution_lists_sizes_and_refresh_lists_that_sizes_rates() -> None:
     refresh = row_titled(row, "Refresh rate")
 
     assert items(resolution) == [
-        "preferred",
-        "highres",
-        "highrr",
-        "maxwidth",
+        "Display's preferred",
+        "Highest resolution",
+        "Highest refresh rate",
+        "Widest resolution",
         "2560x1440",
         "1920x1080",
         "Custom modeline",
@@ -687,11 +687,20 @@ def test_a_special_mode_leaves_refresh_to_the_compositor() -> None:
     row, recorder = dock_row([])
     refresh = row_titled(row, "Refresh rate")
 
-    choose(row_titled(row, "Resolution"), "highrr")
+    choose(row_titled(row, "Resolution"), "Highest refresh rate")
 
     assert recorder.breaking == [("desc:Dell U2720Q", {"mode": "highrr"})]
     assert items(refresh) == ["Chosen by the mode"]
     assert not refresh.get_sensitive()
+
+
+def test_a_special_mode_in_the_rule_shows_its_plain_name() -> None:
+    row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", mode="maxwidth")])
+
+    assert chosen(row_titled(row, "Resolution")) == "Widest resolution"
+
+    choose(row_titled(row, "Resolution"), "Display's preferred")
+    assert recorder.breaking == [("desc:Dell U2720Q", {"mode": "preferred"})]
 
 
 def test_a_modeline_rule_shows_custom_modeline_and_edits_ride_the_breaking_lane() -> None:
