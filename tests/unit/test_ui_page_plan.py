@@ -41,8 +41,9 @@ def test_every_section_gets_a_page() -> None:
 
 
 def test_a_section_whose_options_are_all_advanced_still_gets_a_page() -> None:
-    """`debug`, `quirks`, `experimental` and `input-capture` are entirely non-default. The sidebar is the map of the config surface; a Section that disappears
-    when a switch flips is one the user cannot learn exists."""
+    """`debug`, `quirks`, `experimental` and `input-capture` are entirely non-default. The
+    sidebar is the map of the config surface; a Section that disappears when a switch flips
+    is one the user cannot learn exists."""
     plan = plan_section(SCHEMA, "debug")
 
     assert plan.groups == ()

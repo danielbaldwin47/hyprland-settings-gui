@@ -152,12 +152,11 @@ def test_a_curated_heading_with_an_ampersand_is_not_swallowed_by_pango(
     the string we give libadwaita is markup that parses, and parses to the heading the
     curator wrote.
     """
+    from dataclasses import replace
+
     from gi.repository import Pango
 
     from hyprtweaker.ui.pages.config import escaped
-
-    from dataclasses import replace
-
     from hyprtweaker.ui.pages.tasks import PageSpec
 
     _session, window = build_window(tmp_path)
