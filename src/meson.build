@@ -21,6 +21,7 @@ package_sources = {
     'paths.py',
     'prefs.py',
     'presets.py',
+    'presets_archive.py',
     'profiles.py',
     'rule_filter.py',
     'rule_grammars.py',
@@ -52,6 +53,7 @@ package_sources = {
     '__init__.py',
     'entries.py',
     'registry.py',
+    'wire.py',
   ],
   'hyprtweaker/engine/importer': [
     '__init__.py',
@@ -144,6 +146,7 @@ package_sources = {
     'notices.py',
     'rule_editor.py',
     'submap_editor.py',
+    'theme_import.py',
     'workspace_fields.py',
     'workspace_rule_editor.py',
   ],
