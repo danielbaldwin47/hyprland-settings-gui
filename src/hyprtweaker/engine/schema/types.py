@@ -226,6 +226,9 @@ class GeneratedOption:
     device_overridable: bool = False
     refresh: tuple[str, ...] = ()
     curation_flags: tuple[CurationFlag, ...] = ()
+    added_in: str | None = None
+    """The Hyprland version that first had this Option, stamped by the generator from the
+    predecessor schema (`resolve.stamp_added_in`). `None` for the whole back catalog."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,6 +327,10 @@ class ResolvedOption:
     renamed_from: str | None = None
     """The Option's previous name, from the Overlay: where a value retired under that name
     restores to (ADR-0012, `state/retirement.py`)."""
+
+    added_in: str | None = None
+    """The Hyprland version that added this Option, from the Generated schema. The Tasks
+    view groups an uncurated Option with one under `New in <added_in>` (ADR-0012)."""
 
     @property
     def dotted_key(self) -> str:

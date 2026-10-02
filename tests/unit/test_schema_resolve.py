@@ -25,6 +25,7 @@ from hyprtweaker.engine.schema import (
     load_schema,
     resolve_option,
     select_version,
+    stamp_added_in,
 )
 from hyprtweaker.engine.schema import generated as generated_module
 from hyprtweaker.engine.schema import overlay as overlay_module
@@ -237,6 +238,81 @@ def test_generated_schema_survives_a_serialisation_round_trip() -> None:
         provenance={"degraded": False},
     )
     assert generated_module.loads(generated_module.dumps(schema)) == schema
+
+
+def test_added_in_survives_the_round_trip_and_is_omitted_when_absent() -> None:
+    schema = generated_module.GeneratedSchema(
+        hyprland_version="0.58.0",
+        options=(
+            option("general:border_size", added_in=None),
+            option("general:new_thing", order=1, added_in="0.58.0"),
+        ),
+        provenance={},
+    )
+    text = generated_module.dumps(schema)
+
+    assert generated_module.loads(text) == schema
+    assert text.count('"added_in"') == 1
+    assert '"added_in": "0.58.0"' in text
+
+
+def test_resolution_carries_added_in_from_the_generated_record() -> None:
+    assert resolve_option(option(added_in="0.58.0"), None, None).added_in == "0.58.0"
+    assert resolve_option(option(), None, None).added_in is None
+
+
+def _schema(version: str, *records: GeneratedOption) -> generated_module.GeneratedSchema:
+    return generated_module.GeneratedSchema(
+        hyprland_version=version, options=records, provenance={}
+    )
+
+
+def test_an_option_the_predecessor_lacks_is_stamped_with_the_new_version() -> None:
+    old = _schema("0.56.2", option("general:gaps_in", order=0))
+    new = _schema("0.58.0", option("general:gaps_in", order=0), option("misc:fresh", order=1))
+
+    stamped = stamp_added_in(new, old)
+
+    assert {o.name: o.added_in for o in stamped.options} == {
+        "general:gaps_in": None,
+        "misc:fresh": "0.58.0",
+    }
+    assert stamped.hyprland_version == "0.58.0"
+
+
+def test_a_stamp_carries_forward_until_the_option_is_curated() -> None:
+    """The predecessor's stamp survives: ADR-0012's "New in" group outlives one release."""
+    old = _schema("0.58.0", option("misc:fresh", added_in="0.58.0"))
+    new = _schema("0.59.0", option("misc:fresh"), option("misc:newer", order=1))
+
+    stamped = stamp_added_in(new, old)
+
+    assert {o.name: o.added_in for o in stamped.options} == {
+        "misc:fresh": "0.58.0",
+        "misc:newer": "0.59.0",
+    }
+
+
+def test_no_predecessor_means_no_stamps() -> None:
+    new = _schema("0.56.2", option("general:gaps_in"))
+
+    assert stamp_added_in(new, None) is new
+    assert all(o.added_in is None for o in new.options)
+
+
+def test_stamping_records_the_predecessor_in_provenance() -> None:
+    old = _schema("0.56.2", option("general:gaps_in"))
+    new = _schema("0.58.0", option("general:gaps_in"))
+
+    assert stamp_added_in(new, old).provenance["predecessor"] == "0.56.2"
+    assert "predecessor" not in stamp_added_in(new, None).provenance
+
+
+def test_a_predecessor_that_is_not_older_is_rejected() -> None:
+    same = _schema("0.58.0", option("general:gaps_in"))
+
+    with pytest.raises(ValueError, match="not older"):
+        stamp_added_in(same, same)
 
 
 def test_duplicate_options_are_rejected() -> None:

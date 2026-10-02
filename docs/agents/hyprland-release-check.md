@@ -12,6 +12,7 @@ Build the new version's Generated schema:
 
 - Obtain Hyprland `<ver>`: distro package or build at the release tag.
 - Run `tools/gen_schema.py` against all three sources: (a) `hyprctl -j descriptions` from a nested headless Hyprland of `<ver>`, (b) that version's `/usr/share/hypr/stubs/hl.meta.lua`, (c) a source checkout at the tag (for `MS<Color>` types, `strChoice`, `vec2Range`, refresh bits, the device-overridable list). If (c) is unavailable the generator degrades (Color→string, empty ranges) — note it in the PR; the Overlay must fill the gaps.
+- Pass `--predecessor data/schema/hyprland-<previous>.json` (the previous newest schema). The generator then stamps `added_in: "<ver>"` on every Option that file lacks, keeps the predecessor's own stamps on Options it has, and records `"predecessor": "<previous>"` in the provenance block. The stamp is mechanical: write none by hand. The app groups an Option with a stamp and no curated placement under *New in \<version\>* on its Tasks Page. A missing file stamps nothing. The reproducibility test below reads the recorded predecessor and passes it again, so the stamped file stays reproducible.
 - Output: `data/schema/hyprland-<ver>.json`.
 
 Done when the file exists and the generator reported all three sources consumed (or the degradation is noted).

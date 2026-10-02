@@ -16,6 +16,11 @@ The three sources and how each is reached:
    are absent) and says so in the output's provenance block, which the release-check PR
    must mention. The Overlay then has to carry what was lost.
 
+`--predecessor data/schema/hyprland-<previous>.json` stamps `added_in` on every Option the
+previous schema lacks (and carries the predecessor's own stamps forward), and records the
+predecessor in the provenance block so the file can be reproduced from its own record.
+Without it, or when the file does not exist, nothing is stamped.
+
 The tool is deliberately thin. Every rule it applies lives in `hyprtweaker.engine.schema`,
 because ADR-0012 makes the app run the same inference at runtime against a Hyprland newer
 than any shipped schema.
@@ -36,8 +41,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from hyprtweaker.engine.schema import sources  # noqa: E402
-from hyprtweaker.engine.schema.generated import GeneratedSchema, dumps  # noqa: E402
+from hyprtweaker.engine.schema.generated import GeneratedSchema, dumps, load  # noqa: E402
 from hyprtweaker.engine.schema.infer import build_option  # noqa: E402
+from hyprtweaker.engine.schema.resolve import stamp_added_in  # noqa: E402
 
 DEFAULT_STUB = Path("/usr/share/hypr/stubs/hl.meta.lua")
 RAW_SOURCE_URL = "https://raw.githubusercontent.com/hyprwm/Hyprland/{ref}/{path}"
@@ -102,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", type=Path, help="a Hyprland checkout at the release tag")
     parser.add_argument("--source-ref", help="fetch ConfigValues.* from GitHub at this tag")
     parser.add_argument("--version", help="Hyprland version (default: `hyprctl version`)")
+    parser.add_argument(
+        "--predecessor",
+        type=Path,
+        help="the previous shipped Generated schema: stamps `added_in` (absent file: no stamps)",
+    )
     parser.add_argument("-o", "--out", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -148,6 +159,11 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     schema = GeneratedSchema(hyprland_version=version, options=options, provenance=provenance)
+    if args.predecessor is not None and args.predecessor.is_file():
+        try:
+            schema = stamp_added_in(schema, load(args.predecessor))
+        except ValueError as error:
+            raise SystemExit(f"--predecessor {args.predecessor}: {error}") from error
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(dumps(schema), encoding="utf-8")
 
@@ -159,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"wrote {args.out} -- Hyprland {version}, {len(options)} options")
     print(f"  widgets: {json.dumps(dict(sorted(counts.items())))}")
     print(f"  needing curation: {flagged}")
+    if "predecessor" in schema.provenance:
+        stamped = sum(1 for option in schema.options if option.added_in == version)
+        print(f"  added in {version} (vs {schema.provenance['predecessor']}): {stamped}")
+    elif args.predecessor is not None:
+        print(f"  WARNING: no predecessor at {args.predecessor}, so no `added_in` stamps")
     if facts.is_empty:
         print("  WARNING: degraded run, no Hyprland source consulted")
     return 0
