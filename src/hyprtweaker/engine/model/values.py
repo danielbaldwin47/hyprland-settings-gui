@@ -607,10 +607,31 @@ def parse_getoption(option: ResolvedOption, payload: dict[str, Any]) -> Any:
     records the expected key and `custom` stays a fallback, so the same reader survives
     both engines (`schema/types.py`).
     """
+    if option.type is OptionType.STRING and GetOptionKey.STR.value not in payload:
+        if GetOptionKey.INT.value in payload:
+            return ColorText.from_getoption(payload[GetOptionKey.INT.value])
     raw = getoption_raw(option, payload)
     if (complex_type := COMPLEX_TYPES.get(option.type)) is not None:
         return complex_type.from_getoption(raw)
     return parse_value(option.type, raw)
+
+
+class ColorText(str):
+    """A STRING Option's live value that `getoption` answered as a colour (#213).
+
+    A colour the app knows only from `descriptions` (the runtime supplement, ADR-0012)
+    types as STRING, so the user writes it as text, but Hyprland stores a colour and answers
+    under `int`. The reply reads back as the `rgba(rrggbbaa)` text Hyprland's Lua accepts,
+    and `values_match` compares it with what the user wrote as colours: `"0xee33ccff"` and
+    `"rgba(33ccffee)"` are the same write. Only a reply can make one, so a real string
+    Option is still compared as text.
+    """
+
+    __slots__ = ()
+
+    @classmethod
+    def from_getoption(cls, payload: object) -> ColorText:
+        return cls(f"rgba({Color.from_getoption(payload).rgba:08x})")
 
 
 def parse_lua(option: ResolvedOption, raw: Any) -> Any:
@@ -682,6 +703,11 @@ def values_match(expected: Any, actual: Any) -> bool:
     Used by the Apply transaction's Read-back and, later, by the ADR-0005 drift scan --
     which ask the same question of the same pair of values.
     """
+    if isinstance(actual, ColorText) and isinstance(expected, str):
+        try:
+            return Color.parse(expected) == Color.parse(actual)
+        except ValueError:
+            return False
     if isinstance(expected, bool) or isinstance(actual, bool):
         # Checked before the numeric branch: `True` is an `int`, and `isclose(True, 1)` is
         # true, which would make a bool Option agree with a value it does not have.

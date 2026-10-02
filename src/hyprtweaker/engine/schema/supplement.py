@@ -34,7 +34,7 @@ string's, and only the C++ source tells them apart. Its default prints as bare `
 which Hyprland 0.56.2's Lua rejects (`invalid color "ee33ccff"`), while the string
 `"rgba(33ccffee)"` loads and reads back. The hint shows the form that works. It is a hint and
 not a colour control because a string whose default merely looks like a colour would be
-written as a number by one; the read-back half is `values.ColourText`."""
+written as a number by one; the read-back half is `values.ColorText`."""
 
 
 def newer_than_shipped(version: str, directory: Path | None = None) -> bool:
