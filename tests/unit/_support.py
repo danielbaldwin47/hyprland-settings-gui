@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from _fake_hyprland import FakeHyprland
 
+    from hyprtweaker.engine.ipc import LiveHyprland
     from hyprtweaker.engine.model import ConfigModel
     from hyprtweaker.engine.schema import Schema
     from hyprtweaker.session import Session
@@ -188,7 +189,19 @@ def section_conversation(*sections: str, **set_values: Any) -> dict[str, str]:
     return conversation
 
 
-def session_for(fake: FakeHyprland, root: Path, runner: Runner) -> Session:
+def session_for(
+    fake: FakeHyprland,
+    root: Path,
+    runner: Runner,
+    *,
+    live_hyprland: LiveHyprland | None = None,
+) -> Session:
+    """A Session over `fake`, posing as the Hyprland `live_hyprland` describes, if any.
+
+    The snapshot is handed in rather than read: the startup read blocks, and `fake` serves
+    on the loop this is called from, so the read would wait out its timeout and answer
+    `None` in every test.
+    """
     from hyprtweaker.engine.paths import ConfigPaths
     from hyprtweaker.session import Session
 
@@ -198,6 +211,7 @@ def session_for(fake: FakeHyprland, root: Path, runner: Runner) -> Session:
         paths=ConfigPaths.rooted_at(root),
         app_version=SAMPLE_APP_VERSION,
         connect=lambda: fake.instance,
+        read_live=lambda: live_hyprland,
     )
 
 
