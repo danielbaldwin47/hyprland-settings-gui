@@ -63,6 +63,7 @@ from hyprtweaker.engine.model.entities import (
     StartupCommand,
 )
 from hyprtweaker.engine.schema import Schema
+from hyprtweaker.ui.pages.tasks import entity_page_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -512,7 +513,7 @@ KINDS: tuple[DeclarationKind, ...] = (
         choices_from=lambda schema: {"leaf": animation_leaves(schema)},
         title_of=lambda entity: entity.leaf,
         subtitle_of=_animation_subtitle,
-        section="entity:animations",
+        section=entity_page_id("animations"),
         title="Animation tree",
         singular="animation",
         description="One entry per part of the animation tree. Each needs a curve.",
@@ -526,7 +527,7 @@ KINDS: tuple[DeclarationKind, ...] = (
         findings_for=_curve_findings,
         title_of=lambda entity: entity.name,
         subtitle_of=_curve_subtitle,
-        section="entity:curves",
+        section=entity_page_id("curves"),
         title="Animation curves",
         singular="curve",
         description="Named easing curves the animations above refer to by name.",
@@ -541,7 +542,7 @@ KINDS: tuple[DeclarationKind, ...] = (
         title_of=gesture_title,
         subtitle_of=_gesture_subtitle,
         scripted=is_scripted,
-        section="entity:gestures",
+        section=entity_page_id("gestures"),
         title="Gesture bindings",
         singular="gesture",
         description="Touchpad and touchscreen gestures.",
@@ -556,7 +557,7 @@ KINDS: tuple[DeclarationKind, ...] = (
         findings_for=_device_findings,
         title_of=lambda entity: entity.name,
         subtitle_of=_device_subtitle,
-        section="entity:devices",
+        section=entity_page_id("devices"),
         title="Devices",
         singular="device",
         description="Per-device input settings. These win over the matching Input settings.",
@@ -571,7 +572,7 @@ KINDS: tuple[DeclarationKind, ...] = (
         findings_for=_env_findings,
         title_of=lambda entity: entity.name,
         subtitle_of=_env_subtitle,
-        section="entity:env",
+        section=entity_page_id("env"),
         title="Environment",
         singular="variable",
         description="Variables exported into the session Hyprland starts.",
@@ -588,7 +589,7 @@ KINDS: tuple[DeclarationKind, ...] = (
         kind="startup",
         title_of=lambda entity: entity.command,
         subtitle_of=_startup_subtitle,
-        section="entity:autostart",
+        section=entity_page_id("autostart"),
         title="Autostart",
         singular="command",
         description="Commands Hyprland runs for you, in the order listed.",
@@ -605,7 +606,7 @@ KINDS: tuple[DeclarationKind, ...] = (
         kind="permissions",
         title_of=lambda entity: entity.binary,
         subtitle_of=_permission_subtitle,
-        section="entity:permissions",
+        section=entity_page_id("permissions"),
         title="Permissions",
         singular="permission",
         description="Which programs may record the screen, read the cursor, or grab input.",

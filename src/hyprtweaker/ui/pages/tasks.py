@@ -85,6 +85,23 @@ class PageSpec:
     groups: tuple[GroupSpec, ...] = ()
 
 
+ENTITY_PAGE_PREFIX = "entity:"
+
+
+def entity_page_id(kind: str) -> str:
+    """The sidebar id (and stack name) of the Entity Page for `kind`.
+
+    The one place that spells the `entity:` prefix. It exists because Hyprland has Sections
+    and Entity kinds of the same name (`binds`, `animations`, `gestures`), and the Config
+    view stacks one page per Section beside one per Entity kind: a bare `binds` is two pages
+    under one name, and GTK keeps the first and drops the second (#70, #120).
+
+    `kind` is the id suffix, not the `EntitySet` attribute name: the startup commands are
+    `entity_page_id("autostart")`, though `EntitySet` calls them `startup`.
+    """
+    return f"{ENTITY_PAGE_PREFIX}{kind}"
+
+
 @dataclass(frozen=True, slots=True)
 class EntitySpec:
     """A reference to a Page the shell builds from the model rather than from the Schema.
@@ -183,7 +200,7 @@ def _destination(entry: Any, path: Path) -> Destination:
     if not isinstance(entry, dict):
         raise ValueError(f"{path}: a destination must be an object")
     if "entity" in entry:
-        return EntitySpec(section=str(entry["entity"]))
+        return EntitySpec(section=entity_page_id(str(entry["entity"])))
     return PageSpec(
         id=str(entry["id"]),
         title=str(entry["title"]),

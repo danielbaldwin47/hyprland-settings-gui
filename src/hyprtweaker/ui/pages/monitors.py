@@ -51,6 +51,7 @@ from hyprtweaker.ui.pages.monitor_rows import (  # noqa: E402
     colour_rows,
     reserved_row,
 )
+from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -291,7 +292,7 @@ class ArrangementCanvas(Gtk.DrawingArea):
 class MonitorsPage:
     """The Displays destination: canvas, connected rows, Not connected, catch-all."""
 
-    section = "entity:monitors"
+    section = entity_page_id("monitors")
     title = "Displays"
 
     def __init__(

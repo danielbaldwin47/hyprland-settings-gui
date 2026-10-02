@@ -45,6 +45,7 @@ from hyprtweaker.ui.pages.entity_text import (  # noqa: E402
     rule_subtitle,
     rule_title,
 )
+from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -198,7 +199,7 @@ class RulesPage:
     """
 
     kind = "window"
-    section = "entity:window_rules"
+    section = entity_page_id("window_rules")
     title = "Window rules"
     empty_hint = "Add one with the button above, or import an existing config."
 
@@ -380,7 +381,7 @@ class WindowRulesPage(RulesPage):
     and `title` off the class, so a parameterised constructor would not do."""
 
     kind = "window"
-    section = "entity:window_rules"
+    section = entity_page_id("window_rules")
     title = "Window rules"
 
 
@@ -388,5 +389,5 @@ class LayerRulesPage(RulesPage):
     """The layer-rule instantiation -- ADR-0008's "same list model and editor shell"."""
 
     kind = "layer"
-    section = "entity:layer_rules"
+    section = entity_page_id("layer_rules")
     title = "Layer rules"
