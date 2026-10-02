@@ -487,6 +487,15 @@ class Session:
         """
         return self._app_version
 
+    def instance(self) -> Instance:
+        """The compositor this Session talks to: its `connect`. Raises `NoInstance`.
+
+        Exposed for the Migration wizard, which builds its own client for the same reason
+        it builds its own Writer. Asking here rather than the environment keeps a sandboxed
+        or Harness Session's wizard on the compositor it was given (#201).
+        """
+        return self._connect()
+
     @property
     def recovery(self) -> Recovery:
         """The last reload's problems and what may be done about each (ADR-0016)."""

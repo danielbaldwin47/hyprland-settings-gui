@@ -48,7 +48,7 @@ from hyprtweaker.engine.apply import (  # noqa: E402
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
 from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
-from hyprtweaker.engine.ipc import CommandClient, Instance, NoInstance  # noqa: E402
+from hyprtweaker.engine.ipc import CommandClient, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
 from hyprtweaker.engine.migration.export import render as export_render  # noqa: E402
 from hyprtweaker.engine.migration.flow import (  # noqa: E402
@@ -516,14 +516,14 @@ class MainWindow(Adw.ApplicationWindow):
     # --- migration, import and export ----------------------------------------------------
 
     def migration_flow(self, source: Path | None = None) -> MigrationFlow:
-        """A flow over this session's paths and schema, wired to the live compositor if any.
+        """A flow over this session's paths and schema, wired to its compositor if any.
 
         The client is built here rather than borrowed from the Session because migration is
         the one caller of `reload full-reset`, and because a first-run wizard commonly runs
         while the Session itself is read-only -- there is no live model to apply through yet.
         """
         try:
-            client: CommandClient | None = CommandClient(Instance.current())
+            client: CommandClient | None = CommandClient(self._session.instance())
         except NoInstance:
             # No compositor to talk to. The wizard still detects, previews and writes; the
             # config simply takes effect at next login instead of now.
