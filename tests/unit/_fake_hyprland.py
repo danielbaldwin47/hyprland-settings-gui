@@ -92,22 +92,88 @@ read-only. The array shape is the captured one (one element per error line); the
 messages are the spellings research #5 §6 documents: a `file:line`-prefixed `hl.config`
 complaint and a failed `require`."""
 
-CLIENTS = (
-    "[\n"
-    '{\n    "address": "0x556e03b36ef0",\n    "class": "kitty",\n    "title": "~",\n'
-    '    "initialClass": "kitty",\n    "initialTitle": "kitty",\n    "xwayland": false,\n'
-    '    "workspace": {"id": 1, "name": "1"},\n    "floating": false\n},\n'
-    '{\n    "address": "0x556e03b37000",\n    "class": "helium",\n'
-    '    "title": "Issue #67 - Helium",\n    "initialClass": "helium",\n'
-    '    "initialTitle": "Helium Setup - Helium",\n    "xwayland": false,\n'
-    '    "workspace": {"id": 2, "name": "2"},\n    "floating": true\n}\n'
-    "]\n"
-)
-"""Captured off a live Hyprland 0.56.2 (trimmed to the keys the picker reads).
+CLIENTS = """\
+[
+    {
+        "address": "0x563a2ba47e30",
+        "class": "probe.tiled",
+        "title": "probe.tiled",
+        "initialClass": "probe.tiled",
+        "initialTitle": "probe.tiled",
+        "xwayland": false,
+        "workspace": {
+            "id": 1,
+            "name": "1"
+        },
+        "floating": false,
+        "pinned": false,
+        "fullscreen": 0,
+        "fullscreenClient": 0,
+        "grouped": [],
+        "tags": [],
+        "xdgTag": "",
+        "contentType": "none",
+        "focusHistoryID": 2
+    },
+    {
+        "address": "0x563a2c394cf0",
+        "class": "probe.float",
+        "title": "probe.float",
+        "initialClass": "probe.float",
+        "initialTitle": "probe.float",
+        "xwayland": false,
+        "workspace": {
+            "id": 1,
+            "name": "1"
+        },
+        "floating": true,
+        "pinned": true,
+        "fullscreen": 0,
+        "fullscreenClient": 0,
+        "grouped": [],
+        "tags": [
+            "demo*"
+        ],
+        "xdgTag": "",
+        "contentType": "none",
+        "focusHistoryID": 1
+    },
+    {
+        "address": "0x563a2c1f82a0",
+        "class": "probe.fs",
+        "title": "probe.fs",
+        "initialClass": "probe.fs",
+        "initialTitle": "probe.fs",
+        "xwayland": false,
+        "workspace": {
+            "id": 1,
+            "name": "1"
+        },
+        "floating": false,
+        "pinned": false,
+        "fullscreen": 2,
+        "fullscreenClient": 2,
+        "grouped": [],
+        "tags": [],
+        "xdgTag": "",
+        "contentType": "none",
+        "focusHistoryID": 0
+    }
+]
+"""
+"""Captured off a nested Hyprland 0.56.2 (the Harness, `HARNESS_DRM_CARD=/dev/dri/card0`,
+windowless) with three probe windows opened inside it: a tiled one, a floating pinned one
+tagged `demo` by a window rule, and a fullscreen one. Never the desktop's window list.
+Trimmed to the keys a window rule's Match can read, plus `title`/`address`; the compositor
+sends about twice as many (geometry, `pid`, `monitor`, ...).
 
 `j/clients` answers a JSON **array** of window objects; `class`/`initialClass` are the
 camelCase spellings the wire actually uses, which is exactly the sort of thing worth
-capturing rather than guessing (#67, Pick a window)."""
+capturing rather than guessing (#67, Pick a window). What #113's matches-N count reads:
+`floating`, `pinned`, `fullscreen`/`fullscreenClient` (ints 0-3), `grouped` (a list),
+`tags` (a rule-set tag arrives as `demo*`, trailing star included), `xdgTag`,
+`contentType` (a name) and `workspace{id,name}`. There is no `modal` field and `focus`
+is only `focusHistoryID` (0 = most recently focused)."""
 
 LAYERS = (
     "{\n"

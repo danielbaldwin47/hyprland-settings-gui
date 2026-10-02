@@ -12,7 +12,13 @@ the two shifts the way the user watched it shift.
 position and its row, dimmed, so re-enabling restores the world as it was.
 
 **The filter narrows, never edits.** It hides rows; indexes stay model indexes, so every
-action on a visible row lands on the right rule.
+action on a visible row lands on the right rule. Besides the free text there is one chip per
+match prop and per effect the list uses (#113): the vocabulary is derived from the rules on
+every refresh, chips and text narrow together, and a chip whose rules are gone disappears
+and stops filtering rather than stranding the user on an empty list.
+
+**Reorder has a keyboard route.** Alt+Up and Alt+Down on a row move it past the rule shown
+above or below it, the same keys as the Binds page.
 """
 
 from __future__ import annotations
@@ -29,6 +35,13 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import LayerRule, WindowRule  # noqa: E402
+from hyprtweaker.engine.rule_filter import (  # noqa: E402
+    Chip,
+    ChipGroup,
+    chips_for,
+    filter_rules,
+    value_text,
+)
 from hyprtweaker.engine.rules_catalog import is_negated, strip_negation  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
@@ -37,23 +50,12 @@ if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
 Rule = WindowRule | LayerRule
 
 
-def _value_text(value: object) -> str:
-    """A match or effect value as summary text -- readable, never round-tripped."""
-    if isinstance(value, bool):
-        return "yes" if value else "no"
-    if isinstance(value, (list, tuple)):
-        return " ".join(str(item) for item in value)
-    if isinstance(value, dict):
-        return " ".join(f"{key}={item}" for key, item in value.items())
-    return str(value)
-
-
 def match_text(rule: Rule) -> str:
     """The Match half of a row's auto-summary: `class kitty · not title ^(x)$`."""
     parts = []
     for name, value in rule.match.items():
         negated = is_negated(value)
-        shown = strip_negation(value) if isinstance(value, str) else _value_text(value)
+        shown = strip_negation(value) if isinstance(value, str) else value_text(value)
         prefix = "not " if negated else ""
         parts.append(f"{prefix}{name} {shown}".strip())
     return " · ".join(parts)
@@ -68,7 +70,7 @@ def effects_text(rule: Rule) -> str:
         elif value is False:
             parts.append(f"{name} off")
         else:
-            parts.append(f"{name} {_value_text(value)}")
+            parts.append(f"{name} {value_text(value)}")
     return ", ".join(parts)
 
 
@@ -90,16 +92,7 @@ def rule_subtitle(rule: Rule) -> str:
     return f"{match} → {effects}" if effects else match
 
 
-def filter_haystack(rule: Rule) -> str:
-    """Everything the filter bar matches against: label, match, effects (ADR-0008)."""
-    words = [rule.name]
-    for name, value in rule.match.items():
-        words.append(name)
-        words.append(_value_text(value))
-    for name, value in rule.effects.items():
-        words.append(name)
-        words.append(_value_text(value))
-    return " ".join(word for word in words if word).lower()
+REORDER_HINT = "Drag to reorder, or press Alt+Up or Alt+Down"
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,9 +126,14 @@ class RuleRow:
         *,
         actions: RuleActions,
         editable: bool,
+        neighbours: tuple[int | None, int | None] = (None, None),
     ) -> None:
+        """`neighbours` are the model indexes of the rules shown above and below this one
+        (`None` at an end): where Alt+Up and Alt+Down move it. The *shown* neighbours,
+        not the model's, so under a filter a step lands past the row the user sees."""
         self.rule = rule
         self.index = index
+        self.neighbours = neighbours
 
         subtitle = rule_subtitle(rule)
         # Labels and match patterns are user text: as Pango markup `&` renders blank.
@@ -143,6 +141,8 @@ class RuleRow:
 
         handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
         handle.add_css_class("dim-label")
+        if editable:
+            handle.set_tooltip_text(REORDER_HINT)
         self.widget.add_prefix(handle)
 
         if not rule.enabled:
@@ -172,11 +172,35 @@ class RuleRow:
             self.widget.add_suffix(remove)
 
             self._wire_drag(handle, actions)
+            self._wire_keys(actions)
 
     @staticmethod
     def _on_switch(_switch: Gtk.Switch, state: bool, actions: RuleActions, index: int) -> bool:
         actions.enable(index, state)
         # Handled: the refresh rebuilds the row from the model, which is the truth.
+        return True
+
+    def _wire_keys(self, actions: RuleActions) -> None:
+        """Alt+Up and Alt+Down: the keyboard route to the same move as the drag."""
+        keys = Gtk.ShortcutController()
+        for accelerator, neighbour in zip(
+            ("<Alt>Up", "<Alt>Down"), self.neighbours, strict=True
+        ):
+            keys.add_shortcut(
+                Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(accelerator),
+                    Gtk.CallbackAction.new(self._on_step, neighbour, actions),
+                )
+            )
+        self.widget.add_controller(keys)
+
+    def _on_step(
+        self, widget: Gtk.Widget, _args: object, neighbour: int | None, actions: RuleActions
+    ) -> bool:
+        if neighbour is None:
+            widget.error_bell()  # already first (or last) of the rules shown
+            return True
+        actions.move(self.index, neighbour)
         return True
 
     def _wire_drag(self, handle: Gtk.Image, actions: RuleActions) -> None:
@@ -226,6 +250,9 @@ class RulesPage:
         self._actions = actions
         self._rows: list[RuleRow] = []
         self._filter_text = ""
+        self._active_chips: set[Chip] = set()
+        self._chip_vocabulary: tuple[Chip, ...] = ()
+        self.chip_buttons: dict[Chip, Gtk.ToggleButton] = {}
 
         self._page = Adw.PreferencesPage(title=self.title)
 
@@ -236,11 +263,32 @@ class RulesPage:
         filter_group.add(self._filter)
         self._page.add(filter_group)
 
+        # One chip per match prop and effect the list uses; built by `_sync_chips`.
+        self.chip_box = Adw.PreferencesGroup(visible=False)
+        self._chip_rows: dict[ChipGroup, Adw.WrapBox] = {}
+        for chip_group, caption in ((ChipGroup.MATCH, "Match"), (ChipGroup.EFFECT, "Effect")):
+            wrap = Adw.WrapBox(child_spacing=6, line_spacing=6, hexpand=True)
+            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, margin_bottom=6)
+            line.append(
+                Gtk.Label(
+                    label=caption,
+                    css_classes=["dim-label", "caption-heading"],
+                    xalign=0,
+                    yalign=0,
+                    width_chars=6,
+                    margin_top=6,
+                )
+            )
+            line.append(wrap)
+            self.chip_box.add(line)
+            self._chip_rows[chip_group] = wrap
+        self._page.add(self.chip_box)
+
         self._group = Adw.PreferencesGroup(
             title=self.title,
             description=(
                 "Rules apply top to bottom; later rules win when they set the same "
-                "effect. Drag the handle to reorder."
+                "effect. Drag the handle to reorder, or press Alt+Up or Alt+Down on a rule."
             ),
         )
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -283,6 +331,41 @@ class RulesPage:
         self._filter.set_text(text)
         self._apply_filter(text)
 
+    def _sync_chips(self, rules: list[Rule]) -> None:
+        """Bring the chips in line with the list: one per prop and effect in use.
+
+        An active chip whose prop left the list is dropped from the filter first, so
+        deleting the last rule that carried it widens the list instead of emptying it.
+        Buttons are rebuilt only when the vocabulary changed: a toggle refreshes the page
+        from inside its own `toggled` signal, and replacing the button there would pull
+        the widget out from under the handler.
+        """
+        vocabulary = chips_for(self.kind, rules)
+        self._active_chips.intersection_update(vocabulary)
+        if vocabulary == self._chip_vocabulary:
+            return
+        self._chip_vocabulary = vocabulary
+        for chip_group, wrap in self._chip_rows.items():
+            for button in [b for c, b in self.chip_buttons.items() if c.group is chip_group]:
+                wrap.remove(button)
+        self.chip_buttons = {}
+        for chip in vocabulary:
+            button = Gtk.ToggleButton(label=chip.title, active=chip in self._active_chips)
+            button.add_css_class("pill")
+            button.connect("toggled", self._on_chip_toggled, chip)
+            self._chip_rows[chip.group].append(button)
+            self.chip_buttons[chip] = button
+        self.chip_box.set_visible(bool(vocabulary))
+        for chip_group, wrap in self._chip_rows.items():
+            wrap.get_parent().set_visible(any(c.group is chip_group for c in vocabulary))
+
+    def _on_chip_toggled(self, button: Gtk.ToggleButton, chip: Chip) -> None:
+        if button.get_active():
+            self._active_chips.add(chip)
+        else:
+            self._active_chips.discard(chip)
+        self.refresh()
+
     def _on_filter_changed(self, entry: Gtk.SearchEntry) -> None:
         self._apply_filter(entry.get_text())
 
@@ -305,21 +388,27 @@ class RulesPage:
         self._add_button.set_sensitive(editable)
 
         rules = self.rules
-        shown = 0
-        for index, rule in enumerate(rules):
-            if self._filter_text and self._filter_text not in filter_haystack(rule):
-                continue
-            row = RuleRow(rule, index, actions=self._actions, editable=editable)
+        self._sync_chips(rules)
+        visible = filter_rules(rules, self._filter_text, self._active_chips)
+        for position, index in enumerate(visible):
+            above = visible[position - 1] if position > 0 else None
+            below = visible[position + 1] if position + 1 < len(visible) else None
+            row = RuleRow(
+                rules[index],
+                index,
+                actions=self._actions,
+                editable=editable,
+                neighbours=(above, below),
+            )
             self._rows.append(row)
             self._group.add(row.widget)
             self._listed.append(row.widget)
-            shown += 1
 
-        if not shown:
+        if not visible:
             if rules:
                 empty = Adw.ActionRow(
                     title="No rules match this filter",
-                    subtitle="Clear the filter to see all rules.",
+                    subtitle="Clear the search or chips to see all rules.",
                 )
             else:
                 empty = Adw.ActionRow(
