@@ -291,7 +291,7 @@ def test_entity_destinations_are_passed_through_for_the_shell_to_place() -> None
         if isinstance(page, EntitySpec)
     ]
 
-    assert "binds" in entities
+    assert "entity:binds" in entities
     assert "entity:animations" in entities
 
 

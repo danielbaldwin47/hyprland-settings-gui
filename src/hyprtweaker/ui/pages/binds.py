@@ -403,8 +403,9 @@ class BindsPage:
     re-derive them all anyway, and a stale index is an edit landing on the wrong bind.
     """
 
-    section = "binds"
-    """The stack name. Matches the Section vocabulary the shell keys pages by."""
+    section = "entity:binds"
+    """The stack name, namespaced `entity:` because Hyprland also has a `binds` Section
+    (see `DeclarationKind.section`, #120)."""
 
     title = "Keybinds"
 

@@ -302,7 +302,7 @@ class ArrangementCanvas(Gtk.DrawingArea):
 class MonitorsPage:
     """The Displays destination: canvas, connected rows, Not connected, catch-all."""
 
-    section = "monitors"
+    section = "entity:monitors"
     title = "Displays"
 
     def __init__(

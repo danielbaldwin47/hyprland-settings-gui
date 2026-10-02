@@ -118,7 +118,12 @@ def test_every_entity_page_is_reachable_from_the_curated_sidebar(tmp_path: Path)
     entities = {page.section for page in window.declaration_pages}
 
     assert entities <= listed
-    assert {"binds", "monitors", "window_rules", "layer_rules"} <= listed
+    assert {
+        "entity:binds",
+        "entity:monitors",
+        "entity:window_rules",
+        "entity:layer_rules",
+    } <= listed
 
 
 def test_no_sidebar_row_points_at_a_page_that_was_not_built(tmp_path: Path) -> None:
@@ -218,20 +223,24 @@ def test_switching_views_leaves_the_sidebar_agreeing_with_the_content(
 def test_a_page_that_exists_in_both_views_survives_the_switch(tmp_path: Path) -> None:
     """An Entity Page is named the same in both arrangements, so it should be kept.
 
-    Deliberately *not* `binds`: that id is ambiguous, because the `binds` Schema Section and
-    the Keybinds Entity Page share it, and a test standing on an ambiguous id would go green
-    on the very sidebar-versus-content disagreement this pins. The stack child is asserted
-    for the same reason -- a selected row naming the right id is only half the claim.
+    Keybinds is the case that once failed: its id was the `binds` Schema Section's too, so
+    the Config view resolved it to "Keybind behaviour" (#120). The content title is
+    asserted for that reason -- a selected row naming the right id is only half the claim.
     """
     from hyprtweaker.ui.pages.plan import View
 
-    _session, window = build_window(tmp_path)
-    window._select_section("entity:animations")
+    for section, title in (
+        ("entity:animations", "Animation tree"),
+        ("entity:binds", "Keybinds"),
+    ):
+        _session, window = build_window(tmp_path)
+        window._select_section(section)
 
-    window.set_view(View.CONFIG)
+        window.set_view(View.CONFIG)
 
-    assert window._selected_section() == "entity:animations"
-    assert window.visible_section == "entity:animations"
+        assert window._selected_section() == section
+        assert window.visible_section == section
+        assert window._content_page.get_title() == title
 
 
 def test_the_view_choice_survives_a_restart(tmp_path: Path) -> None:
