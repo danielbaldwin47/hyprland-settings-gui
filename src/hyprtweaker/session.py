@@ -2088,7 +2088,10 @@ class Session:
         # own reload observes the config afresh, and announcing before that would have the
         # notice wiped by the very transaction it describes.
         self._pending_rescue = tuple(modules)
-        self.restore_last_good(*modules)
+        if not self.restore_last_good(*modules):
+            # Declined before anything ran -- no confirmed write to go back to. A notice
+            # left pending would surface on the next restore the user chooses themselves.
+            self._pending_rescue = ()
 
     # --- the recovery actions -----------------------------------------------------------------
 
@@ -2135,6 +2138,9 @@ class Session:
         except (IpcError, RuntimeError) as error:
             _log.error("the restore transaction failed: %s", error)
             self._recovery_halted = True
+            # Nothing was restored, so there is nothing to announce -- now or on the next
+            # restore, which would otherwise inherit this one's notice.
+            self._pending_rescue = ()
             self._changed()
             return
         finally:
