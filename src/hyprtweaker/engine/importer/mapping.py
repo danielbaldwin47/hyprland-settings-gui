@@ -23,7 +23,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Type-only: `lua/__init__` imports `lua.mapping`, which imports this module.
+    from .lua.sandbox import ShellUse
 
 from ..model.entities import (
     Animation,
@@ -143,6 +147,10 @@ class ImportResult:
     """`legacy.lua`'s contents: constructs kept verbatim because the model cannot hold
     them. Only the Lua importer fills this in -- hyprlang has no script constructs to
     keep -- but it lives here so both importers answer the wizard with one shape."""
+    shell: tuple[ShellUse, ...] = ()
+    """Every command and file operation the Lua evaluation ran or faked, in order, also
+    when it ended in an error. The wizard's second offer lists the commands from here
+    verbatim (#190); the Loss report's L34 lines are prose about them, not the commands."""
 
     @property
     def root(self) -> Path:

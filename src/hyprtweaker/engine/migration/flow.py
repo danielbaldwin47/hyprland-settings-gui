@@ -32,9 +32,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from ..importer.loss import BACKUP_NAME, LossReport, rescue_command, rescue_line
+from ..importer.loss import BACKUP_NAME, LossCode, LossReport, rescue_command, rescue_line
 from ..importer.lua.mapping import import_lua
-from ..importer.lua.sandbox import Consent
+from ..importer.lua.sandbox import Consent, Policy
 from ..importer.mapping import ImportResult, import_config
 from ..model import ConfigModel
 from ..model.values import lua_string
@@ -137,6 +137,41 @@ class Preview:
     @property
     def model(self) -> ConfigModel:
         return self.result.model
+
+    @property
+    def offered_commands(self) -> tuple[str, ...]:
+        """The commands the wizard's second offer would run for real, verbatim (#190).
+
+        Non-empty only after a *blocked* read that came back empty (no Option, no Entity)
+        or erroring, and that tried to run a command on the way: a config that builds itself
+        from `io.popen` output reads as nothing, or as a Lua error, while its commands are
+        faked. Anything else it read is a Preview worth showing as it is, and a read that
+        already ran them for real has nothing left to offer. A command run twice is listed
+        once, in the order it first ran.
+        """
+        commands = tuple(
+            dict.fromkeys(
+                use.cmd
+                for use in self.result.shell
+                if use.kind in _OFFERED_SHELL_KINDS and use.policy == Policy.BLOCK
+            )
+        )
+        empty = len(self.model) == 0 and len(self.result.entities) == 0
+        erroring = LossCode.EVAL_ERROR in self.loss.code_counts()
+        return commands if empty or erroring else ()
+
+
+_OFFERED_SHELL_KINDS = frozenset({"os.execute", "io.popen"})
+"""The `ShellUse` kinds that are a config's own commands. `os.remove` and `os.rename` are
+file operations, and `importer.listdir` is the importer's own listing (`runner.lua`)."""
+
+
+def asks_consent(source: Path) -> bool:
+    """Whether reading `source` means running it, so the user is asked first (#190).
+
+    Every `.lua` is read by evaluating it (the Lua importer); a `.conf` is only parsed.
+    """
+    return source.suffix == ".lua"
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,7 +308,7 @@ class MigrationFlow:
         if path is None:
             raise ValueError("nothing to import: no source file was detected or given")
 
-        if path.suffix == ".lua":
+        if asks_consent(path):
             result = import_lua(path, self.schema, consent=consent or Consent())
         else:
             result = import_config(path, self.schema)

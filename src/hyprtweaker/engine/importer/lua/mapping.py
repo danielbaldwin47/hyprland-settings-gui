@@ -207,6 +207,7 @@ class _Mapper:
                 self.legacy,
                 source=str(self.source) if self.source else "a foreign hyprland.lua",
             ),
+            shell=self.recording.shell,
         )
 
     def _context(self, call: Call) -> LossContext:
