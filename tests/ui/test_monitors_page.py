@@ -647,10 +647,10 @@ def test_resolution_lists_sizes_and_refresh_lists_that_sizes_rates() -> None:
     refresh = row_titled(row, "Refresh rate")
 
     assert items(resolution) == [
-        "preferred",
-        "highres",
-        "highrr",
-        "maxwidth",
+        "Display's preferred",
+        "Highest resolution",
+        "Highest refresh rate",
+        "Widest resolution",
         "2560x1440",
         "1920x1080",
         "Custom modeline",
@@ -687,25 +687,47 @@ def test_a_special_mode_leaves_refresh_to_the_compositor() -> None:
     row, recorder = dock_row([])
     refresh = row_titled(row, "Refresh rate")
 
-    choose(row_titled(row, "Resolution"), "highrr")
+    choose(row_titled(row, "Resolution"), "Highest refresh rate")
 
     assert recorder.breaking == [("desc:Dell U2720Q", {"mode": "highrr"})]
     assert items(refresh) == ["Chosen by the mode"]
     assert not refresh.get_sensitive()
 
 
+def test_a_special_mode_in_the_rule_shows_its_plain_name() -> None:
+    row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", mode="maxwidth")])
+
+    assert chosen(row_titled(row, "Resolution")) == "Widest resolution"
+
+    choose(row_titled(row, "Resolution"), "Display's preferred")
+    assert recorder.breaking == [("desc:Dell U2720Q", {"mode": "preferred"})]
+
+
 def test_a_modeline_rule_shows_custom_modeline_and_edits_ride_the_breaking_lane() -> None:
+    from gi.repository import Adw, Gtk
+
     line = "148.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync"
     row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", mode=f"modeline {line}")])
 
     assert chosen(row_titled(row, "Resolution")) == "Custom modeline"
     assert not row_titled(row, "Refresh rate").get_sensitive()
-    entry = row_titled(row, "Modeline")
-    assert entry.get_visible()
+    modeline = row_titled(row, "Modeline")
+    assert modeline.get_visible()
+    assert (
+        "The timings, in order: clock hdisplay hsync_start hsync_end htotal "
+        "vdisplay vsync_start vsync_end vtotal, then any flags."
+    ) in shown_text(modeline)
+    entry = suffix_of(modeline, Gtk.Entry)
     assert entry.get_text() == line
+    # A modeline is ~60 characters: the entry gets a line of its own under the help,
+    # not a squeezed suffix beside it.
+    assert not isinstance(modeline, Adw.ActionRow)
+    assert entry.get_hexpand()
+    entry.emit("activate")  # unchanged: nothing to write
+    assert recorder.breaking == []
 
     entry.set_text("174.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync")
-    entry.emit("apply")
+    entry.emit("activate")
 
     assert recorder.breaking == [
         (
@@ -716,15 +738,17 @@ def test_a_modeline_rule_shows_custom_modeline_and_edits_ride_the_breaking_lane(
 
 
 def test_the_modeline_entry_hides_until_custom_modeline_is_chosen() -> None:
+    from gi.repository import Gtk
+
     row, recorder = dock_row([])
-    entry = row_titled(row, "Modeline")
-    assert not entry.get_visible()
+    modeline = row_titled(row, "Modeline")
+    assert not modeline.get_visible()
 
     choose(row_titled(row, "Resolution"), "Custom modeline")
 
-    assert entry.get_visible()
+    assert modeline.get_visible()
     assert recorder.breaking == []  # nothing to write until a modeline is entered
-    entry.emit("apply")  # an empty modeline is no mode at all
+    suffix_of(modeline, Gtk.Entry).emit("activate")  # an empty modeline is no mode at all
     assert recorder.breaking == []
 
 
@@ -776,8 +800,77 @@ def test_reserved_area_commits_on_the_instant_lane() -> None:
     assert recorder.breaking == []
 
 
+def live_page(rules: list[Any]) -> tuple[Any, FakeSession]:
+    """A page wired as the window wires it: an edit lands in the rules, then the page
+    rebuilds from them."""
+    from gi.repository import Adw
+
+    from hyprtweaker.ui.pages.monitors import MonitorActions, MonitorsPage, ProfileActions
+
+    Adw.init()
+    session = FakeSession(rules)
+    built: list[Any] = []
+
+    def apply(output: str, fields: Any) -> None:
+        held = next((r for r in session.monitor_rules if r.output == output), None)
+        merged = {**(held.fields if held is not None else {}), **fields}
+        others = [r for r in session.monitor_rules if r.output != output]
+        session.monitor_rules = [*others, monitor_rule(output, **merged)]
+        built[0].refresh()
+
+    def nothing(*_: Any) -> None:
+        return None
+
+    page = MonitorsPage(
+        session,  # type: ignore[arg-type]
+        actions=MonitorActions(
+            apply_breaking=apply, apply_benign=apply, rename=nothing, remove=nothing
+        ),
+        profiles=ProfileActions(
+            save=nothing, activate=nothing, update=nothing, detach=nothing, delete=nothing
+        ),
+    )
+    built.append(page)
+    return page, session
+
+
+def test_a_rebuild_keeps_open_displays_advanced_colour_and_focus() -> None:
+    from gi.repository import Gtk
+
+    page, session = live_page([monitor_rule("DP-9", mode="1920x1080@60")])
+    page.set_connected((MONITORS[0], DOCK))
+    window = Gtk.Window(child=page.page)
+    window.present()
+    page.connected_rows[1].set_expanded(True)
+    page.disconnected_rows[0].set_expanded(True)
+    row_titled(page.connected_rows[1], "Advanced colour").emit("activated")
+
+    def reserved() -> Any:
+        return suffix_of(row_titled(page.connected_rows[1], "Reserved area"), _gap_field_type())
+
+    reserved().uniform_toggle.set_active(False)  # a commit: the page rebuilds
+    for side, number in (("top", 8), ("right", 4)):  # never re-expanding in between
+        spin = reserved().sides[side]
+        spin.grab_focus()
+        spin.set_value(number)
+        spin.emit("activate")
+
+    dock = page.connected_rows[1]
+    assert session.monitor_rules[-1].output == "desc:Dell U2720Q"
+    assert session.monitor_rules[-1].fields == {
+        "reserved": {"top": 8, "right": 4, "bottom": 0, "left": 0}
+    }
+    assert dock.get_expanded()
+    assert not page.connected_rows[0].get_expanded()
+    assert page.disconnected_rows[0].get_expanded()
+    assert not page.catch_all_row.get_expanded()
+    assert row_titled(dock, "Colour preset").get_visible()
+    assert window.get_focus().is_ancestor(reserved().sides["right"])
+    window.destroy()
+
+
 def _gap_field_type() -> type:
-    from hyprtweaker.ui.gap_field import GapField
+    from hyprtweaker.ui.rows.gap_field import GapField
 
     return GapField
 

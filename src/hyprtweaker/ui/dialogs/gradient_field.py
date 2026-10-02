@@ -21,13 +21,13 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-gi.require_version("Gdk", "4.0")
 
-from gi.repository import Adw, Gdk, Gtk  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine import rule_grammars  # noqa: E402
 from hyprtweaker.engine.model.values import Color, Gradient  # noqa: E402
-from hyprtweaker.ui.dialogs.effect_helpers import GrammarRow  # noqa: E402
+from hyprtweaker.ui.dialogs.effect_helpers import GrammarRow, border_pair_reason  # noqa: E402
+from hyprtweaker.ui.rows.factory import color_of, gdk_rgba  # noqa: E402
 
 _DEFAULT_STOP = Color(0xFFFFFFFF)
 """What a new `border_color` effect, and a stop the user adds to nothing, starts as."""
@@ -44,6 +44,7 @@ class GradientRow(GrammarRow[Gradient]):
             default=Gradient((_DEFAULT_STOP,), 0.0),
             text=rule_grammars.border_color_text,
             source_text=rule_grammars.border_color_source_text,
+            explain=border_pair_reason,
         )
 
     def _build(self) -> list[Gtk.Widget]:
@@ -90,7 +91,7 @@ class GradientRow(GrammarRow[Gradient]):
     def _add_stop(self, color: Color) -> None:
         button = Gtk.ColorDialogButton(
             dialog=Gtk.ColorDialog(with_alpha=True, modal=True),
-            rgba=_rgba(color),
+            rgba=gdk_rgba(color),
             valign=Gtk.Align.CENTER,
         )
         button.connect("notify::rgba", self._changed)
@@ -114,7 +115,7 @@ class GradientRow(GrammarRow[Gradient]):
         self.remove_buttons.clear()
 
     def _on_add(self, _button: Gtk.Button) -> None:
-        self._add_stop(_color_of(self.stop_buttons[-1]))
+        self._add_stop(color_of(self.stop_buttons[-1]))
         self._stops_changed()
         self._changed()
 
@@ -122,7 +123,7 @@ class GradientRow(GrammarRow[Gradient]):
         if len(self.stop_buttons) <= 1:
             return
         index = self.stop_buttons.index(stop)
-        colors = [_color_of(b) for b in self.stop_buttons]
+        colors = [color_of(b) for b in self.stop_buttons]
         del colors[index]
         self._clear_stops()
         for color in colors:
@@ -151,28 +152,6 @@ class GradientRow(GrammarRow[Gradient]):
 
     def _read(self) -> Gradient:
         return Gradient(
-            tuple(_color_of(button) for button in self.stop_buttons),
+            tuple(color_of(button) for button in self.stop_buttons),
             float(round(self.angle.get_value())),
         )
-
-
-def _rgba(color: Color) -> Gdk.RGBA:
-    """A model colour as GTK's. Through `#rrggbbaa` -- alpha last, as everywhere but ARGB."""
-    rgba = Gdk.RGBA()
-    rgba.parse(f"#{color.rgba:08x}")
-    return rgba
-
-
-def _color_of(button: Gtk.ColorDialogButton) -> Color:
-    """GTK's colour as the model's packed ARGB word."""
-    rgba = button.get_rgba()
-    return Color(
-        (_byte(rgba.alpha) << 24)
-        | (_byte(rgba.red) << 16)
-        | (_byte(rgba.green) << 8)
-        | _byte(rgba.blue)
-    )
-
-
-def _byte(channel: float) -> int:
-    return max(0, min(255, round(channel * 255)))

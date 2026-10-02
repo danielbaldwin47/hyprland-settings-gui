@@ -15,10 +15,7 @@ rule the app cannot parse would otherwise be uneditable here (CONTEXT.md "Findin
 opens in advanced with a line saying Hyprland may not read it, and saves with its fields.
 
 The fields are `WorkspaceFieldRows`; a save is `dataclasses.replace(rule, workspace=new,
-fields=...)`, so `origin` rides along too. Extension points:
-- `add_group(group)` puts a group of rows below the selector, in the dialog's one page.
-- `collect_fields()` is what a save stores as the rule's fields.
-- `selector_problem(text)` is the blocking judgement of an edited selector.
+fields=collect_fields())`, so `origin` rides along too.
 """
 
 from __future__ import annotations
@@ -50,6 +47,12 @@ _KIND_TITLES = {
     SimpleKind.NUMBER: "Number",
     SimpleKind.NAME: "Name",
     SimpleKind.SPECIAL: "Special name",
+}
+
+_BLANK_PICKER = {
+    SimpleKind.NUMBER: "Type a workspace number.",
+    SimpleKind.NAME: "Type a name.",
+    SimpleKind.SPECIAL: "Type a name for the special workspace.",
 }
 
 Save = Callable[[WorkspaceRule], str | None]
@@ -118,7 +121,7 @@ class WorkspaceRuleEditor(Adw.Dialog):
 
         self._advanced = Adw.SwitchRow(
             title="Advanced selector",
-            subtitle="Type a raw selector, such as w[tv1] for one tiled window",
+            subtitle="Match workspaces by their windows, monitor or state",
         )
         self._advanced.connect("notify::active", lambda *_: self._on_mode_toggled())
 
@@ -164,7 +167,7 @@ class WorkspaceRuleEditor(Adw.Dialog):
             rule.fields if rule is not None else {}, layouts=layouts
         )
         for group in self._fields.groups:
-            self.add_group(group)
+            self._groups.append(group)
 
         self.set_child(self._body())
         # The selector is the dialog's one question: the cursor starts there.
@@ -187,22 +190,9 @@ class WorkspaceRuleEditor(Adw.Dialog):
         box.append(scroller)
         return box
 
-    # --- extension points (#160) -----------------------------------------------------------
-
-    def add_group(self, group: Adw.PreferencesGroup) -> None:
-        """Add a group of rows below the selector, in order of the calls."""
-        self._groups.append(group)
-
     def collect_fields(self) -> Mapping[str, Any]:
         """The fields a save stores: the rule's own mapping while no row was touched."""
         return self._fields.collect()
-
-    def selector_problem(self, selector: str) -> str | None:
-        """Why a selector the user typed cannot be saved, or `None` when it can.
-
-        Only an error blocks; a warning shows under the selector and the save goes on."""
-        issue = check_selector(selector)
-        return issue.message if issue is not None and issue.severity is Severity.ERROR else None
 
     # --- what tests and probes drive --------------------------------------------------------
 
@@ -253,7 +243,13 @@ class WorkspaceRuleEditor(Adw.Dialog):
         selector = original if original is not None and text == original else text.strip()
 
         if selector != original:
-            problem = self._simple_problem() or self.selector_problem(selector)
+            # Only an error blocks; a warning shows under the selector and the save goes on.
+            issue = check_selector(selector)
+            problem = self._simple_problem() or (
+                issue.message
+                if issue is not None and issue.severity is Severity.ERROR
+                else None
+            )
             if problem is not None:
                 self._error.set_label(problem)
                 self._error.set_visible(True)
@@ -344,9 +340,7 @@ class WorkspaceRuleEditor(Adw.Dialog):
             self._syncing = True
             self._advanced.set_active(True)
             self._syncing = False
-            self._notice.set_label(
-                "The pickers cannot say this selector, so it stays advanced."
-            )
+            self._notice.set_label("This selector only works in advanced mode.")
             self._notice.set_visible(True)
             return
         self._load_selector(text)
@@ -356,12 +350,18 @@ class WorkspaceRuleEditor(Adw.Dialog):
         return compose_simple(_KINDS[self._kind.get_selected()], self._value.get_text())
 
     def _simple_problem(self) -> str | None:
-        """A number picker holds digits only: `abc` there would be read as a name."""
+        """The pickers' own words for a value they cannot compose.
+
+        The grammar's messages speak advanced syntax (`name:`), which the pickers keep out
+        of sight, so a blank picker says what to type here instead. A number picker holds
+        digits only: `abc` there would be read as a name."""
         if self._advanced.get_active():
             return None
         kind = _KINDS[self._kind.get_selected()]
         value = self._value.get_text().strip()
-        if kind is SimpleKind.NUMBER and value and not value.isdigit():
+        if not value:
+            return _BLANK_PICKER[kind]
+        if kind is SimpleKind.NUMBER and not value.isdigit():
             return "A workspace number is digits only, such as 5. Pick Name for a name."
         return None
 

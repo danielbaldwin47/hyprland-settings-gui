@@ -11,6 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 APP_VERSION = "0.0.0-test"
 SECTION = "entity:workspace_rules"
 
@@ -111,6 +113,22 @@ def test_an_empty_page_shows_one_sentence_and_the_add_action(tmp_path: Path) -> 
     )
     assert page.empty_add_button.get_label() == "Add rule"
     assert page.empty_add_button.get_sensitive()
+
+
+def test_the_empty_state_add_button_still_opens_the_editor_after_refreshes(
+    tmp_path: Path,
+) -> None:
+    """A save, an undo or a Monitors edit refreshes the page; the button must survive it."""
+    _session, window = build_window(tmp_path, live=True)
+    page = window.workspace_rules_page
+    page.refresh()
+    page.refresh()
+
+    page.empty_add_button.emit("clicked")
+
+    dialog = window.get_visible_dialog()
+    assert type(dialog).__name__ == "WorkspaceRuleEditor"
+    assert dialog.get_title() == "Add workspace rule"
 
 
 def test_a_page_with_rules_shows_no_empty_state(tmp_path: Path) -> None:
@@ -385,7 +403,9 @@ def test_a_rules_fields_open_as_rows_of_their_own_type(tmp_path: Path) -> None:
 
     fields = open_editor(window, "3").fields
 
-    assert fields.row("monitor").get_text() == "DP-1"
+    assert fields.text_entry("monitor").get_text() == "DP-1"
+    assert fields.row("monitor").get_subtitle() == "An output name such as DP-1, or desc:…"
+    assert fields.option_entry.get_title() == "Add a layout option"
     assert fields.row("default").get_active() is True
     assert fields.row("border_size").get_value() == 4
     assert choice(fields.row("layout")) == "master"
@@ -425,7 +445,7 @@ def test_editing_one_field_leaves_every_other_value_as_the_same_object(tmp_path:
     session, window = build_window(tmp_path, live=True, rules=(held,))
 
     dialog = open_editor(window, "3")
-    dialog.fields.row("monitor").set_text("HDMI-A-1")
+    dialog.fields.text_entry("monitor").set_text("HDMI-A-1")
     dialog.save()
 
     fields = stored(session, "3").fields
@@ -528,7 +548,7 @@ def test_a_held_layout_the_list_lacks_joins_it_and_is_not_changed(tmp_path: Path
         "monocle",
         "lua:columns",
     ]
-    dialog.fields.row("monitor").set_text("DP-2")
+    dialog.fields.text_entry("monitor").set_text("DP-2")
     dialog.save()
     assert stored(session, "3").fields["layout"] == "lua:columns"
 
@@ -550,6 +570,24 @@ def test_the_layout_choices_come_from_the_schema_without_the_lua_placeholder(
         "scrolling",
         "monocle",
     ]
+
+
+def test_layouts_your_lua_files_register_join_the_layout_choices(tmp_path: Path) -> None:
+    """#175 AC 1: the workspace-rule picker offers the same Discovered layouts."""
+    from hyprtweaker.engine.paths import ConfigPaths
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.app_dir.mkdir(parents=True, exist_ok=True)
+    paths.user_lua.write_text('hl.layout.register("foo", { recalculate = function() end })\n')
+    _session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+    pick(dialog, "Layout")
+
+    combo = dialog.fields.row("layout")
+
+    assert [
+        combo.get_model().get_string(i) for i in range(combo.get_model().get_n_items())
+    ] == ["dwindle", "master", "scrolling", "monocle", "lua:foo"]
 
 
 def test_a_value_a_typed_row_cannot_show_gets_a_raw_row_and_is_kept(tmp_path: Path) -> None:
@@ -591,7 +629,7 @@ def test_an_unknown_table_value_is_shown_read_only_and_kept(tmp_path: Path) -> N
     dialog = open_editor(window, "3")
 
     assert not dialog.fields.row("exotic").get_editable()
-    dialog.fields.row("monitor").set_text("DP-2")
+    dialog.fields.text_entry("monitor").set_text("DP-2")
     dialog.save()
 
     assert stored(session, "3").fields["exotic"] is table
@@ -728,8 +766,39 @@ def test_a_filter_cannot_go_back_to_the_pickers_and_says_why(tmp_path: Path) -> 
     dialog.mode_switch.set_active(False)
 
     assert modes(dialog) == (True, True)
-    assert dialog.notice_label.get_label() == (
-        "The pickers cannot say this selector, so it stays advanced."
+    assert dialog.notice_label.get_label() == "This selector only works in advanced mode."
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        (0, "Type a workspace number."),
+        (1, "Type a name."),
+        (2, "Type a name for the special workspace."),
+    ],
+)
+def test_a_blank_picker_says_what_to_type_in_its_own_words(
+    tmp_path: Path, kind: int, message: str
+) -> None:
+    """The selector grammar's messages speak advanced syntax (`name:`); the pickers
+    keep that syntax out of sight, so their refusals do too (#151 review, finding 20)."""
+    session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+    dialog.kind_row.set_selected(kind)
+
+    dialog.save()
+
+    assert modes(dialog) == (False, False)
+    assert dialog.error_label.get_label() == message
+    assert session.workspace_rules == []
+
+
+def test_the_advanced_switch_explains_itself_without_selector_syntax(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+
+    assert dialog.mode_switch.get_subtitle() == (
+        "Match workspaces by their windows, monitor or state"
     )
 
 
@@ -754,7 +823,7 @@ def test_an_imported_selector_hyprland_may_not_read_never_blocks_save(tmp_path: 
 
     assert modes(dialog) == (True, True)
     assert dialog.notice_label.get_label() == "Hyprland may not read this selector."
-    dialog.fields.row("monitor").set_text("DP-2")
+    dialog.fields.text_entry("monitor").set_text("DP-2")
     dialog.save()
 
     assert [(r.workspace, dict(r.fields)) for r in session.workspace_rules] == [

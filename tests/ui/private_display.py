@@ -54,6 +54,9 @@ _PR_SET_PDEATHSIG = 1
 PRIVATE_DISPLAYS = range(200, 1000)
 _SOCKET = "/tmp/.X11-unix/X{}"
 _LOCK = "/tmp/.X{}-lock"
+# Xvfb writes its lock here first and links it into place; one left by a killed server
+# makes the next Xvfb on that number sleep about 6 s before it gives up (xserver os/utils.c).
+_TEMP_LOCK = "/tmp/.tX{}-lock"
 
 
 def display_number(name: str | None) -> int | None:
@@ -79,8 +82,9 @@ def session_display_clash(display: str, session: str | None) -> str | None:
 def start_xvfb(xvfb: str) -> str | None:
     """Start a headless X server on a free display in `PRIVATE_DISPLAYS`; None if none came up.
 
-    A number whose lock file or socket exists is skipped and left alone, whether a live
-    server or a crashed run's leftover holds it, and so is the session's own number. The
+    A number whose lock file, Xvfb's temporary lock or socket exists is skipped and left
+    alone, whether a live server or a crashed run's leftover holds it, and so is the
+    session's own number. The
     rest is settled by Xvfb's own lock: started with an explicit number (never
     `-displayfd`), it takes `/tmp/.X<n>-lock` with an atomic link() before it creates any
     socket, so of several processes starting at once one wins each number and the others
@@ -98,7 +102,7 @@ def start_xvfb(xvfb: str) -> str | None:
         if time.monotonic() > deadline:
             return None
         if number == session or any(
-            os.path.lexists(path.format(number)) for path in (_LOCK, _SOCKET)
+            os.path.lexists(path.format(number)) for path in (_LOCK, _TEMP_LOCK, _SOCKET)
         ):
             continue
         try:
@@ -119,7 +123,9 @@ def start_xvfb(xvfb: str) -> str | None:
 def _serving(xvfb_process: subprocess.Popen[bytes], number: int, deadline: float) -> bool:
     """Wait until `xvfb_process` holds display `number` and accepts connections.
 
-    False when it exits first (another process took the number) or by the deadline.
+    False when it exits first (another process took the number) or by the deadline, when
+    it is asked to stop, so it removes its own lock and socket, and killed only if it has
+    not stopped a second later; either way it is reaped.
     """
     while time.monotonic() < deadline:
         if xvfb_process.poll() is not None:
@@ -132,7 +138,12 @@ def _serving(xvfb_process: subprocess.Popen[bytes], number: int, deadline: float
                 except OSError:
                     pass
         time.sleep(0.02)
-    xvfb_process.kill()
+    xvfb_process.terminate()
+    try:
+        xvfb_process.wait(1)
+    except subprocess.TimeoutExpired:
+        xvfb_process.kill()
+        xvfb_process.wait()
     return False
 
 

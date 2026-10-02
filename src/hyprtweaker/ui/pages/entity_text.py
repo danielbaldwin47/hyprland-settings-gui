@@ -68,7 +68,9 @@ def action_text(bind: Bind) -> str:
     return f"{label} ({detail})" if detail else label
 
 
-EMPTY_SUBMAP = "Hyprland cannot enter a submap with no binds. Add a bind to it."
+EMPTY_SUBMAP = (
+    "Hyprland cannot enter a submap with no enabled keybinds. Add or enable a keybind in it."
+)
 """The empty-submap flag's sentence (#208). A group description and the tooltip of the badge
 on each bind that enters the submap carry it alike. It leads the unreachable sentence: a
 submap with neither gets the bind first, then the way in."""
@@ -179,7 +181,7 @@ def bind_badge(bind: Bind, *, empty_submaps: frozenset[str] = frozenset()) -> Bi
         if (target := submap_target(bind)) is not None and target in empty_submaps:
             return BindBadge(
                 BadgeKind.EMPTY_SUBMAP,
-                "Submap has no binds",
+                "Submap has no enabled keybinds",
                 f"This keybind enters the submap {target}. {EMPTY_SUBMAP} "
                 "Or remove this keybind.",
             )

@@ -28,7 +28,8 @@ settings portal is not on it and nothing the owner runs can be activated (#212).
 ``private_display.py`` starts both and pins GTK to them, for this tier and for the
 widget probe route (``tools/widget_probe.py``) alike.
 ``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display and the host bus on
-purpose, for example to watch it. The display opens in ``pytest_configure``, before
+purpose. It is the owner's switch, for watching the tier, and CI's; the desktop fence
+refuses it from an agent's shell. The display opens in ``pytest_configure``, before
 collection: importing ``Gtk`` initialises GTK, and some ``tests/unit`` modules import UI
 pages at collection time.
 """
@@ -120,13 +121,10 @@ def ui_unavailable() -> str | None:
 
     xvfb = shutil.which("Xvfb")
     if xvfb is None:
-        return f"Xvfb is not installed; set {HOST_DISPLAY_OPT_IN}=1 to use the host display"
+        return "Xvfb is not installed (pacman -S xorg-server-xvfb)"
     dbus_daemon = shutil.which("dbus-daemon")
     if dbus_daemon is None:
-        return (
-            "dbus-daemon is not installed, so there is no private session bus; "
-            f"set {HOST_DISPLAY_OPT_IN}=1 to use the host's"
-        )
+        return "dbus-daemon is not installed, for the private session bus (pacman -S dbus)"
     display = start_xvfb(xvfb)
     if display is None:
         return "Xvfb did not open a display within 10 s"

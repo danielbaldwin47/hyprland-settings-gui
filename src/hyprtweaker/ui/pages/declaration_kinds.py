@@ -61,6 +61,7 @@ from hyprtweaker.engine.model.entities import (
     Gesture,
     Permission,
     StartupCommand,
+    entity_noun,
 )
 from hyprtweaker.engine.schema import Schema
 from hyprtweaker.ui.pages.tasks import entity_page_id
@@ -88,7 +89,6 @@ class DeclarationKind:
     """
 
     title: str
-    singular: str
     description: str
     empty_hint: str
 
@@ -152,6 +152,11 @@ class DeclarationKind:
     @property
     def all_fields(self) -> tuple[FieldSpec, ...]:
         return self.fields + self.optional
+
+    @property
+    def singular(self) -> str:
+        """One entry's name mid-sentence ("Add a variable"): the undo toast's noun, lowered."""
+        return entity_noun(self.kind).lower()
 
 
 # --- curves --------------------------------------------------------------------------------
@@ -515,7 +520,6 @@ KINDS: tuple[DeclarationKind, ...] = (
         subtitle_of=_animation_subtitle,
         section=entity_page_id("animations"),
         title="Animation tree",
-        singular="animation",
         description="One entry per part of the animation tree. Each needs a curve.",
         empty_hint="Add one to override Hyprland's default animation for that part.",
         fields=_ANIMATION_FIELDS,
@@ -529,7 +533,6 @@ KINDS: tuple[DeclarationKind, ...] = (
         subtitle_of=_curve_subtitle,
         section=entity_page_id("curves"),
         title="Animation curves",
-        singular="curve",
         description="Named easing curves the animations above refer to by name.",
         empty_hint="Hyprland's built-in default and linear curves are always available.",
         fields=_CURVE_FIELDS,
@@ -544,7 +547,6 @@ KINDS: tuple[DeclarationKind, ...] = (
         scripted=is_scripted,
         section=entity_page_id("gestures"),
         title="Gesture bindings",
-        singular="gesture",
         description="Touchpad and touchscreen gestures.",
         empty_hint="Add one to swipe between workspaces or resize a window.",
         fields=GESTURE_FIELDS[:3],
@@ -559,7 +561,6 @@ KINDS: tuple[DeclarationKind, ...] = (
         subtitle_of=_device_subtitle,
         section=entity_page_id("devices"),
         title="Devices",
-        singular="device",
         description="Per-device input settings. These win over the matching Input settings.",
         empty_hint="Add one to give a single mouse, keyboard or tablet its own settings.",
         fields=(_DEVICE_NAME,),
@@ -574,7 +575,6 @@ KINDS: tuple[DeclarationKind, ...] = (
         subtitle_of=_env_subtitle,
         section=entity_page_id("env"),
         title="Environment",
-        singular="variable",
         description="Variables exported into the session Hyprland starts.",
         empty_hint="Add one to set something like XCURSOR_SIZE for every program.",
         note=(
@@ -591,7 +591,6 @@ KINDS: tuple[DeclarationKind, ...] = (
         subtitle_of=_startup_subtitle,
         section=entity_page_id("autostart"),
         title="Autostart",
-        singular="command",
         description="Commands Hyprland runs for you, in the order listed.",
         empty_hint="Add one to start your bar, notification daemon or wallpaper tool.",
         note=(
@@ -608,7 +607,6 @@ KINDS: tuple[DeclarationKind, ...] = (
         subtitle_of=_permission_subtitle,
         section=entity_page_id("permissions"),
         title="Permissions",
-        singular="permission",
         description="Which programs may record the screen, read the cursor, or grab input.",
         empty_hint="Without any entries, Hyprland asks about every request.",
         note=(

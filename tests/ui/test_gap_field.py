@@ -14,7 +14,7 @@ from typing import Any
 def build(value: Any) -> tuple[Any, list[Any]]:
     from gi.repository import Adw
 
-    from hyprtweaker.ui.gap_field import GapField
+    from hyprtweaker.ui.rows.gap_field import GapField
 
     Adw.init()
     committed: list[Any] = []
@@ -103,7 +103,7 @@ def test_switching_to_per_side_spreads_the_number_to_every_side() -> None:
 def test_bounds_clamp_what_the_user_types() -> None:
     from gi.repository import Adw
 
-    from hyprtweaker.ui.gap_field import GapField
+    from hyprtweaker.ui.rows.gap_field import GapField
 
     Adw.init()
     committed: list[Any] = []

@@ -21,6 +21,8 @@ gi.require_version("Gtk", "4.0")
 
 from gi.repository import Gio, Gtk  # noqa: E402
 
+PARENTED = "release() needs a widget already removed from its parent, not a {} still in it"
+
 
 def release(widget: Gtk.Widget) -> None:
     """Dispose `widget` and every widget under it that Python still holds.
@@ -30,7 +32,18 @@ def release(widget: Gtk.Widget) -> None:
     may remove a controller it added to another widget. A window's actions hold handlers as
     well. The walk keeps only weak references, so a widget whose wrapper is gone is GTK's
     alone, goes with its parent, and is never touched here.
+
+    Everything under `widget` goes, so a control the caller keeps and shows again (a
+    button reused across refreshes, a row a later page re-adds) must be detached from the
+    tree first, or it comes back with no handlers.
+
+    `widget` must be out of the tree already. Raises `ValueError` on one that still has a
+    parent: stripping the controllers of live UI would leave it on screen and dead, a
+    defect no test sees unless it clicks, and a raise makes the caller's ordering mistake
+    fail where it is made.
     """
+    if widget.get_parent() is not None:
+        raise ValueError(PARENTED.format(type(widget).__name__))
     if isinstance(widget, Gio.ActionMap):
         for name in widget.list_actions():
             widget.remove_action(name)

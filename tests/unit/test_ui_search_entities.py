@@ -168,7 +168,7 @@ def test_each_kind_is_findable_by_its_salient_text(
         ("a&b", "Multi-key: Hyprland can't load it"),
         ("nautilus", "Disabled"),
         ("super + f", "Defined by a Lua function in user.lua"),
-        ("submap", "Submap has no binds"),
+        ("submap", "Submap has no enabled keybinds"),
         ("pavucontrol", "Disabled"),
         ("super + q", None),
     ],
