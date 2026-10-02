@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# PreToolUse guard on Bash: the desktop fence for an agent's own shell
+# PreToolUse guard on Bash and Monitor: the desktop fence for an agent's own shell
 # (docs/agents/local-checks.md, Running the app and Private X displays). The
 # owner's desktop compositor is their daily session, and the session exports its
 # HYPRLAND_INSTANCE_SIGNATURE, WAYLAND_DISPLAY and DISPLAY, so a bare call reaches
-# it. Four commands are refused unless they name a nested instance:
+# it. Five commands are refused unless they name a nested instance or a private
+# display:
 #
 #  - `hyprctl`, any subcommand but `instances` (which reads lock files only).
 #    Nested means a selector, `--instance <sig>`, `-i <sig>`, `--instance=<sig>`
@@ -14,58 +15,81 @@
 #    running with a HOME other than the account's. That last test is the
 #    Harness guard's (tests/integration/harness/guard.py): the session's own
 #    compositor runs the account's config, a nested one a sandbox HOME.
-#  - `wtype`, which types into WAYLAND_DISPLAY: nested means a
-#    `WAYLAND_DISPLAY=<display>` prefix naming the Wayland socket of an
-#    instance that passes the same lock test.
-#  - `Hyprland` (and `hyprland`, `start-hyprland`): tools/sandbox.py and the
-#    Harness start the nested ones.
+#  - `wtype`, `wl-copy`, `grim` and `hyprpicker`, which act on WAYLAND_DISPLAY:
+#    nested means a `WAYLAND_DISPLAY=<display>` prefix naming the Wayland socket
+#    of an instance that passes the same lock test.
+#  - `xdotool`, which types into DISPLAY (the desktop's Xwayland): private means
+#    a `DISPLAY=:<n>` prefix, n in 200-999, written out.
+#  - `Hyprland` (and `hyprland`, `start-hyprland`, `cage`, `sway`): tools/sandbox.py
+#    and the Harness start the nested ones.
 #  - `ydotool` (and `ydotoold`), always: it writes to the kernel's uinput and
 #    has no nested form.
 #
-# Four more families are refused always (#209), each with its working shape:
+# More families are refused always (#209, review of #151), each with its working shape:
 #
-#  - `pkill` and `killall`, which match by name across the whole session and
-#    can kill the owner's Hyprland, terminal or apps. Kill a PID you started
-#    and recorded: `kill <pid>`, `kill $!`.
+#  - A pattern kill, which can kill the owner's Hyprland, terminal or apps:
+#    `pkill`, `killall`, `killall5`, `skill`, `fuser -k`, and `kill` of pids found by name (`$(pgrep …)`,
+#    `$(pidof …)`, `$(ps …)`, a variable or `read` filled from them, or a pipe from
+#    them into `xargs kill`), or of a process group (`kill 0`, `kill -1`,
+#    `kill -- -<pgid>`). Kill a PID you started and recorded: `kill <pid>`, `kill $!`.
 #  - A GTK start outside the probe route: `python`/`python3`/`pythonX.Y` code
-#    (`-c`, or stdin: `python - <<EOF`) that names `Gtk`, `Adw`, `Gdk` or `gi.repository`, or running the app
-#    directly (`-m hyprtweaker`, a script under `src/hyprtweaker`) instead of
-#    through `tools/sandbox.py`. The route is `tools/widget_probe.py`,
-#    `tools/sandbox.py` or pytest.
-#  - An X server started from the shell: `Xvfb`, `Xorg`, `Xwayland`, `xvfb-run`
-#    (an X server unlinks the socket of the display it binds, which is how an
-#    agent's Xvfb replaced the desktop's `:0`). pytest and tools/widget_probe.py
-#    start their own Xvfb as children, on a private display, and pass.
+#    (`-c`, a heredoc or here-string on stdin, or a pipe into `python -`) that
+#    loads GTK (`import gi`, `from gi`, `gi.require_version`, `gi.repository`), or
+#    running the app directly (`-m hyprtweaker`, a script under
+#    `src/hyprtweaker`) instead of through `tools/sandbox.py`. The route is
+#    `tools/widget_probe.py`, `tools/sandbox.py` or pytest. The same python code
+#    is refused when it runs a fenced command (`subprocess`, `os.system`, …) or
+#    removes or links an X socket or lock (`os.unlink`, …).
+#  - An X server started from the shell: `Xvfb`, `Xorg`, `X`, `Xwayland`, `Xephyr`,
+#    `Xnest`, `Xvnc`, `xvfb-run`, `startx`, `xinit` (an X server unlinks the socket
+#    of the display it binds, which is how an agent's Xvfb replaced the desktop's
+#    `:0`). pytest and tools/widget_probe.py start their own Xvfb as children, on a
+#    private display, and pass.
 #  - `rm`, `unlink`, `rmdir`, `mv`, `ln`, `shred`, and `find` with `-delete` or
-#    `-exec`, when an operand is under `/tmp/.X11-unix/` or is a
-#    `/tmp/.X<n>-lock`. Reading them (`ls`, `ss -xlp`) passes.
+#    an `-exec` of one of those, when an operand (after one level of `{a,b}`) is
+#    under `/tmp/.X11-unix/`, is a `/tmp/.X<n>-lock`, or is `/` or `/tmp` above
+#    them. Reading them (`ls`, `ss -xlp`, `find -exec ls`) passes.
+#  - A command on the owner's session or its managers: `omarchy-*` (but
+#    `omarchy-version`), `hyprpm` (but `list`), `uwsm` (but `check`), `hyprshot`,
+#    `notify-send`, `loginctl` and `systemctl` but their reads (`list-*`, `show*`,
+#    `*-status`; `status`, `cat`, `is-*`).
+#  - Setting `HYPRTWEAKER_UI_HOST_DISPLAY`, the owner's opt-in that maps the UI
+#    tier's windows on the desktop, as a prefix, an assignment or an `export`.
 #
 # A command is judged only at command position: the command is split into
-# simple commands (quotes, `$(…)`, backticks and heredocs followed), and the
-# word after any `VAR=…`, `env`, `command`, `exec` or wrapper (`timeout`,
-# `nohup`, `sudo`, …) is the one judged, so `grep hyprctl docs/` or a heredoc
-# commit message passes. Doubt fails closed: without jq, any call whose input
-# names one of the words above (or a `python -c` that names Gtk, Adw, Gdk or
-# gi.repository, or removes or links an X socket or lock) is refused. The hook
-# guards against mistakes, not deliberate evasion: a call inside a script file,
-# `bash -c '…'`, `eval`, an alias, a command held in a variable, python code
-# in a script file, a path relative to a `cd` into
-# /tmp/.X11-unix, or a direct write to the compositor's socket (`socat`, `nc`)
-# passes. tests/unit/test_no_unguarded_instance.py fences tests/integration;
-# this hook fences the interactive route.
+# simple commands (quotes, `$(…)`, backticks, pipes and heredocs followed), and
+# the word after any `VAR=…`, `env`, `command`, `exec` or wrapper (`timeout`,
+# `nohup`, `sudo`, `xargs`, `flock`, …, each with the options that take a value)
+# is the one judged, so `grep hyprctl docs/` or a heredoc commit message passes.
+# A command line handed to a shell is split and judged in turn: `bash -c '…'`,
+# `sh -c`, a heredoc into `bash`, `eval`, `watch '…'` and `flock -c`. Doubt fails
+# closed: without jq, any call whose input names one of the fenced words, a GTK
+# load in python, an app start, a pattern kill or a removal or link of an X
+# socket or lock is refused. The hook guards against mistakes, not deliberate
+# evasion: a call inside a script file, an alias, a command held in a variable,
+# python code in a script file or read from a file, a kill by a variable filled
+# in an earlier call, a path relative to a `cd` into /tmp/.X11-unix, or a direct
+# write to the compositor's socket (`socat`, `nc`) passes.
+# tests/unit/test_no_unguarded_instance.py fences tests/integration; this hook
+# fences the interactive route.
 set -uo pipefail
 
 input=$(cat)
 
 if ! command -v jq > /dev/null 2>&1; then
     # Raw JSON, so no command position: the words, a GTK python -c, an app start, an X file.
-    raw_words='hyprctl|Hyprland|wtype|ydotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland'
+    raw_words='hyprctl|Hyprland|wtype|ydotool|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|HYPRTWEAKER_UI_HOST_DISPLAY=[^ "]'
+    raw_x='(^|[^[:alnum:]_.-])X +:[0-9]'
+    raw_kill='(pgrep|pidof)[^;&]*kill|kill[^;&|]*(pgrep|pidof)|fuser[^;&|]* -[a-z]*k|kill( +-[A-Za-z0-9]+)? +(--? +)?(0|-1)([\";]|$)'
     raw_gtk='python[^|;&]*-[A-Za-z]*c[ "'"'"'].*(Gtk|Adw|Gdk|gi\.repository)'
     raw_stdin='python[0-9.]*( +-)? *<<.*(Gtk|Adw|Gdk|gi\.repository)'
-    raw_app='python[0-9.]*( +-[A-Za-z]+)* +(-[A-Za-z]*m +hyprtweaker|src/hyprtweaker)'
+    raw_app='python[0-9.]*( +-[A-Za-z]+)* +(-[A-Za-z]*m *hyprtweaker|src/hyprtweaker)'
     raw_xfile='(^|[^[:alnum:]_.-])(rm|unlink|rmdir|mv|ln|shred|find)[ \t"][^|;&]*(\.X11-unix|\.X[^ /"]*-lock|/tmp/\.X[0-9]*[*?])'
-    if grep -Eq "$raw_words|$raw_gtk|$raw_stdin|$raw_app|$raw_xfile" <<< "$input"; then
-        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"This call names hyprctl, Hyprland, wtype, ydotool, pkill, killall, an X server (Xvfb, Xorg, Xwayland, xvfb-run), a python -c that names Gtk, Adw, Gdk or gi.repository, an app start, or a removal or link of /tmp/.X11-unix or an X lock, and without jq the desktop fence cannot tell whether it reaches the owner'"'"'s desktop session, so it fails closed. install jq, then run it again (.claude/hooks/desktop-fence.sh)."}}'
+    raw_session='(^|[^[:alnum:]_.-])(omarchy-[a-z]|(hyprpm|uwsm|loginctl|notify-send|wl-copy|grim|hyprshot|hyprpicker|cage|sway|killall5|skill)([^[:alnum:]_.-]|$))'
+    raw_systemctl='systemctl[^|;&]* (start|stop|restart|try-restart|reload|reload-or-restart|kill|isolate|mask|unmask|enable|disable|daemon-reload|set-environment|unset-environment|import-environment|edit|poweroff|reboot|suspend|hibernate)'
+    raw_find_tmp='find +/+(tmp/*)?[ "][^|;&]*-(delete|exec)'
+    if grep -Eq "$raw_words|$raw_x|$raw_kill|$raw_gtk|$raw_stdin|$raw_app|$raw_xfile|$raw_session|$raw_systemctl|$raw_find_tmp" <<< "$input"; then
+        printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"This call names hyprctl, Hyprland, wtype, ydotool, xdotool, a pattern kill (pkill, killall, fuser -k, kill by pgrep or pidof), an X server (Xvfb, Xorg, X, Xwayland, Xephyr, Xnest, Xvnc, xvfb-run), a python -c that names Gtk, Adw, Gdk or gi.repository, an app start, HYPRTWEAKER_UI_HOST_DISPLAY, a command on the owner'"'"'s session (omarchy-*, hyprpm, uwsm, loginctl, systemctl stop or restart, notify-send, wl-copy, grim, hyprshot, hyprpicker, cage, sway), or a removal or link of /tmp/.X11-unix or an X lock, and without jq the desktop fence cannot tell whether it reaches the owner'"'"'s desktop session, so it fails closed. install jq, then run it again (.claude/hooks/desktop-fence.sh)."}}'
     fi
     exit 0
 fi
@@ -80,56 +104,115 @@ deny() {
 
 docs="docs/agents/local-checks.md, Running the app; .claude/hooks/desktop-fence.sh"
 xdocs="docs/agents/local-checks.md, Private X displays; .claude/hooks/desktop-fence.sh"
-fenced_words='hyprctl|[Hh]yprland|wtype|ydotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|\.X11-unix|\.X[^ /]*-lock'
+fenced_words='hyprctl|[Hh]yprland|hyprpm|hyprshot|hyprpicker|omarchy-|uwsm|loginctl|notify-send|wl-copy|wtype|ydotool|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|HYPRTWEAKER_UI_HOST_DISPLAY|\.X11-unix|\.X[^ /]*-lock'
 re_x_dir='(^|/)\.X11-unix(/|$)'
-re_x_lock='(^|/)\.X[^/]*-lock$'
+re_x_lock='^(/tmp/)?\.X[^/]*-lock$'
 re_x_glob='(^|/)\.X[0-9]*[*?[]'
-re_gtk='Gtk|Adw|Gdk|gi\.repository'
+re_x_above='^/+(tmp/*)?$' # `/` or `/tmp`: removing it removes the X files with it
+# Python code that loads GTK, runs a command, or removes or links a file.
+re_gtk='gi\.repository|gi\.require_version|(^|[^[:alnum:]_.])(import|from)[[:space:]]+gi([^[:alnum:]_]|$)'
+re_py_run='subprocess|Popen|os\.system|os\.popen|os\.exec|os\.spawn|pty\.spawn|create_subprocess'
+re_py_word='(^|[^[:alnum:]_.-])(hyprctl|Hyprland|hyprland|start-hyprland|wtype|ydotool|ydotoold|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit)([^[:alnum:]_./-]|$)'
+re_py_unlink='unlink|remove|rename|replace|rmtree|rmdir|symlink|link'
+re_py_xfile='\.X11-unix|\.X[0-9]+-lock'
+# A word that holds pids found by name: the splitter writes `$(<first command>)`
+# for a command substitution.
+re_pid_sub='\$\((pgrep|pidof|ps|lsof|fuser)\)'
+re_pid_finder=' (pgrep|pidof|ps|lsof|fuser) '
 sig_shape="hyprctl --instance <signature printed by tools/sandbox.py>"
 display_shape="WAYLAND_DISPLAY=<display printed by tools/sandbox.py> wtype …"
+kill_shape="Kill a PID you started and recorded: \`kill <pid>\`, or \`kill \$!\` after a background start"
+
+# The options of each wrapper that take their value as the next word. A word
+# misread here becomes the judged command, so each list follows the tool's --help.
+# `sudo -h` stays out: it is `--help` alone and `--host=…` attached.
+declare -A wrapper_values=(
+    [timeout]=" -s -k --signal --kill-after "
+    [sudo]=" -u -g -p -C -D -R -T -U -r -t --user --group --prompt --close-from --chdir --chroot --command-timeout --other-user --role --type --host "
+    [doas]=" -u -C "
+    [xargs]=" -a -d -E -I -L -n -P -s --arg-file --delimiter --max-lines --max-args --max-procs --max-chars --process-slot-var "
+    [stdbuf]=" -i -o -e --input --output --error "
+    [watch]=" -n -q -s --interval --equexit --shotsdir "
+    [nice]=" -n --adjustment "
+    [ionice]=" -c -n -p -P -u --class --classdata --pid --pgid --uid "
+    [chrt]=" -T -P -D --sched-runtime --sched-period --sched-deadline "
+    [flock]=" -w -E --timeout --wait --conflict-exit-code "
+    [strace]=" -a -b -e -E -I -o -O -p -P -s -S -u -U -X --output --trace --signal --status --attach --user --env "
+    [systemd-run]=" -p -u -E -M -H -C --property --unit --setenv --machine --host --capsule --description --slice --uid --gid --nice --working-directory --service-type "
+    [dbus-run-session]=" --config-file --dbus-daemon "
+    [exec]=" -a "
+)
+# Wrappers whose first operand is not the command: flock's lock file, taskset's mask.
+declare -A wrapper_positionals=([flock]=1 [taskset]=1)
 
 # --- Splitting the command ----------------------------------------------------
 
-# Prints one line per simple command, its words separated by \037, each word
-# prefixed `L` when literal or `X` when the shell expands it at run time
-# (`$…`, a backtick, an unquoted glob). Quotes are removed; a heredoc's body,
-# a comment and a redirection's target are dropped; `$(…)`, `<(…)` and
-# backticks are simple commands of their own.
+# Reads the command on stdin and prints one line per simple command, its words
+# separated by \037, each word prefixed `L` when literal or `X` when the shell
+# expands it at run time (`$…`, a backtick, an unquoted glob). Quotes are
+# removed; a comment and a redirection's target are dropped; a newline inside a
+# word becomes \036. `$(…)`, `<(…)` and backticks are simple commands of their
+# own, printed before the one holding them, which keeps the word as
+# `$(<first command name>)`. A line may open with `P` (it reads a pipe from the
+# line before) and `D` (it runs inside a substitution), and close with an
+# `H<text>` word per heredoc or here-string it reads (lines joined by \036).
 read -r -d '' split_awk << 'AWK'
 function flush() {
     if (inword) {
-        if (skipword) skipword = 0
-        else { gsub(/\n/, " ", word); seg = seg (seg == "" ? "" : US) flag word }
+        gsub(/\n/, NL, word)
+        if (skipword == 1) skipword = 0
+        else if (skipword == 2) { skipword = 0; body[curid] = body[curid] US "H" word }
+        else seg = seg (seg == "" ? "" : US) flag word
     }
     word = ""; inword = 0; flag = "L"
 }
-function endseg() { flush(); if (seg != "") print seg; seg = "" }
+function endseg(   k, w1) {
+    flush()
+    if (seg != "") {
+        nout++; order[nout] = curid; out[curid] = seg; dep[curid] = depth
+        if (depth > 0 && sfirst[depth] == "") {
+            k = index(seg US, US); w1 = substr(seg, 2, k - 2); sub(/.*\//, "", w1)
+            sfirst[depth] = w1
+        }
+        curid = ++nid
+    }
+    seg = ""
+}
 function push(kind) {
     depth++
     skind[depth] = kind; sq[depth] = q; sword[depth] = word; sseg[depth] = seg
+    scur[depth] = curid; sskip[depth] = skipword; sfirst[depth] = ""
+    curid = ++nid; skipword = 0
     pc[depth] = 0; seg = ""; word = ""; inword = 0; flag = "L"; q = ""
 }
 function pop() {
     endseg()
-    q = sq[depth]; word = sword[depth]; seg = sseg[depth]; inword = 1; flag = "X"
+    q = sq[depth]; seg = sseg[depth]; curid = scur[depth]; skipword = sskip[depth]
+    word = sword[depth] "$(" sfirst[depth] ")"; inword = 1; flag = "X"
     depth--
 }
-# Skips the bodies of the heredocs opened on the line that ends at s[i].
-function heredocs(   k, j, line, nl) {
+# Reads the bodies of the heredocs opened on the line that ends at s[i].
+function heredocs(   k, j, line, text) {
     for (k = 1; k <= nhd; k++) {
+        text = ""
         while (i < n) {
-            nl = index(substr(s, i + 1), "\n")
-            if (nl == 0) { line = substr(s, i + 1); j = n } else { line = substr(s, i + 1, nl - 1); j = i + nl }
-            i = j
+            j = i + 1
+            while (j <= n && substr(s, j, 1) != "\n") j++
+            line = substr(s, i + 1, j - i - 1)
+            i = (j > n) ? n : j
             if (hdash[k]) sub(/^\t+/, "", line)
             if (line == hdelim[k]) break
+            text = text (text == "" ? "" : NL) line
         }
+        body[hid[k]] = body[hid[k]] US "H" text
     }
     nhd = 0
 }
-BEGIN {
-    s = ENVIRON["FENCE_CMD"]; n = length(s); US = "\037"
+{ s = s (NR > 1 ? "\n" : "") $0 }
+END {
+    n = length(s); US = "\037"; NL = "\036"
     seg = ""; word = ""; inword = 0; flag = "L"; q = ""; depth = 0; nhd = 0; skipword = 0; pc[0] = 0
+    nid = 1; curid = 1; nout = 0
     for (i = 1; i <= n; i++) {
         c = substr(s, i, 1); d = substr(s, i + 1, 1)
         if (q == "'") { if (c == "'") q = ""; else word = word c; continue }
@@ -166,14 +249,21 @@ BEGIN {
                     i++; e = substr(s, i, 1)
                     if (e != "'" && e != "\"" && e != "\\") delim = delim e
                 }
-                nhd++; hdelim[nhd] = delim; hdash[nhd] = dash
+                nhd++; hdelim[nhd] = delim; hdash[nhd] = dash; hid[nhd] = curid
                 continue
             }
+            herestring = (c == "<" && d == "<")
             while (substr(s, i + 1, 1) ~ /[<>&|]/) i++
-            skipword = 1
+            skipword = herestring ? 2 : 1
             continue
         }
-        if (c == ";" || c == "&" || c == "|") { endseg(); continue }
+        if (c == "|") {
+            if (d == "|") { i++; endseg(); continue }
+            if (d == "&") i++
+            endseg(); piped[curid] = 1
+            continue
+        }
+        if (c == ";" || c == "&") { endseg(); continue }
         if (c == "(") { endseg(); pc[depth]++; continue }
         if (c == ")") {
             if (pc[depth] > 0) { pc[depth]--; endseg() }
@@ -187,6 +277,10 @@ BEGIN {
     endseg()
     while (depth > 0) pop()
     endseg()
+    for (k = 1; k <= nout; k++) {
+        id = order[k]
+        print (piped[id] ? "P" US : "") (dep[id] > 0 ? "D" US : "") out[id] body[id]
+    }
 }
 AWK
 
@@ -251,21 +345,76 @@ not_nested_display() {
     echo "no Hyprland instance under \$XDG_RUNTIME_DIR/hypr serves \`$display\`"
 }
 
+# --- Judging a command line ---------------------------------------------------
+
+doubt="the desktop fence fails closed on a call it cannot read that names hyprctl, Hyprland, wtype, ydotool, xdotool, pkill, killall, an X server or an X socket, since that call may reach the owner's desktop session"
+
+# Splits the command line $1 and judges each simple command in it. Called again
+# for a command line handed to a shell (`bash -c`, `eval`, `watch`, …).
+judge_command() {
+    local level=$((level + 1)) segments line piped inner judged_name="" pipeline=" " pipeline_text="" pid_vars=" "
+    local -a words bodies
+    if ((level > 5)); then
+        [[ $1 =~ $fenced_words ]] && deny "This call nests shells more than five deep, and $doubt. Run the inner command directly ($docs)."
+        return 0
+    fi
+    segments=$(LC_ALL=C awk "$split_awk" <<< "$1") || {
+        [[ $1 =~ $fenced_words ]] && deny "awk could not split this command, and $doubt. Report the command on the fence's ticket and run it in a nested instance's shape ($docs)."
+        return 0
+    }
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        IFS=$'\037' read -r -a words <<< "$line"
+        words=("${words[@]//$'\036'/$'\n'}")
+        piped=0 inner=0 bodies=()
+        while ((${#words[@]})); do
+            case "${words[0]}" in
+                P) piped=1 ;;
+                D) inner=1 ;;
+                *) break ;;
+            esac
+            words=("${words[@]:1}")
+        done
+        while ((${#words[@]})) && [ "${words[-1]:0:1}" = H ]; do
+            bodies=("${words[-1]:1}" "${bodies[@]}")
+            unset 'words[-1]'
+        done
+        # A pipeline is followed at the top level only; a substitution's own is not.
+        ((inner)) && piped=0
+        ((piped || inner)) || { pipeline=" " pipeline_text=""; }
+        judge "${words[@]}" || deny "\`env -S\` hides the command it runs, and $doubt. Run the command without \`env -S\` ($docs)."
+        if ((!inner)); then
+            pipeline+="$judged_name "
+            pipeline_text+=" $(printf '%s ' "${words[@]#?}")"
+        fi
+    done <<< "$segments"
+}
+
+# The words $2… (flag + text) joined as one command line, for a shell to run.
+joined() {
+    local -a rest=("${@#?}")
+    printf '%s' "${rest[*]}"
+}
+
 # --- Judging a simple command -------------------------------------------------
 
 judge() {
     local -a w=("$@")
-    local n=${#w[@]} i=0 text wrapped=0 his="" display=""
+    local n=${#w[@]} i=0 text wrapped=0 wrapper="" positional=0 his="" display="" xdisplay=""
+    judged_name=""
     # Prefix: keywords, assignments, `env` and its flags, wrappers and theirs.
     while ((i < n)); do
         text=${w[i]:1}
         case "$text" in
-            '!' | '{' | '}' | if | then | else | elif | fi | do | done | while | until | time | exec | builtin \
-                | nohup | setsid | sudo | doas | nice | timeout | stdbuf | xargs | watch | --)
+            '!' | '{' | '}' | if | then | else | elif | fi | do | done | while | until | time | builtin | --)
                 wrapped=1
                 ;;
+            exec | nohup | setsid | sudo | doas | nice | timeout | stdbuf | xargs | watch | ionice | chrt \
+                | taskset | flock | strace | systemd-run | dbus-run-session | coproc)
+                wrapped=1 wrapper=$text positional=${wrapper_positionals[$text]:-0}
+                ;;
             command)
-                [[ ${w[i + 1]:1} == -[vV] ]] && return # a lookup, not a run
+                [[ ${w[i + 1]:-L} == ?-[vV] ]] && return # a lookup, not a run
                 wrapped=1
                 ;;
             env)
@@ -284,11 +433,24 @@ judge() {
                 ;;
             HYPRLAND_INSTANCE_SIGNATURE=*) his=${w[i]:0:1}${text#*=} ;;
             WAYLAND_DISPLAY=*) display=${w[i]:0:1}${text#*=} ;;
+            DISPLAY=*) xdisplay=${w[i]:0:1}${text#*=} ;;
             *)
                 if [[ $text =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+                    judge_assignment "${w[i]}"
+                elif ((wrapped)) && [[ $text == -* ]]; then
+                    if [ "$wrapper" = flock ] && [[ $text == -c || $text == --command ]]; then
+                        text=${w[i + 1]:-L}
+                        judge_command "${text:1}"
+                        return 0
+                    fi
+                    [ -n "$wrapper" ] && [[ ${wrapper_values[$wrapper]:-} == *" $text "* ]] && i=$((i + 1))
+                elif ((positional > 0)); then
+                    positional=$((positional - 1))
+                elif ((wrapped)) && [[ $text =~ ^[0-9.]+[smhd]?$ ]]; then
                     :
-                elif ((wrapped)) && [[ $text == -* || $text =~ ^[0-9.]+[smhd]?$ ]]; then
-                    :
+                elif [ "$wrapper" = watch ]; then # watch hands its words to `sh -c`
+                    judge_command "$(joined "${w[@]:i}")"
+                    return 0
                 else
                     break
                 fi
@@ -300,61 +462,231 @@ judge() {
     [ "${w[i]:0:1}" = L ] || return 0 # a command held in a variable: a stated limit
     local name=${w[i]:1}
     name=${name##*/}
+    judged_name=$name
+    local sub
+    local -a rest=("${w[@]:i+1}")
     case "$name" in
-        hyprctl) judge_hyprctl "$his" "${w[@]:i+1}" ;;
-        wtype) judge_wtype "$display" ;;
-        Hyprland | hyprland | start-hyprland)
+        hyprctl) judge_hyprctl "$his" "${rest[@]}" ;;
+        wtype | wl-copy | grim | hyprpicker) judge_wayland_client "$name" "$display" ;;
+        hyprshot)
+            deny "\`hyprshot\` asks the session's compositor (through hyprctl) what to shoot, so it captures the owner's desktop. Screenshot a nested instance: \`.venv/bin/python tools/sandbox.py --shot <png>\`, or \`WAYLAND_DISPLAY=<display printed by tools/sandbox.py> grim <png>\` ($docs)."
+            ;;
+        notify-send)
+            deny "\`notify-send\` pops a notification on the owner's desktop session. Print what you need the owner to see to your own output, or put it in the effort PR's ready comment ($docs)."
+            ;;
+        omarchy-version*) ;;
+        omarchy-*)
+            deny "\`$name\` restarts or changes the owner's desktop session (Omarchy runs it there); it has no nested form. Probe behaviour in a nested instance from \`tools/sandbox.py\`, and leave a change to the owner's session to the owner ($docs)."
+            ;;
+        hyprpm)
+            [[ $(first_operand " " "${rest[@]}") =~ ^(list|)$ ]] \
+                || deny "\`hyprpm\` builds or loads plugins into the session's compositor on the owner's desktop. \`hyprpm list\` reads; leave plugin changes to the owner ($docs)."
+            ;;
+        uwsm)
+            [[ $(first_operand " " "${rest[@]}") =~ ^(check|)$ ]] \
+                || deny "\`uwsm\` starts, stops or launches into the owner's desktop session. Run the app in a nested instance with \`.venv/bin/python tools/sandbox.py\` ($docs)."
+            ;;
+        loginctl)
+            sub=$(first_operand " -p -P -H -M -n -o -s --property --host --machine --lines --output --signal --kill-whom " "${rest[@]}")
+            [[ $sub =~ ^(list-.*|show-.*|.*-status|)$ ]] \
+                || deny "\`loginctl $sub\` acts on the owner's login session (ending, locking or signalling the desktop). Reads pass: \`loginctl list-sessions\`, \`loginctl show-session <id>\` ($docs)."
+            ;;
+        systemctl)
+            sub=$(first_operand " -p -P -t -H -M -n -o -s --property --type --state --host --machine --lines --output --signal --kill-whom --kill-value --what --root --image --job-mode --preset-mode --timestamp --message --when " "${rest[@]}")
+            [[ $sub =~ ^(status|show|cat|help|list-.*|is-.*|show-environment|get-default|)$ ]] \
+                || deny "\`systemctl $sub\` changes a manager the owner's desktop session runs under (its units, its environment, the machine's power state). Reads pass: \`systemctl --user status|show|list-units\`, \`systemctl --user show-environment\` ($docs)."
+            ;;
+        xdotool) judge_xdotool "$xdisplay" ;;
+        Hyprland | hyprland | start-hyprland | cage | sway)
             deny "\`$name\` from an agent's shell starts a compositor on the owner's desktop session (its seat, display and user manager). Start a nested one with \`.venv/bin/python tools/sandbox.py\` or the Harness tier's NestedHyprland; for the version, \`pacman -Q hyprland\` ($docs)."
             ;;
         ydotool | ydotoold)
             deny "\`$name\` writes to the kernel's uinput, so its keys and clicks land on the owner's desktop session; it has no nested form. Type into a nested instance with \`$display_shape\`, or drive the widget in a widget probe ($docs)."
             ;;
-        pkill | killall)
-            deny "\`$name\` matches processes by name across the whole session, so it can kill the owner's desktop compositor, terminal or apps, not only your own. Kill a PID you started and recorded: \`kill <pid>\`, or \`kill \$!\` after a background start ($docs)."
+        pkill | killall | killall5 | skill)
+            deny "\`$name\` matches processes by name across the whole session, so it can kill the owner's desktop compositor, terminal or apps, not only your own. $kill_shape ($docs)."
             ;;
-        Xvfb | Xorg | Xwayland | xvfb-run)
+        kill) judge_kill "${rest[@]}" ;;
+        fuser)
+            local arg
+            for arg in "${rest[@]}"; do
+                [[ ${arg:1} == --kill || ${arg:1} =~ ^-[A-Za-z]*k ]] || continue
+                deny "\`fuser -k\` kills every process that holds the file or port, the owner's desktop compositor, Xwayland or terminal among them. $kill_shape ($docs)."
+            done
+            ;;
+        Xvfb | Xorg | X | Xwayland | Xephyr | Xnest | Xvnc | xvfb-run | startx | xinit)
             deny "\`$name\` from an agent's shell starts an X server, which unlinks the socket of the display number it binds (/tmp/.X11-unix/X<n>) without asking who listens there, so it can replace the desktop's own :0 (it did on 2026-10-01); \`xvfb-run\` also leaves GDK_BACKEND and WAYLAND_DISPLAY alone, so GTK maps on the desktop. Run \`.venv/bin/pytest tests/ui\` or \`.venv/bin/python tools/widget_probe.py <probe.py>\`, which start their own Xvfb on a private display; a script that needs an X server calls \`start_xvfb\` in tests/ui/private_display.py ($xdocs)."
             ;;
-        python | python[0-9]*) judge_python "${w[@]:i+1}" ;;
-        rm | unlink | rmdir | mv | ln | shred | find) judge_x_files "$name" "${w[@]:i+1}" ;;
+        export | declare | typeset | readonly | local)
+            local arg
+            for arg in "${rest[@]}"; do
+                [[ ${arg:1} == *=* ]] && judge_assignment "$arg"
+            done
+            ;;
+        for) # `for p in $(pgrep …)`: p holds pids found by name
+            [ ${#rest[@]} -gt 2 ] && names_pids "${rest[@]:2}" && pid_vars+="${rest[0]:1} "
+            ;;
+        read) # `pgrep … | while read p`: p holds pids found by name
+            if ((piped)) && [[ $pipeline =~ $re_pid_finder ]]; then
+                local arg
+                for arg in "${rest[@]}"; do
+                    [[ ${arg:1} == -* ]] || pid_vars+="${arg:1} "
+                done
+            fi
+            ;;
+        bash | sh | dash | zsh | ksh | mksh | ash | fish) judge_shell "${rest[@]}" ;;
+        eval) judge_command "$(joined "${rest[@]}")" ;;
+        python | python[0-9]*) judge_python "${rest[@]}" ;;
+        rm | unlink | rmdir | mv | ln | shred | find) judge_x_files "$name" "${rest[@]}" ;;
     esac
     return 0
 }
 
-# A GTK start outside the probe route: `-c` code naming GTK, or the app run directly.
-judge_python() {
+# An assignment word (flag + text): the owner's host-display opt-in, or a
+# variable filled with pids found by name.
+judge_assignment() {
+    local text=${1:1}
+    local var=${text%%=*} value=${text#*=}
+    if [ "$var" = HYPRTWEAKER_UI_HOST_DISPLAY ] && [ -n "$value" ]; then
+        deny "\`HYPRTWEAKER_UI_HOST_DISPLAY\` is the owner's opt-in: it maps the UI tier's windows on the owner's desktop session, where Hyprland may raise its \"Application Not Responding\" dialog over their work. Run \`.venv/bin/pytest tests/ui\` as it is, on its private Xvfb; to see a widget, \`.venv/bin/python tools/widget_probe.py <probe.py>\` and its \`shoot\`, or \`tools/sandbox.py --shot\` ($docs)."
+    fi
+    names_pids "$1" && pid_vars+="$var "
+    return 0
+}
+
+# Whether any of the words $@ (flag + text) holds pids found by name: a
+# `$(pgrep …)`-like substitution, or a variable already filled from one.
+names_pids() {
+    local arg rest re='\$\{?([A-Za-z_][A-Za-z0-9_]*)'
+    for arg in "$@"; do
+        [ "${arg:0:1}" = X ] || continue
+        rest=${arg:1}
+        [[ $rest =~ $re_pid_sub ]] && return 0
+        while [[ $rest =~ $re ]]; do
+            [[ $pid_vars == *" ${BASH_REMATCH[1]} "* ]] && return 0
+            rest=${rest#*"${BASH_REMATCH[0]}"}
+        done
+    done
+    return 1
+}
+
+# `kill`: refused for pids found by name and for a process group.
+judge_kill() {
     local -a args=("$@")
-    local j=0 m=${#args[@]} text code="" module="" script=""
+    local j=0 m=$# text why="" opts=1
+    while ((j < m)); do
+        text=${args[j]:1}
+        if ((opts)); then
+            opts=0
+            case "$text" in
+                --) ;;
+                -s | -n | --signal)
+                    j=$((j + 1))
+                    [ "${args[j]:-L}" = L0 ] && return 0 # signal 0 only asks whether it lives
+                    ;;
+                -l | -L | --list | --table | -0) return 0 ;;
+                -*) ;; # the signal
+                *) continue ;;
+            esac
+            j=$((j + 1))
+            continue
+        fi
+        if [ "${args[j]:0:1}" = L ]; then
+            [[ $text == 0 || $text =~ ^-[0-9]+$ ]] \
+                && why="\`$text\` signals a whole process group (\`-1\` every process you may signal), the owner's desktop session among them"
+        elif names_pids "${args[j]}"; then
+            why="on pids found by name (\`$text\`) kills every match across the whole session, not only your own"
+        fi
+        [ -n "$why" ] && break
+        j=$((j + 1))
+    done
+    if [ -z "$why" ] && ((piped)) && [[ $pipeline =~ $re_pid_finder ]]; then
+        why="on pids piped from \`${BASH_REMATCH[1]}\` kills every match across the whole session, not only your own"
+    fi
+    [ -n "$why" ] && deny "\`kill\` $why, so it can kill the owner's desktop compositor, terminal or apps. $kill_shape ($docs)."
+    return 0
+}
+
+# A shell that runs a command line: `-c '…'` or a heredoc on stdin is judged in turn.
+judge_shell() {
+    local -a args=("$@")
+    local j=0 m=$# text has_c=0 body
     while ((j < m)); do
         text=${args[j]:1}
         case "$text" in
-            -W | -X) j=$((j + 1)) ;; # options that take their value as the next word
-            --)
-                script=${args[j + 1]:1}
-                break
-                ;;
-            -*c)
-                code=${args[j + 1]:1}
-                break
-                ;;
-            -*m)
-                module=${args[j + 1]:1}
-                break
-                ;;
-            -*) ;;
-            *)
-                script=$text
-                break
-                ;;
+            --) j=$((j + 1)); break ;;
+            -o | +o | -O | +O | --rcfile | --init-file) j=$((j + 1)) ;;
+            --*) ;;
+            -*c*) has_c=1 ;;
+            [-+]*) ;;
+            *) break ;;
         esac
         j=$((j + 1))
     done
-    # Code read from stdin (`python - <<EOF`) is skipped by the splitter: judge the whole command.
+    if ((has_c)); then
+        ((j < m)) && judge_command "${args[j]:1}"
+    elif ((j >= m)); then
+        for body in "${bodies[@]}"; do judge_command "$body"; done
+    fi
+    return 0
+}
+
+# Python: a GTK load outside the probe route, a fenced command run through
+# subprocess, an X file removed, or the app run directly.
+judge_python() {
+    local -a args=("$@")
+    local j=0 m=$# text code="" module="" script="" k ch value
+    while ((j < m)); do
+        text=${args[j]:1}
+        case "$text" in
+            --)
+                script=${args[j + 1]:-L}
+                script=${script:1}
+                break
+                ;;
+            -) script=-; break ;;
+            --*) ;;
+            -*) # a cluster of short options: `-Ic`, `-um`, `-mhyprtweaker`
+                for ((k = 1; k < ${#text}; k++)); do
+                    ch=${text:k:1}
+                    case "$ch" in
+                        c | m)
+                            value=${text:k+1}
+                            if [ -z "$value" ]; then
+                                j=$((j + 1))
+                                value=${args[j]:-L}
+                                value=${value:1}
+                            fi
+                            if [ "$ch" = c ]; then code=$value; else module=$value; fi
+                            break 2
+                            ;;
+                        W | X)
+                            [ -z "${text:k+1}" ] && j=$((j + 1))
+                            break
+                            ;;
+                    esac
+                done
+                ;;
+            *) script=$text; break ;;
+        esac
+        j=$((j + 1))
+    done
+    # Code on stdin: a heredoc or here-string of this command's own, or a pipe into it.
     if [ -z "$code$module" ] && { [ -z "$script" ] || [ "$script" = - ]; }; then
-        code=$cmd
+        if ((${#bodies[@]})); then
+            code=$(printf '%s\n' "${bodies[@]}")
+        elif ((piped)); then
+            code=$pipeline_text
+        fi
     fi
     if [[ $code =~ $re_gtk ]]; then
-        deny "\`python -c\` code that names Gtk, Adw, Gdk or gi.repository starts GTK on the session's own GDK_BACKEND and WAYLAND_DISPLAY, so its window maps on the owner's desktop. Run it as a widget probe, whose first line is \`import widget_probe\`: \`.venv/bin/python tools/widget_probe.py <probe.py>\` ($docs)."
+        deny "\`python -c\` or stdin code that loads GTK (\`${BASH_REMATCH[0]}\`) starts GTK on the session's own GDK_BACKEND and WAYLAND_DISPLAY, so its window maps on the owner's desktop. Run it as a widget probe, whose first line is \`import widget_probe\`: \`.venv/bin/python tools/widget_probe.py <probe.py>\` ($docs)."
+    fi
+    if [[ $code =~ $re_py_run ]] && [[ $code =~ $re_py_word ]]; then
+        deny "This python code runs \`${BASH_REMATCH[2]}\` through \`subprocess\` or \`os.system\`, which the shell fence refuses for reaching the owner's desktop session. Run it from the shell in the shape the fence lets through (\`$sig_shape …\`, the sandbox, pytest), so the fence can judge it ($docs)."
+    fi
+    if [[ $code =~ $re_py_unlink ]] && [[ $code =~ $re_py_xfile ]]; then
+        deny "This python code removes, moves or links \`${BASH_REMATCH[0]}\`, the desktop's X sockets or locks: the owner's Xwayland listens on /tmp/.X11-unix/X0. Reading them is the whole of an agent's business there ($xdocs)."
     fi
     local app=""
     if [[ $module == hyprtweaker || $module == hyprtweaker.* ]]; then
@@ -370,22 +702,39 @@ judge_python() {
 # Removing, moving or linking the session's X sockets and locks. The words after the
 # command name are matched as paths wherever they stand, so a flag or a target counts.
 judge_x_files() {
-    local name=$1 arg text hit=""
+    local name=$1 arg text hit="" path pre alt
+    local -a paths alts
     shift
     for arg in "$@"; do
         text=${arg:1}
-        if [[ $text =~ $re_x_dir || $text =~ $re_x_lock || $text =~ $re_x_glob ]]; then
-            hit=$text
-            break
+        paths=("$text")
+        if [[ $text =~ ^([^{]*)\{([^}]*)\}(.*)$ ]]; then # one level of brace expansion
+            pre=${BASH_REMATCH[1]}
+            IFS=, read -r -a alts <<< "${BASH_REMATCH[2]}"
+            for alt in "${alts[@]}"; do paths+=("$pre$alt${BASH_REMATCH[3]}"); done
         fi
+        for path in "${paths[@]}"; do
+            if [[ $path =~ $re_x_dir || $path =~ $re_x_lock || $path =~ $re_x_glob || $path =~ $re_x_above ]]; then
+                hit=$path
+                break 2
+            fi
+        done
     done
     [ -n "$hit" ] || return 0
-    if [ "$name" = find ]; then # a find that only lists is a read
-        local deletes=0
+    if [ "$name" = find ]; then # a find that only lists or reads is a read
+        local writes=0 exec=0
         for arg in "$@"; do
-            case "${arg:1}" in -delete | -exec | -execdir | -ok | -okdir) deletes=1 ;; esac
+            text=${arg:1}
+            if ((exec)); then
+                exec=0
+                [[ ${text##*/} =~ ^(rm|unlink|rmdir|mv|ln|shred)$ ]] && writes=1
+            fi
+            case "$text" in
+                -delete) writes=1 ;;
+                -exec | -execdir | -ok | -okdir) exec=1 ;;
+            esac
         done
-        ((deletes)) || return 0
+        ((writes)) || return 0
     fi
     deny "\`$name\` on \`$hit\` removes, moves or links the desktop's X sockets or locks: the owner's Xwayland listens on /tmp/.X11-unix/X0, and a change there cuts off every X11 app the owner starts next (2026-10-02). Reading them (\`ls /tmp/.X11-unix\`, \`ss -xlp\`) is the whole of an agent's business there; an agent's own X server takes a private display through \`start_xvfb\` ($xdocs)."
 }
@@ -423,22 +772,55 @@ judge_hyprctl() {
     done
 }
 
-judge_wtype() {
+# A Wayland client that types, copies, captures or picks on WAYLAND_DISPLAY: $1 the
+# command, $2 the WAYLAND_DISPLAY word of its prefix.
+judge_wayland_client() {
     local why
-    if [ -z "$1" ]; then
+    if [ -z "$2" ]; then
         why="it follows WAYLAND_DISPLAY, which is the session's (\`${WAYLAND_DISPLAY:-unset}\`)"
     else
-        why=$(not_nested_display "$1")
+        why=$(not_nested_display "$2")
         [ -z "$why" ] && return 0
     fi
-    deny "\`wtype\` would type into the owner's desktop session: $why. Name a nested display: \`$display_shape\` ($docs)."
+    deny "\`$1\` would act on the owner's desktop session: $why. Name a nested display: \`WAYLAND_DISPLAY=<display printed by tools/sandbox.py> $1 …\` ($docs)."
 }
 
-doubt="the desktop fence fails closed on a call it cannot read that names hyprctl, Hyprland, wtype, ydotool, pkill, killall, an X server or an X socket, since that call may reach the owner's desktop session"
-segments=$(FENCE_CMD="$cmd" awk "$split_awk") \
-    || deny "awk could not split this command, and $doubt. Report the command on the fence's ticket and run it in a nested instance's shape ($docs)."
-while IFS= read -r line; do
-    IFS=$'\037' read -r -a words <<< "$line"
-    judge "${words[@]}" || deny "\`env -S\` hides the command it runs, and $doubt. Run the command without \`env -S\` ($docs)."
-done <<< "$segments"
+# The first operand among the words $2… (flag + text): the subcommand. $1 lists the
+# options that take the next word as their value, space-delimited.
+first_operand() {
+    local values=$1 text
+    shift
+    while (($#)); do
+        text=${1:1}
+        shift
+        if [[ $values == *" $text "* ]]; then
+            (($#)) && shift
+        elif [[ $text != -* ]]; then
+            printf '%s' "$text"
+            return
+        fi
+    done
+}
+
+# `xdotool` types into DISPLAY: only a private display (200-999) written out passes.
+judge_xdotool() {
+    local flag=${1:0:1} d=${1:1} why number session
+    session=${DISPLAY:-}
+    session=${session##*:}
+    session=${session%%.*}
+    if [ -z "$1" ]; then
+        why="it follows DISPLAY, which is the session's (\`${DISPLAY:-unset}\`, the desktop's Xwayland)"
+    elif [ "$flag" = X ]; then
+        why="\`$d\` is expanded only when the command runs, so the hook cannot tell which display it names"
+    elif [[ $d =~ ^:([0-9]+)(\.[0-9]+)?$ ]] && number=$((10#${BASH_REMATCH[1]})) && ((number >= 200 && number <= 999)); then
+        [ "$number" != "$session" ] && return 0
+        why="\`$d\` is the session's own DISPLAY"
+    else
+        why="\`$d\` is not a private display (:200 to :999)"
+    fi
+    deny "\`xdotool\` would type or click into the owner's desktop session: $why. Name a private display written out, \`DISPLAY=:<200-999> xdotool …\`, served by an Xvfb that \`start_xvfb\` started ($xdocs)."
+}
+
+level=0
+judge_command "$cmd"
 exit 0

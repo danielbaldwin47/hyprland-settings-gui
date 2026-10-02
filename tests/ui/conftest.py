@@ -25,8 +25,9 @@ desktop session it was started from: its windows would map there, and Hyprland
 would show its "Application Not Responding" dialog over the developer's work
 (#146). ``private_display.py`` starts it and pins GTK to it, for this tier and for
 the widget probe route (``tools/widget_probe.py``) alike.
-``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose, for example
-to watch it. The display opens in ``pytest_configure``, before collection: importing
+``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose. It is the
+owner's switch, for watching the tier, and CI's; the desktop fence refuses it from an
+agent's shell. The display opens in ``pytest_configure``, before collection: importing
 ``Gtk`` initialises GTK, and some ``tests/unit`` modules import UI pages at collection
 time.
 """
@@ -111,7 +112,7 @@ def ui_unavailable() -> str | None:
 
     xvfb = shutil.which("Xvfb")
     if xvfb is None:
-        return f"Xvfb is not installed; set {HOST_DISPLAY_OPT_IN}=1 to use the host display"
+        return "Xvfb is not installed (pacman -S xorg-server-xvfb)"
     display = start_xvfb(xvfb)
     if display is None:
         return "Xvfb did not open a display within 10 s"
