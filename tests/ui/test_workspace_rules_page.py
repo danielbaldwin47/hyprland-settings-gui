@@ -385,7 +385,9 @@ def test_a_rules_fields_open_as_rows_of_their_own_type(tmp_path: Path) -> None:
 
     fields = open_editor(window, "3").fields
 
-    assert fields.row("monitor").get_text() == "DP-1"
+    assert fields.text_entry("monitor").get_text() == "DP-1"
+    assert fields.row("monitor").get_subtitle() == "An output name such as DP-1, or desc:…"
+    assert fields.option_entry.get_title() == "Add a layout option"
     assert fields.row("default").get_active() is True
     assert fields.row("border_size").get_value() == 4
     assert choice(fields.row("layout")) == "master"
@@ -425,7 +427,7 @@ def test_editing_one_field_leaves_every_other_value_as_the_same_object(tmp_path:
     session, window = build_window(tmp_path, live=True, rules=(held,))
 
     dialog = open_editor(window, "3")
-    dialog.fields.row("monitor").set_text("HDMI-A-1")
+    dialog.fields.text_entry("monitor").set_text("HDMI-A-1")
     dialog.save()
 
     fields = stored(session, "3").fields
@@ -528,7 +530,7 @@ def test_a_held_layout_the_list_lacks_joins_it_and_is_not_changed(tmp_path: Path
         "monocle",
         "lua:columns",
     ]
-    dialog.fields.row("monitor").set_text("DP-2")
+    dialog.fields.text_entry("monitor").set_text("DP-2")
     dialog.save()
     assert stored(session, "3").fields["layout"] == "lua:columns"
 
@@ -591,7 +593,7 @@ def test_an_unknown_table_value_is_shown_read_only_and_kept(tmp_path: Path) -> N
     dialog = open_editor(window, "3")
 
     assert not dialog.fields.row("exotic").get_editable()
-    dialog.fields.row("monitor").set_text("DP-2")
+    dialog.fields.text_entry("monitor").set_text("DP-2")
     dialog.save()
 
     assert stored(session, "3").fields["exotic"] is table
@@ -754,7 +756,7 @@ def test_an_imported_selector_hyprland_may_not_read_never_blocks_save(tmp_path: 
 
     assert modes(dialog) == (True, True)
     assert dialog.notice_label.get_label() == "Hyprland may not read this selector."
-    dialog.fields.row("monitor").set_text("DP-2")
+    dialog.fields.text_entry("monitor").set_text("DP-2")
     dialog.save()
 
     assert [(r.workspace, dict(r.fields)) for r in session.workspace_rules] == [
