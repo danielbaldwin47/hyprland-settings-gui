@@ -30,6 +30,27 @@ env:
   SKIP_CEILING: '13'
 
 jobs:
+  harness-probe:
+    name: harness probe (#89 spike)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Facts
+        run: |
+          set +e
+          cat /etc/os-release | head -4; uname -r; nproc; free -g | head -2
+          echo "--- /dev/dri"; ls -la /dev/dri /sys/class/drm 2>&1
+          echo "--- vkms/vgem module files"; find /lib/modules/$(uname -r) -name 'vkms*' -o -name 'vgem*' 2>&1 | head
+          echo "--- kernel config"; grep -E 'CONFIG_DRM(_VKMS|_VGEM|_VIRTIO_GPU)?=' /boot/config-$(uname -r) 2>&1
+          grep -E 'CONFIG_DRM_(VKMS|VGEM|VIRTIO_GPU|SIMPLEDRM)' /boot/config-$(uname -r) 2>&1
+          echo "--- modprobe"; sudo modprobe vkms; echo "vkms rc=$?"; sudo modprobe vgem; echo "vgem rc=$?"
+          ls -la /dev/dri /sys/class/drm 2>&1
+          echo "--- apt"; apt-cache policy hyprland bubblewrap grim libseat1 2>&1 | head -30
+          echo "--- userns"; sysctl kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone 2>&1
+          echo "--- docker"; docker --version; sudo docker info 2>&1 | grep -iE 'runtimes|Server Version' 
+          echo "--- nix"; command -v nix; echo "--- groups"; id
+
   lint:
     name: ruff + mypy (engine)
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
