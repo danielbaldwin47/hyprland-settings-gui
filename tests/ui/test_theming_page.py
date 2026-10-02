@@ -618,6 +618,29 @@ def test_other_tools_offer_set_up_or_say_why_they_cannot(
     assert ("Other tools", "noctalia", "Waiting for noctalia's first run") in page.rows
 
 
+def test_remove_names_every_file_it_puts_back_or_deletes_and_cancel_keeps_them(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """Addendum 38 of the #153 review: Set up listed every file, Remove listed none."""
+    stub_tool("matugen")
+    put(tmp_path / "matugen/config.toml", "[config]\n")
+    session, _ = make_session(tmp_path)
+    page = build_page(session)
+    ask(page, "Switch to matugen")
+    answer(page.dialog, "agree")
+    files = tree(tmp_path / "matugen")
+
+    click(page, "Remove…")
+    body = page.dialog.get_body()
+
+    assert body.endswith(
+        f"Put back: {tmp_path}/matugen/config.toml\n"
+        f"Deleted: {tmp_path}/matugen/templates/hyprtweaker-hyprland.lua"
+    )
+    answer(page.dialog, "cancel")
+    assert tree(tmp_path / "matugen") == files
+
+
 def test_noctalia_4_is_named_with_what_to_do(tmp_path: Path) -> None:
     """Finding 20 of the #153 review: noctalia 4 has no binary, so it was never shown."""
     put(tmp_path / "hypr/noctalia/noctalia-colors.conf", "")

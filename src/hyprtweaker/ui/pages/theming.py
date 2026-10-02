@@ -65,6 +65,7 @@ from hyprtweaker.engine.bridge.wire import (  # noqa: E402
     detect,
     plan_wire,
     unwire,
+    unwire_preview,
     wire,
 )
 from hyprtweaker.engine.tools import (  # noqa: E402
@@ -768,6 +769,13 @@ class ThemingPage:
         )
         if isinstance(self._state.source, Wallpaper) and self._state.source.tool == tool:
             body += " Your own color settings apply again until you choose another source."
+        # Every file Remove writes, as Set up listed every file it wrote (addendum 38).
+        preview = unwire_preview(tool, paths=self._session.paths)
+        listed = [f"Put back: {each.shown}" for each in preview.put_back] + [
+            f"Deleted: {each.shown}" for each in preview.deleted
+        ]
+        if listed:
+            body += "\n\n" + "\n".join(listed)
         self._confirm(
             ConsentDialog(
                 heading=f"Remove {spec.title}?",

@@ -667,6 +667,32 @@ def unwire(
     return Unwired(tool, restored=tuple(restored), removed=tuple(removed))
 
 
+@dataclass(frozen=True, slots=True)
+class UnwirePreview:
+    """What Remove would do to the tool's own files, for its confirm. Read only."""
+
+    put_back: tuple[FileRef, ...] = ()
+    """Files setup changed, which go back to the copy kept then."""
+    deleted: tuple[FileRef, ...] = ()
+    """Files setup created, which go."""
+
+
+def unwire_preview(tool: str, *, paths: ConfigPaths) -> UnwirePreview:
+    """The files `unwire` would put back or delete, from the same record it acts on.
+
+    Writes nothing. A file changed since setup is left out: `unwire` asks about it
+    (`NeedsChoice`) before touching it, and so does the confirm after this one.
+    """
+    record = _Record.active(paths.bridge_backups_dir, tool)
+    if record is None:
+        return UnwirePreview()
+    wired = [each for each in record.files if record.status(each) is _Status.WIRED]
+    return UnwirePreview(
+        put_back=tuple(_ref(each.path, paths) for each in wired if each.copy is not None),
+        deleted=tuple(_ref(each.path, paths) for each in wired if each.copy is None),
+    )
+
+
 # --- the record -------------------------------------------------------------------------------
 
 
