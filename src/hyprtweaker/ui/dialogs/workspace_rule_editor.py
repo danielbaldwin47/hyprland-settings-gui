@@ -96,10 +96,12 @@ class WorkspaceRuleEditor(Adw.Dialog):
         selector_group.add(self._selector)
         selector_group.add(self._duplicate)
 
-        self._page = Adw.PreferencesPage()
-        self._page.add(selector_group)
+        self._groups = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        self._groups.append(selector_group)
 
         self.set_child(self._body())
+        # The selector is the dialog's one question: the cursor starts there.
+        self.set_focus(self._selector)
 
     def _body(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -110,18 +112,19 @@ class WorkspaceRuleEditor(Adw.Dialog):
         header.pack_end(self._save_button)
         box.append(header)
         box.append(self._error)
-        # Natural height while the dialog holds a selector only; it scrolls once field
-        # groups make it taller than the window.
-        scroller = Gtk.ScrolledWindow(vexpand=True, propagate_natural_height=True)
-        scroller.set_child(self._page)
-        box.append(scroller)
+        # No scroller yet: one around a selector-only body pinned the dialog at its first
+        # height, cutting the duplicate row off when it appeared (widget probe). Field
+        # groups (#160) bring the height that needs a scroller and a `content_height`.
+        clamp = Adw.Clamp(margin_top=12, margin_bottom=18, margin_start=12, margin_end=12)
+        clamp.set_child(self._groups)
+        box.append(clamp)
         return box
 
     # --- extension points (#160) -----------------------------------------------------------
 
     def add_group(self, group: Adw.PreferencesGroup) -> None:
         """Add a group of rows below the selector, in order of the calls."""
-        self._page.add(group)
+        self._groups.append(group)
 
     def collect_fields(self) -> Mapping[str, Any]:
         """The fields a save stores: the rule's own, untouched, while nothing edits them."""
