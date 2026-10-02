@@ -19,11 +19,12 @@ from typing import Any, TypeVar
 import pytest
 from _support import SAMPLE_APP_VERSION, sample_schema
 
-from hyprtweaker.engine.importer.loss import LossReport
+from hyprtweaker.engine.importer.loss import LossCode, LossReport
 from hyprtweaker.engine.importer.lua.sandbox import Consent, lua_binary
 from hyprtweaker.engine.migration import sentinel as sentinels
 from hyprtweaker.engine.migration.detect import ConfigKind
 from hyprtweaker.engine.migration.flow import Decision, MigrationFlow, Step, fresh_start
+from hyprtweaker.engine.model.values import CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
 from hyprtweaker.engine.state import Manifest
@@ -668,3 +669,92 @@ class TestReloadSettling:
         flow.back_up()
 
         assert not run(flow.switch()).ok
+
+
+def _foreign_lua(paths: ConfigPaths, source: str) -> MigrationFlow:
+    paths.entrypoint.write_text(source, encoding="utf-8")
+    flow = flow_for(paths, sample_schema())
+    flow.detect()
+    return flow
+
+
+@pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter on this machine")
+class TestTheSecondOffer:
+    """After a blocked read that found nothing, the commands it would have run (#190).
+
+    Offered only when the blocked run came back empty or erroring *and* it tried to run a
+    command: a config that builds itself from shell output reads as nothing under `BLOCK`,
+    and running those commands for real is the only way to read it at all.
+    """
+
+    def test_a_config_built_from_a_pipe_offers_its_command(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(
+            paths,
+            'local f = io.popen("echo 5")\n'
+            'hl.config({ general = { gaps_in = tonumber(f:read("*a")) } })\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered_commands == ("echo 5",)
+
+    def test_a_blocked_run_that_errors_offers_what_it_ran_before_the_error(
+        self, paths: ConfigPaths
+    ) -> None:
+        flow = _foreign_lua(
+            paths,
+            'os.execute("hyprctl version")\n'
+            'local n = tonumber(io.popen("echo 5"):read("*a"))\n'
+            "hl.config({ general = { gaps_in = n + 1 } })\n"
+            'io.popen("never reached")\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered_commands == ("hyprctl version", "echo 5")
+
+    def test_file_operations_and_repeats_are_not_listed(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(
+            paths, 'os.remove("stale")\nio.popen("echo 5")\nos.execute("echo 5")\n'
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered_commands == ("echo 5",)
+
+    def test_a_config_that_read_something_offers_nothing(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(
+            paths,
+            'io.popen("echo 5")\nhl.config({ general = { gaps_in = 7 } })\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert len(preview.model) == 1
+        assert preview.offered_commands == ()
+
+    def test_an_error_with_no_command_offers_nothing(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(paths, 'error("broken")\n')
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert LossCode.EVAL_ERROR in preview.loss.code_counts()
+        assert preview.offered_commands == ()
+
+    def test_running_them_for_real_reads_the_config_and_offers_nothing_more(
+        self, paths: ConfigPaths, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "ran"
+        flow = _foreign_lua(
+            paths,
+            f'local f = io.popen("touch {marker}; echo 5")\n'
+            'hl.config({ general = { gaps_in = tonumber(f:read("*a")) } })\n',
+        )
+        flow.build_preview(consent=Consent(evaluate=True))
+        assert not marker.exists()
+
+        preview = flow.build_preview(consent=Consent(evaluate=True, passthrough=True))
+
+        assert marker.exists()
+        assert preview.model.get("general:gaps_in") == CssGaps(5, 5, 5, 5)
+        assert preview.offered_commands == ()

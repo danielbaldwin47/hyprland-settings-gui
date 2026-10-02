@@ -132,3 +132,18 @@ def test_an_enabled_bind_with_a_dead_trigger_still_blocks() -> None:
 
     assert saved == []
     assert "'notakey' is not a key name xkb knows" in editor._error.get_text()
+
+
+def test_a_free_form_call_keeps_its_booleans_and_quoted_numbers_through_an_edit() -> None:
+    """`movetoworkspacesilent` imports as `window.move{ workspace = "3", follow = false }`.
+
+    The raw table showed Python's `False` and an unquoted `3`, which `_coerce` read back as
+    the string "False" and the integer 3: Save changed what Hyprland was told to do (#126).
+    """
+    call = DispatcherCall(path="window.move", args={"workspace": "3", "follow": False})
+    editor, saved = open_editor(Bind(keys="SUPER + w", dispatcher=call))
+    editor._save()
+
+    assert [(b.dispatcher.args, b.dispatcher.positional) for b in saved if b.dispatcher] == [
+        ({"workspace": "3", "follow": False}, ())
+    ]

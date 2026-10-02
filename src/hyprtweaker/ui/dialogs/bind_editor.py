@@ -218,7 +218,9 @@ class BindEditor(Adw.Dialog):
             view.set_size_request(-1, 96)
             if existing is not None:
                 view.get_buffer().set_text(
-                    "\n".join(f"{key} = {value}" for key, value in existing.args.items())
+                    "\n".join(
+                        f"{key} = {_free_text(value)}" for key, value in existing.args.items()
+                    )
                 )
             frame = Gtk.Frame(child=view)
             group.add(frame)
@@ -423,6 +425,19 @@ def _typed(text: str, arg_type: str) -> object:
     if arg_type == "bool":
         return text.strip().lower() in {"true", "yes", "1"}
     return text
+
+
+def _free_text(value: object) -> str:
+    """A saved argument as the raw table shows it, such that `_coerce` reads back the same.
+
+    `str(False)` is `False`, which comes back as the string "False", and an unquoted `"3"`
+    comes back as the integer 3; either changes what Hyprland is told to do on Save.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str) and _coerce(value) != value:
+        return f'"{value}"'
+    return str(value)
 
 
 def _coerce(text: str) -> object:

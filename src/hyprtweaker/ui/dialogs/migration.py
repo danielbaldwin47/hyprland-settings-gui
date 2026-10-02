@@ -24,15 +24,24 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from ...engine.importer.loss import CLASS_ORDER, CLASS_TITLES, LossReport  # noqa: E402
+from ...engine.importer.lua.sandbox import Consent  # noqa: E402
 from ...engine.migration.detect import ConfigKind  # noqa: E402
 from ...engine.migration.flow import (  # noqa: E402
     ROLLBACK_SECONDS,
     Decision,
     MigrationFlow,
     SwitchResult,
+    asks_consent,
 )
 
 Spawn = Callable[[Any], None]
+
+CONSENT_TEXT = (
+    "Reading your hyprland.lua means running it once in a sandbox: no commands run, no "
+    "files change."
+)
+"""The consent page's promise (#190, decided on inbox #79). `Consent(evaluate=True)` is
+`Policy.BLOCK`, which is what makes it true: the config's commands and writes are faked."""
 
 DETECTED_TITLES = {
     ConfigKind.LEGACY_CONF: "You have a hyprland.conf",
@@ -61,17 +70,33 @@ class MigrationDialog(Adw.Dialog):
         *,
         spawn: Spawn,
         on_finished: Callable[[Decision | None], None] | None = None,
+        source: Path | None = None,
     ) -> None:
         super().__init__(title="Import configuration", content_width=680, content_height=560)
         self._flow = flow
         self._spawn = spawn
         self._on_finished = on_finished
+        self._source = source
+        """The file Import... chose, read instead of the detected one; `None` on first run."""
         self._decision: Decision | None = None
         self._countdown_label: Gtk.Label | None = None
+        self._defaults: dict[Adw.NavigationPage, Gtk.Widget] = {}
+        """Each page's safe button, made the dialog's default while that page shows."""
 
         self._view = Adw.NavigationView()
+        self._view.connect("notify::visible-page", self._on_visible_page)
         self.set_child(self._view)
-        self._view.push(self._detect_page())
+        if source is not None and asks_consent(source):
+            # Import... of a `.lua`: the user just chose the file, so the first question is
+            # whether it may be run, not what was found in the config dir.
+            self._view.push(self._consent_page(source))
+        else:
+            self._view.push(self._detect_page())
+
+    def _on_visible_page(self, view: Adw.NavigationView, _pspec: Any) -> None:
+        # Cleared on every other page: a default left over from a page underneath would
+        # make Enter on the Preview close the wizard.
+        self.set_default_widget(self._defaults.get(view.get_visible_page()))
 
     # --- step 1: detect -------------------------------------------------------------------
 
@@ -101,13 +126,21 @@ class MigrationDialog(Adw.Dialog):
         page.get_child().add_bottom_bar(_actions(convert, self._close_button("Not now")))
         return page
 
-    def _go_preview(self) -> None:
+    def _go_preview(self, consent: Consent | None = None) -> None:
+        detected = self._flow.detection.source if self._flow.detection else None
+        reading = self._source or detected
+        if consent is None and reading is not None and asks_consent(reading):
+            self._view.push(self._consent_page(reading))
+            return
         try:
-            self._flow.build_preview()
+            preview = self._flow.build_preview(self._source, consent=consent)
         except Exception as error:
             # Any importer failure is a page, not a crash: the wizard always has somewhere
             # to show the user, and the config is untouched at this point either way.
             self._view.push(self._failed_page("Could not read the configuration", str(error)))
+            return
+        if preview.offered_commands:
+            self._view.push(self._commands_page(preview.offered_commands))
             return
         self._flow.save_report()
         if self._flow.preview is not None and self._flow.preview.detection.streamlined:
@@ -117,6 +150,55 @@ class MigrationDialog(Adw.Dialog):
             self._go_backup()
             return
         self._view.push(self._preview_page())
+
+    # --- before step 2: consent to run a .lua (#190) ---------------------------------------
+
+    def _consent_page(self, source: Path) -> Adw.NavigationPage:
+        """Ask before the Lua importer runs the file. Asked every time, never remembered.
+
+        "Not now" is the default: the user agreed to look at their config, not yet to run
+        it. There is no "Copy the Lua instead" here -- that exports the *converted* config,
+        which needs the very read the user has not agreed to.
+        """
+        page = _page("Read your config")
+        group = Adw.PreferencesGroup(title=f"Read {source.name}?", description=CONSENT_TEXT)
+        group.add(_row("File", str(source)))
+        page.get_child().set_content(_column(group))
+
+        read = Gtk.Button(label="Read it")
+        read.connect("clicked", lambda _button: self._go_preview(Consent(evaluate=True)))
+        not_now = self._close_button("Not now")
+        page.get_child().add_bottom_bar(_actions(read, not_now))
+        self._defaults[page] = not_now
+        return page
+
+    def _commands_page(self, commands: tuple[str, ...]) -> Adw.NavigationPage:
+        """The second offer: run the config's own commands for real, after it read empty.
+
+        Never the default and never suggested: these are the user's commands running with
+        the user's rights, and the only page in the app that runs anything it did not write.
+        """
+        page = _page("Commands")
+        group = Adw.PreferencesGroup(
+            title="This config runs commands to build itself",
+            description="Reading it fully means running these for real:",
+        )
+        for command in commands:
+            row = _row(command, "")
+            row.set_title_selectable(True)
+            row.add_css_class("monospace")
+            group.add(row)
+        page.get_child().set_content(_scrolled(_column(group)))
+
+        run = Gtk.Button(label="Run them and read", css_classes=["destructive-action"])
+        run.connect(
+            "clicked",
+            lambda _button: self._go_preview(Consent(evaluate=True, passthrough=True)),
+        )
+        not_now = self._close_button("Not now")
+        page.get_child().add_bottom_bar(_actions(run, not_now))
+        self._defaults[page] = not_now
+        return page
 
     # --- step 2: preview ------------------------------------------------------------------
 
@@ -442,13 +524,14 @@ def migration_dialog(
     *,
     spawn: Spawn,
     on_finished: Callable[[Decision | None], None] | None = None,
+    source: Path | None = None,
 ) -> MigrationDialog:
     """Build, present and return the wizard.
 
     Returned rather than just presented, following `errors.py`: the dialog is the only
     handle a test has on what the wizard is showing.
     """
-    dialog = MigrationDialog(flow, spawn=spawn, on_finished=on_finished)
+    dialog = MigrationDialog(flow, spawn=spawn, on_finished=on_finished, source=source)
     dialog.present(parent)
     return dialog
 
