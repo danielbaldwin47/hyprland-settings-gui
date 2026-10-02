@@ -14,12 +14,13 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from . import generated as generated_module
 from . import overlay as overlay_module
+from .diff import added_names
 from .generated import GeneratedSchema
 from .overlay import Overlay
 from .types import (
@@ -62,6 +63,44 @@ def version_key(version: str) -> tuple[int, ...]:
     schema than the one shipped for the running compositor.
     """
     return tuple(int(part) for part in re.findall(r"\d+", version))
+
+
+def stamp_added_in(
+    schema: GeneratedSchema, predecessor: GeneratedSchema | None
+) -> GeneratedSchema:
+    """Stamp each Option `predecessor` lacks with `added_in = schema`'s version.
+
+    The one definition of "added" between two consecutive Generated schemas is
+    `diff.added_names`: what the release check's diff classifies as added and what the
+    Tasks view groups under `New in <version>` come from the same rule. An Option the
+    predecessor has keeps the predecessor's stamp, so it stays in its `New in` group until
+    someone curates it (ADR-0012), not for one release only. No predecessor means no
+    stamps, and the provenance then names none. A predecessor that is not older is a
+    caller's mistake: every Option would read as old, silently.
+    """
+    if predecessor is None:
+        return schema
+    if version_key(predecessor.hyprland_version) >= version_key(schema.hyprland_version):
+        raise ValueError(
+            f"predecessor {predecessor.hyprland_version} is not older than "
+            f"{schema.hyprland_version}"
+        )
+    earlier = {option.name: option for option in predecessor.options}
+    added = added_names(schema, predecessor)
+    options = tuple(
+        replace(
+            option,
+            added_in=schema.hyprland_version
+            if option.name in added
+            else earlier[option.name].added_in,
+        )
+        for option in schema.options
+    )
+    return replace(
+        schema,
+        options=options,
+        provenance={**schema.provenance, "predecessor": predecessor.hyprland_version},
+    )
 
 
 def derive_title(option: GeneratedOption) -> str:
@@ -189,6 +228,7 @@ def resolve_option(
         refresh=generated.refresh,
         curation_flags=generated.curation_flags,
         renamed_from=entry.renamed_from,
+        added_in=generated.added_in,
     )
 
 
@@ -205,6 +245,12 @@ class Schema:
     Option, but its **title** has nowhere to land: it names a Page, not a Row. Dropping it
     here would leave the Config view -- one Page per Section -- with 21 raw config keys for
     headings and no way to reach the curated names sitting in the Overlay."""
+
+    animation_leaves: tuple[str, ...] | None = None
+    """The animation tree's leaves as this version's Generated schema recorded them.
+
+    `None` when the file has no block; read through `entities_catalog.animation_leaves`,
+    which supplies the shipped list for that case, rather than directly."""
 
     _by_name: dict[str, ResolvedOption] = field(init=False, repr=False, compare=False)
 
@@ -224,6 +270,7 @@ class Schema:
                 for option in schema.options
             ),
             sections=dict(overlay.sections),
+            animation_leaves=schema.animation_leaves,
         )
 
     def __getitem__(self, name: str) -> ResolvedOption:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ from hyprtweaker.engine.schema import (
     load_schema,
     resolve_option,
     select_version,
+    stamp_added_in,
 )
 from hyprtweaker.engine.schema import generated as generated_module
 from hyprtweaker.engine.schema import overlay as overlay_module
@@ -239,6 +241,128 @@ def test_generated_schema_survives_a_serialisation_round_trip() -> None:
     assert generated_module.loads(generated_module.dumps(schema)) == schema
 
 
+def test_added_in_survives_the_round_trip_and_is_omitted_when_absent() -> None:
+    schema = generated_module.GeneratedSchema(
+        hyprland_version="0.58.0",
+        options=(
+            option("general:border_size", added_in=None),
+            option("general:new_thing", order=1, added_in="0.58.0"),
+        ),
+        provenance={},
+    )
+    text = generated_module.dumps(schema)
+
+    assert generated_module.loads(text) == schema
+    assert text.count('"added_in"') == 1
+    assert '"added_in": "0.58.0"' in text
+
+
+def test_resolution_carries_added_in_from_the_generated_record() -> None:
+    assert resolve_option(option(added_in="0.58.0"), None, None).added_in == "0.58.0"
+    assert resolve_option(option(), None, None).added_in is None
+
+
+def _schema(version: str, *records: GeneratedOption) -> generated_module.GeneratedSchema:
+    return generated_module.GeneratedSchema(
+        hyprland_version=version, options=records, provenance={}
+    )
+
+
+def test_an_option_the_predecessor_lacks_is_stamped_with_the_new_version() -> None:
+    old = _schema("0.56.2", option("general:gaps_in", order=0))
+    new = _schema("0.58.0", option("general:gaps_in", order=0), option("misc:fresh", order=1))
+
+    stamped = stamp_added_in(new, old)
+
+    assert {o.name: o.added_in for o in stamped.options} == {
+        "general:gaps_in": None,
+        "misc:fresh": "0.58.0",
+    }
+    assert stamped.hyprland_version == "0.58.0"
+
+
+def test_a_stamp_carries_forward_until_the_option_is_curated() -> None:
+    """The predecessor's stamp survives: ADR-0012's "New in" group outlives one release."""
+    old = _schema("0.58.0", option("misc:fresh", added_in="0.58.0"))
+    new = _schema("0.59.0", option("misc:fresh"), option("misc:newer", order=1))
+
+    stamped = stamp_added_in(new, old)
+
+    assert {o.name: o.added_in for o in stamped.options} == {
+        "misc:fresh": "0.58.0",
+        "misc:newer": "0.59.0",
+    }
+
+
+def test_no_predecessor_means_no_stamps() -> None:
+    new = _schema("0.56.2", option("general:gaps_in"))
+
+    assert stamp_added_in(new, None) is new
+    assert all(o.added_in is None for o in new.options)
+
+
+def test_stamping_records_the_predecessor_in_provenance() -> None:
+    old = _schema("0.56.2", option("general:gaps_in"))
+    new = _schema("0.58.0", option("general:gaps_in"))
+
+    assert stamp_added_in(new, old).provenance["predecessor"] == "0.56.2"
+    assert "predecessor" not in stamp_added_in(new, None).provenance
+
+
+def test_stamping_keeps_the_animation_leaves_block() -> None:
+    old = _schema("0.56.2", option("general:gaps_in"))
+    new = replace(
+        _schema("0.58.0", option("general:gaps_in")), animation_leaves=("fade", "global")
+    )
+
+    assert stamp_added_in(new, old).animation_leaves == ("fade", "global")
+
+
+def test_a_predecessor_that_is_not_older_is_rejected() -> None:
+    same = _schema("0.58.0", option("general:gaps_in"))
+
+    with pytest.raises(ValueError, match="not older"):
+        stamp_added_in(same, same)
+
+
+def test_the_animation_leaves_block_round_trips_and_sits_beside_provenance() -> None:
+    schema = generated_module.GeneratedSchema(
+        hyprland_version="0.56.2",
+        options=(option(),),
+        provenance={},
+        animation_leaves=("fade", "global"),
+    )
+    text = generated_module.dumps(schema)
+
+    assert json.loads(text)["animation_leaves"] == ["fade", "global"]
+    assert generated_module.loads(text) == schema
+
+
+def test_a_schema_without_the_block_serialises_without_one() -> None:
+    """The shipped 0.56.1-style file has no block and must stay byte-for-byte as it is."""
+    schema = generated_module.GeneratedSchema(
+        hyprland_version="0.56.2", options=(option(),), provenance={}
+    )
+    text = generated_module.dumps(schema)
+
+    assert "animation_leaves" not in json.loads(text)
+    assert generated_module.loads(text).animation_leaves is None
+
+
+@pytest.mark.parametrize("block", [[], "fade", ["fade", "fade"], ["fade", 3], [""]])
+def test_a_malformed_animation_leaves_block_is_refused_at_load(block: object) -> None:
+    text = generated_module.dumps(
+        generated_module.GeneratedSchema(
+            hyprland_version="0.56.2", options=(option(),), provenance={}
+        )
+    )
+    payload = json.loads(text)
+    payload["animation_leaves"] = block
+
+    with pytest.raises(ValueError, match="animation_leaves"):
+        generated_module.loads(json.dumps(payload))
+
+
 def test_duplicate_options_are_rejected() -> None:
     with pytest.raises(ValueError, match="duplicate options"):
         generated_module.GeneratedSchema(
@@ -276,6 +400,24 @@ def test_an_unknown_widget_is_rejected() -> None:
 
 
 # --- the Schema container --------------------------------------------------------------
+
+
+def test_the_resolved_schema_carries_the_animation_leaves() -> None:
+    generated = generated_module.GeneratedSchema(
+        hyprland_version="0.56.2",
+        options=(option(),),
+        provenance={},
+        animation_leaves=("fade", "global"),
+    )
+
+    assert Schema.merge(generated, Overlay(sections={}, options={})).animation_leaves == (
+        "fade",
+        "global",
+    )
+    bare = generated_module.GeneratedSchema(
+        hyprland_version="0.56.2", options=(option(),), provenance={}
+    )
+    assert Schema.merge(bare, Overlay(sections={}, options={})).animation_leaves is None
 
 
 def test_schema_lookup_and_sections() -> None:

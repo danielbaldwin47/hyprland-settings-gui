@@ -10,9 +10,11 @@ the Tasks view is allowed to have and the Config view is not.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
-from hyprtweaker.engine.schema import Visibility, load_schema
+from hyprtweaker.engine.schema import Schema, Visibility, load_schema
 from hyprtweaker.ui.pages.plan import Disclosure, PagePlan, View, is_visible, plan_config_view
 from hyprtweaker.ui.pages.tasks import (
     NEW_IN_GROUP_DESCRIPTION,
@@ -423,3 +425,133 @@ def test_the_mapping_reads_groups_in_the_order_the_curator_wrote_them() -> None:
         "Virtual keyboards",
     ]
     assert isinstance(keyboard.groups[0], GroupSpec)
+
+
+# --- per-Option "New in" (#123) --------------------------------------------------------------
+
+
+def stamped(**versions: str) -> Schema:
+    """The shipped Schema with `added_in` set on some Options (names use `__` for `:`).
+
+    One schema ships today, so a release that added an Option to an already-homed Section
+    is built here, not found: the same trick `uncurated` plays for whole Sections.
+    """
+    by_name = {name.replace("__", ":"): version for name, version in versions.items()}
+    return Schema(
+        hyprland_version=SCHEMA.hyprland_version,
+        options=tuple(
+            replace(option, added_in=by_name[option.name]) if option.name in by_name else option
+            for option in SCHEMA
+        ),
+        sections=SCHEMA.sections,
+    )
+
+
+def cursor_page(
+    schema: Schema, mapping: TasksMapping = MAPPING, *, show_advanced: bool = True
+) -> PagePlan:
+    return next(
+        page
+        for category in plan_tasks_view(
+            schema, mapping, Disclosure(show_advanced=show_advanced)
+        )
+        for page in category.option_pages
+        if page.section == "system.cursor"
+    )
+
+
+def group_names(page: PagePlan) -> dict[str, list[str]]:
+    return {group.title: [option.name for option in group.options] for group in page.groups}
+
+
+def with_group_on_cursor_page(*keys: str) -> TasksMapping:
+    """The shipped mapping with a curated Group on the cursor Page, beside its home Section."""
+    return TasksMapping(
+        categories=tuple(
+            CategorySpec(
+                id=category.id,
+                title=category.title,
+                pages=tuple(
+                    replace(page, groups=(*page.groups, GroupSpec("Warping", keys)))
+                    if isinstance(page, PageSpec) and page.id == "system.cursor"
+                    else page
+                    for page in category.pages
+                ),
+            )
+            for category in MAPPING.categories
+        )
+    )
+
+
+def test_a_new_option_in_a_homed_section_joins_a_new_in_group_on_its_home_page() -> None:
+    page = cursor_page(stamped(cursor__no_warps="0.99.0"))
+
+    groups = group_names(page)
+    assert groups["New in 0.99.0"] == ["cursor:no_warps"]
+    assert "cursor:no_warps" not in groups[""]
+    assert [group.description for group in page.groups if group.title == "New in 0.99.0"] == [
+        NEW_IN_GROUP_DESCRIPTION
+    ]
+    assert page.groups[-1].title == "New in 0.99.0"
+
+
+def test_options_with_no_stamp_plan_exactly_as_before() -> None:
+    assert cursor_page(stamped()) == cursor_page(SCHEMA)
+    assert [g.title for g in cursor_page(SCHEMA).groups] == [""]
+
+
+def test_each_version_gets_its_own_group_oldest_first() -> None:
+    page = cursor_page(stamped(cursor__no_warps="0.99.0", cursor__zoom_rigid="0.58.0"))
+
+    assert [g.title for g in page.groups] == ["", "New in 0.58.0", "New in 0.99.0"]
+    assert group_names(page)["New in 0.58.0"] == ["cursor:zoom_rigid"]
+
+
+def test_a_version_is_ordered_numerically_not_as_text() -> None:
+    page = cursor_page(stamped(cursor__no_warps="0.100.0", cursor__zoom_rigid="0.58.0"))
+
+    assert [g.title for g in page.groups][1:] == ["New in 0.58.0", "New in 0.100.0"]
+
+
+def test_curating_a_new_option_onto_its_home_page_removes_it_from_the_fallback() -> None:
+    """The Section loop used to keep an Option a same-Page group had placed: shown twice."""
+    mapping = with_group_on_cursor_page("cursor:no_warps")
+    page = cursor_page(stamped(cursor__no_warps="0.99.0"), mapping)
+
+    groups = group_names(page)
+    assert "New in 0.99.0" not in groups
+    assert groups["Warping"] == ["cursor:no_warps"]
+    assert sum(names.count("cursor:no_warps") for names in groups.values()) == 1
+
+
+def test_a_same_page_curated_group_does_not_duplicate_an_unstamped_option() -> None:
+    page = cursor_page(SCHEMA, with_group_on_cursor_page("cursor:no_warps"))
+
+    shown = [name for names in group_names(page).values() for name in names]
+    assert shown.count("cursor:no_warps") == 1
+    assert len(shown) == len(set(shown))
+
+
+def test_an_advanced_new_option_is_withheld_and_counted_until_advanced_is_on() -> None:
+    schema = stamped(cursor__zoom_factor="0.99.0")
+
+    closed = cursor_page(schema, show_advanced=False)
+    assert "New in 0.99.0" not in group_names(closed)
+    assert closed.withheld == cursor_page(SCHEMA, show_advanced=False).withheld
+
+    opened = cursor_page(schema, show_advanced=True)
+    assert group_names(opened)["New in 0.99.0"] == ["cursor:zoom_factor"]
+    assert opened.withheld == 0
+
+
+def test_a_new_option_is_still_on_exactly_one_page() -> None:
+    schema = stamped(cursor__no_warps="0.99.0", general__gaps_in="0.99.0")
+    names = [
+        option.name
+        for category in plan_tasks_view(schema, MAPPING, Disclosure(show_advanced=True))
+        for page in category.option_pages
+        for group in page.groups
+        for option in group.options
+    ]
+
+    assert sorted(names) == sorted(placed_options())

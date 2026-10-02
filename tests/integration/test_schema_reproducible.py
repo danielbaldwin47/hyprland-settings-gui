@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -48,17 +49,10 @@ def running_hyprland_version(hyprland: GuardedInstance) -> str | None:
     return match.group(1) if match else None
 
 
-def test_the_generator_reproduces_the_committed_schema(
-    tmp_path: Path, guarded_hyprland: GuardedInstance
-) -> None:
-    version = running_hyprland_version(guarded_hyprland)
-    assert version is not None, "the nested Hyprland did not answer `hyprctl version`"
-
-    committed = SCHEMA_DIR / f"hyprland-{version}.json"
-    if not committed.is_file():
-        pytest.skip(f"no committed schema for the running Hyprland {version}")
-
-    regenerated = tmp_path / f"hyprland-{version}.json"
+def regenerate(
+    hyprland: GuardedInstance, version: str, out: Path, *extra: str
+) -> subprocess.CompletedProcess[str]:
+    """The generator against the nested compositor, as a release check runs it."""
     result = subprocess.run(
         [
             sys.executable,
@@ -67,18 +61,96 @@ def test_the_generator_reproduces_the_committed_schema(
             f"v{version}",
             "--version",
             version,
+            *extra,
             "-o",
-            str(regenerated),
+            str(out),
         ],
         capture_output=True,
         text=True,
-        env=guarded_hyprland.env,
+        env=hyprland.env,
     )
     if result.returncode != 0:
         pytest.skip(f"generator could not run here: {result.stderr.strip()[:200]}")
+    return result
+
+
+def committed_schema(hyprland: GuardedInstance) -> tuple[str, Path]:
+    version = running_hyprland_version(hyprland)
+    assert version is not None, "the nested Hyprland did not answer `hyprctl version`"
+
+    committed = SCHEMA_DIR / f"hyprland-{version}.json"
+    if not committed.is_file():
+        pytest.skip(f"no committed schema for the running Hyprland {version}")
+    return version, committed
+
+
+def test_the_generator_reproduces_the_committed_schema(
+    tmp_path: Path, guarded_hyprland: GuardedInstance
+) -> None:
+    version, committed = committed_schema(guarded_hyprland)
+
+    # `added_in` is relative to a predecessor, so the file says which one it was stamped
+    # against (provenance, #123) and the regeneration is handed that same file.
+    predecessor_flags: list[str] = []
+    predecessor = generated_module.load(committed).provenance.get("predecessor")
+    if predecessor is not None:
+        predecessor_file = SCHEMA_DIR / f"hyprland-{predecessor}.json"
+        if not predecessor_file.is_file():
+            pytest.skip(
+                f"{committed.name} was stamped against {predecessor}, which is not shipped"
+            )
+        predecessor_flags = ["--predecessor", str(predecessor_file)]
+
+    regenerated = tmp_path / f"hyprland-{version}.json"
+    regenerate(guarded_hyprland, version, regenerated, *predecessor_flags)
 
     # Provenance records the build commit, which differs between machines running the
     # same release. Everything describing the Options themselves must match exactly.
-    assert (
-        generated_module.load(regenerated).options == generated_module.load(committed).options
+    again, shipped = generated_module.load(regenerated), generated_module.load(committed)
+    assert again.options == shipped.options
+    # The animation tree is what the same release's compositor reports (#121), so it
+    # reproduces exactly too: a leaf added or dropped by hand fails here.
+    assert again.animation_leaves == shipped.animation_leaves
+
+
+def test_the_generator_stamps_exactly_the_options_its_predecessor_lacks(
+    tmp_path: Path, guarded_hyprland: GuardedInstance
+) -> None:
+    version, committed = committed_schema(guarded_hyprland)
+
+    # A synthetic older release: the committed schema minus three Options, so those three
+    # are "added" by the real generator run and nothing else is.
+    current = generated_module.load(committed)
+    dropped = {option.name for option in current.options[-3:]}
+    older = replace(
+        current,
+        hyprland_version="0.0.1",
+        options=tuple(option for option in current.options if option.name not in dropped),
     )
+    predecessor = tmp_path / "hyprland-0.0.1.json"
+    predecessor.write_text(generated_module.dumps(older), encoding="utf-8")
+
+    regenerated = tmp_path / f"hyprland-{version}.json"
+    regenerate(guarded_hyprland, version, regenerated, "--predecessor", str(predecessor))
+
+    result = generated_module.load(regenerated)
+    assert {o.name for o in result.options if o.added_in == version} == dropped
+    assert all(o.added_in is None for o in result.options if o.name not in dropped)
+    assert result.provenance["predecessor"] == "0.0.1"
+    assert result.animation_leaves == current.animation_leaves
+
+
+def test_a_missing_predecessor_means_no_stamps_and_no_crash(
+    tmp_path: Path, guarded_hyprland: GuardedInstance
+) -> None:
+    version, _ = committed_schema(guarded_hyprland)
+
+    regenerated = tmp_path / f"hyprland-{version}.json"
+    result = regenerate(
+        guarded_hyprland, version, regenerated, "--predecessor", str(tmp_path / "absent.json")
+    )
+
+    loaded = generated_module.load(regenerated)
+    assert all(option.added_in is None for option in loaded.options)
+    assert "predecessor" not in loaded.provenance
+    assert "no `added_in` stamps" in result.stdout

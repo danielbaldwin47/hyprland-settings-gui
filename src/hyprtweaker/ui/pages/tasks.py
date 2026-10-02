@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from hyprtweaker.engine.schema import ResolvedOption, Schema
-from hyprtweaker.engine.schema.resolve import schema_dir
+from hyprtweaker.engine.schema.resolve import schema_dir, version_key
 
 from .plan import (
     DEFAULT_DISCLOSURE,
@@ -287,17 +287,6 @@ def _placements(mapping: TasksMapping) -> dict[str, _Placement]:
     return placements
 
 
-def _claimed_elsewhere(placed: dict[str, _Placement], name: str, page_id: str) -> bool:
-    """Whether some *other* Page named this Option, so its Section's home must not take it.
-
-    The one predicate the home-versus-named precedence turns on (`groups` outrank
-    `sections`), spelled once: written inline it reads as a comparison between a placement
-    and a page id, which is not the question being asked.
-    """
-    claim = placed.get(name)
-    return claim is not None and claim.page_id != page_id
-
-
 def _plan_page(
     schema: Schema,
     spec: PageSpec,
@@ -309,17 +298,27 @@ def _plan_page(
     Sections first because they are what the Page is *about* -- the curated Groups on a Page
     like Rendering are settings pulled in from `misc`, and leading with borrowed settings
     would read as though `misc` were the subject.
+
+    An Option the mapping places by name sits only where it was placed, on this Page or on
+    another: one Option, one Row. One no group places, that a newer Hyprland added
+    (`added_in`), leaves its Section's Group for a `New in <version>` Group at the foot of
+    its home Page, so it stands out among the settings that were always there until
+    curation places it (ADR-0012).
     """
     withheld = 0
 
     section_groups: dict[str, list[ResolvedOption]] = {}
+    new_in: dict[str, list[ResolvedOption]] = {}
     multi = len(spec.sections) > 1
     for section in spec.sections:
         for option in schema.section(section):
-            if _claimed_elsewhere(placed, option.name, spec.id):
+            if option.name in placed:
                 continue
             if not is_visible(option, disclosure):
                 withheld += is_withheld(option, disclosure)
+                continue
+            if option.added_in is not None:
+                new_in.setdefault(option.added_in, []).append(option)
                 continue
             title = _section_group_title(schema, option, section, multi=multi)
             section_groups.setdefault(title, []).append(option)
@@ -344,6 +343,15 @@ def _plan_page(
             members.append(curated)
         if members:
             groups.append(GroupPlan(title=group.title, options=tuple(members)))
+
+    groups.extend(
+        GroupPlan(
+            title=new_in_group_title(version),
+            options=tuple(options),
+            description=NEW_IN_GROUP_DESCRIPTION,
+        )
+        for version, options in sorted(new_in.items(), key=lambda item: version_key(item[0]))
+    )
 
     return PagePlan(
         section=spec.id,
@@ -379,14 +387,10 @@ def _with_fallbacks(
 ) -> list[CategoryPlan]:
     """Append a Page per uncurated Section: a release adds settings rather than hiding them.
 
-    Keyed on the Section rather than on the individual Option, which is a real limit worth
-    stating: an Option added to a Section the mapping *already* homes lands on that home
-    Page unflagged, because nothing here can tell it apart from the Options that were always
-    there. Detecting that needs a per-Option "added in" fact the Schema does not carry -- it
-    would come from diffing two shipped Generated schemas (ADR-0012's standing drift loop),
-    not from anything visible at plan time. Whole uncurated Sections are what this catches,
-    and they are the case where an Option would otherwise be unreachable rather than merely
-    unsorted.
+    Keyed on the Section: a Section the mapping never homed has no Page for its Options to
+    land on, so each gets one here. An Option a release adds to a Section the mapping
+    already homes needs no Page of its own -- `_plan_page` groups it by its `added_in` stamp
+    on the home Page. Between them, an uncurated Option is always shown and always flagged.
     """
     homed = mapping.homed_sections
 

@@ -24,13 +24,13 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from ..importer.loss import BACKUP_NAME, LossCode, LossReport, rescue_command, rescue_line
 from ..importer.lua.mapping import import_lua
@@ -38,10 +38,12 @@ from ..importer.lua.sandbox import Consent, Policy
 from ..importer.mapping import ImportResult, import_config
 from ..model import ConfigModel
 from ..model.values import lua_string
+from ..monitors_catalog import arrangement_mismatches
 from ..paths import ConfigPaths
 from ..schema import Schema
 from ..state.manifest import Manifest
 from ..writer import Writer
+from ..writer.binds import live_bind_count
 from ..writer.lua import table_key
 from . import backup as backups
 from . import sentinel as sentinels
@@ -113,12 +115,17 @@ class Client(Protocol):
     """The slice of the IPC command client a migration needs.
 
     A Protocol rather than the concrete class so the flow's tests do not need a compositor,
-    and so it is obvious at a glance that migration talks to Hyprland in exactly three ways.
+    and so it is obvious at a glance what migration asks Hyprland: the one reload, and the
+    four reads ADR-0009's live checks are made of.
     """
 
     async def configerrors(self) -> tuple[str, ...]: ...
 
     async def bind_count(self) -> int: ...
+
+    async def workspace_rule_count(self) -> int: ...
+
+    async def monitors(self) -> tuple[Mapping[str, Any], ...]: ...
 
     async def reload_full_reset(self) -> None: ...
 
@@ -203,9 +210,12 @@ class Check:
     hard: bool = True
     """Whether failing it rolls the migration back.
 
-    Entity counts are soft for now: the Entity Modules (`binds.lua`, `monitors.lua`, ...)
-    are #64 and are not written yet, so a mismatch here reports a known gap in what the app
-    can emit rather than evidence that the switch went wrong.
+    Decided by what a false alarm costs. A hard check that misfires on a legitimate config
+    rolls back a migration that worked, the worst outcome this wizard has, so only the two
+    that mean "the user may be stranded" are hard: `configerrors`, and the bind count
+    (a config that loads with no keybinds is ADR-0016's emergency). Workspace rules and
+    monitors are compared with what Hyprland *did* with a request -- merged a selector,
+    picked the closest mode -- so a difference there is reported, not acted on.
     """
 
 
@@ -429,7 +439,7 @@ class MigrationFlow:
         self._record_provenance(preview)
 
         await self.client.reload_full_reset()
-        checks = await self._verify_live(preview)
+        checks = await self.verify_live(preview)
         ok = all(check.ok for check in checks if check.hard)
         errors = tuple(
             check.detail for check in checks if not check.ok and check.name == "configerrors"
@@ -458,8 +468,12 @@ class MigrationFlow:
             errors = await self.client.configerrors()
         return errors
 
-    async def _verify_live(self, preview: Preview) -> list[Check]:
-        """ADR-0009's live checks, spoken over the IPC socket rather than by spawning."""
+    async def verify_live(self, preview: Preview) -> list[Check]:
+        """ADR-0009's live checks, spoken over the IPC socket rather than by spawning.
+
+        Public so the Harness can run them against a compositor it booted on a written
+        config, which is the only place the false-alarm question has an answer.
+        """
         assert self.client is not None
         checks: list[Check] = []
 
@@ -473,17 +487,57 @@ class MigrationFlow:
             )
         )
 
-        expected = len(preview.result.entities.binds)
-        if expected:
+        entities = preview.result.entities
+
+        # The count the Writer emits, not the count imported: disabled binds are comments and
+        # function-valued ones never reach `binds.lua`. `>=`, because `legacy.lua` and a
+        # preserved script can register binds the model never held.
+        expected_binds = live_bind_count(entities)
+        if expected_binds:
             live = await self.client.bind_count()
+            ok = live >= expected_binds
             checks.append(
                 Check(
                     name="binds",
-                    ok=live >= expected,
-                    detail=f"{live} live, {expected} imported",
+                    ok=ok,
+                    detail=""
+                    if ok
+                    else (
+                        f"Only {live} of the {expected_binds} keybinds in the new "
+                        "configuration are active."
+                    ),
+                    hard=True,
+                )
+            )
+
+        # Window and layer rules have no IPC listing in Hyprland, so `configerrors` is all
+        # that verifies them; saying so in a row the user cannot act on would be noise.
+        expected_workspace_rules = len(entities.workspace_rules)
+        if expected_workspace_rules:
+            live = await self.client.workspace_rule_count()
+            ok = live >= expected_workspace_rules
+            checks.append(
+                Check(
+                    name="workspace rules",
+                    ok=ok,
+                    detail=""
+                    if ok
+                    else (
+                        f"Only {live} of the {expected_workspace_rules} workspace rules in "
+                        "the new configuration are active."
+                    ),
                     hard=False,
                 )
             )
+
+        if entities.monitors:
+            mismatches = arrangement_mismatches(entities.monitors, await self.client.monitors())
+            checks.extend(
+                Check(name="monitors", ok=False, detail=detail, hard=False)
+                for detail in mismatches
+            )
+            if not mismatches:
+                checks.append(Check(name="monitors", ok=True, hard=False))
         return checks
 
     # --- 5. keep or roll back -----------------------------------------------------------
@@ -653,6 +707,10 @@ class MigrationFlow:
         if result.legacy:
             paths.legacy_lua.write_text(result.legacy, encoding="utf-8")
 
+        # The Writer renders `model.entities`, and an Importer returns its Entities beside the
+        # model rather than in it: without this the tree carries the Options and none of the
+        # binds, rules or monitors the Preview promised (#101).
+        result.model.adopt_entities(result.entities)
         Writer(paths, app_version=self.app_version).write(result.model)
 
     def _record_provenance(self, preview: Preview) -> None:

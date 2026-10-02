@@ -24,7 +24,7 @@ from hyprtweaker.ui.pages.declaration_kinds import BY_KIND  # noqa: E402
 KINDS = ("animations", "curves", "gestures", "devices", "env", "startup", "permissions")
 
 
-def build_window(tmp_path: Path) -> Any:
+def build_window(tmp_path: Path, schema: Any = None) -> Any:
     from gi.repository import Adw
 
     from hyprtweaker.engine.ipc import Instance, NoInstance
@@ -38,6 +38,7 @@ def build_window(tmp_path: Path) -> Any:
     Adw.init()
     session = Session(
         spawn=lambda coro: coro.close(),
+        schema=schema,
         paths=ConfigPaths.rooted_at(tmp_path),
         app_version=APP_VERSION,
         connect=no_compositor,
@@ -341,6 +342,47 @@ def test_an_unknown_device_field_is_shown_on_the_device(tmp_path: Path) -> None:
 
     assert page.rows[0].findings
     assert "eraser_button_mode" in page.rows[0].findings[0].message
+
+
+def _tree_schema(*leaves: str) -> Any:
+    from hyprtweaker.engine.schema import Schema
+
+    return Schema("0.57.0", (), animation_leaves=leaves)
+
+
+def test_a_leaf_the_sessions_schema_records_is_not_flagged_on_the_page(tmp_path: Path) -> None:
+    """The Page asks the schema for the tree, not the list shipped with the app (#121)."""
+    from hyprtweaker.engine.model.entities import Animation
+
+    held = [
+        Animation("brandNewLeaf", {"enabled": False}),
+        Animation("windowsIn", {"enabled": False}),
+    ]
+    session, window = build_window(tmp_path, _tree_schema("brandNewLeaf"))
+    session.model.entities.animations.extend(held)
+    page = window.declaration_page("animations")
+    page.refresh()
+
+    assert [bool(row.findings) for row in page.rows] == [False, True]
+    assert "no such leaf" in page.rows[1].findings[0].message
+
+
+def test_the_editor_offers_the_leaves_it_is_handed_in_place_of_the_shipped_list() -> None:
+    dialog = editor("animations", choices={"leaf": ("brandNewLeaf", "fade")})
+
+    model = dialog._rows["leaf"].get_model()
+
+    assert [model.get_string(i) for i in range(model.get_n_items())] == ["brandNewLeaf", "fade"]
+    assert dialog.collect()["leaf"] == "brandNewLeaf"
+
+
+def test_the_window_hands_the_editor_the_session_schemas_leaves(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path, _tree_schema("brandNewLeaf", "fade"))
+
+    dialog = window.declaration_editor("animations", on_done=lambda _entity: None)
+
+    model = dialog._rows["leaf"].get_model()
+    assert [model.get_string(i) for i in range(model.get_n_items())] == ["brandNewLeaf", "fade"]
 
 
 # --- the editor -------------------------------------------------------------------------------

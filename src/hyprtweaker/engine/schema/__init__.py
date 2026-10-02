@@ -26,6 +26,7 @@ Typical use::
 
 from __future__ import annotations
 
+from .diff import SchemaDiff, diff_schemas
 from .generated import GeneratedSchema
 from .overlay import Overlay
 from .resolve import (
@@ -40,6 +41,7 @@ from .resolve import (
     resolve_option,
     schema_dir,
     select_version,
+    stamp_added_in,
 )
 from .types import (
     CurationFlag,
@@ -73,6 +75,7 @@ __all__ = [
     "ResolvedOption",
     "Restart",
     "Schema",
+    "SchemaDiff",
     "SectionOverlay",
     "Vec2Range",
     "Visibility",
@@ -81,9 +84,11 @@ __all__ = [
     "below_lua_floor",
     "derive_section_title",
     "derive_title",
+    "diff_schemas",
     "humanise",
     "load_schema",
     "resolve_option",
     "schema_dir",
     "select_version",
+    "stamp_added_in",
 ]
