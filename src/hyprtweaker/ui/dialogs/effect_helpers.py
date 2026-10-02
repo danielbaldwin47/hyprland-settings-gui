@@ -15,8 +15,9 @@ helper cannot show is dropped or rewritten.
 
 `GrammarRow` is the shared half: the toggle, the text entry, the mode switch and the
 "untouched keeps the original" rule. A grammar subclasses it and supplies its controls
-(`_build`) and how to move a typed value in and out of them. The gradient editor (#156)
-is one such subclass in a file of its own.
+(`_build`) and how to move a typed value in and out of them. The gradient editor (#156,
+`gradient_field`) is one such subclass in a file of its own; its value is a table, so the
+emit step may return any object, and `text` says how the typed value reads as text.
 """
 
 from __future__ import annotations
@@ -88,12 +89,19 @@ class GrammarRow(Generic[T]):
         original: object | None,
         *,
         parse: Callable[[object], T | None],
-        emit: Callable[[T], str],
+        emit: Callable[[T], object],
         default: T,
+        text: Callable[[T], str] | None = None,
+        source_text: Callable[[object], str] = effect_text,
     ) -> None:
+        """`emit` is the value to save for the controls; `text` is how a typed value reads
+        as text (the emitted string when `emit` returns one); `source_text` is how an
+        original value reads as text, for one `parse` rejected or text mode opened on."""
         self._original = original
         self._parse = parse
         self._emit = emit
+        self._text_of = text
+        self._source_text_of = source_text
         self._loading = True
         # True once the user changed anything; a new effect has no original to keep.
         self._edited = original is None
@@ -114,7 +122,10 @@ class GrammarRow(Generic[T]):
 
         typed = None if original is None else parse(original)
         if typed is None and original is not None:
-            self.raw_entry.set_text(effect_text(original))
+            # The controls stay loaded behind the text, so reading them never meets a
+            # half-built row (the entry's `changed` summarises the controls first).
+            self._load(default)
+            self.raw_entry.set_text(self._source_text_of(original))
             self._show_mode(raw=True)
         else:
             self._load(default if typed is None else typed)
@@ -145,7 +156,9 @@ class GrammarRow(Generic[T]):
     def value(self) -> object:
         if self._original is not None and not self._edited:
             return self._original
-        return self._text()
+        if self._raw:
+            return str(self.raw_entry.get_text()).strip()
+        return self._emit(self._read())
 
     def blank(self) -> bool:
         if self._raw:
@@ -159,10 +172,14 @@ class GrammarRow(Generic[T]):
         return bool(self.raw_toggle.get_active())
 
     def _text(self) -> str:
-        """The value as text: what the entry holds, or what the controls emit."""
+        """The value as text: what the entry holds, or what the controls say."""
         if self._raw:
             return str(self.raw_entry.get_text()).strip()
-        return self._emit(self._read())
+        return self._controls_text()
+
+    def _controls_text(self) -> str:
+        typed = self._read()
+        return self._text_of(typed) if self._text_of is not None else str(self._emit(typed))
 
     def _changed(self, *_args: object) -> None:
         """A control changed: the row is no longer untouched."""
@@ -199,8 +216,8 @@ class GrammarRow(Generic[T]):
     def _source_text(self) -> str:
         """The text to open text mode with: the original's own spelling while untouched."""
         if self._original is not None and not self._edited:
-            return effect_text(self._original)
-        return self._emit(self._read())
+            return self._source_text_of(self._original)
+        return self._controls_text()
 
     def _show_mode(self, *, raw: bool) -> None:
         was = self._loading

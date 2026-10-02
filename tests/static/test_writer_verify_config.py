@@ -477,3 +477,64 @@ def test_the_switch_triggers_the_picker_writes_are_a_config_hyprland_accepts(
     written = (paths.app_dir / "binds.lua").read_text(encoding="utf-8")
     for keys in triggers:
         assert f'"{keys}"' in written
+
+
+def verify_window_rule_effects(tmp_path: Path, effects: dict[str, object]) -> str | None:
+    """Write one window rule carrying `effects`; the verify output when Hyprland rejects
+    the config, `None` when it says "config ok"."""
+    from hyprtweaker.engine.model.entities import WindowRule
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    model.entities.window_rules.append(WindowRule({"class": "kitty"}, effects))
+    model.mark_entities_loaded()
+    Writer(paths, app_version="0.0.0-test").write(model)
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    if result.returncode == 0 and "config ok" in result.stdout:
+        return None
+    return f"{result.stdout}\n{result.stderr}"
+
+
+def test_the_gradient_editor_writes_a_border_color_hyprland_accepts(tmp_path: Path) -> None:
+    """The table the gradient editor emits (#156), in each shape it takes: one stop, several,
+    translucent, and an angle at either end of the scale."""
+    from hyprtweaker.engine import rule_grammars
+    from hyprtweaker.engine.model.values import Color, Gradient
+
+    shapes = [
+        Gradient((Color.parse("#ff0000"),), 0.0),
+        Gradient(tuple(Color.parse(c) for c in ("#12345678", "#abcdef01", "#fff")), 360.0),
+        Gradient((Color.parse("rgba(33ccffee)"), Color.parse("rgba(00ff99ee)")), 45.0),
+    ]
+    for number, shape in enumerate(shapes):
+        rejected = verify_window_rule_effects(
+            tmp_path / str(number), {"border_color": rule_grammars.emit_border_color(shape)}
+        )
+        assert rejected is None, f"Hyprland rejected the gradient {shape}:\n{rejected}"
+
+
+def test_the_gradient_editors_text_forms_are_accepted_too(tmp_path: Path) -> None:
+    """What raw mode saves verbatim (#156): the active+inactive pair, a one-gradient legacy
+    string, and a plain colour. All three are strings the Lua API falls back to."""
+    forms = [
+        "rgba(33ccffee) rgba(595959aa)",
+        "rgba(33ccffee) rgba(00ff99ee) 45deg",
+        "rgba(33ccffee)",
+    ]
+    for number, text in enumerate(forms):
+        rejected = verify_window_rule_effects(tmp_path / str(number), {"border_color": text})
+        assert rejected is None, f"Hyprland rejected {text!r}:\n{rejected}"
+
+
+def test_a_border_color_hyprland_cannot_read_is_rejected(tmp_path: Path) -> None:
+    """Guards the two tests above: "accepted" must come from Hyprland reading the colour."""
+    rejected = verify_window_rule_effects(
+        tmp_path, {"border_color": {"colors": ["rgba(zzzzzzzz)"], "angle": 0}}
+    )
+
+    assert rejected is not None

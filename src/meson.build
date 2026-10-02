@@ -127,6 +127,7 @@ package_sources = {
     'declaration_editor.py',
     'effect_helpers.py',
     'errors.py',
+    'gradient_field.py',
     'migration.py',
     'notices.py',
     'rule_editor.py',

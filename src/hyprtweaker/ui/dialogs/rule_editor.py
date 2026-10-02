@@ -15,7 +15,8 @@ shelved by category. An effect the catalog does not know -- a plugin's, or a new
 Hyprland's -- shows as a raw custom row and passes through *unedited by identity*: its
 value object is only replaced when the user actually changes the text, so a table-valued
 effect survives an unrelated edit byte-for-byte (ADR-0008: "never dropped"). The string-
-grammar effects (`opacity`, `fullscreen_state`, `suppress_event`) get a helper row instead
+grammar effects (`opacity`, `fullscreen_state`, `suppress_event`, and `border_color`'s
+gradient editor, #156) get a helper row instead
 of a text entry (`effect_helpers`, picked by `Effect.grammar` through `EFFECT_HELPERS`),
 with the same untouched-keeps-the-original rule and an "Edit as text" toggle.
 
@@ -73,6 +74,7 @@ from hyprtweaker.ui.dialogs.effect_helpers import (  # noqa: E402
     SuppressEventRow,
     effect_text,
 )
+from hyprtweaker.ui.dialogs.gradient_field import GradientRow  # noqa: E402
 
 Rule = WindowRule | LayerRule
 
@@ -108,11 +110,11 @@ EFFECT_HELPERS: dict[str, EffectHelperBuilder] = {
     "opacity": OpacityRow,
     "fullscreen_state": FullscreenStateRow,
     "suppress_event": SuppressEventRow,
+    "gradient": GradientRow,
 }
 """Helper widget per string grammar: the key is `Effect.grammar` from the catalog, the
 value builds the row from the effect's original value (`None` for a new effect). An effect
-whose grammar has no entry here falls back to a text entry. The gradient editor (#156)
-adds `"gradient"`."""
+whose grammar has no entry here falls back to a text entry."""
 
 
 @dataclass(frozen=True, slots=True)
