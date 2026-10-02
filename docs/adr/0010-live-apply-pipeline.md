@@ -39,15 +39,17 @@ Read-back also reports **unconfirmed** keys (amended during #54): ones the compo
 
 ### Eval preview
 
-Continuous controls (sliders, colour pickers) preview per-tick via `eval 'hl.config{...}'` over the socket — sub-frame, correct prop refresh, real parse errors — and run a normal Apply transaction on release. File writes per drag tick are ruled out: each would be a full teardown reload. Eval state is transient (wiped by any reload) and eval wipes `configerrors`, so previews never run while a transaction is confirming. Discrete controls skip preview entirely.
+Continuous controls — those that move under a held pointer, such as sliders — preview per-tick via `eval 'hl.config{...}'` over the socket — sub-frame, correct prop refresh, real parse errors — and run a normal Apply transaction on release. File writes per drag tick are ruled out: each would be a full teardown reload. Eval state is transient (wiped by any reload) and eval wipes `configerrors`, so previews never run while a transaction is confirming. Discrete controls skip preview entirely.
+
+**Colour controls stay modal-commit (amended during #93).** A colour dialog is modal: the user picks, confirms, and the value commits once through the normal Apply path, with no per-tick preview. In the generated Rows today the gradient's angle slider is the only control that previews per tick (`docs/design/row-catalogue.md`).
 
 ### Rollback mechanism
 
-Before each write, the transaction snapshots the previous bytes of every dirty Module into the ADR-0005 Journal. **Restore-last-good** = write those bytes back through a normal Apply transaction. This ADR provides the mechanism; *when* it fires automatically and what the user sees is #31's decision.
+Before each write, the transaction snapshots the previous bytes of every dirty Module into the ADR-0005 Journal. **Restore-last-good** (amended during #95) = write a Module's Snapshot bytes to disk, reload once, then re-read from the compositor exactly the Options the Journal recorded those bytes as setting. It is deliberately not an Apply transaction: that renders the model, and would overwrite the very bytes being restored before the reload. The re-read is what brings the model back into step with a file it did not render (`engine/apply/restore.py`). This ADR provides the mechanism; *when* it fires automatically and what the user sees is #31's decision.
 
 ### Undo
 
-One **Undo step** = one user gesture (a whole slider drag is one step: value-at-press → value-at-release). Steps are model-level deltas (option/entity old → new), held in a single global linear in-memory stack, replayed through the normal Apply pipeline. The stack dies with the session; the Journal remains the durable history but is not walkable as undo. Byte-level file undo rejected — it fights the tri-state model.
+One **Undo step** = one user gesture (a whole slider drag is one step: value-at-press → value-at-release). Steps are model-level deltas (option/entity old → new), held in a single global linear in-memory stack, replayed through the normal Apply pipeline. The stack dies with the session; the Journal remains the durable history but is not walkable as undo. Byte-level file undo is rejected as the way to undo a model delta — it fights the tri-state model. Restore-last-good is a different operation, not an undo step: it lays down Snapshot bytes and then brings the model into step by re-read (§Rollback mechanism), so the model is never left stale and the file never becomes a second source of truth.
 
 ### Restart-flagged options
 
