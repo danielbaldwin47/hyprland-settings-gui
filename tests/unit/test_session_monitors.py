@@ -22,8 +22,9 @@ class StubApplier:
     def __init__(self) -> None:
         self.commits = 0
 
-    def commit_entities(self) -> None:
+    def commit_entities(self) -> int:
         self.commits += 1
+        return self.commits
 
 
 def live_session(tmp_path: Path) -> tuple[Session, StubApplier]:

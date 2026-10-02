@@ -34,7 +34,7 @@ session whose undo depth nobody is ever going to walk.
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..model import UNSET, OptionValue
@@ -151,6 +151,25 @@ class EntityStep:
 
 Step = UndoStep | EntityStep
 """Anything on the one stack. Option and entity gestures interleave in the order they landed."""
+
+
+@dataclass(eq=False, slots=True)
+class UndoGroup:
+    """Entity steps held back to become one step, or none (`Session.begin_undo_group`).
+
+    A handle with state, not a stack operation: the session fills `held` as the group's
+    commits come back, and merges it once the group is ended and nothing it holds is still
+    in flight. Confirm-or-revert is the caller: a kept countdown is one gesture, and a
+    reverted one ends where it started and records nothing.
+    """
+
+    kinds: frozenset[str]
+    held: list[EntityStep] = field(default_factory=list)
+    failed: bool = False
+    """A held commit's transaction failed: the batch never stood whole, so nothing is pushed."""
+    title: str | None = None
+    """Set by `end_undo_group`; `None` while the group is still open."""
+    finished: bool = False
 
 
 class UndoStack:

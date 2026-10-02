@@ -27,6 +27,7 @@ Typical use::
 from __future__ import annotations
 
 from .entities import (
+    ENTITY_NOUNS,
     Animation,
     Bind,
     BindDevice,
@@ -46,6 +47,7 @@ from .entities import (
     Unbind,
     WindowRule,
     WorkspaceRule,
+    entity_title,
 )
 from .options import (
     UNSET,
@@ -76,6 +78,7 @@ from .values import (
 
 __all__ = [
     "COMPLEX_TYPES",
+    "ENTITY_NOUNS",
     "UNSET",
     "Animation",
     "Bind",
@@ -108,6 +111,7 @@ __all__ = [
     "WindowRule",
     "WorkspaceRule",
     "display_text",
+    "entity_title",
     "getoption_raw",
     "has_emittable_null",
     "lua_literal",

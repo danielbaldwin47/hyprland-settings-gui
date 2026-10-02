@@ -537,8 +537,11 @@ def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None
     session, window = build_window(tmp_path)
 
     class StubApplier:
-        def commit_entities(self) -> None:
-            pass
+        serial = 0
+
+        def commit_entities(self) -> int:
+            self.serial += 1
+            return self.serial
 
     session._applier = StubApplier()
     session._offline_reason = None

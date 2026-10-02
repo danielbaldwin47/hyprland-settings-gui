@@ -62,7 +62,16 @@ from .transaction import (
     Reloader,
     ReloadReport,
 )
-from .undo import UNDO_MAX_DEPTH, Edit, EntityEdit, EntityStep, Step, UndoStack, UndoStep
+from .undo import (
+    UNDO_MAX_DEPTH,
+    Edit,
+    EntityEdit,
+    EntityStep,
+    Step,
+    UndoGroup,
+    UndoStack,
+    UndoStep,
+)
 
 __all__ = [
     "DEBOUNCE_SECONDS",
@@ -92,6 +101,7 @@ __all__ = [
     "RestoreTransaction",
     "Step",
     "Transaction",
+    "UndoGroup",
     "UndoStack",
     "UndoStep",
     "app_owned_options",
