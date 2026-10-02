@@ -15,7 +15,8 @@ before `gi` and before any `hyprtweaker.ui` import, since either initialises GTK
 This runner starts an Xvfb of its own (the UI tier's, `tests/ui/private_display.py`), sets
 `DISPLAY` to it and `GDK_BACKEND=x11`, drops `WAYLAND_DISPLAY` and
 `HYPRLAND_INSTANCE_SIGNATURE`, points `XDG_CONFIG_HOME` and `XDG_STATE_HOME` at a throwaway
-directory, and runs the probe in its own process with the worktree's `src` importable.
+directory, runs the app non-unique as `tools/sandbox.py` does, and runs the probe in its own
+process with the worktree's `src` importable.
 
 The import is the fence: imported by a probe this runner did not start, `widget_probe`
 exits at once with one line naming this command, before GTK can open a display. On
@@ -32,7 +33,7 @@ import runpy
 import shutil
 import sys
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -73,44 +74,63 @@ def refuse_unless_routed() -> None:
         )
 
 
-def settle(seconds: float = 0.5) -> None:
-    """Run GTK's main loop for `seconds`: layout, frame clock ticks, short animations."""
+def _run_until(done: Callable[[], bool], seconds: float) -> bool:
+    """Run GTK's main loop until `done()` holds or `seconds` pass; say whether it held.
+
+    It sleeps between events (`iteration(True)`), woken by a timeout at the deadline, so
+    waiting costs no CPU: a busy `iteration(False)` loop pinned a core per probe.
+    """
     from gi.repository import GLib
 
+    expired = False
+
+    def expire() -> bool:
+        nonlocal expired
+        expired = True
+        return GLib.SOURCE_REMOVE
+
     context = GLib.MainContext.default()
-    deadline = GLib.get_monotonic_time() + int(seconds * 1_000_000)
-    while GLib.get_monotonic_time() < deadline:
-        context.iteration(False)
+    timer = GLib.timeout_add(max(1, round(seconds * 1000)), expire)
+    while not (held := done()) and not expired:
+        context.iteration(True)
+    if not expired:
+        GLib.source_remove(timer)
+    return held
+
+
+def settle(seconds: float = 0.5) -> None:
+    """Run GTK's main loop for `seconds`: layout, frame clock ticks, short animations."""
+    _run_until(lambda: False, seconds)
 
 
 def shoot(widget: Any, path: str | os.PathLike[str]) -> tuple[int, int]:
-    """Write a PNG of `widget` as drawn in its window, cropped to its bounds.
+    """Write a PNG of `widget` as drawn on its surface, cropped to its bounds.
 
-    The widget must already be in a window (`window.set_child(...)`); this presents the
-    window, waits for the widget to be mapped and laid out, then renders the window and
-    keeps the widget's rectangle, background included. Returns the PNG's size.
+    The widget must already be in a window (`window.set_child(...)`) or in a popover
+    whose button is (`popover.popup()` first). This presents the window, waits for the
+    widget to be mapped and laid out, then renders the surface the widget is drawn on (the
+    window, or the popover: a popover is a surface of its own) and keeps the widget's
+    rectangle, background included. Returns the PNG's size.
     """
-    from gi.repository import GLib, Graphene, Gtk
+    from gi.repository import Graphene, Gtk
 
-    window = widget.get_root()
-    if window is None:
+    window, native = widget.get_root(), widget.get_native()
+    if window is None or native is None:
         raise ValueError("shoot: the widget is in no window; set it as a window's child first")
     window.present()
-    deadline = GLib.get_monotonic_time() + 5_000_000
-    while not (widget.get_mapped() and widget.get_width() > 0):
-        if GLib.get_monotonic_time() > deadline:
-            raise RuntimeError("shoot: the widget was not mapped within 5 s")
-        GLib.MainContext.default().iteration(False)
+    if not _run_until(lambda: widget.get_mapped() and widget.get_width() > 0, 5):
+        hint = "; call popover.popup() first" if native is not window else ""
+        raise RuntimeError(f"shoot: the widget was not mapped within 5 s{hint}")
     settle()
 
-    found, bounds = widget.compute_bounds(window)
+    found, bounds = widget.compute_bounds(native)
     if not found:
-        raise RuntimeError("shoot: the widget has no bounds in its window")
+        raise RuntimeError("shoot: the widget has no bounds on its surface")
     snapshot = Gtk.Snapshot()
-    Gtk.WidgetPaintable.new(window).snapshot(snapshot, window.get_width(), window.get_height())
+    Gtk.WidgetPaintable.new(native).snapshot(snapshot, native.get_width(), native.get_height())
     width, height = round(bounds.get_width()), round(bounds.get_height())
     viewport = Graphene.Rect().init(bounds.get_x(), bounds.get_y(), width, height)
-    texture = window.get_renderer().render_texture(snapshot.to_node(), viewport)
+    texture = native.get_renderer().render_texture(snapshot.to_node(), viewport)
     texture.save_to_png(os.fspath(path))
     return texture.get_width(), texture.get_height()
 
@@ -145,6 +165,9 @@ def main(argv: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="widget-probe-") as sandbox:
         os.environ["XDG_CONFIG_HOME"] = str(Path(sandbox) / "config")
         os.environ["XDG_STATE_HOME"] = str(Path(sandbox) / "state")
+        # An app the probe runs must not claim the app id on the session bus, or it hands
+        # its launch to the owner's open window (`hyprtweaker.application.NON_UNIQUE_ENV`).
+        os.environ["HYPRTWEAKER_NON_UNIQUE"] = "1"
         runpy.run_path(str(probe), run_name="__main__")
     return 0
 
