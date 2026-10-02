@@ -80,6 +80,48 @@ def test_the_advanced_switch_reveals_every_remaining_option(tmp_path: Path) -> N
     assert len(window.pages) == len(session.schema.section_names)
 
 
+def test_a_page_that_shows_some_options_says_how_many_the_switch_withholds(
+    tmp_path: Path,
+) -> None:
+    """#136: Config ▸ Cursor shows 20 settings and withholds 2. The hint row closes the Page,
+    after its Groups, so the 2 are discoverable; the switch shows them and drops the hint."""
+    from gi.repository import Adw
+
+    _session, window = build_window(tmp_path)
+
+    def descendants(widget: Any) -> Any:
+        child = widget.get_first_child()
+        while child is not None:
+            yield child
+            yield from descendants(child)
+            child = child.get_next_sibling()
+
+    def foot(section: str) -> tuple[int, list[tuple[str, str]]]:
+        """(Rows built, hint rows in the Page's last Group) for one Config Page."""
+        page = next(page for page in window.pages if page.plan.section == section)
+        groups = [w for w in descendants(page.page) if isinstance(w, Adw.PreferencesGroup)]
+        hints = [
+            (w.get_title(), w.get_subtitle())
+            for w in descendants(groups[-1])
+            if isinstance(w, Adw.ActionRow) and "advanced setting" in w.get_title()
+        ]
+        return len(page.rows), hints
+
+    assert foot("cursor") == (
+        20,
+        [
+            (
+                "2 advanced settings",
+                "Turn on “Show advanced settings” in the main menu to see them.",
+            )
+        ],
+    )
+
+    window.activate_action("win.show-advanced")
+
+    assert foot("cursor") == (22, [])
+
+
 def test_a_read_only_session_leaves_controls_insensitive_but_rows_readable(
     tmp_path: Path,
 ) -> None:

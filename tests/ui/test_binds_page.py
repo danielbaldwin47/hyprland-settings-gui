@@ -225,8 +225,12 @@ def test_a_multi_key_bind_offers_only_remove(tmp_path: Path, monkeypatch: Any) -
     no_xkb_for_notakey(monkeypatch)
     row, calls = editable_row(exec_bind("SUPER + A&B", "kitty", enabled=False))
 
-    assert row.badge_label.get_label() == "Multi-key: Hyprland 0.56 can't load it"
-    assert "error" not in row.badge_label.get_css_classes()
+    assert row.badge_label.get_label() == "Multi-key: Hyprland can't load it"
+    assert "0.56" not in row.badge_label.get_tooltip_text(), "copy that expires on a release"
+    # Readable: the badge is the one line telling the user to remove this bind.
+    assert "warning" in row.badge_label.get_css_classes()
+    assert "dim-label" not in row.badge_label.get_css_classes()
+    assert "dim-label" not in row.widget.get_css_classes()
     assert (row.enable_button, row.edit_button) == (None, None)
     row.remove_button.emit("clicked")
     assert calls == [("remove", 3)]
@@ -287,6 +291,28 @@ def test_a_declared_empty_submap_gets_a_group_flagged_unreachable(tmp_path: Path
     groups = window.binds_page.groups
     assert [g.get_title() for g in groups] == ["Keybinds", "Submap: resize"]
     assert UNREACHABLE in groups[1].get_description()
+
+
+def test_a_submap_name_with_an_ampersand_shows_in_its_group_title(tmp_path: Path) -> None:
+    """The group title is Pango markup: an unescaped `&` renders it blank."""
+    from gi.repository import Gtk
+
+    from hyprtweaker.engine.model.entities import Submap
+
+    session, window = build_window(tmp_path)
+    session.model.entities.submaps.append(Submap(name="a&b"))
+    window.binds_page.refresh()
+
+    def labels(widget: Any) -> Any:
+        child = widget.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Label):
+                yield child
+            yield from labels(child)
+            child = child.get_next_sibling()
+
+    shown = [label.get_text() for label in labels(window.binds_page.groups[1])]
+    assert "Submap: a&b" in shown
 
 
 def test_an_entered_submap_is_not_flagged(tmp_path: Path) -> None:

@@ -310,14 +310,15 @@ class MigrationDialog(Adw.Dialog):
     def _done_page(self, title: str, body: str) -> Adw.NavigationPage:
         page = _page(title)
         page.set_can_pop(False)
-        group = Adw.PreferencesGroup(title=title, description=body)
+        group = Adw.PreferencesGroup(title=title, description=GLib.markup_escape_text(body))
         page.get_child().set_content(_column(group))
         page.get_child().add_bottom_bar(_actions(self._close_button("Close", suggested=True)))
         return page
 
     def _failed_page(self, title: str, body: str) -> Adw.NavigationPage:
         page = _page("Stopped")
-        group = Adw.PreferencesGroup(title=title, description=body)
+        # `body` carries error text and paths, which may hold `&`: escaped, not markup.
+        group = Adw.PreferencesGroup(title=title, description=GLib.markup_escape_text(body))
         page.get_child().set_content(_scrolled(_column(group)))
         page.get_child().add_bottom_bar(_actions(self._close_button("Close", suggested=True)))
         return page

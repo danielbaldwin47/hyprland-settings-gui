@@ -38,6 +38,7 @@ deletes a state file would turn a truncated write from an unrelated crash into a
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -78,6 +79,42 @@ one: no entry, no reference, no blob.
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _replace(path: Path, data: bytes, *, durable: bool = False) -> None:
+    """Write `path` through a temporary and a rename. Raises `OSError`; callers decide.
+
+    `durable` adds the `fsync`s that make the new file survive a power loss, not only a
+    crash of the app: the file's bytes before the rename, the directory entry after it. Only
+    the crash window needs it -- `Draft.preserve` runs before the Writer's own rename, and
+    that rename must never outlive the Snapshot it overwrote.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    with temporary.open("wb") as handle:
+        handle.write(data)
+        if durable:
+            handle.flush()
+            _sync(handle.fileno())
+    os.replace(temporary, path)
+    if durable:
+        _sync_path(path.parent)
+
+
+def _sync(fileno: int) -> None:
+    """`os.fsync`, best effort: tmpfs and some network mounts refuse it (`sentinel._fsync`)."""
+    with contextlib.suppress(OSError):
+        os.fsync(fileno)
+
+
+def _sync_path(path: Path) -> None:
+    """`_sync` a file or directory by name. Best effort, like `_sync`."""
+    with contextlib.suppress(OSError):
+        fileno = os.open(path, os.O_RDONLY)
+        try:
+            _sync(fileno)
+        finally:
+            os.close(fileno)
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,7 +290,7 @@ class Draft:
         if module is None or module in self._preserved:
             return
         before = self._before[module]
-        digest = self._journal.store(before)
+        digest = self._journal.store(before, durable=True)
         if before is not None and digest is None:
             # The bytes did not reach the store. Recording `None` would claim the file was
             # absent, which is a worse lie than having no record of it.
@@ -330,8 +367,8 @@ class Draft:
             changes=tuple(changes),
         )
         self._journal.append(entry)
-        # After the append, so the preserved Snapshots are never unreferenced in between: a
-        # crash here journals the write twice, which beats journalling it not at all.
+        # After the append, so the preserved Snapshots are never unreferenced in between. A
+        # crash here leaves the record behind; `recover` sees the entry and adds no copy.
         self._journal.release()
         return entry
 
@@ -385,6 +422,10 @@ class Journal:
         disk says which of those replacements landed. Each one that did becomes a change
         with its preserved `before` and the bytes now there as `after`, so the overwritten
         bytes are history like any other write's. Never `confirmed`: no reload answered.
+
+        A process that died after its commit appended and before it released has already
+        journalled these changes; the newest entry says so, and nothing is appended twice.
+        An unreadable record names nothing it can trust, and is dropped here.
         """
         pending = self._pending()
         if pending is None:
@@ -396,7 +437,7 @@ class Journal:
                 continue  # the replace never landed
             changes.append(ModuleChange(module=module, before=before, after=self.store(after)))
         entry = None
-        if changes:
+        if changes and not self._newest_records(changes):
             entry = JournalEntry(
                 at=_now(),
                 keys=(),
@@ -410,13 +451,9 @@ class Journal:
 
     def hold(self, before: Mapping[str, str | None]) -> None:
         """Record the in-flight transaction's preserved Snapshots, Module to `before` digest."""
-        path = self._paths.journal_pending
         text = json.dumps({"format_version": JOURNAL_FORMAT_VERSION, "before": dict(before)})
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(f".{path.name}.tmp")
-            temporary.write_text(text, encoding="utf-8")
-            os.replace(temporary, path)
+            _replace(self._paths.journal_pending, text.encode("utf-8"), durable=True)
         except OSError as error:
             _log.warning("could not record the pending transaction: %s", error)
 
@@ -427,8 +464,28 @@ class Journal:
         except OSError as error:
             _log.warning("could not clear the pending transaction: %s", error)
 
+    def _newest_records(self, changes: Sequence[ModuleChange]) -> bool:
+        """Whether the newest entry already records each of `changes`' before and after."""
+        entries = self.entries()
+        if not entries:
+            return False
+        newest = entries[-1]
+        for change in changes:
+            recorded = newest.change(change.module)
+            if recorded is None or (recorded.before, recorded.after) != (
+                change.before,
+                change.after,
+            ):
+                return False
+        return True
+
     def _pending(self) -> dict[str, str | None] | None:
-        """The pending record, or `None` when there is none or it will not parse."""
+        """The pending record: `None` when there is none, `{}` when it will not parse.
+
+        Only reads. An unreadable record, or one from another format, names nothing that can
+        be trusted, so it comes back empty; `recover` then finds no change and releases it,
+        which keeps every later `begin` from tripping over the same file.
+        """
         try:
             payload = json.loads(self._paths.journal_pending.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -440,11 +497,8 @@ class Journal:
         )
         before = payload.get("before") if current else None
         if not isinstance(before, dict):
-            # Unreadable or from another format: nothing it says can be trusted, and leaving
-            # it would have every later `begin` trip over the same file.
             _log.warning("skipping an unreadable pending transaction record")
-            self.release()
-            return None
+            return {}
         return {
             str(module): digest
             for module, digest in before.items()
@@ -453,25 +507,27 @@ class Journal:
 
     # --- the Snapshot store -------------------------------------------------------------
 
-    def store(self, data: bytes | None) -> str | None:
+    def store(self, data: bytes | None, *, durable: bool = False) -> str | None:
         """Put bytes in the Snapshot store and return their digest. `None` passes through.
 
         Idempotent by construction: the digest *is* the filename, so re-storing bytes the
         store already holds is one `is_file()` and no write at all. That is what makes
         snapshotting every write affordable -- a config where one Module churns and nineteen
         do not costs one new file per distinct version of that Module, forever.
+
+        `durable` makes the blob survive a power loss (`_replace`), including one the store
+        already held: an earlier commit wrote it without the `fsync`.
         """
         if data is None:
             return None
         digest = content_hash(data)
         path = self._paths.snapshots_dir / digest
         if path.is_file():
+            if durable:
+                _sync_path(path)
             return digest
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(f".{digest}.tmp")
-            temporary.write_bytes(data)
-            os.replace(temporary, path)
+            _replace(path, data, durable=durable)
         except OSError as error:
             # History, not config. A state dir that cannot be written costs the user
             # auto-revert and Last known good, and the app says so in the log -- but
@@ -629,12 +685,8 @@ class Journal:
 
     def _rewrite(self, entries: Sequence[JournalEntry]) -> None:
         text = "".join(json.dumps(entry.as_json(), sort_keys=False) + "\n" for entry in entries)
-        path = self._paths.journal
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = path.with_name(f".{path.name}.tmp")
-            temporary.write_text(text, encoding="utf-8")
-            os.replace(temporary, path)
+            _replace(self._paths.journal, text.encode("utf-8"))
         except OSError as error:
             _log.warning("could not prune the Journal: %s", error)
 

@@ -72,6 +72,51 @@ def test_every_rule_becomes_a_row_in_model_order(tmp_path: Path) -> None:
     assert page.rows[2].enabled_switch.get_active() is False
 
 
+def shown(widget: Any) -> list[str]:
+    """Every label's text as drawn under `widget`: markup that fails to parse draws ''."""
+    from gi.repository import Gtk
+
+    texts: list[str] = []
+    child = widget.get_first_child()
+    while child is not None:
+        if isinstance(child, Gtk.Label):
+            texts.append(child.get_text())
+        texts.extend(shown(child))
+        child = child.get_next_sibling()
+    return texts
+
+
+def test_rule_text_with_an_ampersand_shows_as_typed(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path)
+    session.model.entities.window_rules.extend(
+        [
+            window_rule(match={"title": "Tom & Jerry"}, effects={"float": True}),
+            window_rule(match={"class": "a&b"}, effects={"pin": True}, name="R&D <tools>"),
+        ]
+    )
+    page = window.window_rules_page
+    page.refresh()
+
+    unnamed, named = (shown(row.widget) for row in page.rows)
+    assert any("Tom & Jerry" in text for text in unnamed)
+    assert "R&D <tools>" in named
+    assert any("a&b" in text for text in named)
+
+
+def test_the_window_picker_shows_a_title_with_an_ampersand(tmp_path: Path) -> None:
+    """Window titles are other programs' text, and `&` and `<` are common in them."""
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    build_window(tmp_path)
+    payload = ({"class": "mpv", "title": "Tom & Jerry <1940>"},)
+    editor = RuleEditor(
+        kind="window", on_done=lambda _rule: None, fetch_targets=lambda done: done(payload)
+    )
+    editor._open_picker()
+
+    assert "Tom & Jerry <1940>" in shown(editor._picker_rows[0])
+
+
 def test_the_filter_narrows_without_renumbering(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
 

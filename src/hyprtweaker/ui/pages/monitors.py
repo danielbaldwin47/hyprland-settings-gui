@@ -570,7 +570,7 @@ class MonitorsPage:
         summary = f"{rules} display {'rule' if rules == 1 else 'rules'}"
         if pins:
             summary += f" · {pins} workspace {'pin' if pins == 1 else 'pins'}"
-        row = Adw.ActionRow(title=profile.name, subtitle=summary)
+        row = Adw.ActionRow(title=profile.name, subtitle=summary, use_markup=False)
 
         if active and drifted:
             # The drift badge (ADR-0015): reality and the capture disagree.
@@ -626,6 +626,7 @@ class MonitorsPage:
         row = Adw.ExpanderRow(
             title=description or connector,
             subtitle=f"{connector} · {format_mode(width, height, refresh)}",
+            use_markup=False,  # the EDID description is the vendor's text, not markup
         )
         if rule is None:
             badge = Gtk.Label(label="No rule yet", css_classes=["dim-label", "caption"])
@@ -813,7 +814,7 @@ class MonitorsPage:
         breaking: bool,
     ) -> Adw.ExpanderRow:
         """The raw-fields editor for rules with no live display to build combos from."""
-        row = Adw.ExpanderRow(title=title, subtitle=subtitle)
+        row = Adw.ExpanderRow(title=title, subtitle=subtitle, use_markup=False)
         output = rule.output
         lane = self._actions.apply_breaking if breaking else self._actions.apply_benign
 
