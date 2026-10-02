@@ -205,6 +205,60 @@ def test_a_layers_reply_of_the_wrong_shape_is_malformed() -> None:
     run(scenario)
 
 
+# --- switches (the switch picker, #107) ---------------------------------------------------
+
+
+def test_switches_asks_for_devices_and_returns_each_switch_with_its_exact_name() -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        switches = await client.switches()
+        assert fake.requests == ["j/devices"]
+        assert [switch["name"] for switch in switches] == ["Lid Switch", "Tablet Mode Switch"]
+
+    run(scenario)
+
+
+def test_a_devices_reply_with_no_switches_is_an_empty_answer_not_a_failure() -> None:
+    """The captured nested reply: the compositor answered and has no switch device."""
+
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        fake.conversation["j/devices"] = (
+            '{"mice": [], "keyboards": [], "tablets": [], "touch": [], "switches": []}'
+        )
+        assert await client.switches() == ()
+
+    run(scenario)
+
+
+def test_a_devices_reply_without_a_switches_key_is_an_empty_answer() -> None:
+    """A Hyprland that predates the key still answers; nothing to list is not malformed."""
+
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        fake.conversation["j/devices"] = '{"mice": [], "keyboards": []}'
+        assert await client.switches() == ()
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("reply", ["[]", '{"switches": {}}', "not json"])
+def test_a_devices_reply_of_the_wrong_shape_is_malformed(reply: str) -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        fake.conversation["j/devices"] = reply
+        with pytest.raises(MalformedReply):
+            await client.switches()
+
+    run(scenario)
+
+
+def test_an_entry_without_a_name_is_left_out() -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        fake.conversation["j/devices"] = (
+            '{"switches": [{"address": "0x1"}, {"address": "0x2", "name": "Lid Switch"}]}'
+        )
+        assert [switch["name"] for switch in await client.switches()] == ["Lid Switch"]
+
+    run(scenario)
+
+
 def test_workspace_rule_count_is_the_length_of_the_live_rule_list() -> None:
     async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
         assert await client.workspace_rule_count() == 2

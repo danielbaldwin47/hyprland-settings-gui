@@ -45,6 +45,7 @@ __all__ = [
     "format_trigger",
     "normalise_keysym",
     "parse_trigger",
+    "switch_trigger",
     "trigger_load_problem",
     "validate_trigger",
     "wheel_token",
@@ -272,6 +273,34 @@ def parse_trigger(text: str) -> Trigger:
         else:
             keys.append(token)
     return Trigger(tuple(m for m in MODIFIERS if m in set(mods)), " + ".join(keys))
+
+
+def switch_trigger(name: str, when: str = "") -> str | TriggerProblem:
+    """`switch:[on:|off:]<name>` for a switch the compositor reported, or why it cannot be.
+
+    `name` is the device's own string, copied as `hyprctl devices` gives it: Hyprland
+    compares it exactly, spaces and case included, so it is never normalised (and the
+    `hl.device` rule that turns spaces into `-` does not apply here). `when` is `"on"`,
+    `"off"`, or `""` for the plain form that fires both ways.
+
+    `+` and `&` separate keys in a trigger, so a name holding one cannot be written back
+    as the one switch it is: `parse_trigger` would read two keys. That is refused here, with
+    the name in the message, rather than left for `validate_trigger` to call it a
+    combination of keys.
+    """
+    if not name.strip():
+        return TriggerProblem(
+            Severity.BLOCK,
+            "That switch has no name.",
+            "Use switch:<name>, spelled exactly as your device list reports it.",
+        )
+    if "+" in name or MULTI_KEY in name:
+        return TriggerProblem(
+            Severity.BLOCK,
+            f"A switch named {name!r} cannot be bound from here.",
+            "+ and & separate keys in a trigger, so the name would be read as more than one.",
+        )
+    return f"switch:{when}:{name}" if when else f"switch:{name}"
 
 
 def validate_trigger(

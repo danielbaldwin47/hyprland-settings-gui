@@ -175,6 +175,35 @@ capturing rather than guessing (#67, Pick a window). What #113's matches-N count
 `contentType` (a name) and `workspace{id,name}`. There is no `modal` field and `focus`
 is only `focusHistoryID` (0 = most recently focused)."""
 
+DEVICES = (
+    "{\n"
+    '"mice": [\n\n],\n'
+    '"keyboards": [\n\n],\n'
+    '"tablets": [\n\n],\n'
+    '"touch": [\n\n],\n'
+    '"switches": [\n'
+    "    {\n"
+    '        "address": "0x5581a0c3d2f0",\n'
+    '        "name": "Lid Switch"\n'
+    "    },\n"
+    "    {\n"
+    '        "address": "0x5581a0c3e110",\n'
+    '        "name": "Tablet Mode Switch"\n'
+    "    }\n"
+    "]\n"
+    "}\n"
+)
+"""**Mixed.** Captured off a nested headless Hyprland 0.56.2 (`guarded_hyprland`, no input
+devices): the envelope, an object with the five keys `mice`, `keyboards`, `tablets`,
+`touch` and `switches`, each an array, the arrays empty and blank-line separated exactly as
+here. **From source**, not captured, because a headless compositor has no switch device
+and the desktop session is off limits: the two entries in `switches`. Each is
+`{"address": "0x<hex>", "name": "<name>"}`, read off the format string in the 0.56.2
+binary (`strings /usr/bin/Hyprland`, the `{{"address": "0x{:x}", "name": "{}"}}` template
+that follows the keyboards'). The names are what a laptop's lid and a convertible's
+tablet-mode switch report; the addresses are made up. Switch names reach the bind as typed
+here, so they are never normalised (research `hyprlang-to-lua.md` on `switch:` names)."""
+
 LAYERS = (
     "{\n"
     '"eDP-1": {\n'
@@ -260,6 +289,7 @@ CONVERSATION: Mapping[str, str] = {
     "j/descriptions": DESCRIPTIONS,
     "j/binds": BINDS,
     "j/clients": CLIENTS,
+    "j/devices": DEVICES,
     "j/layers": LAYERS,
     "j/workspacerules": WORKSPACE_RULES,
     "j/getoption general:gaps_in": GAPS_IN,

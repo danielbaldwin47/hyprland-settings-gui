@@ -72,6 +72,7 @@ from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
+from hyprtweaker.engine.workspace_catalog import BUILTIN_LAYOUTS  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
@@ -1067,7 +1068,9 @@ class MainWindow(Adw.ApplicationWindow):
             if self._session.add_bind(bind):
                 self._refresh_binds()
 
-        BindEditor(on_done=done, submap=submap).present(self)
+        BindEditor(on_done=done, submap=submap, fetch_switches=self._switch_fetch()).present(
+            self
+        )
 
     def _edit_bind(self, index: int) -> None:
         if self._binds_page is None:
@@ -1080,7 +1083,19 @@ class MainWindow(Adw.ApplicationWindow):
             if self._session.replace_bind(index, bind):
                 self._refresh_binds()
 
-        BindEditor(on_done=done, bind=binds[index]).present(self)
+        BindEditor(
+            on_done=done, bind=binds[index], fetch_switches=self._switch_fetch()
+        ).present(self)
+
+    def _switch_fetch(self) -> Callable[..., None] | None:
+        """The live switch list for Capture's picker, or `None` when nobody is answering.
+
+        One source for every door that opens Capture (add, edit, rebind), so none of them
+        offers a different picker. `None` rather than a callable that fails: Capture words
+        "not connected" and "connected, no switch" differently (ADR-0008 degrades to
+        manual entry).
+        """
+        return self._session.fetch_switches if self._session.live else None
 
     def _remove_bind(self, index: int) -> None:
         if self._session.remove_bind(index):
@@ -1134,6 +1149,7 @@ class MainWindow(Adw.ApplicationWindow):
             on_done=done,
             initial=bind.keys,
             in_submap=bool(bind.submap) or bind.options.submap_universal,
+            fetch_switches=self._switch_fetch(),
         ).present(self)
 
     def _edit_submap(self, name: str | None) -> None:
@@ -1259,7 +1275,16 @@ class MainWindow(Adw.ApplicationWindow):
             on_show=self._reveal_workspace_rule,
             rule=rule,
             taken=[item.workspace for item in rules if item is not rule],
+            layouts=self._layout_choices(),
         )
+
+    def _layout_choices(self) -> tuple[str, ...]:
+        """The layouts the layout row offers: the schema's own, without its `lua:<name>`
+        placeholder (the compositor's Lua layouts join as #175 discovers them)."""
+        option = self._session.schema.get("general:layout")
+        known = option.known_values.values if option and option.known_values else ()
+        named = tuple(choice for choice in known if "<" not in choice)
+        return named or BUILTIN_LAYOUTS
 
     def _add_workspace_rule(self) -> None:
         self.workspace_rule_editor().present(self)
