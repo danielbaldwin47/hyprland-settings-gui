@@ -205,16 +205,17 @@ def test_a_dialog_shown_again_after_one_it_opened_closes_is_released_once(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     """Capture over the bind editor hands visibility back to the editor when it closes."""
-    from hyprtweaker.ui.release import release
-    from hyprtweaker.ui.shell import window as window_module
+    from hyprtweaker.ui import release as release_module
 
+    release = release_module.release
     released: list[str] = []
 
     def counting(widget: Any) -> None:
         released.append(type(widget).__name__)
         release(widget)
 
-    monkeypatch.setattr(window_module, "release", counting)
+    # Where a closed dialog is released (`release_when_unparented`, F18).
+    monkeypatch.setattr(release_module, "release", counting)
     window = wired_window(offline_session(tmp_path))
     add_bind_button(window).emit("clicked")
     editor = window.get_visible_dialog()
