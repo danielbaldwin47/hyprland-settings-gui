@@ -8,6 +8,7 @@ tried to write is asserted absent, not merely "reported".
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -332,6 +333,36 @@ def _alive(pid: int) -> bool:
     return stat.rsplit(")", 1)[1].split()[0] not in {"Z", "X"}
 
 
+OUR_SLEEP = b"sleep\x00600\x00"
+"""The command line of the `sleep` these tests' configs start, as /proc spells it."""
+
+
+def _kill_if_ours(pid: int) -> None:
+    """Kill `pid` only while it is still the `sleep 600` a config of ours started.
+
+    The pid comes from a pidfile, not a `Popen`, so nothing holds it: once that `sleep`
+    ends, the number can be reused by any of the owner's processes (#270 item 6).
+    """
+    try:
+        ours = Path(f"/proc/{pid}/cmdline").read_bytes() == OUR_SLEEP
+    except OSError:
+        return
+    if ours and _alive(pid):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_the_cleanup_leaves_a_process_that_is_not_ours_alone() -> None:
+    """A pidfile naming an unrelated process: the cleanup finds it and leaves it running."""
+    other = subprocess.Popen(["sleep", "30"])
+    try:
+        _kill_if_ours(other.pid)
+        assert other.poll() is None
+    finally:
+        other.kill()
+        other.wait()
+
+
 def _within(seconds: float, condition, what: str) -> None:  # type: ignore[no-untyped-def]
     deadline = time.monotonic() + seconds
     while not condition():
@@ -366,8 +397,7 @@ def test_a_cancelled_read_stops_the_config_and_the_commands_it_started(tmp_path)
         assert [type(error) for error in outcome] == [Cancelled]
         _within(10, lambda: not _alive(command), "the command's end")
     finally:
-        if _alive(command):  # a failed run must not leave its `sleep` behind
-            os.kill(command, signal.SIGKILL)
+        _kill_if_ours(command)  # a failed run must not leave its `sleep` behind
 
 
 EXITS_MID_READ = """
@@ -405,8 +435,7 @@ def test_a_read_still_running_when_the_app_exits_is_stopped(tmp_path) -> None:  
     try:
         _within(10, lambda: not _alive(command), "the command's end once the app exited")
     finally:
-        if _alive(command):
-            os.kill(command, signal.SIGKILL)
+        _kill_if_ours(command)
 
 
 def test_a_read_cancelled_before_it_starts_runs_nothing(tmp_path) -> None:  # type: ignore[no-untyped-def]
