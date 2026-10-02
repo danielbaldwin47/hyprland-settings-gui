@@ -812,6 +812,28 @@ def test_deleting_asks_first_and_cancel_keeps_the_preset(tmp_path: Path) -> None
     assert session.presets() == ()
     assert group.rows == {}
     assert group.others[0][0] == "No presets yet"
+    assert "Deleted Nord" in toasts(window)
+
+
+def test_a_preset_that_cannot_be_deleted_says_so_and_stays(tmp_path: Path) -> None:
+    """Finding 23 of the #153 review: a refused unlink showed nothing and kept the row."""
+    session, window = build(tmp_path)
+    slug = a_preset(session)
+    window.theming_page.refresh()
+    group = presets_of(window)
+    store = session.paths.presets_dir
+    store.chmod(0o555)
+    try:
+        group.button(slug, "delete").emit("clicked")
+        answer(group.dialog, "delete")
+    finally:
+        store.chmod(0o755)
+
+    assert (
+        "Nord was not deleted. Its file could not be removed (permission denied), so it is "
+        "still in your presets." in toasts(window)
+    )
+    assert list(group.rows) == [slug]
 
 
 # --- reveal -----------------------------------------------------------------------------------

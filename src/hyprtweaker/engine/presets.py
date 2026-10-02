@@ -26,6 +26,7 @@ prune never touches what the Manifest does not claim.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import Mapping
@@ -195,10 +196,13 @@ class PresetStore:
         self._revision += 1
 
     def delete(self, slug: str) -> None:
+        """Remove the Preset, then its kept wallpaper. Raises `OSError` when the Preset's
+        file cannot be removed; an image left behind is only disk space, so not fatal."""
         (self._dir / f"{slug}.json").unlink(missing_ok=True)
-        for extension in WALLPAPER_EXTENSIONS:
-            (self.wallpaper_dir / f"{slug}.{extension}").unlink(missing_ok=True)
         self._revision += 1
+        for extension in WALLPAPER_EXTENSIONS:
+            with contextlib.suppress(OSError):
+                (self.wallpaper_dir / f"{slug}.{extension}").unlink(missing_ok=True)
 
     @property
     def wallpaper_dir(self) -> Path:

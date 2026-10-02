@@ -1960,9 +1960,17 @@ class Session:
         """How many Options `scope` captures in the loaded Schema: the checklist's count."""
         return len(scoped_options(self._schema, scope))
 
-    def delete_preset(self, slug: str) -> None:
-        """Remove a Preset's file. Allowed on a read-only session, as saving is."""
-        self._preset_store.delete(slug)
+    def delete_preset(self, slug: str) -> str | None:
+        """Remove a Preset's file. Allowed on a read-only session, as saving is.
+
+        `None` once it is gone; otherwise why it is still there, as a sentence (finding 23
+        of the #153 review: the user saw nothing and the row stayed)."""
+        try:
+            self._preset_store.delete(slug)
+        except OSError as error:
+            why = (error.strerror or str(error)).lower()
+            return f"Its file could not be removed ({why}), so it is still in your presets."
+        return None
 
     def save_preset(
         self,

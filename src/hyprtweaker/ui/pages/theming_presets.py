@@ -534,9 +534,12 @@ class PresetsGroup:
         def answered(_dialog: Adw.AlertDialog, response: str) -> None:
             if response != "delete":
                 return
-            self._session.delete_preset(slug)
+            refused = self._session.delete_preset(slug)
             self.refresh(force=True)
-            self._actions.toast(f"Deleted {preset.name}.")
+            if refused is None:
+                self._actions.toast(f"Deleted {preset.name}")
+            else:
+                self._actions.toast(f"{preset.name} was not deleted. {refused}")
 
         dialog.connect("response", answered)
         self._present(dialog)
