@@ -24,6 +24,8 @@ package_sources = {
     'rule_grammars.py',
     'rules_catalog.py',
     'triggers.py',
+    'workspace_catalog.py',
+    'workspace_selector.py',
   ],
   'hyprtweaker/engine/apply': [
     '__init__.py',
@@ -127,6 +129,7 @@ package_sources = {
     'notices.py',
     'rule_editor.py',
     'submap_editor.py',
+    'workspace_fields.py',
     'workspace_rule_editor.py',
   ],
   'hyprtweaker/ui/pages': [
