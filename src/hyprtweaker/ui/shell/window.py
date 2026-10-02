@@ -237,6 +237,27 @@ whose Row has no home in the active View. One action means those three cannot di
 a search-driven switch is remembered exactly like a manual one, which is what the ADR asks
 for ("one mechanism, no temporary hidden state")."""
 
+THEME_ACTION = "theme"
+"""The Theme override: System, Light or Dark, three radio items in the primary menu.
+
+This app's own colour scheme, set on its `Adw.StyleManager` and nowhere else: the desktop's
+GTK settings and portal are never written, and never read to decide anything here. Hyprland
+boxes often run without the portal that makes "follow the system" reliable (ADR-0019), so
+the user can force the ground they can read. Remembered in the Prefs file."""
+
+_SCHEMES = {
+    "system": Adw.ColorScheme.DEFAULT,
+    "light": Adw.ColorScheme.FORCE_LIGHT,
+    "dark": Adw.ColorScheme.FORCE_DARK,
+}
+"""Each Theme override name, in menu order, and the colour scheme it asks for."""
+
+FORGET_REMEMBERED_ACTION = "forget-remembered"
+"""Clear every "remember my choice" answer (ADR-0014), so each such dialog asks again.
+
+Without it, a remembered answer is a one-way door (UX critique 4, #79). Insensitive while
+nothing is remembered, so the item never promises an effect it cannot have."""
+
 
 class MainWindow(Adw.ApplicationWindow):
     """The Config view over one `Session`."""
@@ -268,6 +289,10 @@ class MainWindow(Adw.ApplicationWindow):
 
         Read at construction rather than per-use so a `$XDG_STATE_HOME` that disappears
         mid-session cannot change the view out from under the user."""
+        # Before the first present: the window's first frame is already the chosen ground.
+        Adw.StyleManager.get_default().set_color_scheme(
+            _SCHEMES[_theme_from(self._prefs.theme)]
+        )
         self._view = _view_from(self._prefs.view)
         """The active sidebar arrangement, and the source of truth for it.
 
@@ -482,6 +507,16 @@ class MainWindow(Adw.ApplicationWindow):
         views.append("Config", f"win.{VIEW_ACTION}('{View.CONFIG.value}')")
         menu.append_section("View", views)
 
+        themes = Gio.Menu()
+        for name in _SCHEMES:
+            themes.append(name.capitalize(), f"win.{THEME_ACTION}('{name}')")
+        menu.append_section("Theme", themes)
+        # Its own unlabelled section right below Theme rather than inside it: forgetting a
+        # dialog answer is not a colour, and under the "Theme" heading it would read as one.
+        remembered = Gio.Menu()
+        remembered.append("Forget remembered choices", f"win.{FORGET_REMEMBERED_ACTION}")
+        menu.append_section(None, remembered)
+
         interop = Gio.Menu()
         interop.append(IMPORT_LABEL, f"win.{IMPORT_ACTION}")
         interop.append("Export...", f"win.{EXPORT_ACTION}")
@@ -542,6 +577,20 @@ class MainWindow(Adw.ApplicationWindow):
         view.connect("activate", self._on_choose_view)
         self.add_action(view)
         self._view_action = view
+
+        theme = Gio.SimpleAction.new_stateful(
+            THEME_ACTION,
+            GLib.VariantType.new("s"),
+            GLib.Variant.new_string(_theme_from(self._prefs.theme)),
+        )
+        theme.connect("activate", self._on_choose_theme)
+        self.add_action(theme)
+
+        forget = Gio.SimpleAction.new(FORGET_REMEMBERED_ACTION, None)
+        forget.connect("activate", self._on_forget_remembered)
+        forget.set_enabled(bool(self._prefs.remembered))
+        self.add_action(forget)
+        self._forget_action = forget
 
         undo = Gio.SimpleAction.new(UNDO_ACTION, None)
         undo.connect("activate", self._on_undo)
@@ -850,9 +899,23 @@ class MainWindow(Adw.ApplicationWindow):
         A failed write is deliberately silent: `$XDG_STATE_HOME` being read-only means the
         choice will not survive a restart, which is not worth a toast over the Row the user
         is looking at, and `PrefsStore.save` has already declined to raise.
+
+        The one path every preference change takes, a dialog's remembered answer included
+        (#170), so "Forget remembered choices" turns sensitive the moment there is one.
         """
         self._prefs = prefs
         self._prefs_store.save(prefs)
+        self._forget_action.set_enabled(bool(prefs.remembered))
+
+    def _on_choose_theme(self, action: Gio.SimpleAction, parameter: Any) -> None:
+        theme = _theme_from(parameter.get_string())
+        action.set_state(GLib.Variant.new_string(theme))
+        Adw.StyleManager.get_default().set_color_scheme(_SCHEMES[theme])
+        self._remember(self._prefs.with_theme(theme))
+
+    def _on_forget_remembered(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        self._remember(self._prefs.without_any_remembered())
+        self._toasts.add_toast(Adw.Toast(title="Remembered choices forgotten"))
 
     @property
     def visible_section(self) -> str | None:
@@ -2324,6 +2387,15 @@ def _view_from(value: str) -> View:
         return View(value)
     except ValueError:
         return View.TASKS
+
+
+def _theme_from(value: str) -> str:
+    """A stored or action-supplied Theme override name, degraded to System if unrecognised.
+
+    As `_view_from` for views: a name from a newer app or a hand edit opens the app in the
+    platform's own scheme rather than failing to start.
+    """
+    return value if value in _SCHEMES else "system"
 
 
 def _category_heading(title: str) -> Gtk.ListBoxRow:
