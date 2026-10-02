@@ -16,7 +16,7 @@ refinement is the word-prefix boost -- `round` should reach "Rounding" before it
 "Blur passes (rounding aware)" -- and it is a *tie-break within a field*, not a rank of its
 own, so the field order below still decides first.
 
-**Two groups** (ADR-0017 §Index scope): Settings, then Rules & entities. The Options are
+**Two groups** (ADR-0017 §Index scope): Settings, then Keybinds, rules & displays. The Options are
 indexed once, at construction; the Entities are not, because they change under the window
 -- an edit, an undo, a foreign reload, a profile saved. Rather than a change signal fired
 from every site that mutates a list (and forgotten at the next one), the index *pulls*: each
@@ -58,7 +58,7 @@ from hyprtweaker.ui.pages.entity_text import (
 )
 
 SETTINGS_GROUP = "Settings"
-ENTITIES_GROUP = "Rules & entities"
+ENTITIES_GROUP = "Keybinds, rules & displays"
 """ADR-0017's two result groups, in the order the finder lists them."""
 
 

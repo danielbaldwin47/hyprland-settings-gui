@@ -280,7 +280,7 @@ def test_the_reveal_ends_when_the_user_navigates(window: Any) -> None:
     assert all(page.row(HIDDEN_OPTION) is None for page in window.pages)
 
 
-# --- the Rules & entities group (#75) -------------------------------------------------------
+# --- the Keybinds, rules & displays group (#75)---------------------------------------------------
 
 
 def test_startup_builds_no_entity_entries() -> None:
@@ -373,7 +373,7 @@ def test_results_group_settings_first_then_rules_and_entities(
         for index in range(len(window.hits))
         if (row := window.finder.results.get_row_at_index(index)).get_header() is not None
     ]
-    assert headings == [(0, "Settings"), (kinds.index(EntityHit), "Rules & entities")]
+    assert headings == [(0, "Settings"), (kinds.index(EntityHit), "Keybinds, rules & displays")]
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,4 @@
-# search index -- the Rules & entities group
+# search index -- the Keybinds, rules & displays group
 
 ## query: super (8 hits)
 field | match | kind | title | subtitle | badge
