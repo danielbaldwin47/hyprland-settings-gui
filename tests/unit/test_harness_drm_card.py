@@ -54,7 +54,7 @@ def fake_sysfs(
     return sys_drm
 
 
-#: A `vkms` card as a stock `ubuntu-latest` runner shows it (kernel 6.17, CI run TODO):
+#: A `vkms` card as a stock `ubuntu-latest` runner shows it (kernel 6.17, CI run 36957432658):
 #: since Linux 6.15 `vkms` sits on the faux bus, its driver is `faux_driver`, and it has
 #: no render node.
 VKMS = {"device": "devices/faux/vkms", "driver": "faux_driver", "render": False}
