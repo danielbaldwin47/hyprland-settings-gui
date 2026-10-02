@@ -502,10 +502,15 @@ class BindRow:
         target.connect("motion", self._on_hover, drag)
         target.connect("drop", self._on_drop, drag, actions)
         self.widget.add_controller(target)
+
+        handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
         if not movable:
+            # Holds the handle's width, so this row's trigger lines up with its neighbours'.
+            handle.set_opacity(0)
+            self.widget.add_prefix(handle)
             return
 
-        self.drag_handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+        self.drag_handle = handle
         self.drag_handle.add_css_class("dim-label")
         self.drag_handle.set_tooltip_text(REORDER_HINT)
         self.widget.add_prefix(self.drag_handle)
