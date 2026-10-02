@@ -139,6 +139,19 @@ def test_a_landed_gesture_is_offered_back(tmp_path: Path) -> None:
     assert toast.get_title() == f"{session.schema[ROUNDING].title} changed"
 
 
+def test_an_applied_preset_is_offered_back_by_its_name(tmp_path: Path) -> None:
+    from hyprtweaker.engine.apply import PresetStep
+
+    _session, window = build_window(tmp_path)
+
+    window.offer_undo(PresetStep("Nord", a_gesture()))
+
+    toast = window.undo_toast
+    assert toast is not None
+    assert toast.get_title() == "Applied Nord. Press Ctrl+Z to undo."
+    assert toast.get_button_label() == "Undo"
+
+
 def test_the_toasts_button_asks_the_session_to_undo(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
     window.offer_undo(a_gesture())
