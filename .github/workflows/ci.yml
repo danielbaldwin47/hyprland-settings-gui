@@ -54,7 +54,7 @@ jobs:
             pacman -Q hyprland mesa
             mkdir -p /tmp/xdg && chmod 700 /tmp/xdg
             export XDG_RUNTIME_DIR=/tmp/xdg LIBSEAT_BACKEND=noop AQ_DRM_DEVICES=/dev/dri/card0 HYPRLAND_NO_SD_VARS=1
-            (Hyprland >/tmp/h.log 2>&1 &) ; sleep 8
+            (Hyprland --i-am-really-stupid >/tmp/h.log 2>&1 &) ; sleep 8
             export HYPRLAND_INSTANCE_SIGNATURE=$(ls /tmp/xdg/hypr | head -1)
             hyprctl monitors 2>&1 | head -12
             hyprctl output create headless 2>&1; sleep 1
