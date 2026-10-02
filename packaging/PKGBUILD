@@ -23,7 +23,11 @@ depends=(python 'python-gobject>=3.50' gtk4 'libadwaita>=1.7' glib2 hicolor-icon
 makedepends=(git meson)
 # jq: tests/unit/test_desktop_fence_hook.py runs the shell fence, which reads its input with jq.
 checkdepends=(python-pytest desktop-file-utils appstream jq)
-optdepends=('hyprland: the compositor being configured')
+optdepends=('hyprland: the compositor being configured'
+            'matugen: border colors from the wallpaper'
+            'wallust: border colors from the wallpaper'
+            'swww: wallpaper for presets'
+            'awww: wallpaper for presets')
 source=("$_repo::${HYPRTWEAKER_SRC:-git+$url.git}")
 sha256sums=('SKIP')
 
