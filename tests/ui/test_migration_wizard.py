@@ -1467,3 +1467,20 @@ def _labels_of(widget: Any) -> list[str]:
             stack.append(child)
             child = child.get_next_sibling()
     return found
+
+
+def test_enter_on_the_detect_page_converts(tmp_path: Path) -> None:
+    """#148 hand-test 8: Tab reached the found path with no focus ring, and Enter there did
+    nothing, as the Detect page named no default button (the other pages do)."""
+    from hyprtweaker.engine.paths import ConfigPaths
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+    window, _session = build_window(tmp_path)
+    window.route_first_run()
+    dialog = window.show_migration()
+
+    default = dialog.get_default_widget()
+    assert default is not None and default.get_label() == "Convert..."
+    dialog.close()

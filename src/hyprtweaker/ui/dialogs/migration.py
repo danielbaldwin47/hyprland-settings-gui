@@ -177,6 +177,8 @@ class MigrationDialog(Adw.Dialog):
             self._view.push(self._consent_page(source))
         else:
             self._view.push(self._detect_page())
+        # The first page is pushed before anything shows; its default is set here.
+        self._on_visible_page(self._view, None)
 
     def _on_visible_page(self, view: Adw.NavigationView, _pspec: Any) -> None:
         # Cleared on every other page: a default left over from a page underneath would
@@ -209,6 +211,9 @@ class MigrationDialog(Adw.Dialog):
         convert = _suggested("Convert...")
         convert.connect("clicked", lambda _button: self._go_preview())
         page.get_child().add_bottom_bar(_actions(convert, self._close_button("Not now")))
+        # Enter converts, wherever focus is on the page -- the selectable path included,
+        # which took a Tab stop and did nothing on Enter (#148 hand-test 8).
+        self._defaults[page] = convert
         return page
 
     def _go_preview(self) -> None:
