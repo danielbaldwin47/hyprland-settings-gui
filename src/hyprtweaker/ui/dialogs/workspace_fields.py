@@ -29,7 +29,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from hyprtweaker.engine.entities_catalog import field_text  # noqa: E402
 from hyprtweaker.engine.workspace_catalog import (  # noqa: E402
@@ -42,6 +42,7 @@ from hyprtweaker.engine.workspace_catalog import (  # noqa: E402
     find_field,
     retype_like,
 )
+from hyprtweaker.ui.release import release  # noqa: E402
 from hyprtweaker.ui.rows.gap_field import GapField, gap_row  # noqa: E402
 
 _MISSING: Any = object()
@@ -320,6 +321,9 @@ class WorkspaceFieldRows:
         else:
             self._other_group.remove(row.widget)
             self._other_rows.remove(row.widget)
+        # From an idle: this runs inside the row's own trash button's handler, and the
+        # button's closure holds this object, a cycle `release` cuts.
+        GLib.idle_add(release, row.widget)
         del self._rows[row.key]
         self._gaps.pop(row.key, None)
         self._order.remove(row.key)
@@ -362,6 +366,7 @@ class WorkspaceFieldRows:
     def _remove_option(self, row: _Row) -> None:
         self._opts_group.remove(row.widget)
         self._opts_widgets.remove(row.widget)
+        GLib.idle_add(release, row.widget)
         del self._opts_rows[row.key]
         self._opts_touched = True
         self._dirty = True

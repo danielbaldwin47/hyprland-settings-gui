@@ -522,6 +522,32 @@ def test_a_drag_from_one_handle_to_another_row_calls_move() -> None:
     assert calls == [("move", 0, 4)]
 
 
+def test_a_drag_whose_row_a_refresh_replaced_lands_nowhere(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A refresh mid-drag (an undo, a reload) renumbers the rows: the old drag must not
+    move whatever bind now sits at the index it started from (review #151, finding 39)."""
+    from gi.repository import Gdk, Gtk
+
+    session, window = build_window(tmp_path)
+    monkeypatch.setattr(type(session), "live", property(lambda _self: True))
+    session.model.entities.binds.extend(
+        exec_bind("SUPER + Q", command) for command in ("a", "b", "c")
+    )
+    moved: list[tuple[int, int]] = []
+    monkeypatch.setattr(session, "move_bind", lambda *args: moved.append(args) or True)
+    page = window.binds_page
+    page.refresh()
+    controller(page.rows[0].drag_handle, Gtk.DragSource).emit("prepare", 0.0, 0.0)
+
+    page.refresh()
+    drop = controller(page.rows[2].widget, Gtk.DropTarget)
+
+    assert drop.emit("enter", 0.0, 0.0) == Gdk.DragAction(0)
+    assert drop.emit("drop", 0, 0.0, 0.0) is False
+    assert moved == []
+
+
 def test_a_row_from_another_group_is_not_a_drop_target() -> None:
     """No highlight, no drop: order between groups is not something binds.lua holds."""
     from hyprtweaker.ui.pages.binds import BindDrag

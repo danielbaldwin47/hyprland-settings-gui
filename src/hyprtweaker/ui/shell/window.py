@@ -171,9 +171,14 @@ def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> Non
 
     An idle rather than the `closed` handler itself: libadwaita is still finishing the close
     when it emits `closed`, and every handler of it must still find the dialog whole.
+
+    Once per dialog: a dialog becomes visible again each time one it opened (Capture over
+    the bind editor) closes. The mark lives on the wrapper, which PyGObject then keeps for
+    as long as the dialog lives, so it cannot be forgotten and hooked twice.
     """
     dialog = window.get_visible_dialog()
-    if dialog is not None:
+    if dialog is not None and not getattr(dialog, "_release_on_close", False):
+        dialog._release_on_close = True
         dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
 
 
@@ -1696,8 +1701,14 @@ class MainWindow(Adw.ApplicationWindow):
         """
         if self._monitors_page is None:
             return
-        self._session.fetch_monitors(self._monitors_page.set_connected)
+        # The page is looked up when the answer lands: a rebuild in between replaces it and
+        # releases the old one.
+        self._session.fetch_monitors(self._set_connected)
         self.sync()
+
+    def _set_connected(self, monitors: tuple[Mapping[str, Any], ...] | None) -> None:
+        if self._monitors_page is not None:
+            self._monitors_page.set_connected(monitors)
 
     def sync(self) -> None:
         """Make every control agree with the model, and the Banner with the session's health.
