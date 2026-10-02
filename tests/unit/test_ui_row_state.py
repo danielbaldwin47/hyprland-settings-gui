@@ -968,3 +968,13 @@ class TestValueSummary:
         assert state.summary is not None
         assert state.summary.text == "8"
         assert row_state(SCHEMA["decoration:rounding"], context).summary is None
+
+
+def test_the_popover_default_reads_in_the_controls_words() -> None:
+    """#148 hand-test 3: "Default: [0, 0]", "Default: ffffffff 0deg", "Default: 5 5 5 5",
+    "Default: 400" (a weight the combo calls Normal)."""
+    assert default_label(SCHEMA["decoration:shadow:offset"]) == "0.0, 0.0"
+    assert default_label(SCHEMA["general:col.active_border"]) == "#ffffff"
+    assert default_label(SCHEMA["misc:background_color"]) == "#111111"
+    assert default_label(SCHEMA["general:gaps_in"]) == "5"
+    assert default_label(SCHEMA["group:groupbar:font_weight_active"]) == "Normal"

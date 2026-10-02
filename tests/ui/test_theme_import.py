@@ -137,7 +137,7 @@ def test_the_preview_shows_each_change_and_what_is_left_out(tmp_path: Path) -> N
     assert dialog.get_title() == "Import theme"
     assert rows(dialog) == [
         ("General", "Border size", "2 → 3"),
-        ("General", "Inner gaps", "5 5 5 5 → 5 10 5 10"),
+        ("General", "Inner gaps", "5 → 5 · 10 · 5 · 10"),
         ("Already the same", "Corner rounding", "0"),
         ("Left out", "general:sparkle", "This version of Hyprland does not have it"),
     ]

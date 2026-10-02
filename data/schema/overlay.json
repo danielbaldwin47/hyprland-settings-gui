@@ -1659,7 +1659,7 @@
       "title": "Hide the built-in wallpaper",
       "group": "Wallpaper and splash",
       "order": 3,
-      "help": "Hides the random Hyprland logo or anime picture drawn on the desktop background."
+      "help": "Hides the built-in wallpaper Hyprland draws on the desktop background, whichever one is chosen."
     },
     "misc:disable_splash_rendering": {
       "title": "Hide the splash text",
@@ -1824,7 +1824,7 @@
       "title": "Background color",
       "group": "Wallpaper and splash",
       "order": 2,
-      "help": "Color shown behind everything when no wallpaper covers the screen. Needs the Hyprland logo hidden."
+      "help": "Color shown behind everything when no wallpaper covers the screen. Needs the built-in wallpaper hidden."
     },
     "misc:close_special_on_empty": {
       "title": "Close the special workspace when empty",

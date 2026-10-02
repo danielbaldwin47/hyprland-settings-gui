@@ -1315,7 +1315,7 @@ help = "Blurs what lies behind the group bar's tab indicators and gradient backg
 #   upstream: disables the random Hyprland logo / anime girl background. :(
 #   wiki:     disables the random Hyprland logo / anime girl background. :(
 ["misc:disable_hyprland_logo"]
-help = "Hides the random Hyprland logo or anime picture drawn on the desktop background."
+help = "Hides the built-in wallpaper Hyprland draws on the desktop background, whichever one is chosen."
 
 # misc:disable_splash_rendering: Hide the splash text [Wallpaper and splash] (bool, default False)
 #   upstream: disables the Hyprland splash rendering.
@@ -1475,7 +1475,7 @@ help = "Blurs what shows through the lockscreen. Works only while Session lock X
 #   wiki:     change the background color. (requires enabled `disable_hyprland_logo`)
 #   candidate: short (28 chars); wiki is longer (71 chars)
 ["misc:background_color"]
-help = "Color shown behind everything when no wallpaper covers the screen. Needs the Hyprland logo hidden."
+help = "Color shown behind everything when no wallpaper covers the screen. Needs the built-in wallpaper hidden."
 
 # misc:close_special_on_empty: Close the special workspace when empty [Window handling] (bool, default True)
 #   upstream: close the special workspace if the last window is removed

@@ -34,6 +34,7 @@ from hyprtweaker.engine.model import (
     display_text,
     parse_value,
 )
+from hyprtweaker.engine.model.values import FONT_WEIGHT_NAMES, Color, FontWeight
 from hyprtweaker.engine.schema import (
     OptionType,
     ResolvedOption,
@@ -158,7 +159,46 @@ def _labelled(option: ResolvedOption, value: Any) -> str:
         return humanise(value)
     if option.type is OptionType.BOOL:
         return "On" if value else "Off"
-    return display_text(value)
+    return _control_words(option, value)
+
+
+def _control_words(option: ResolvedOption, value: Any) -> str:
+    """A typed value as its control reads it, never its config spelling (#148 hand-test 3):
+    `#ffffff` not `ffffffff 0deg`, `5` not `5 5 5 5`, `0.0, 0.0` not `[0, 0]`, `Normal`
+    not `400`. Anything the type's own parser refuses is shown verbatim."""
+    try:
+        typed = parse_value(option.type, value)
+    except (ValueError, TypeError):
+        return display_text(value)
+    if isinstance(typed, Color):
+        return color_words(typed)
+    if isinstance(typed, Gradient):
+        colors = ", ".join(color_words(color) for color in typed.colors)
+        if len(typed.colors) == 1 and not typed.angle:
+            return colors
+        return f"{colors} at {display_text(typed.angle)}°"
+    if isinstance(typed, CssGaps):
+        sides = (typed.top, typed.right, typed.bottom, typed.left)
+        if len(set(sides)) == 1:
+            return str(typed.top)
+        return " · ".join(str(side) for side in sides)
+    if isinstance(typed, Vec2):
+        return f"{_axis(typed.x)}, {_axis(typed.y)}"
+    if isinstance(typed, FontWeight):
+        named = next(
+            (name for name, number in FONT_WEIGHT_NAMES.items() if number == typed.number),
+            None,
+        )
+        if named is not None:
+            return humanise(named)
+        return display_text(typed.weight)
+    return display_text(typed)
+
+
+def color_words(color: Color) -> str:
+    """`#rrggbb`, with the alpha only when it is not opaque: what a color picker shows."""
+    rgba = f"{color.rgba:08x}"
+    return f"#{rgba[:6]}" if rgba.endswith("ff") else f"#{rgba}"
 
 
 def _label_key(value: Any) -> str:
