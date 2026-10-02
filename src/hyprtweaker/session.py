@@ -36,6 +36,7 @@ from collections.abc import Callable, Collection, Coroutine, Iterable, Mapping, 
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -419,6 +420,21 @@ renamed them."""
 _NOT_CONNECTED_YET = "Connecting to Hyprland…"
 
 
+class Replaced(Enum):
+    """How "Replace file" ended (`Session.replace_edited_file`). Only `DONE` wrote."""
+
+    DONE = "done"
+    READ_ONLY = "read-only"
+    NOT_EDITED = "not edited"
+    NOT_KNOWN = "not known"
+    """The file does not read, and there is no earlier version of the app's to rebuild
+    it from: writing it from the model would write it empty (#148 fix review R9)."""
+    NO_COPY = "no copy"
+
+    def __bool__(self) -> bool:
+        return self is Replaced.DONE
+
+
 @dataclass(frozen=True, slots=True)
 class _PendingEntityStep:
     """An Entity step waiting for the verdict on the commit that carries it."""
@@ -583,6 +599,8 @@ class Session:
         self._edited_files: list[str] = []
         """Modules that refused a change and are still edited: `Health.edited_files`."""
         self._read_off_text: frozenset[str] = frozenset()
+        self._not_known: set[str] = set()
+        """Edited Modules whose values neither their text nor a Snapshot could give (R9)."""
         """The options Modules the last re-read took off their own text (`_read_model`)."""
         self._model_read = False
         self._lua_missing: str | None = None
@@ -3200,7 +3218,7 @@ class Session:
             else:
                 self._model.set(name, value)
         await self._read_off_text_of(
-            off_text, [o for o in texts if o.name not in result.unknown]
+            off_text, [o for o in texts if o.name not in result.unknown], launch=True
         )
         return result
 
@@ -3209,25 +3227,50 @@ class Session:
         return frozenset(m for m in manifest.hand_edited(self._paths) if is_option_module(m))
 
     async def _read_off_text_of(
-        self, modules: Collection[str], options: Sequence[ResolvedOption]
+        self,
+        modules: Collection[str],
+        options: Sequence[ResolvedOption],
+        *,
+        launch: bool = False,
     ) -> None:
-        """Set each of `options` from its Module's own text, or unset it there (R3)."""
+        """Set each of `options` from its Module's own text, or unset it there (R3).
+
+        A Module that cannot be read is read off the app's last version of it; with none,
+        the Module is not known (R9), which `replace_edited_file` refuses to write rather
+        than writing it empty. Its Options keep what the model holds -- the app's values --
+        except at `launch`, when what the model holds is the compositor's answer, which may
+        be `user.lua`'s: they are unset there.
+        """
         if not modules or not options:
             return
         try:
-            values = await asyncio.to_thread(
-                overrides.module_values, self._paths.app_dir, self._schema, modules
+            values, unknown = await asyncio.to_thread(
+                overrides.module_values,
+                self._paths.app_dir,
+                self._schema,
+                modules,
+                last_written=self._last_written,
             )
         except LuaUnavailable as error:
             _log.warning("no Lua, so an edited Module's settings are not known: %s", error)
-            values = {}
+            values, unknown = {}, frozenset(modules)
+        self._not_known = (self._not_known - set(modules)) | unknown
         for option in options:
+            if module_relpath(option) in unknown:
+                if launch:
+                    self._model.unset(option.name)
+                continue
             if option.name not in values:
                 self._model.unset(option.name)
             elif values[option.name] is None:
                 self._model.set_null(option.name)
             else:
                 self._model.set(option.name, values[option.name])
+
+    def _last_written(self, module: str) -> bytes | None:
+        """The app's last version of `module`: the Snapshot of the bytes the Manifest names."""
+        record = self._manifest().modules.get(module)
+        return self._journal.snapshot(record.sha256) if record is not None else None
 
     async def _scan(self, client: CommandClient) -> None:
         """Read what the live config is complaining about, and raise the Banner for it.
@@ -3897,22 +3940,27 @@ class Session:
             self._edited_files.remove(module)
             self._changed()
 
-    def replace_edited_file(self, module: str) -> bool:
+    def replace_edited_file(self, module: str) -> Replaced:
         """Overwrite `module` with the app's version, after keeping a copy of it.
 
-        The app's version renders what the model holds for the Module, which is what the
-        file itself said (`_read_model`, R3), in the app's own form. Nothing refused earlier
-        is replayed: the user makes that change again. `False`, with nothing written, when
-        the session is read-only or the copy could not be kept: the dialog promised one.
+        The app's version renders what the model holds for the Module: what the file itself
+        said (`_read_model`, R3), or, for a file that cannot be read, the app's last version
+        of it (R9), in the app's own form. Nothing refused earlier is replayed: the user
+        makes that change again. Anything but `Replaced.DONE` (which alone is truthy) wrote
+        nothing, and says why.
         """
-        if self._refuse(module) or self._edited_module((module,)) is None:
-            return False
+        if self._refuse(module):
+            return Replaced.READ_ONLY
+        if self._edited_module((module,)) is None:
+            return Replaced.NOT_EDITED
+        if module in self._not_known:
+            return Replaced.NOT_KNOWN
         if not self._keep_edited_copy(module):
-            return False
+            return Replaced.NO_COPY
         self._applier.allow_overwrite(module)  # type: ignore[union-attr]  # _refuse proved it
         self._applier.force_write()  # type: ignore[union-attr]  # _refuse proved it
         self.keep_edited_file(module)
-        return True
+        return Replaced.DONE
 
     def _keep_edited_copy(self, module: str) -> bool:
         """Copy the hand-edited `module` where the user can find it, before it is replaced.
@@ -3921,6 +3969,8 @@ class Session:
         a copy is whole or absent and a second one never lands on the first.
         """
         source = self._paths.app_dir / module
+        if not source.exists():
+            return True  # deleted by hand: there is nothing of the user's to copy
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         base = self._paths.edited_copies_dir / stamp
         suffix = 1

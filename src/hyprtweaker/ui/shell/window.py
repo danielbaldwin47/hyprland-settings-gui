@@ -86,7 +86,7 @@ from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
-from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
+from hyprtweaker.session import AutoRevert, Notice, Replaced, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
 from hyprtweaker.ui.dialogs.colour_conflict import (  # noqa: E402
@@ -2171,13 +2171,11 @@ class MainWindow(Adw.ApplicationWindow):
         if response == "open":
             self._launch_file(self._session.edited_file_path(module))
         elif response == "replace":
-            if self._session.replace_edited_file(module):
-                said = (
-                    f"{name} was replaced with the app's version. Make your change again. "
-                    f"Your edited file is in {self._session.edited_copies_shown}."
-                )
-            else:
-                said = f"{name} was not replaced: a copy of it could not be kept."
+            said = replaced_sentence(
+                self._session.replace_edited_file(module),
+                name,
+                self._session.edited_copies_shown,
+            )
             self._toasts.add_toast(plain_toast(said, timeout=8))
         else:
             self._session.keep_edited_file(module)
@@ -3266,3 +3264,20 @@ def _revert_summary(revert: AutoRevert) -> str:
     if revert.restored:
         return f"{cause} — reverted."
     return f"{cause}, and it could not be reverted."
+
+
+def replaced_sentence(outcome: Replaced, name: str, copies: str) -> str:
+    """What "Replace file" did, one sentence per way it ends: only `DONE` wrote."""
+    return {
+        Replaced.DONE: (
+            f"{name} was replaced with the app's version. Make your change again. "
+            f"Your edited file is in {copies}."
+        ),
+        Replaced.NO_COPY: f"{name} was not replaced: a copy of it could not be kept.",
+        Replaced.NOT_KNOWN: (
+            f"{name} was not replaced: it does not read as a config, and the app has no "
+            f"earlier version of it to rebuild. Open it and fix it by hand."
+        ),
+        Replaced.NOT_EDITED: f"{name} is back as the app wrote it, so nothing was replaced.",
+        Replaced.READ_ONLY: f"{name} was not replaced: settings are read-only.",
+    }[outcome]

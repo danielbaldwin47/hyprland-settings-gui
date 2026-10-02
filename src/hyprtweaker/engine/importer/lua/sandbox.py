@@ -514,9 +514,28 @@ def config_values(
     """
     if not module.is_file():
         return {}
-    recording = evaluate(
+    return _set_by(_evaluate_module(module, timeout), keys)
+
+
+def readable_config_values(
+    module: Path, keys: Iterable[str], *, timeout: float = DEFAULT_TIMEOUT
+) -> dict[str, Any] | None:
+    """`config_values`, or `None` when the Module cannot be read: missing, or its text does
+    not evaluate cleanly. Unreadable is not "sets nothing" (#148 fix review R9): a caller
+    that took it for that would unset every value the Module held, and write it so."""
+    if not module.is_file():
+        return None
+    recording = _evaluate_module(module, timeout)
+    return _set_by(recording, keys) if recording.ok else None
+
+
+def _evaluate_module(module: Path, timeout: float) -> Recording:
+    return evaluate(
         module, consent=Consent(evaluate=True), timeout=timeout, assume_plugins_loaded=True
     )
+
+
+def _set_by(recording: Recording, keys: Iterable[str]) -> dict[str, Any]:
     tables = [
         call.args
         for call in recording.calls

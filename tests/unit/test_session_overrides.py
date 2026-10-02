@@ -549,3 +549,79 @@ def test_an_entrypoint_recovery_reads_an_edited_module_off_its_text(tmp_path: Pa
         assert session.model.get(GAPS_IN) == WRITTEN
 
     run_with_fake(scenario, compositor())
+
+
+def test_replace_of_a_module_that_does_not_read_writes_the_apps_last_version(
+    tmp_path: Path,
+) -> None:
+    """R9 of the #148 fix review: a typo made the file read as "sets nothing", the re-read
+    unset its every Option, and Replace pruned the file while saying it was replaced."""
+    from hyprtweaker.session import Replaced
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.write_text(path.read_text() + "this is ( not lua\n")
+        await foreign_reload(fake, session, runner)
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+        assert session.replace_edited_file("options/general.lua") is Replaced.DONE
+        await session.drain()
+        await runner.settle()
+
+        assert GAPS_LINE in path.read_text()
+        copies = list((tmp_path / "state" / "edited-copies").rglob("general.lua"))
+        assert [c.read_text().endswith("this is ( not lua\n") for c in copies] == [True]
+
+    run_with_fake(scenario, compositor())
+
+
+def test_with_no_earlier_version_a_broken_module_is_not_replaced_and_says_why(
+    tmp_path: Path,
+) -> None:
+    """R9: without the app's last version to rebuild from, the values are not known, and
+    Replace writes nothing rather than an empty Module."""
+    import shutil
+
+    from hyprtweaker.session import Replaced
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        shutil.rmtree(tmp_path / "state" / "snapshots")
+        path = _general(tmp_path)
+        broken = path.read_text() + "this is ( not lua\n"
+        path.write_text(broken)
+        live_says(fake, GAPS_IN, OVERRIDE)
+        session, runner = await launch(fake, tmp_path)
+        assert session.model.get(GAPS_IN) is UNSET, "an unknown Module's key was read live"
+
+        assert session.replace_edited_file("options/general.lua") is Replaced.NOT_KNOWN
+        await session.drain()
+        await runner.settle()
+
+        assert path.read_text() == broken
+
+    run_with_fake(scenario, compositor())
+
+
+def test_a_module_deleted_by_hand_is_replaced_from_the_apps_last_version(
+    tmp_path: Path,
+) -> None:
+    """A missing Module has nothing to copy, and is not one that sets nothing."""
+    from hyprtweaker.session import Replaced
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.unlink()
+        await foreign_reload(fake, session, runner)
+
+        assert session.replace_edited_file("options/general.lua") is Replaced.DONE
+        await session.drain()
+        await runner.settle()
+
+        assert GAPS_LINE in path.read_text()
+
+    run_with_fake(scenario, compositor())

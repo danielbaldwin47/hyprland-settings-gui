@@ -22,11 +22,12 @@ the main loop.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+import tempfile
+from collections.abc import Callable, Collection, Sequence
 from pathlib import Path
 from typing import Any
 
-from ..importer.lua.sandbox import config_values
+from ..importer.lua.sandbox import config_values, readable_config_values
 from ..ipc import CommandClient, MalformedReply, NoSuchOption
 from ..model.values import parse_lua
 from ..schema import ResolvedOption, Schema
@@ -88,27 +89,47 @@ def written_values(
 
 
 def module_values(
-    app_dir: Path, schema: Schema, modules: Collection[str], *, timeout: float = 5.0
-) -> dict[str, Any]:
-    """What each of `modules` sets, read off its own text, for every Option it holds.
+    app_dir: Path,
+    schema: Schema,
+    modules: Collection[str],
+    *,
+    last_written: Callable[[str], bytes | None] = lambda _module: None,
+    timeout: float = 5.0,
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """What each of `modules` sets, read off its own text, for every Option it holds; and
+    the Modules whose values are not known.
 
     For a Module edited outside the app (#148 review R3): its keys never come from the
     compositor, whose answer may be `user.lua`'s or a theming tool's, and a key the user
     added by hand is read as well as the ones the app wrote. Hyprland itself runs the file
     on every reload, so reading it here runs nothing that does not already run. A key the
     file does not set, or sets to something its Option cannot take, is left out.
+
+    A Module that cannot be read -- missing, or its text does not evaluate -- is not one
+    that sets nothing (R9): its values are read off the app's last version of it
+    (`last_written`, the Snapshot the Manifest names), and when there is none it is
+    returned as not known, for the caller to leave its values alone.
     """
-    wanted = set(modules)
     values: dict[str, Any] = {}
-    for module in sorted(wanted):
+    unknown: set[str] = set()
+    for module in sorted(set(modules)):
         held = {lua_key_for(o.name): o for o in schema.options if module_relpath(o) == module}
-        for key, raw in config_values(app_dir / module, held, timeout=timeout).items():
+        raw = readable_config_values(app_dir / module, held, timeout=timeout)
+        if raw is None and (written := last_written(module)) is not None:
+            with tempfile.TemporaryDirectory(prefix="hyprtweaker-last-") as scratch:
+                copy = Path(scratch) / Path(module).name
+                copy.write_bytes(written)
+                raw = readable_config_values(copy, held, timeout=timeout)
+        if raw is None:
+            unknown.add(module)
+            continue
+        for key, found in raw.items():
             option = held[key]
             try:
-                values[option.name] = parse_lua(option, raw)
+                values[option.name] = parse_lua(option, found)
             except (ValueError, TypeError):
                 continue
-    return values
+    return values, frozenset(unknown)
 
 
 def reference(
