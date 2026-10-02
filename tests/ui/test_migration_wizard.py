@@ -208,27 +208,26 @@ class TestTheMigrationClient:
         from hyprtweaker.session import Session
         from hyprtweaker.ui.shell.window import MainWindow
 
-        # The ambient compositor: a live socket the environment names.
-        runtime = tmp_path / "runtime"
-        (runtime / "hypr" / "ambient").mkdir(parents=True)
-        ambient = socket.socket(socket.AF_UNIX)
-        ambient.bind(str(runtime / "hypr" / "ambient" / ".socket.sock"))
-        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
-        monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "ambient")
+        # The ambient compositor: a live socket the environment names. Short path: a unix
+        # socket path is capped at 108 bytes, and xdist lengthens tmp_path.
+        (tmp_path / "r" / "hypr" / "a").mkdir(parents=True)
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "r"))
+        monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "a")
         given = Instance(tmp_path / "nested")
 
-        session = Session(
-            spawn=lambda coro: coro.close(),
-            paths=ConfigPaths.rooted_at(tmp_path),
-            app_version=APP_VERSION,
-            connect=lambda: given,
-        )
-        flow = MainWindow(session).migration_flow()
+        with socket.socket(socket.AF_UNIX) as ambient:
+            ambient.bind(str(tmp_path / "r" / "hypr" / "a" / ".socket.sock"))
+            session = Session(
+                spawn=lambda coro: coro.close(),
+                paths=ConfigPaths.rooted_at(tmp_path),
+                app_version=APP_VERSION,
+                connect=lambda: given,
+            )
+            flow = MainWindow(session).migration_flow()
 
-        assert flow.client is not None
-        with pytest.raises(IpcError, match=re.escape(str(given.command_socket))):
-            asyncio.run(flow.client.configerrors())
-        ambient.close()
+            assert flow.client is not None
+            with pytest.raises(IpcError, match=re.escape(str(given.command_socket))):
+                asyncio.run(flow.client.configerrors())
 
 
 class TestExport:
