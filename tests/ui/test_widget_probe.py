@@ -210,7 +210,8 @@ window.set_child(page.page)
 row = page.rows[0].widget
 size = widget_probe.shoot(row, sys.argv[1])
 box = row.get_allocation()  # the border box: what the user sees of the row
-print(box.width, box.height, *size, window.get_width(), window.get_height())
+margined = widget_probe.shoot(row, sys.argv[1] + ".margin.png", margin=8)
+print(box.width, box.height, *size, window.get_width(), window.get_height(), *margined)
 """
 
 
@@ -228,12 +229,16 @@ def test_the_route_writes_a_png_cropped_to_one_widget_of_a_real_page(tmp_path: P
     result = run([*ROUTE, str(probe), str(shot)], tmp_path, **dead_session(tmp_path))
 
     assert result.returncode == 0, result.stderr
-    row_width, row_height, *returned, window_width, window_height = map(
-        int, result.stdout.split()
-    )
+    numbers = [int(number) for number in result.stdout.split()]
+    row_width, row_height, *returned, window_width, window_height = numbers[:6]
+    margined = tuple(numbers[6:])
     assert png_size(shot) == (row_width, row_height) == tuple(returned)
     assert 0 < row_height < window_height
     assert 0 < row_width <= window_width
+    # A margin takes that much of the surface around the widget, where a group title's
+    # glyphs reach past its box; the row spans the page, so the sides stop at the window.
+    assert png_size(Path(f"{shot}.margin.png")) == margined
+    assert margined[1] == row_height + 16
 
 
 POPOVER_PROBE = """\
@@ -278,3 +283,43 @@ def test_a_widget_in_a_popover_is_shot_from_the_popover_not_the_window(
     assert result.returncode == 0, result.stderr
     assert result.stdout.split() == ["120", "60", "255", "0", "0"]
     assert png_size(shot) == (120, 60)
+
+
+SCROLLED_PROBE = """\
+import widget_probe
+
+import sys
+
+from gi.repository import Gtk
+
+target = Gtk.Box(height_request=200)
+column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+column.append(Gtk.Box(height_request=400))
+column.append(target)
+column.append(Gtk.Box(height_request=400))
+scrolled = Gtk.ScrolledWindow(child=column)
+window = Gtk.Window(default_width=400, default_height=300)
+window.set_child(scrolled)
+window.present()
+widget_probe.settle()
+scrolled.get_vadjustment().set_value(500)  # the target's top 100 px above the view
+widget_probe.settle()
+widget_probe.shoot(target, sys.argv[1])
+"""
+
+
+def test_a_widget_partly_scrolled_out_of_view_is_refused_not_shot(tmp_path: Path) -> None:
+    # The #177 shot cut the group's title off: the window has other pixels where the
+    # scrolled-away part would be, and nothing said so.
+    probe = tmp_path / "probe.py"
+    probe.write_text(SCROLLED_PROBE)
+    shot = tmp_path / "target.png"
+
+    result = run([*ROUTE, str(probe), str(shot)], tmp_path, **dead_session(tmp_path))
+
+    assert result.returncode == 1
+    assert not shot.exists()
+    assert result.stderr.strip().splitlines()[-1] == (
+        "RuntimeError: shoot: 100 of the widget's 200 px rows are scrolled out of view; "
+        "scroll it into view or make the window larger first"
+    )

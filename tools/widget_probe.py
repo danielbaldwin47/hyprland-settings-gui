@@ -103,14 +103,39 @@ def settle(seconds: float = 0.5) -> None:
     _run_until(lambda: False, seconds)
 
 
-def shoot(widget: Any, path: str | os.PathLike[str]) -> tuple[int, int]:
+def _scrolled_out(widget: Any, native: Any) -> str | None:
+    """Say how much of `widget` a ScrolledWindow it sits in does not show, if any.
+
+    The surface has other pixels where that part would be, so a crop would show them.
+    """
+    from gi.repository import Gtk
+
+    ancestor = widget.get_parent()
+    while ancestor is not None and ancestor is not native:
+        if isinstance(ancestor, Gtk.ScrolledWindow):
+            _found, box = widget.compute_bounds(ancestor)
+            for axis, start, size, view in (
+                ("rows", box.get_y(), box.get_height(), ancestor.get_height()),
+                ("columns", box.get_x(), box.get_width(), ancestor.get_width()),
+            ):
+                shown = min(start + size, view) - max(start, 0)
+                if (hidden := round(size - max(shown, 0))) > 0:
+                    return f"{hidden} of the widget's {round(size)} px {axis}"
+        ancestor = ancestor.get_parent()
+    return None
+
+
+def shoot(widget: Any, path: str | os.PathLike[str], *, margin: int = 0) -> tuple[int, int]:
     """Write a PNG of `widget` as drawn on its surface, cropped to its bounds.
 
     The widget must already be in a window (`window.set_child(...)`) or in a popover
     whose button is (`popover.popup()` first). This presents the window, waits for the
     widget to be mapped and laid out, then renders the surface the widget is drawn on (the
     window, or the popover: a popover is a surface of its own) and keeps the widget's
-    rectangle, background included. Returns the PNG's size.
+    rectangle, background included. `margin` takes that many pixels of the surface around
+    it, stopping at the surface's edge: a group title's glyphs reach a few pixels above
+    the group's box. A widget partly scrolled out of view is refused, not cropped. Returns
+    the PNG's size.
     """
     from gi.repository import Graphene, Gtk
 
@@ -122,14 +147,21 @@ def shoot(widget: Any, path: str | os.PathLike[str]) -> tuple[int, int]:
         hint = "; call popover.popup() first" if native is not window else ""
         raise RuntimeError(f"shoot: the widget was not mapped within 5 s{hint}")
     settle()
+    if hidden := _scrolled_out(widget, native):
+        raise RuntimeError(
+            f"shoot: {hidden} are scrolled out of view; "
+            "scroll it into view or make the window larger first"
+        )
 
     found, bounds = widget.compute_bounds(native)
     if not found:
         raise RuntimeError("shoot: the widget has no bounds on its surface")
     snapshot = Gtk.Snapshot()
     Gtk.WidgetPaintable.new(native).snapshot(snapshot, native.get_width(), native.get_height())
-    width, height = round(bounds.get_width()), round(bounds.get_height())
-    viewport = Graphene.Rect().init(bounds.get_x(), bounds.get_y(), width, height)
+    left, top = max(0, bounds.get_x() - margin), max(0, bounds.get_y() - margin)
+    right = min(native.get_width(), bounds.get_x() + bounds.get_width() + margin)
+    bottom = min(native.get_height(), bounds.get_y() + bounds.get_height() + margin)
+    viewport = Graphene.Rect().init(left, top, round(right - left), round(bottom - top))
     texture = native.get_renderer().render_texture(snapshot.to_node(), viewport)
     texture.save_to_png(os.fspath(path))
     return texture.get_width(), texture.get_height()
