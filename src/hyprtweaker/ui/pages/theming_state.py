@@ -26,7 +26,7 @@ from hyprtweaker.engine.bridge import (
     Wallpaper,
     source_name,
 )
-from hyprtweaker.engine.bridge.wire import ToolDetection
+from hyprtweaker.engine.bridge.wire import ChangedFile, ToolDetection
 
 BACKENDS: tuple[str, ...] = tuple(tool for tool, spec in REGISTRY.items() if spec.color_source)
 """The Wallpaper backends, one tab each (matugen, wallust), in the registry's order."""
@@ -219,6 +219,25 @@ def other_tool(
     return ToolState(tool, title, "On", remove=True)
 
 
+def changed_since_setup(title: str, files: Sequence[ChangedFile]) -> str:
+    """The body of Remove's question when files changed since setup: each file as it is now
+    beside the copy "Restore the copy" would put back, so the user sees both before
+    choosing. Nothing has changed when this is asked."""
+    listed = []
+    for each in files:
+        if each.copy is None:
+            listed.append(f"{each.shown}\nSetup created this file, so restoring deletes it.")
+        else:
+            listed.append(f"{each.shown}\nCopy from before setup: {each.copy}")
+    these = "These files were" if len(files) > 1 else "This file was"
+    return (
+        f"{these} changed after {title} was set up:\n\n"
+        + "\n\n".join(listed)
+        + "\n\nRestore the copy (the file as it is now is kept beside it), or leave it as "
+        f"it is and only stop loading {title}."
+    )
+
+
 def _title(tool: str) -> str:
     spec = REGISTRY.get(tool)
     return spec.title if spec is not None else tool
@@ -239,6 +258,7 @@ __all__ = [
     "TabState",
     "ToolState",
     "backend_tab",
+    "changed_since_setup",
     "has_backend",
     "other_tool",
     "resume_target",

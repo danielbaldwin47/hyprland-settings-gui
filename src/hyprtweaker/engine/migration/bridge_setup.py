@@ -119,18 +119,15 @@ def wire_consented(
 ) -> tuple[str, ...]:
     """Wire each consented tool; one sentence each, said on the Keep-or-roll-back page.
 
-    A tool that cannot be wired now has its entry taken out again (`unregister`) and is
-    reported: it costs the switch nothing, and the rest of the migration stands.
+    A tool that cannot be wired now has its entry taken out again (`wire` calls
+    `unregister`, and puts back any file it wrote) and is reported: it costs the switch
+    nothing, and the rest of the migration stands.
     """
     notes: list[str] = []
     for consent in consents:
         plan = consent.plan
-        try:
-            outcome = wire(plan, consent, register=register)
-        except OSError as error:
-            outcome = NotDone(plan.tool, f"{error.strerror or error}.")
+        outcome = wire(plan, consent, register=register, unregister=unregister)
         if isinstance(outcome, NotDone):
-            unregister(plan.tool)
             notes.append(f"{plan.title} was not set up: {outcome.reason} {LATER}")
         else:
             spec = REGISTRY[plan.tool]

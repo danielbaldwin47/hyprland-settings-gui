@@ -53,6 +53,7 @@ from hyprtweaker.engine.bridge import (  # noqa: E402
     Wallpaper,
 )
 from hyprtweaker.engine.bridge.wire import (  # noqa: E402
+    ChangedFile,
     IfChanged,
     NeedsChoice,
     NotDone,
@@ -85,6 +86,7 @@ from hyprtweaker.ui.pages.theming_state import (  # noqa: E402
     Tab,
     TabState,
     backend_tab,
+    changed_since_setup,
     has_backend,
     other_tool,
     resume_target,
@@ -685,6 +687,7 @@ class ThemingPage:
                 plan,
                 WireConsent(plan),
                 register=lambda t: self._session.add_bridge(t, source=Wallpaper(t)),
+                unregister=self._session.remove_bridge,
             )
             self._report_wired(done)
             switched = isinstance(done, Wired)
@@ -717,7 +720,14 @@ class ThemingPage:
         )
 
     def _set_up(self, plan: WirePlan) -> None:
-        self._report_wired(wire(plan, WireConsent(plan), register=self._session.add_bridge))
+        self._report_wired(
+            wire(
+                plan,
+                WireConsent(plan),
+                register=self._session.add_bridge,
+                unregister=self._session.remove_bridge,
+            )
+        )
         self.refresh()
 
     def _report_wired(self, done: Wired | NotDone) -> None:
@@ -760,7 +770,7 @@ class ThemingPage:
         )
         match done:
             case NeedsChoice(changed=changed):
-                self._ask_changed(tool, tuple(each.shown for each in changed))
+                self._ask_changed(tool, changed)
                 return
             case NotDone(reason=reason):
                 self._tell(f"{title} was not removed", reason)
@@ -770,18 +780,13 @@ class ThemingPage:
                 self._actions.toast(f"{title} is removed.")
         self.refresh()
 
-    def _ask_changed(self, tool: str, files: tuple[str, ...]) -> None:
+    def _ask_changed(self, tool: str, files: tuple[ChangedFile, ...]) -> None:
+        """S3's question, showing both sides of each file: as it is now, and the copy that
+        "Restore the copy" would put back. Nothing has changed yet; Cancel is the default."""
         title = REGISTRY[tool].title
-        listed = ", ".join(files)
-        these = "these files have" if len(files) > 1 else "this file has"
         dialog = Adw.AlertDialog()
-        dialog.set_heading(f"{listed} changed since setup")
-        dialog.set_body(
-            f"Since {title} was set up, {these} "
-            "been changed. Restore the copy kept at setup (the file as it is now is kept "
-            "beside it), or leave it as it is and only stop loading "
-            f"{title}."
-        )
+        dialog.set_heading("Files changed since setup")
+        dialog.set_body(changed_since_setup(title, files))
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("leave", "Leave it as it is")
         dialog.add_response("restore", "Restore the copy")

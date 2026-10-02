@@ -23,6 +23,7 @@ from test_bridge_wire import DMS_COLORS, HAND_EDIT, MATUGEN_CONFIG, WALLUST_CONF
 from test_migration_flow import CONF, FakeClient, run
 
 from hyprtweaker.engine.bridge import REGISTRY
+from hyprtweaker.engine.bridge import wire as wiring
 from hyprtweaker.engine.bridge.wire import WireConsent, Wired, wire
 from hyprtweaker.engine.migration import bridge_setup
 from hyprtweaker.engine.migration import flow as flow_module
@@ -300,6 +301,35 @@ class TestConsentIsTheOnlyWayIn:
             "Theming page.",
         )
 
+    def test_a_file_that_cannot_be_written_at_switch_is_put_back_and_said(
+        self, two_tools: ConfigPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Finding 2 of the #153 review, on the wizard's path: the same "wire, else
+        unregister" as the Theming page, so the template already written goes again."""
+        before = tool_files(two_tools)
+        real_write = wiring._write_atomic
+
+        def denied(path: Path, content: str | bytes) -> None:
+            if path.name == "config.toml":
+                raise PermissionError(13, "Permission denied", str(path))
+            real_write(path, content)
+
+        monkeypatch.setattr(wiring, "_write_atomic", denied)
+        flow = flow_for(two_tools, FakeClient())
+        flow.consent(WireConsent(offer(flow, "matugen").plan))
+
+        result = run(flow.switch())
+
+        assert result.ok
+        assert tool_files(two_tools) == before
+        assert bridges(two_tools) == []
+        assert "matugen" not in two_tools.entrypoint.read_text(encoding="utf-8")
+        assert result.bridges == (
+            "matugen was not set up: ~/.config/matugen/config.toml could not be written "
+            "(permission denied), so nothing was changed. You can set it up on the Theming "
+            "page.",
+        )
+
 
 class TestTheStagedTree:
     def test_the_gate_judges_the_tree_with_a_waiting_tools_line_in_require_order(
@@ -414,7 +444,15 @@ class TestRollBack:
         is gone left its record behind; the user then edited the config by hand. Rolling the
         switch back, in this app or a relaunched one, puts back that edit, byte for byte."""
         earlier = WireConsent(offer(flow_for(two_tools, FakeClient()), "matugen").plan)
-        assert isinstance(wire(earlier.plan, earlier, register=lambda _tool: True), Wired)
+        assert isinstance(
+            wire(
+                earlier.plan,
+                earlier,
+                register=lambda _tool: True,
+                unregister=lambda _tool: True,
+            ),
+            Wired,
+        )
         config = two_tools.config_home / "matugen/config.toml"
         config.write_text(HAND_EDIT, encoding="utf-8")
         flow = flow_for(two_tools, FakeClient())

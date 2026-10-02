@@ -35,6 +35,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import tomllib
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -55,6 +56,7 @@ from .registry import (
     TemplatePack,
     ToolSpec,
     VersionState,
+    toml_string,
     version_state,
 )
 
@@ -202,11 +204,24 @@ class IfChanged(enum.StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ChangedFile:
+    """A tool file that is not what setup left: the file as it is now, and the copy of it
+    kept at setup, so the user is shown both before choosing."""
+
+    path: Path
+    shown: str
+    copy: str | None
+    """The copy from before setup, in `~/` form. `None`: setup created the file, so
+    "Restore the copy" deletes it."""
+
+
+@dataclass(frozen=True, slots=True)
 class NeedsChoice:
-    """Files changed since setup: the caller asks, then calls `unwire` again with a choice."""
+    """Files changed since setup: the caller asks, then calls `unwire` again with a choice.
+    Nothing was changed."""
 
     tool: str
-    changed: tuple[FileRef, ...]
+    changed: tuple[ChangedFile, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,13 +321,21 @@ def plan_wire(tool: str, *, paths: ConfigPaths, find: Find = find_tool) -> WireP
     if _version(spec, paths, binaries) is VersionState.NEEDS_UPDATE:
         return NotDone(tool, spec.detection.needs_update)
     try:
-        files = _PLANNERS[tool](spec, paths)
+        files = [edit for edit in _PLANNERS[tool](spec, paths) if edit.before != edit.after]
     except _Refuse as refusal:
         return NotDone(tool, str(refusal))
+    for edit in files:
+        if not _writable(edit.path):
+            return NotDone(
+                tool,
+                f"{edit.shown} cannot be changed: its folder is read-only, as it is when a "
+                "dotfiles manager such as home-manager owns it. It was left alone. Make it "
+                f"writable, then set {spec.title} up again.",
+            )
     return WirePlan(
         tool=tool,
         title=spec.title,
-        files=tuple(edit for edit in files if edit.before != edit.after),
+        files=tuple(files),
         lines=tuple(module.line for module in spec.modules),
         backups=paths.bridge_backups_dir,
         backups_shown=shown(paths.bridge_backups_dir, paths) + "/",
@@ -326,7 +349,10 @@ def _pack(spec: ToolSpec) -> TemplatePack:
 
 
 def _edit(path: Path, paths: ConfigPaths, after: str) -> FileEdit:
-    return FileEdit(path=path, shown=shown(path, paths), before=_read(path, paths), after=after)
+    said = shown(path, paths)
+    if path.is_symlink():
+        said += f" (a link to {shown(path.resolve(), paths)})"
+    return FileEdit(path=path, shown=said, before=_read(path, paths), after=after)
 
 
 def _templates(spec: ToolSpec, paths: ConfigPaths) -> list[FileEdit]:
@@ -470,13 +496,17 @@ def wire(
     consent: WireConsent | None,
     *,
     register: Register,
+    unregister: Register,
     now: datetime | None = None,
 ) -> Wired | NotDone:
     """Do exactly `plan`: add the Bridge entry, back each file up, then write it.
 
     Raises `ConsentRequired` unless `consent` is for this very plan. Refuses, changing
     nothing, when a file no longer holds what the plan was made from (the user would be
-    agreeing to text they never saw) or when `register` cannot add the entry.
+    agreeing to text they never saw), when `register` cannot add the entry, or when a file
+    cannot be read or written (a read-only dotfiles store, a full disk): every file this
+    call wrote is put back, and the entry goes again through `unregister`. So a tool is
+    either set up or not, never in between; the caller has nothing to clean up.
 
     The entry goes first, so noctalia, once its template is on, finds its `require` in the
     Entrypoint and never appends its own (#167 Cross-cutting 4). The record goes before any
@@ -484,31 +514,80 @@ def wire(
     """
     if consent is None or consent.plan != plan:
         raise ConsentRequired(f"{plan.title} was not set up: the user has not agreed to it")
+
+    def refused(reason: str) -> NotDone:
+        unregister(plan.tool)
+        return NotDone(plan.tool, reason)
+
     targets = [(edit, _target(edit.path)) for edit in plan.files]
     for edit, target in targets:
-        if _read_raw(target) != edit.before:
-            return NotDone(
-                plan.tool,
+        try:
+            now_text = _read_raw(target)
+        except OSError as error:
+            return refused(
+                f"{edit.shown} could not be read ({_why(error)}), so nothing was changed."
+            )
+        if now_text != edit.before:
+            return refused(
                 f"{edit.shown} changed after the changes were shown, so nothing was changed. "
-                "Review them again.",
+                "Review them again."
             )
     if not register(plan.tool):
-        return NotDone(plan.tool, _NOT_REGISTERED)
+        return refused(_NOT_REGISTERED)
     if not targets:
         return Wired(plan.tool, written=(), backup=None)
-    record = _Record.active(plan.backups, plan.tool) or _Record.new(
-        plan.backups, plan.tool, now
-    )
+    previous = _Record.active(plan.backups, plan.tool)
+    record = previous or _Record.new(plan.backups, plan.tool, now)
+    try:
+        for edit, target in targets:
+            record = record.wrote(target, edit.after)
+        record.save()
+    except OSError as error:
+        return refused(
+            f"The copy of each file could not be kept in {plan.backups_shown} ({_why(error)}), "
+            "so nothing was changed."
+        )
+    made = record.dirs
+    written: list[tuple[FileEdit, Path]] = []
     for edit, target in targets:
-        record = record.wrote(target, edit.after)
-    record.save()
-    for edit, target in targets:
-        _write_atomic(target, edit.after)
+        try:
+            _write_atomic(target, edit.after)
+        except OSError as error:
+            put_back = _put_back(written, made)
+            with contextlib.suppress(OSError):
+                if previous is not None:
+                    previous.save()
+                else:
+                    record.close()
+            said = f"{edit.shown} could not be written ({_why(error)})"
+            if put_back:
+                return refused(f"{said}, so nothing was changed.")
+            return refused(
+                f"{said}, and the files changed before it could not all be put back. The "
+                f"copy of each is in {plan.backups_shown}."
+            )
+        written.append((edit, target))
     return Wired(
         plan.tool,
         written=tuple(FileRef(edit.path, edit.shown) for edit, _ in targets),
         backup=record.directory,
     )
+
+
+def _put_back(written: list[tuple[FileEdit, Path]], made: Iterable[Path]) -> bool:
+    """Undo this call's own writes: each file gets the text the plan was made from back.
+    `False` if one could not be."""
+    whole = True
+    for edit, target in reversed(written):
+        try:
+            if edit.before is None:
+                target.unlink(missing_ok=True)
+            else:
+                _write_atomic(target, edit.before)
+        except OSError:
+            whole = False
+    _remove_empty(made)
+    return whole
 
 
 # --- unwire -----------------------------------------------------------------------------------
@@ -526,7 +605,9 @@ def unwire(
 
     A file that still holds what `wire` wrote is restored (or removed, if `wire` created it);
     one that already holds the original is left. A file changed since setup is never
-    silently overwritten: with `IfChanged.ASK` nothing is done and `NeedsChoice` names them.
+    silently overwritten: with `IfChanged.ASK` nothing is done and `NeedsChoice` names each,
+    with the copy it would be restored from. A record it cannot trust -- a copy gone from
+    the backups -- counts as changed, and "Restore the copy" then refuses rather than guess.
     Idempotent: a second call, or one after a crash part-way, converges; with nothing wired
     it changes nothing and says so.
     """
@@ -540,7 +621,15 @@ def unwire(
     status = {each.path: record.status(each) for each in files} if record else {}
     changed = [each for each in files if status[each.path] is _Status.CHANGED]
     if changed and if_changed is IfChanged.ASK:
-        return NeedsChoice(tool, tuple(_ref(each.path, paths) for each in changed))
+        assert record is not None
+        return NeedsChoice(tool, tuple(record.changed_file(each, paths) for each in changed))
+    restoring = (
+        []
+        if record is None or (changed and if_changed is IfChanged.LEAVE)
+        else [each for each in files if status[each.path] is not _Status.ORIGINAL]
+    )
+    if record is not None and (refusal := record.cannot_restore(restoring, paths)):
+        return NotDone(tool, refusal)
     if entry and not unregister(tool):
         return NotDone(tool, _NOT_REGISTERED)
     if record is None:
@@ -548,19 +637,26 @@ def unwire(
     if changed and if_changed is IfChanged.LEAVE:
         record.close()
         return Unwired(tool, left=tuple(_ref(each.path, paths) for each in files))
-    for each in changed:
-        record.keep_replaced(each)
     restored: list[FileRef] = []
     removed: list[FileRef] = []
-    for each in files:
-        if status[each.path] is _Status.ORIGINAL:
-            continue
-        if each.copy is None:
-            each.path.unlink(missing_ok=True)
-            removed.append(_ref(each.path, paths))
-        else:
-            _write_atomic(each.path, (record.directory / each.copy).read_bytes())
-            restored.append(_ref(each.path, paths))
+    try:
+        for each in changed:
+            record.keep_replaced(each)
+        for each in restoring:
+            if each.copy is None:
+                each.path.unlink(missing_ok=True)
+                removed.append(_ref(each.path, paths))
+            else:
+                _write_atomic(each.path, (record.directory / each.copy).read_bytes())
+                restored.append(_ref(each.path, paths))
+    except OSError as error:
+        return NotDone(
+            tool,
+            f"{title} no longer loads, but {shown(Path(error.filename or ''), paths)} could "
+            f"not be put back ({_why(error)}). The copy of each file from before setup is in "
+            f"{shown(record.directory, paths)}/.",
+        )
+    _remove_empty(record.dirs)
     record.close()
     return Unwired(tool, restored=tuple(restored), removed=tuple(removed))
 
@@ -596,6 +692,9 @@ class _Record:
     directory: Path
     tool: str
     files: tuple[_FileRecord, ...]
+    dirs: tuple[Path, ...] = ()
+    """Directories `wire` created for its files, deepest first: `unwire` removes each that
+    is empty again, and never one that was there before."""
 
     @classmethod
     def new(cls, backups: Path, tool: str, now: datetime | None) -> _Record:
@@ -630,9 +729,10 @@ class _Record:
                 )
                 for each in payload["files"]
             )
-        except (OSError, ValueError, KeyError, TypeError):
+            dirs = tuple(Path(str(each)) for each in payload.get("dirs", ()))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             return None
-        return cls(directory, tool, files)
+        return cls(directory, tool, files, dirs)
 
     def wrote(self, target: Path, text: str) -> _Record:
         """This record once `text` is written to `target`, copying the original first time.
@@ -645,6 +745,12 @@ class _Record:
         The older copy stays in the record's directory as history.
         """
         digest = _sha(text.encode("utf-8"))
+        missing: list[Path] = []
+        parent = target.parent
+        while not parent.exists() and parent != parent.parent:
+            missing.append(parent)
+            parent = parent.parent
+        dirs = tuple(dict.fromkeys([*self.dirs, *missing]))
         for index, each in enumerate(self.files):
             if each.path == target:
                 if self.status(each) is _Status.CHANGED:
@@ -652,10 +758,9 @@ class _Record:
                 else:
                     updated = replace(each, wrote=tuple(dict.fromkeys([*each.wrote, digest])))
                 files = (*self.files[:index], updated, *self.files[index + 1 :])
-                return replace(self, files=files)
-        return replace(
-            self, files=(*self.files, _FileRecord(target, self._copy(target), (digest,)))
-        )
+                return replace(self, files=files, dirs=dirs)
+        added = _FileRecord(target, self._copy(target), (digest,))
+        return replace(self, files=(*self.files, added), dirs=dirs)
 
     def _copy(self, target: Path) -> str | None:
         """Copy `target` under `copies/<n>/` (a number no copy uses yet); `None` if absent."""
@@ -672,11 +777,33 @@ class _Record:
     def status(self, each: _FileRecord) -> _Status:
         current = _read_bytes(each.path)
         original = None if each.copy is None else _read_bytes(self.directory / each.copy)
+        if each.copy is not None and original is None:
+            return _Status.CHANGED  # its copy is gone: nothing vouches for what to put back
         if current == original:
             return _Status.ORIGINAL
         if current is not None and _sha(current) in each.wrote:
             return _Status.WIRED
         return _Status.CHANGED
+
+    def changed_file(self, each: _FileRecord, paths: ConfigPaths) -> ChangedFile:
+        copy = None if each.copy is None else shown(self.directory / each.copy, paths)
+        return ChangedFile(each.path, shown(each.path, paths), copy)
+
+    def cannot_restore(self, files: Iterable[_FileRecord], paths: ConfigPaths) -> str | None:
+        """Why putting `files` back would fail part-way, checked before anything changes."""
+        for each in files:
+            if each.copy is not None and not (self.directory / each.copy).is_file():
+                return (
+                    f"The copy of {shown(each.path, paths)} from before setup is missing from "
+                    f"{shown(self.directory, paths)}/, so it cannot be put back and nothing "
+                    "was changed. Choose Leave it as it is to keep the file as it is now."
+                )
+            if not _writable(each.path):
+                return (
+                    f"{shown(each.path, paths)} cannot be changed (its folder is read-only), "
+                    "so nothing was changed."
+                )
+        return None
 
     def keep_replaced(self, each: _FileRecord) -> None:
         """Copy the user's changed file beside the originals before it is restored over."""
@@ -692,6 +819,7 @@ class _Record:
             "tool": self.tool,
             "wired": wired,
             "files": [each.as_json() for each in self.files],
+            "dirs": [str(each) for each in self.dirs],
         }
         self.directory.mkdir(parents=True, exist_ok=True)
         _write_atomic(self.directory / RECORD_NAME, json.dumps(payload, indent=2) + "\n")
@@ -752,14 +880,43 @@ def _read(path: Path, paths: ConfigPaths) -> str | None:
 
 def _write_atomic(path: Path, content: str | bytes) -> None:
     """Temp file in the same directory, then a rename: the old file or the new, never half.
-    Keeps the file's permissions."""
+    Keeps the file's permissions; the bytes reach the disk before the rename."""
     data = content.encode("utf-8") if isinstance(content, str) else content
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.hyprtweaker.tmp")
-    temporary.write_bytes(data)
-    with contextlib.suppress(OSError):
-        shutil.copymode(path, temporary)
-    os.replace(temporary, path)
+    handle, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            with contextlib.suppress(OSError):
+                os.fsync(stream.fileno())
+        with contextlib.suppress(OSError):
+            shutil.copymode(path, temporary)
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _writable(path: Path) -> bool:
+    """Whether `path` can be replaced: the nearest folder of it that exists takes writes."""
+    folder = _target(path).parent
+    while not folder.exists() and folder != folder.parent:
+        folder = folder.parent
+    return os.access(folder, os.W_OK)
+
+
+def _remove_empty(dirs: Iterable[Path]) -> None:
+    """Remove each directory `wire` created that is empty again, deepest first."""
+    for each in sorted(dirs, key=lambda path: len(path.parts), reverse=True):
+        with contextlib.suppress(OSError):
+            each.rmdir()
+
+
+def _why(error: OSError) -> str:
+    """An `OSError` in words, without its number or path: "permission denied"."""
+    return (error.strerror or str(error)).lower()
 
 
 def _sha(data: bytes) -> str:
@@ -839,12 +996,6 @@ def _has(entry: Any, wanted: Mapping[str, Any]) -> bool:
     return isinstance(entry, dict) and all(entry.get(k) == v for k, v in wanted.items())
 
 
-def _toml_string(value: str) -> str:
-    if "'" not in value and not any(ord(char) < 32 for char in value):
-        return f"'{value}'"
-    return json.dumps(value, ensure_ascii=False)
-
-
 def _key_path(header: str) -> tuple[str, ...]:
     return tuple(part.strip().strip("\"'") for part in header.split("."))
 
@@ -876,7 +1027,7 @@ def _retarget(text: str, table: tuple[str, ...], values: Mapping[str, str]) -> s
         if len(hits) != 1:
             return None
         index, match = hits[0]
-        lines[index] = match.group(1) + _toml_string(value) + match.group(3)
+        lines[index] = match.group(1) + toml_string(value) + match.group(3)
     return "".join(lines)
 
 

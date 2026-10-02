@@ -22,6 +22,7 @@ a caller gathered from the tool path and the config home (#166).
 from __future__ import annotations
 
 import enum
+import json
 import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
@@ -148,18 +149,26 @@ class TemplatePack:
     """The tool's config the stanza goes into, relative to the config home."""
 
     stanza: str = ""
-    """TOML with `$template` and `$output` placeholders, absolute paths filled in."""
+    """TOML with `$template` and `$output` placeholders, each filled in as a TOML string."""
 
     patch: str = ""
     """Text the user applies to their own copy of the tool (shell-switch); the app never
     edits it."""
 
     def stanza_for(self, config_home: Path, hypr_dir: Path, output: str) -> str:
-        """The stanza with the first template's and `output`'s absolute paths filled in."""
+        """The stanza with the first template's and `output`'s absolute paths filled in,
+        quoted so any path, one with a `'` in it included, reads back as itself."""
         template = config_home / self.templates[0].path if self.templates else config_home
         return Template(self.stanza).substitute(
-            template=str(template), output=str(hypr_dir / output)
+            template=toml_string(str(template)), output=toml_string(str(hypr_dir / output))
         )
+
+
+def toml_string(value: str) -> str:
+    """`value` as a TOML string: a literal one where it can be, else an escaped basic one."""
+    if "'" not in value and not any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return f"'{value}'"
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,9 +426,7 @@ MATUGEN = ToolSpec(
         ),
         config_file="matugen/config.toml",
         stanza=(
-            "[templates.hyprtweaker_hyprland]\n"
-            "input_path = '$template'\n"
-            "output_path = '$output'\n"
+            "[templates.hyprtweaker_hyprland]\ninput_path = $template\noutput_path = $output\n"
         ),
     ),
 )
@@ -456,7 +463,7 @@ WALLUST = ToolSpec(
         stanza=(
             "[templates]\n"
             f"hyprtweaker_hyprland = {{ template = '{_HYPRTWEAKER_TEMPLATE}', "
-            "target = '$output' }\n"
+            "target = $output }\n"
         ),
     ),
 )

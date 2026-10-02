@@ -26,11 +26,12 @@ from hyprtweaker.engine.bridge import (
     Wallpaper,
     entries_for,
 )
-from hyprtweaker.engine.bridge.wire import ToolDetection
+from hyprtweaker.engine.bridge.wire import ChangedFile, ToolDetection
 from hyprtweaker.ui.pages.theming_state import (
     TabState,
     ToolState,
     backend_tab,
+    changed_since_setup,
     has_backend,
     other_tool,
     resume_target,
@@ -181,3 +182,27 @@ def test_resume_picks_the_one_backend_set_up_or_the_tab_on_screen() -> None:
     assert resume_target(ManualColors(), both, shown="matugen") == "matugen"
     assert resume_target(ManualColors(), (), shown="matugen") is None
     assert resume_target(Wallpaper("matugen"), both, shown="wallust") is None
+
+
+def test_the_changed_files_question_shows_each_file_beside_its_copy() -> None:
+    from pathlib import Path
+
+    files = (
+        ChangedFile(
+            Path("/h/.config/matugen/config.toml"),
+            "~/.config/matugen/config.toml",
+            "~/.local/state/hyprtweaker/bridge-backups/matugen-1/copies/0/config.toml",
+        ),
+        ChangedFile(Path("/h/t.lua"), "~/t.lua", None),
+    )
+
+    assert changed_since_setup("matugen", files) == (
+        "These files were changed after matugen was set up:\n\n"
+        "~/.config/matugen/config.toml\n"
+        "Copy from before setup: "
+        "~/.local/state/hyprtweaker/bridge-backups/matugen-1/copies/0/config.toml\n\n"
+        "~/t.lua\n"
+        "Setup created this file, so restoring deletes it.\n\n"
+        "Restore the copy (the file as it is now is kept beside it), or leave it as it is "
+        "and only stop loading matugen."
+    )

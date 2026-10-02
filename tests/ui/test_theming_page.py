@@ -512,13 +512,53 @@ def test_remove_puts_back_what_setup_changed_and_asks_about_a_file_changed_since
     assert page.dialog.get_heading() == "Remove wallust?"
     assert "Your own color settings apply again" in page.dialog.get_body()
     answer(page.dialog, "agree")
-    assert page.dialog.get_heading() == f"{tmp_path}/wallust/wallust.toml changed since setup"
+    assert page.dialog.get_heading() == "Files changed since setup"
+    assert page.dialog.get_body() == (
+        "This file was changed after wallust was set up:\n\n"
+        f"{tmp_path}/wallust/wallust.toml\n"
+        "Setup created this file, so restoring deletes it.\n\n"
+        "Restore the copy (the file as it is now is kept beside it), or leave it as it is "
+        "and only stop loading wallust."
+    )
     assert page.dialog.get_default_response() == "cancel"
     answer(page.dialog, "restore")
 
     assert not config.exists(), "setup created it; restoring takes it away"
     assert page.color_source_text == "Manual"
     assert page.toasts[-1] == "wallust is removed."
+
+
+def test_a_setup_that_cannot_write_says_why_and_leaves_nothing_set_up(
+    tmp_path: Path, stub_tool: Any, monkeypatch: Any
+) -> None:
+    """Finding 2 of the #153 review: the user saw a traceback and a tool that looked set up
+    but never loaded. Now: a sentence, the files as they were, and no entry."""
+    from hyprtweaker.engine.bridge import ManualColors
+    from hyprtweaker.engine.bridge import wire as wiring
+
+    stub_tool("wallust")
+    session, _ = make_session(tmp_path)
+    page = build_page(session)
+    real_write = wiring._write_atomic
+
+    def denied(path: Path, content: Any) -> None:
+        if path.name == "wallust.toml":
+            raise PermissionError(13, "Permission denied", str(path))
+        real_write(path, content)
+
+    monkeypatch.setattr(wiring, "_write_atomic", denied)
+    ask(page, "Switch to wallust")
+    answer(page.dialog, "agree")
+
+    assert page.dialog.get_heading() == "wallust was not set up"
+    assert page.dialog.get_body() == (
+        f"{tmp_path}/wallust/wallust.toml could not be written (permission denied), so "
+        "nothing was changed."
+    )
+    assert not (tmp_path / "wallust").exists()
+    assert session.manifest().bridges == ()
+    assert session.color_source() == ManualColors()
+    assert page.color_source_text == "Manual"
 
 
 # --- the reveal entry point ----------------------------------------------------------------
