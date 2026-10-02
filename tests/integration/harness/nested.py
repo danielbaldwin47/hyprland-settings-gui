@@ -385,6 +385,10 @@ class NestedHyprland:
         environment = home_environment(self.home)
         environment["HYPRLAND_INSTANCE_SIGNATURE"] = self.signature
         environment["WAYLAND_DISPLAY"] = self.wayland_display
+        # The nested display is the only one a client of it may use: never X11, which the
+        # test fence pins for everything else (`hermetic.fence_desktop`), never a fallback.
+        environment["GDK_BACKEND"] = "wayland"
+        environment.pop("DISPLAY", None)
         # The nested instance's own hyprctl by path, ahead of any refusing stand-in on
         # PATH (a widget probe's refuses a bare `hyprctl`, ruling A12): one link in a
         # directory of its own, so nothing else on PATH moves ahead of the stand-ins.
