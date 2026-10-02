@@ -136,6 +136,7 @@ def build(
     if live:
         session._offline_reason = None
     window = MainWindow(session, application=started_application())
+    window._toasts = RecordingOverlay(window._toasts)
     session.on_recorded = window.offer_undo
     session.on_preset_note = window.show_preset_note
     return session, window
@@ -194,18 +195,24 @@ SHOWN_TOASTS: list[str] = []
 
 
 @pytest.fixture(autouse=True)
-def record_toasts(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The overlay keeps no list of what it showed: note each title as it is added."""
-    from gi.repository import Adw
-
+def record_toasts() -> None:
     SHOWN_TOASTS.clear()
-    real = Adw.ToastOverlay.add_toast
 
-    def add_toast(self: Any, toast: Any) -> None:
+
+class RecordingOverlay:
+    """The window's own toast overlay, with each title noted as it is added. A wrapper of
+    this one instance: wrapping `Adw.ToastOverlay.add_toast` on the class is what
+    double-freed a toast under a shared window (finding 31 of the #153 review)."""
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+
+    def add_toast(self, toast: Any) -> None:
         SHOWN_TOASTS.append(toast.get_title())
-        real(self, toast)
+        self._real.add_toast(toast)
 
-    monkeypatch.setattr(Adw.ToastOverlay, "add_toast", add_toast)
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
 
 
 def toasts(_window: Any) -> list[str]:
