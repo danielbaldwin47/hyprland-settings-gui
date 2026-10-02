@@ -185,6 +185,7 @@ def resolve_option(
         device_overridable=generated.device_overridable,
         refresh=generated.refresh,
         curation_flags=generated.curation_flags,
+        renamed_from=entry.renamed_from,
     )
 
 
