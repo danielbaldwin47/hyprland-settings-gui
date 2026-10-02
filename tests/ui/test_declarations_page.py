@@ -212,6 +212,28 @@ def test_every_entity_becomes_a_row_in_model_order(tmp_path: Path) -> None:
     assert [row.index for row in page.rows] == [0, 1, 2]
 
 
+def test_a_command_with_an_ampersand_shows_as_typed(tmp_path: Path) -> None:
+    """Row titles are Pango markup unless told otherwise: `a && b` would render blank."""
+    from gi.repository import Gtk
+
+    from hyprtweaker.engine.model.entities import StartupCommand
+
+    session, window = build_window(tmp_path)
+    session.model.entities.startup.append(StartupCommand("a && b"))
+    page = window.declaration_page("startup")
+    page.refresh()
+
+    def shown(widget: Any) -> Any:
+        child = widget.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Label):
+                yield child.get_text()
+            yield from shown(child)
+            child = child.get_next_sibling()
+
+    assert "a && b" in list(shown(page.rows[0].widget))
+
+
 def test_the_filter_narrows_without_renumbering_the_rows(tmp_path: Path) -> None:
     """The index addresses the model, never the filtered view -- a delete must hit the
     row the user clicked."""
