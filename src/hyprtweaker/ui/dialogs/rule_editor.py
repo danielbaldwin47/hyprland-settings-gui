@@ -354,7 +354,8 @@ class RuleEditor(Adw.Dialog):
             spin.connect("notify::value", self._on_match_edited)
             widget = spin
         else:
-            entry = Adw.EntryRow(title=prop_title(prop.name))
+            entry = Adw.EntryRow(use_markup=False)
+            entry.set_title(prop_title(prop.name))
             if value is not None:
                 entry.set_text(strip_negation(str(value)))
             if prop.kind is MatchKind.REGEX:

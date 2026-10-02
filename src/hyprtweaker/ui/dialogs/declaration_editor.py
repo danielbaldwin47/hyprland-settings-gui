@@ -293,7 +293,8 @@ class DeclarationEditor(Adw.Dialog):
             self._values[spec.name] = _as_number(spec, adjustment.get_value())
             return row
 
-        row = Adw.EntryRow(title=spec.label, text=field_text(value))
+        row = Adw.EntryRow(use_markup=False, text=field_text(value))
+        row.set_title(spec.label)
         row.connect("changed", self._on_text, spec)
         return row
 

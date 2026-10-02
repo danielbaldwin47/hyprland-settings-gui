@@ -904,7 +904,8 @@ class MonitorsPage:
         lane = self._actions.apply_breaking if breaking else self._actions.apply_benign
 
         def entry(field_title: str, key: str) -> Adw.EntryRow:
-            widget = Adw.EntryRow(title=field_title, show_apply_button=True)
+            widget = Adw.EntryRow(use_markup=False, show_apply_button=True)
+            widget.set_title(field_title)
             value = rule.fields.get(key)
             if value is not None:
                 widget.set_text(str(value))

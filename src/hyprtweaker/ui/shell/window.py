@@ -925,7 +925,7 @@ class MainWindow(Adw.ApplicationWindow):
         """
         report = LossReport.latest(self._session.paths)
         if report is None:
-            self._toasts.add_toast(Adw.Toast(title="No configuration has been imported yet"))
+            self._toasts.add_toast(plain_toast("No configuration has been imported yet"))
             return
         dialog = Adw.AlertDialog(heading="Last import", body=report.render())
         dialog.add_response("close", "Close")
@@ -943,7 +943,7 @@ class MainWindow(Adw.ApplicationWindow):
             if not result.missing
             else f"Exported to {target.name}, without {len(result.missing)} unreadable file(s)"
         )
-        self._toasts.add_toast(Adw.Toast(title=note))
+        self._toasts.add_toast(plain_toast(note))
 
     # --- the Config view ---------------------------------------------------------------------
 
@@ -1086,7 +1086,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_forget_remembered(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         self._remember(self._prefs.without_any_remembered())
-        self._toasts.add_toast(Adw.Toast(title="Remembered choices forgotten"))
+        self._toasts.add_toast(plain_toast("Remembered choices forgotten"))
 
     @property
     def visible_section(self) -> str | None:
@@ -1882,11 +1882,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._profile_offered = (slug, fingerprint)
         if self._profile_toast is not None:
             self._profile_toast.dismiss()
-        toast = Adw.Toast(
-            title=f'Displays match profile "{profile.name}"',
-            button_label="Activate",
-            timeout=10,
-        )
+        toast = plain_toast(f'Displays match profile "{profile.name}"', timeout=10)
+        toast.set_button_label("Activate")
         toast.connect("button-clicked", lambda _t: self._activate_monitor_profile(slug))
         self._profile_toast = toast
         self._toasts.add_toast(toast)
@@ -1896,7 +1893,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self._monitors_page is None:
             return
         self._session.save_monitor_profile(name, self._monitors_page.connected)
-        self._toasts.add_toast(Adw.Toast(title=f'Saved profile "{name}"'))
+        self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
         self._refresh_monitors()
 
     def _activate_monitor_profile(self, slug: str) -> None:
@@ -2043,7 +2040,7 @@ class MainWindow(Adw.ApplicationWindow):
         if not result.ok:
             self._dismiss_undo()
         if not result.ok and not result.errors and not result.mismatches:
-            toast = Adw.Toast(title=_result_summary(result), timeout=5)
+            toast = plain_toast(_result_summary(result), timeout=5)
             self._result_toast = toast
             self._toasts.add_toast(toast)
 
@@ -2057,7 +2054,7 @@ class MainWindow(Adw.ApplicationWindow):
         compositor's copy.
         """
         self._dismiss_undo()
-        toast = Adw.Toast(title=_revert_summary(revert), timeout=8)
+        toast = plain_toast(_revert_summary(revert), timeout=8)
         if revert.errors:
             toast.set_button_label("Details")
             # The same dialog the Banner opens, with no actions on it. By the time this can
@@ -2080,8 +2077,8 @@ class MainWindow(Adw.ApplicationWindow):
         what = titles[0] if len(titles) == 1 else f"{len(titles)} changes"
         verb = "was" if len(titles) == 1 else "were"
         name = files[0].rsplit("/", 1)[-1] if files else "the file"
-        toast = Adw.Toast(
-            title=f"{what} {verb} not saved: {name} was edited outside this app", timeout=8
+        toast = plain_toast(
+            f"{what} {verb} not saved: {name} was edited outside this app", timeout=8
         )
         if files:
             toast.set_button_label("Details")
@@ -2136,7 +2133,7 @@ class MainWindow(Adw.ApplicationWindow):
         raised, so one queued behind other toasts when the app quits comes back next start.
         Returned for the UI tier.
         """
-        toast = Adw.Toast(title=notice_title(notice), timeout=NOTICE_TOAST_SECONDS)
+        toast = plain_toast(notice_title(notice), timeout=NOTICE_TOAST_SECONDS)
         toast.set_button_label("Details")
         toast.connect("button-clicked", lambda *_: self.notice_details(notice))
         toast.connect("dismissed", lambda *_: self._session.notice_seen(notice))
@@ -2272,7 +2269,7 @@ class MainWindow(Adw.ApplicationWindow):
         plugin = PluginLoad(path)
         if any(each.path == path for each in self._session.declarations("plugins")):
             name = path.rsplit("/", 1)[-1] or path
-            self._toasts.add_toast(Adw.Toast(title=f"{name} is already in the list"))
+            self._toasts.add_toast(plain_toast(f"{name} is already in the list"))
             return
         if self._session.add_declaration("plugins", plugin):
             self._refresh_plugins()
@@ -2344,9 +2341,7 @@ class MainWindow(Adw.ApplicationWindow):
                 dialog.present(self)
             case PresetNotApplied(reason):
                 named = dict(self._session.presets()).get(slug)
-                toast = Adw.Toast(timeout=5)
-                toast.set_use_markup(False)  # a preset's name is the user's text
-                toast.set_title(
+                toast = plain_toast(
                     f"{named.name if named is not None else slug} was not applied. {reason}"
                 )
                 self._toasts.add_toast(toast)
@@ -2372,7 +2367,7 @@ class MainWindow(Adw.ApplicationWindow):
     def show_preset_note(self, text: str) -> Adw.Toast:
         """What applying or undoing a Preset could not do, said as a toast. Returned for
         the UI tier."""
-        toast = Adw.Toast(title=text, timeout=PRESET_NOTE_SECONDS)
+        toast = plain_toast(text, timeout=PRESET_NOTE_SECONDS)
         self._toasts.add_toast(toast)
         return toast
 
@@ -2403,7 +2398,7 @@ class MainWindow(Adw.ApplicationWindow):
             # so the transaction still gets one toast (finding 13 of the #153 review).
             self._result_toast.dismiss()
         self._result_toast = None
-        toast = Adw.Toast(title=self._gesture_title(step), timeout=UNDO_TOAST_SECONDS)
+        toast = plain_toast(self._gesture_title(step), timeout=UNDO_TOAST_SECONDS)
         toast.set_button_label("Undo")
         toast.connect("button-clicked", lambda *_: self._undo())
         toast.connect("dismissed", self._on_undo_toast_dismissed)
@@ -2454,7 +2449,7 @@ class MainWindow(Adw.ApplicationWindow):
             # An entity step whose list changed since -- a hand edit was adopted. The session
             # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead. A
             # queued undo is not refused: it runs when the edit in flight lands.
-            self._toasts.add_toast(Adw.Toast(title="Can't undo that change any more"))
+            self._toasts.add_toast(plain_toast("Can't undo that change any more"))
         self._sync_undo_action()
 
     def _sync_undo_action(self) -> None:
@@ -2749,15 +2744,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _toast(self, text: str) -> None:
         """A short message: plain text, since a tool's name or a path may hold `&`."""
-        toast = Adw.Toast(timeout=4)
-        toast.set_use_markup(False)
-        toast.set_title(text)
-        self._toasts.add_toast(toast)
+        self._toasts.add_toast(plain_toast(text, timeout=4))
 
     def _entity_changed(self) -> None:
         """A hit whose entity is gone: refresh the list and say so, rather than fail quietly."""
         self._finder.requery()
-        self._toasts.add_toast(Adw.Toast(title=ENTITY_CHANGED, timeout=4))
+        self._toasts.add_toast(plain_toast(ENTITY_CHANGED, timeout=4))
 
     def _end_one_off_reveal(self) -> None:
         """The visit is over: the user navigated somewhere themselves.
@@ -3134,6 +3126,19 @@ def _counted(count: int, verb: str) -> str:
     plural = verb.replace("is ", "are ", 1) if verb.startswith("is ") else verb
     plural = plural.replace("was ", "were ", 1) if plural.startswith("was ") else plural
     return f"{count} settings {plural}"
+
+
+def plain_toast(title: str, *, timeout: int = 5) -> Adw.Toast:
+    """A toast whose title is plain text, never Pango markup (F7 of the #148 review).
+
+    `Adw.Toast` parses its title as markup by default, so a preset's name, a path or a
+    tool's message holding `&` or `<` rendered blank or wrong. Markup goes off before the
+    title is set, which is the order that never parses it (#228).
+    """
+    toast = Adw.Toast(timeout=timeout)
+    toast.set_use_markup(False)
+    toast.set_title(title)
+    return toast
 
 
 def _result_summary(result: ApplyResult) -> str:

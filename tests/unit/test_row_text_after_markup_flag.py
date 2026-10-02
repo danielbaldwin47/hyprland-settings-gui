@@ -81,3 +81,41 @@ def test_no_row_in_src_takes_its_texts_before_the_flag() -> None:
     assert offenders == [], (
         "pass use_markup=False alone and set the texts after (see ui/shell/finder.py)"
     )
+
+
+MARKUP_BY_DEFAULT = {"Toast", "EntryRow"}
+"""Widgets whose `title` libadwaita parses as markup unless told otherwise."""
+
+
+def user_text_titles(source: str) -> list[int]:
+    """Lines of an `Adw.Toast` or `Adw.EntryRow` built with a `title` that is not a literal.
+
+    F7 of the #148 review: a preset name, a path or a typed key holding `&` or `<` rendered
+    blank. A toast goes through `plain_toast`; an EntryRow sets its title after
+    `use_markup=False`.
+    """
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr not in MARKUP_BY_DEFAULT:
+            continue
+        title = _keywords(node).get("title")
+        if title is not None and not isinstance(title, ast.Constant):
+            lines.append(node.lineno)
+    return lines
+
+
+def test_no_toast_or_entry_row_takes_user_text_as_its_title() -> None:
+    found = [
+        f"{path.relative_to(SRC)}:{line}"
+        for path in sorted(SRC.rglob("*.py"))
+        for line in user_text_titles(path.read_text())
+    ]
+    assert found == []
+
+
+def test_the_scan_finds_a_toast_built_from_user_text() -> None:
+    assert user_text_titles("Adw.Toast(title=f'Applied {name}')") == [1]
+    assert user_text_titles("Adw.EntryRow(title=key)") == [1]
+    assert user_text_titles("Adw.Toast(title='Saved')") == []

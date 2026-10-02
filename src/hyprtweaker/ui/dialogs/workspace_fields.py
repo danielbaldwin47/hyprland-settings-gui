@@ -338,7 +338,8 @@ class WorkspaceFieldRows:
     # --- raw rows and the layout_opts table -----------------------------------------------
 
     def _build_raw(self, key: str, value: Any) -> _Row:
-        widget = Adw.EntryRow(title=key, text=field_text(value))
+        widget = Adw.EntryRow(use_markup=False, text=field_text(value))
+        widget.set_title(key)  # the key is the user's text: never markup (F7)
         scalar = value is None or isinstance(value, str | int | float | bool)
         if not scalar:
             widget.set_editable(False)
@@ -351,7 +352,10 @@ class WorkspaceFieldRows:
         return row
 
     def _add_option_row(self, key: str, value: Any) -> None:
-        widget = Adw.EntryRow(title=key, text="" if value is _MISSING else field_text(value))
+        widget = Adw.EntryRow(
+            use_markup=False, text="" if value is _MISSING else field_text(value)
+        )
+        widget.set_title(key)  # the key is the user's text: never markup (F7)
         row = _Row(key, widget, value, lambda: widget.get_text().strip())
         widget.connect("changed", lambda *_: self._touch_option(row))
         button = _trash(f"Remove {key}")
