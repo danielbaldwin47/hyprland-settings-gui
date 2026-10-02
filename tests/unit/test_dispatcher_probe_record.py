@@ -1,7 +1,7 @@
 """The dispatcher catalog against the committed probe record (#126, ADR-0007).
 
-`tests/golden/dispatcher-probe-0.56.2.json` is what a nested 0.56.2 answered when
-`harness/dispatcher_probe.py` asked it about every dispatcher (the integration tier
+The newest `tests/golden/dispatcher-probe-<version>.json` is what a nested Hyprland answered
+when `harness/dispatcher_probe.py` asked it about every dispatcher (the integration tier
 regenerates it and fails if it drifts). This is the half that needs no compositor and so runs
 on every commit: each catalog entry must name exactly the keys the compositor read, mark the
 ones it required, and take the call form it accepted.
@@ -31,8 +31,27 @@ from harness.dispatcher_probe import (
 )
 
 from hyprtweaker.engine.dispatchers import BY_PATH, ArgSpec, Dispatcher
+from hyprtweaker.engine.schema.resolve import version_key
 
-RECORD = Path(__file__).resolve().parents[1] / "golden" / "dispatcher-probe-0.56.2.json"
+
+def newest_record(golden: Path) -> Path:
+    """The newest Hyprland's record in `golden`, by release order rather than by name."""
+    return max(
+        golden.glob("dispatcher-probe-*.json"),
+        key=lambda path: version_key(path.stem.removeprefix("dispatcher-probe-")),
+    )
+
+
+RECORD = newest_record(Path(__file__).resolve().parents[1] / "golden")
+"""The catalog describes the newest release the app ships for, so a release check that
+commits a new record is checked against it with no edit here."""
+
+
+def test_the_newest_record_is_chosen_by_release_not_by_name(tmp_path: Path) -> None:
+    for version in ("0.56.2", "0.100.0", "0.57.0"):
+        (tmp_path / f"dispatcher-probe-{version}.json").write_text("{}")
+
+    assert newest_record(tmp_path).name == "dispatcher-probe-0.100.0.json"
 
 
 @pytest.fixture(scope="module")
