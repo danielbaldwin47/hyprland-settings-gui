@@ -53,7 +53,7 @@ from hyprtweaker.ui.pages.entity_text import (  # noqa: E402
     rule_title,
 )
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
-from hyprtweaker.ui.release import release  # noqa: E402
+from hyprtweaker.ui.release import release, release_when_unparented  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -375,6 +375,8 @@ class ChipLine:
             following = child.get_next_sibling()
             if child is not self.more and child is not self.popover:
                 self.box.remove(child)
+                if child not in buttons:  # a chip shown again keeps its handlers (F19)
+                    release_when_unparented(child)
             child = following
         for button in buttons:
             button.insert_before(self.box, self.more)

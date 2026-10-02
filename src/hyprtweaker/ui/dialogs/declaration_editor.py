@@ -41,6 +41,7 @@ from hyprtweaker.ui.pages.declaration_kinds import (  # noqa: E402
     choice_label,
     missing_required,
 )
+from hyprtweaker.ui.release import release_when_unparented  # noqa: E402
 
 _NOT_SET = "—"
 """What an optional dropdown shows for "leave this key out of the table".
@@ -155,6 +156,9 @@ class DeclarationEditor(Adw.Dialog):
         # reference. The add row is among them, or every rebuild stacks another picker.
         for row in self._optional_rows:
             self._optional_group.remove(row)
+            # From an idle: this runs inside the "Add a setting" row's own notify::selected
+            # handler, and that row is among them (F19).
+            release_when_unparented(row)
         self._optional_rows = []
         for spec in self._descriptor.optional:
             self._rows.pop(spec.name, None)

@@ -27,6 +27,7 @@ from gi.repository import Adw, Gtk  # noqa: E402
 from hyprtweaker.engine import rule_grammars  # noqa: E402
 from hyprtweaker.engine.model.values import Color, Gradient  # noqa: E402
 from hyprtweaker.ui.dialogs.effect_helpers import GrammarRow, border_pair_reason  # noqa: E402
+from hyprtweaker.ui.release import release_when_unparented  # noqa: E402
 from hyprtweaker.ui.rows.factory import color_of, gdk_rgba  # noqa: E402
 
 _DEFAULT_STOP = Color(0xFFFFFFFF)
@@ -112,6 +113,8 @@ class GradientRow(GrammarRow[Gradient]):
     def _clear_stops(self) -> None:
         while (child := self._stops.get_first_child()) is not None:
             self._stops.remove(child)
+            # From an idle: a stop's own remove button is what clears them (F19).
+            release_when_unparented(child)
         self.stop_buttons.clear()
         self.remove_buttons.clear()
 
