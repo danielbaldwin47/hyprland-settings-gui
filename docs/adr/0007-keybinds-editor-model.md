@@ -45,7 +45,7 @@ Conflict = same (submap, modmask, trigger) among enabled binds (`submap_universa
 
 ### Imported edge cases
 
-Dead-keysym binds arrive commented out from the Importer → disabled row, error badge, re-capture affordance. `catchall`-with-mods and multi-key `binds` (`A&B`) approximations are badged "imported approximately". Multi-key binds are read-only with raw-text editing — no capture UX (0 uses in corpus, mapping only approximate).
+Dead-keysym binds arrive commented out from the Importer → disabled row, error badge, re-capture affordance. Both Importers do this since #131; the editor saves a description or flag edit to such a bind with its trigger untouched, since the Writer keeps a disabled bind commented out, and still blocks an edit that changes a trigger to a dead name or saves an enabled bind with one (#108). `catchall`-with-mods and multi-key `binds` (`A&B`) approximations are badged "imported approximately". Multi-key binds are read-only with raw-text editing — no capture UX (0 uses in corpus, mapping only approximate).
 
 ### Placement
 

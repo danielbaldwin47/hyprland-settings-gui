@@ -68,7 +68,7 @@ def test_an_untouched_dead_trigger_on_a_disabled_bind_saves_a_flag_edit() -> Non
 
 @needs_xkb
 def test_a_respelled_but_unchanged_dead_trigger_still_counts_as_untouched() -> None:
-    """ "Changed" compares canonical forms: `_save` canonicalises on the way out, so a
+    """The editor compares canonical forms: `_save` canonicalises on the way out, so a
     reordered or aliased spelling of the same trigger is not an edit to it."""
     editor, saved = open_editor(dead_bind())
     editor._trigger.set_text("win + notakey")
