@@ -206,6 +206,39 @@ def test_confirming_while_live_imports_then_applies_through_the_given_apply(
     assert [slug for slug, _ in session.presets()] == ["nord"]
 
 
+def test_a_colour_conflict_adds_the_preset_and_says_where_to_choose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Until #171 puts the choice in this dialog, a conflict applies nothing (#170)."""
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.bridge import Wallpaper
+    from hyprtweaker.engine.presets import PresetColorConflict
+    from hyprtweaker.session import Session
+    from hyprtweaker.ui.dialogs.theme_import import ThemeImportDialog
+
+    window, session, archive = build(tmp_path)
+    monkeypatch.setattr(Session, "live", property(lambda _self: True))
+    dialog = ThemeImportDialog(
+        session, archive, apply=lambda _slug: PresetColorConflict(Wallpaper("matugen"))
+    )
+    dialog.present(window)
+
+    button(dialog, "Import and Apply").emit("clicked")
+    main_loop.settle("the dialog")
+
+    [group] = [
+        w
+        for w in walk(dialog)
+        if isinstance(w, Adw.PreferencesGroup) and w.get_title() == "Added, but not applied"
+    ]
+    assert group.get_description() == (
+        "Nord is in your presets. Its colors and the ones your wallpaper sets would "
+        "compete, so apply it from your presets to choose which win."
+    )
+    assert [slug for slug, _ in session.presets()] == ["nord"]
+
+
 def test_a_hostile_archive_is_a_sentence_and_nothing_to_confirm(tmp_path: Path) -> None:
     from hyprtweaker.ui.dialogs.theme_import import ThemeImportDialog
 

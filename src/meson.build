@@ -30,6 +30,7 @@ package_sources = {
     'scripting.py',
     'tools.py',
     'triggers.py',
+    'wallpaper.py',
     'workspace_catalog.py',
     'workspace_selector.py',
   ],
@@ -52,6 +53,7 @@ package_sources = {
     '__init__.py',
     'entries.py',
     'registry.py',
+    'wire.py',
   ],
   'hyprtweaker/engine/importer': [
     '__init__.py',
@@ -134,6 +136,7 @@ package_sources = {
     '__init__.py',
     'bind_editor.py',
     'capture.py',
+    'colour_conflict.py',
     'confirm_revert.py',
     'declaration_editor.py',
     'effect_helpers.py',

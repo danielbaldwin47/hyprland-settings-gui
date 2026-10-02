@@ -335,3 +335,45 @@ def test_a_quarantined_native_bridge_is_named_by_its_file() -> None:
         Health(quarantined=("dms.colors",)).title
         == "dms/colors.lua is disabled until you fix it."
     )
+
+
+def test_setting_a_tool_up_adds_its_line_in_one_reload_and_removing_it_takes_it_out(
+    tmp_path: Path,
+) -> None:
+    """What #166's `wire` and `unwire` call to add and remove a tool's Bridge entry."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        put(tmp_path, "dms/colors.lua")
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        reloads = fake.requests.count("reload")
+
+        assert session.add_bridge("dms")
+        await settle(session, runner)
+        assert bridge_lines(tmp_path) == ['require("dms.colors")']
+        assert fake.requests.count("reload") == reloads + 1
+
+        assert session.remove_bridge("dms")
+        await settle(session, runner)
+        assert bridge_lines(tmp_path) == []
+        assert fake.requests.count("reload") == reloads + 2
+
+        assert session.remove_bridge("dms"), "nothing set up is nothing to do"
+        await settle(session, runner)
+        assert fake.requests.count("reload") == reloads + 2
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_a_tool_is_not_set_up_while_the_session_is_read_only(tmp_path: Path) -> None:
+    async def scenario(fake: FakeHyprland) -> None:
+        session = session_for(fake, tmp_path, Runner())
+
+        assert not session.add_bridge("dms")
+        assert not paths_of(tmp_path).entrypoint.exists()
+
+    run_with_fake(scenario, FakeHyprland(conversation()))

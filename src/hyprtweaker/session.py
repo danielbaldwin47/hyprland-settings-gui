@@ -53,10 +53,12 @@ from hyprtweaker.engine.apply import (
     Problem,
     Recovery,
     ReRead,
+    SourceChange,
     Step,
     UndoGroup,
     UndoStack,
     UndoStep,
+    WallpaperChange,
     app_owned_options,
     overrides,
     own_write_modules,
@@ -65,12 +67,18 @@ from hyprtweaker.engine.apply import (
 )
 from hyprtweaker.engine.apply.result import UNREADABLE, live_value
 from hyprtweaker.engine.bridge import (
+    REGISTRY,
     BridgeEntry,
     ChosenSource,
     ColorSource,
     ManualColors,
+    PresetColors,
+    Several,
+    ToolSpec,
+    Wallpaper,
     bridge_states_for,
     color_source_of,
+    entries_for,
     owners,
     with_presence,
 )
@@ -130,10 +138,12 @@ from hyprtweaker.engine.paths import (
 )
 from hyprtweaker.engine.presets import (
     CaptureScope,
+    ColorChoice,
     Preset,
     PresetApplied,
     PresetApplyResult,
     PresetChange,
+    PresetColorConflict,
     PresetImported,
     PresetImportResult,
     PresetNameTaken,
@@ -177,6 +187,7 @@ from hyprtweaker.engine.state.retirement import (
     UnkeptNotice,
 )
 from hyprtweaker.engine.triggers import trigger_load_problem
+from hyprtweaker.engine.wallpaper import Daemon, WallpaperError, Wallpapers
 from hyprtweaker.engine.writer import (
     BeforeReplace,
     LuaSyntaxError,
@@ -392,11 +403,32 @@ that says why is better than one that appears a moment later."""
 
 
 @dataclass(frozen=True, slots=True)
+class _WallpaperOrder:
+    """A Preset's image, to be shown through `daemon` once its transaction stands."""
+
+    daemon: Daemon
+    image: Path
+
+
+@dataclass(frozen=True, slots=True)
 class _AppliedPreset:
-    """A Preset whose Options are queued: its name, and each Option's value before it."""
+    """A Preset whose Options are queued: its name, each Option's value before it, the
+    Bridge entries it gated ("Use preset's colors"), and the wallpaper it will set."""
 
     name: str
     before: dict[str, OptionValue]
+    source: SourceChange | None = None
+    wallpaper: _WallpaperOrder | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _UndonePreset:
+    """A Preset step whose Options are being put back: what follows once that stands."""
+
+    names: frozenset[str]
+    source: SourceChange | None
+    wallpaper: WallpaperChange | None
+    notes: tuple[str, ...]
 
 
 def _typed(option: ResolvedOption, value: Any) -> Any:
@@ -421,6 +453,7 @@ class Session:
         app_version: str,
         connect: Callable[[], Instance] = Instance.current,
         read_live: Callable[[], LiveHyprland | None] | None = None,
+        wallpapers: Wallpapers | None = None,
     ) -> None:
         """`connect` names the compositor to talk to; by default, the one we run under.
 
@@ -433,8 +466,12 @@ class Session:
         blocking read over `connect`, bounded at one second; tests that have no compositor
         to ask, or want to pose as another version, hand in the answer. It runs whether or
         not `schema` is injected, so `live_hyprland` means the same thing in every session.
+
+        `wallpapers` is where a wallpaper daemon is looked for and how it is called: by
+        default the tool search path and this process's environment (`engine/tools.py`).
         """
         self._spawn = spawn
+        self._wallpapers = wallpapers if wallpapers is not None else Wallpapers()
         self._live_hyprland = (
             read_live() if read_live is not None else read_live_hyprland(connect)
         )
@@ -529,6 +566,13 @@ class Session:
         """The Preset store, built lazily over `presets/` (ADR-0014)."""
         self._applying_preset: _AppliedPreset | None = None
         """The Preset whose Options are queued and not yet reported (`apply_preset`)."""
+        self._undoing_preset: _UndonePreset | None = None
+        """The Preset step whose Options an undo has queued and not yet reported."""
+
+        self.on_preset_note: Callable[[str], None] | None = None
+        """Called with a sentence saying what applying or undoing a Preset could not do: a
+        wallpaper with no daemon to show it, or a Color source or wallpaper changed since
+        and so left as it is (S7). The window shows it as a toast."""
 
         self._undo = UndoStack()
         self._open_gestures: dict[str, OptionValue] = {}
@@ -795,6 +839,48 @@ class Session:
             lambda current: with_presence(current, present=self._bridge_files_present(current)),
             manifest.with_bridges(entries),
             "load a theming tool's colors",
+        )
+
+    def add_bridge(self, tool: str) -> bool:
+        """Give `tool` its Bridge entries and the Entrypoint its lines: one transaction.
+
+        What #166's `wire` calls before it touches the tool's own files. Never gates (#163):
+        a Color source change is `set_color_source` afterwards. `False` when the session is
+        read-only or the Entrypoint was hand-edited (`color_source_blocked` says why).
+        """
+        if self.color_source_blocked is not None:
+            return False
+        spec = REGISTRY[tool]
+
+        def added(current: Sequence[BridgeEntry]) -> list[BridgeEntry]:
+            kept = [entry for entry in current if entry.tool != tool]
+            return [*kept, *entries_for(spec, present=self._module_files_present(spec))]
+
+        prospective = self._manifest().add_bridge(
+            spec, present=self._module_files_present(spec)
+        )
+        return self._set_bridges(added, prospective, f"set up {spec.title}")
+
+    def remove_bridge(self, tool: str) -> bool:
+        """Take `tool`'s Bridge entries and lines out: what #166's `unwire` calls first.
+
+        `True` with nothing done when the tool has no entry, so an `unwire` that converges
+        after a crash never costs a reload.
+        """
+        manifest = self._manifest()
+        if not any(entry.tool == tool for entry in manifest.bridges):
+            return True
+        if self.color_source_blocked is not None:
+            return False
+        return self._set_bridges(
+            lambda current: [entry for entry in current if entry.tool != tool],
+            manifest.remove_bridge(tool),
+            f"remove {REGISTRY[tool].title if tool in REGISTRY else tool}",
+        )
+
+    def _module_files_present(self, spec: ToolSpec) -> frozenset[str]:
+        return frozenset(
+            each.file for each in spec.modules if (self._paths.hypr_dir / each.file).is_file()
         )
 
     def _set_bridges(
@@ -1814,12 +1900,35 @@ class Session:
         )
         client = self._client
         if not self.live or client is None:
+            if CaptureScope.COLORS in chosen and isinstance(
+                self.color_source(), Wallpaper | Several
+            ):
+                # The model holds the user's colours, not the ones the wallpaper made (S7).
+                done(
+                    PresetNotSaved(
+                        "Wallpaper colors can only be captured while Hyprland is running."
+                    )
+                )
+                return
+            if CaptureScope.WALLPAPER in chosen:
+                done(
+                    PresetNotSaved("The wallpaper can only be saved while Hyprland is running.")
+                )
+                return
             values = {
                 option.name: stored_value(value)
                 for option in options
                 if (value := self._model.get(option.name)) is not UNSET
             }
             done(self._write_preset(name, chosen, values, replace=replace))
+            return
+        daemon = self._wallpapers.detect() if CaptureScope.WALLPAPER in chosen else None
+        if CaptureScope.WALLPAPER in chosen and daemon is None:
+            done(
+                PresetNotSaved(
+                    f"The wallpaper could not be saved. {self._wallpapers.absent_reason()}"
+                )
+            )
             return
 
         async def capture() -> None:
@@ -1829,7 +1938,18 @@ class Session:
                 _log.warning("preset capture failed: %s", error)
                 done(PresetNotSaved("Hyprland stopped answering, so nothing was saved."))
                 return
-            done(self._write_preset(name, chosen, values, replace=replace))
+            image: str | None = None
+            if daemon is not None:
+                try:
+                    shown = await asyncio.to_thread(daemon.current)
+                except WallpaperError as error:
+                    done(PresetNotSaved(f"The wallpaper could not be saved. {error}"))
+                    return
+                if not shown:
+                    done(PresetNotSaved(f"{daemon.name} is not showing an image to save."))
+                    return
+                image = str(shown[0].image)
+            done(self._write_preset(name, chosen, values, replace=replace, wallpaper=image))
 
         self._spawn(capture())
 
@@ -1868,8 +1988,9 @@ class Session:
         values: Mapping[str, Any],
         *,
         replace: bool,
+        wallpaper: str | None = None,
     ) -> PresetSaveResult:
-        if not values:
+        if not values and wallpaper is None:
             return PresetNotSaved(
                 "Nothing to save: everything you chose is at Hyprland's default."
             )
@@ -1888,6 +2009,7 @@ class Session:
             hyprland_version=live.version
             if live is not None
             else self._schema.hyprland_version,
+            wallpaper=wallpaper,
         )
         try:
             store.write(slug, preset)
@@ -1896,13 +2018,37 @@ class Session:
             return PresetNotSaved(f"The preset could not be saved: {error.strerror or error}.")
         return PresetSaved(slug, preset)
 
-    def apply_preset(self, slug: str) -> PresetApplyResult:
+    def preset_color_conflict(self, preset: Preset) -> Wallpaper | Several | None:
+        """The wallpaper source a Preset's Colors would fight, or `None` (ADR-0014).
+
+        Not `None` exactly when the Preset holds a colour and a wallpaper sets the colours
+        now: then `apply_preset` needs a `ColorChoice`. For the import preview to ask before
+        anything is saved, as the Presets group asks before applying.
+        """
+        colours = {option.name for option in scoped_options(self._schema, CaptureScope.COLORS)}
+        if colours.isdisjoint(preset.options):
+            return None
+        source = self.color_source()
+        return source if isinstance(source, Wallpaper | Several) else None
+
+    def apply_preset(
+        self, slug: str, *, colors: ColorChoice | None = None, wallpaper: bool = False
+    ) -> PresetApplyResult:
         """Set every Option the Preset holds, as one gesture: one Apply transaction, one step.
 
         One gesture because the edits are made in one synchronous burst: the queue's worker
         runs on this loop, so it takes every key in one batch, and the step it records is a
         `PresetStep` that one Ctrl+Z takes back whole. A Preset holds set values only, so
         applying never unsets an Option the Preset does not name.
+
+        Colors while a wallpaper sets them (`preset_color_conflict`): without `colors`,
+        nothing is applied and the answer is `PresetColorConflict`. `USE_PRESET` gates the
+        wallpaper's Bridge in the same transaction (S6), so the source becomes Preset;
+        `KEEP_WALLPAPER` applies everything but the colours.
+
+        `wallpaper` is "change" rather than "keep mine": the Preset's image is shown through
+        the running daemon once the transaction stands, never before. When it cannot be,
+        `on_preset_note` says why and the rest still applies.
 
         What this session cannot set is skipped and named in the result, never fatal (ADR-0014
         §Sharing). Refused, with the Banner's reason, on a read-only session.
@@ -1912,17 +2058,95 @@ class Session:
         preset = self._preset_store.load(slug)
         if preset is None:
             return PresetNotApplied("This preset could not be read. It may have been deleted.")
+        conflict = self.preset_color_conflict(preset)
+        if conflict is not None and colors is None:
+            return PresetColorConflict(conflict)
+        source: SourceChange | None = None
+        kept: frozenset[str] = frozenset()
+        if conflict is not None and colors is ColorChoice.USE_PRESET:
+            if (blocked := self.color_source_blocked) is not None:
+                return PresetNotApplied(blocked)
+            bridges = self._manifest().bridges
+            source = SourceChange(
+                bridges,
+                tuple(
+                    bridge_states_for(
+                        PresetColors(), bridges, present=self._bridge_files_present(bridges)
+                    )
+                ),
+            )
+        elif conflict is not None:
+            kept = frozenset(o.name for o in scoped_options(self._schema, CaptureScope.COLORS))
         values, _unknown, _invalid = self._preset_values(preset)
-        skipped = [name for name in preset.options if name not in values]
+        skipped = [name for name in preset.options if name not in values and name not in kept]
+        values = {name: value for name, value in values.items() if name not in kept}
         if skipped:
             _log.warning("preset %s: skipped %s", slug, ", ".join(skipped))
+        order = self._wallpaper_order(preset) if wallpaper else None
         if values:
             self._applying_preset = _AppliedPreset(
-                preset.name, {name: self._model.get(name) for name in values}
+                preset.name, {name: self._model.get(name) for name in values}, source, order
             )
+            if source is not None:
+                # Manifest only: this transaction's write renders the gated Entrypoint, so
+                # one reload lands the colours and the source together (S6).
+                self._writer.record_bridges(self._model, source.after)
             for name, value in values.items():
                 self.set_option(name, value)
+        elif order is not None:
+            # Nothing to write, so no transaction to wait for.
+            self._spawn(self._show_preset_wallpaper(preset.name, order, None))
         return PresetApplied(tuple(values), tuple(skipped))
+
+    def _wallpaper_order(self, preset: Preset) -> _WallpaperOrder | None:
+        """The Preset's image and the daemon to show it, or `None` after saying why not."""
+        if preset.wallpaper is None:
+            return None
+        image = Path(preset.wallpaper)
+        if not image.is_absolute():
+            image = self._paths.app_dir / image
+        if not image.is_file():
+            self._say_preset(f"The wallpaper was not changed. {image} is missing.")
+            return None
+        daemon = self._wallpapers.detect()
+        if daemon is None:
+            reason = self._wallpapers.absent_reason()
+            self._say_preset(f"The wallpaper was not changed. {reason}")
+            return None
+        return _WallpaperOrder(daemon, image)
+
+    def _say_preset(self, text: str) -> None:
+        if self.on_preset_note is not None:
+            self.on_preset_note(text)
+
+    async def _show_preset_wallpaper(
+        self, name: str, order: _WallpaperOrder, step: PresetStep | None
+    ) -> None:
+        """Show the Preset's image, after reading what it replaces, and add that to `step`.
+
+        Off the main loop: `query` and `img` are processes, and `img` decodes the image.
+        The step is already on the stack (the transaction stood), so it is replaced by one
+        that also puts the wallpaper back; with no step, the wallpaper is the whole gesture.
+        """
+        try:
+            before = await asyncio.to_thread(order.daemon.current)
+        except WallpaperError as error:
+            _log.warning("could not read the wallpaper before setting it: %s", error)
+            before = ()
+        try:
+            await asyncio.to_thread(order.daemon.set, order.image)
+        except WallpaperError as error:
+            self._say_preset(f"The wallpaper was not changed. {error}")
+            return
+        change = WallpaperChange(before, order.image)
+        if step is not None:
+            if not self._undo.replace(step, replace(step, wallpaper=change)):
+                _log.info("the preset step was undone before its wallpaper was set")
+            return
+        recorded = PresetStep.of(name, None, wallpaper=change)
+        self._undo.record(recorded)
+        if recorded is not None and self.on_recorded is not None:
+            self.on_recorded(recorded)
 
     def _preset_values(
         self, preset: Preset
@@ -2145,12 +2369,75 @@ class Session:
             return False
         if isinstance(step, EntityStep):
             return self._undo_entities(step)
+        if isinstance(step, PresetStep):
+            return self._undo_preset(step)
 
-        options = step.options if isinstance(step, PresetStep) else step
-        self._restore({edit.name: edit.before for edit in options.edits})
-        self._applier.commit(*options.names)
+        self._restore({edit.name: edit.before for edit in step.edits})
+        self._applier.commit(*step.names)
         self._changed()
         return True
+
+    def _undo_preset(self, step: PresetStep) -> bool:
+        """Put back everything a Preset changed: Options and Color source in one Apply
+        transaction, then the wallpaper once that stands (S7).
+
+        A Color source changed since the apply is the user's newer choice and stays; so does
+        a wallpaper changed since. `on_preset_note` says which, after "Settings restored."
+        """
+        notes: list[str] = []
+        source = step.color_source
+        if source is not None and (
+            self._manifest().bridges != source.after or self.color_source_blocked is not None
+        ):
+            notes.append("Wallpaper colors were changed since, so they stay as they are.")
+            source = None
+        if step.options is None:
+            # The values matched already, so there are no Options to carry the gate back:
+            # the Entrypoint goes back on its own transaction (`set_color_source`'s).
+            if source is not None:
+                before = source.before
+                self._set_bridges(
+                    lambda _current: before,
+                    self._manifest().with_bridges(before),
+                    "put the Color source back",
+                )
+            self._spawn(self._finish_preset_undo(step.wallpaper, tuple(notes)))
+            return True
+        if source is not None:
+            self._writer.record_bridges(self._model, source.before)
+        self._undoing_preset = _UndonePreset(
+            frozenset(step.options.names), source, step.wallpaper, tuple(notes)
+        )
+        self._restore({edit.name: edit.before for edit in step.options.edits})
+        self._applier.commit(*step.options.names)  # type: ignore[union-attr]  # undo checked
+        self._changed()
+        return True
+
+    async def _finish_preset_undo(
+        self, wallpaper: WallpaperChange | None, notes: tuple[str, ...]
+    ) -> None:
+        """Put the wallpaper back if it still shows the Preset's, then say what stayed."""
+        said = list(notes)
+        if wallpaper is not None:
+            said.extend(await self._put_wallpaper_back(wallpaper))
+        if said:
+            self._say_preset(" ".join(["Settings restored.", *said]))
+
+    async def _put_wallpaper_back(self, change: WallpaperChange) -> list[str]:
+        """Show `change.before` again; what could not be done, as sentences."""
+        daemon = self._wallpapers.detect()
+        if daemon is None:
+            return [f"The wallpaper was not put back. {self._wallpapers.absent_reason()}"]
+        try:
+            now = await asyncio.to_thread(daemon.current)
+            if not now or any(shown.image != change.after for shown in now):
+                return ["The wallpaper was changed since, so it stays as it is."]
+            if not change.before:
+                return ["The wallpaper was not put back: what it was could not be read."]
+            await asyncio.to_thread(daemon.show, change.before)
+        except WallpaperError as error:
+            return [f"The wallpaper was not put back. {error}"]
+        return []
 
     @property
     def undo_queued(self) -> bool:
@@ -2926,15 +3213,24 @@ class Session:
             # From the Preset's own snapshot: an Option it set while an earlier edit of it
             # was in flight had its gesture closed by that edit's transaction.
             delta = {**delta, **preset.before}
+        undone = self._carried_undo(result.keys)
         stands = self._stands(result)
         entity_steps, failed = self._settle_entities(result, stands=stands)
         if not stands:
+            # The gate goes back first, so the auto-revert's write renders the Entrypoint
+            # with the wallpaper's Bridge loading again (S6).
+            if preset is not None and preset.source is not None:
+                self._put_bridges(preset.source.after, preset.source.before)
+            if undone is not None and undone.source is not None:
+                self._put_bridges(undone.source.before, undone.source.after)
             self._fell(result, delta, self._lists_before(failed))
             return
 
         option_step = self._step(delta)
         step: Step | None = (
-            option_step if preset is None else PresetStep.of(preset.name, option_step)
+            option_step
+            if preset is None
+            else PresetStep.of(preset.name, option_step, color_source=preset.source)
         )
         self._undo.record(step)
         for entity_step in entity_steps:
@@ -2942,6 +3238,11 @@ class Session:
         self._observe(result)
         self._repoll_if_timed_out(result)
         self._report(result)
+        if preset is not None and preset.wallpaper is not None:
+            carried = step if isinstance(step, PresetStep) else None
+            self._spawn(self._show_preset_wallpaper(preset.name, preset.wallpaper, carried))
+        if undone is not None:
+            self._spawn(self._finish_preset_undo(undone.wallpaper, undone.notes))
         if self._undo_when_landed():
             # The user already asked for this gesture back: no offer to undo it.
             return
@@ -2963,6 +3264,21 @@ class Session:
             return None
         self._applying_preset = None
         return preset
+
+    def _carried_undo(self, keys: Sequence[str]) -> _UndonePreset | None:
+        """The Preset undo this transaction carries, taken, as `_carried_preset` does."""
+        undone = self._undoing_preset
+        if undone is None or not undone.names <= set(keys):
+            return None
+        self._undoing_preset = None
+        return undone
+
+    def _put_bridges(
+        self, expected: Sequence[BridgeEntry], entries: Sequence[BridgeEntry]
+    ) -> None:
+        """Record `entries` as the Bridge entries, if the Manifest still holds `expected`."""
+        if tuple(self._manifest().bridges) == tuple(expected):
+            self._writer.record_bridges(self._model, entries)
 
     def _stands(self, result: ApplyResult) -> bool:
         """Whether this transaction's edits are kept: in the model, and on the undo stack.
