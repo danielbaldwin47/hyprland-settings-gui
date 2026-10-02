@@ -42,6 +42,7 @@ compositor is always stopped.
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import re
 import shutil
@@ -61,6 +62,7 @@ from harness import NestedHyprland, make_home, unavailable_reason  # noqa: E402
 from harness.nested import DRM_CARD_VARIABLE, drm_card_problem  # noqa: E402
 
 from hermetic import FENCE_LOG_ENV, REFUSED_TOOLS, install_refusals  # noqa: E402
+from ui.private_display import start_bus  # noqa: E402
 
 TOOL_PATH_ENV = "HYPRTWEAKER_TOOL_PATH"  # hyprtweaker.engine.tools.TOOL_PATH_ENV
 TOOL_DIR = "bin"
@@ -156,19 +158,34 @@ def argument_problem(*, window: bool, home: Path | None) -> str | None:
     return None
 
 
-def app_environment(nested: Mapping[str, str], home: Path) -> dict[str, str]:
+def app_environment(nested: Mapping[str, str], home: Path, bus: str) -> dict[str, str]:
     """What the app runs with: the nested compositor's environment, plus this checkout.
 
     `nested` already names the sandbox `HOME` and `XDG_*` homes and the nested instance.
     The tool search path is `<home>/bin`, empty unless someone put a stub there, so the
     app finds no theming tool or wallpaper daemon of the owner's (`engine/tools.py`, #233).
+
+    GTK talks to the nested Wayland display and nothing of the desktop's (F13 of the #148
+    review, hand-test 15): Wayland only and no `DISPLAY`, so a failed nested connect fails
+    rather than falling back to the desktop's Xwayland; `bus`, a session bus of the
+    sandbox's own, rather than the owner's; no accessibility bus, no settings portal and
+    GSettings in memory; and no Vulkan probe of a render node the sandbox cannot open.
     """
-    return {
+    environment = {
         **nested,
         "PYTHONPATH": str(REPO_ROOT / "src"),
         "HYPRTWEAKER_NON_UNIQUE": "1",
         TOOL_PATH_ENV: str(home / TOOL_DIR),
+        "GDK_BACKEND": "wayland",
+        "GTK_A11Y": "none",
+        "DBUS_SESSION_BUS_ADDRESS": bus,
+        "ADW_DISABLE_PORTAL": "1",
+        "GSETTINGS_BACKEND": "memory",
+        "GDK_DISABLE": "vulkan",
     }
+    for name in ("DISPLAY", "AT_SPI_BUS_ADDRESS"):
+        environment.pop(name, None)
+    return environment
 
 
 def main() -> int:
@@ -218,8 +235,15 @@ def main() -> int:
     os.environ.update(fence_environment(home, os.environ.get("PATH", "")))
     print(f"refusals log to {home / REFUSED_LOG}")
 
+    dbus_daemon = shutil.which("dbus-daemon")
+    bus = start_bus(dbus_daemon) if dbus_daemon is not None else None
+    if bus is None:
+        print("sandbox unavailable: no private session bus (dbus-daemon)", file=sys.stderr)
+        return 2
+    atexit.register(bus.stop)
+
     with NestedHyprland(entrypoint, home=home, log=home / "nested.log") as nested:
-        env = app_environment(nested.env, home)
+        env = app_environment(nested.env, home, bus.address)
         for name in ("HOME", "HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", TOOL_PATH_ENV):
             print(f"{name}={env[name]}")
         log = (home / "app.log").open("w")

@@ -29,20 +29,49 @@ def test_the_app_runs_with_a_tool_path_inside_the_sandbox_home(tmp_path: Path) -
         "PATH": "/usr/bin:/bin",
     }
 
-    environment = sandbox.app_environment(nested, home)
+    environment = sandbox.app_environment(nested, home, "unix:path=/tmp/sandbox-bus")
 
     assert environment == {
         **nested,
         "PYTHONPATH": str(ROOT / "src"),
         "HYPRTWEAKER_NON_UNIQUE": "1",
         "HYPRTWEAKER_TOOL_PATH": str(home / "bin"),
+        "GDK_BACKEND": "wayland",
+        "GTK_A11Y": "none",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/sandbox-bus",
+        "ADW_DISABLE_PORTAL": "1",
+        "GSETTINGS_BACKEND": "memory",
+        "GDK_DISABLE": "vulkan",
     }
+
+
+def test_the_app_gets_nothing_of_the_desktop_session(tmp_path: Path) -> None:
+    """F13 of the #148 review and hand-test 15: the session's `GDK_BACKEND=wayland,x11,*`
+    and `DISPLAY=:0` let a failed nested connect fall back to the desktop's Xwayland, and
+    the host's accessibility bus reached the app (a Gtk-CRITICAL in app.log)."""
+    nested = {
+        "HOME": str(tmp_path),
+        "WAYLAND_DISPLAY": "wayland-9",
+        "GDK_BACKEND": "wayland,x11,*",
+        "DISPLAY": ":0",
+        "AT_SPI_BUS_ADDRESS": "unix:path=/run/user/1000/at-spi/bus_0",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+    }
+
+    environment = sandbox.app_environment(nested, tmp_path, "unix:path=/tmp/sandbox-bus")
+
+    assert "DISPLAY" not in environment
+    assert "AT_SPI_BUS_ADDRESS" not in environment
+    assert environment["GDK_BACKEND"] == "wayland"
+    assert environment["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/tmp/sandbox-bus"
 
 
 def test_the_sandbox_home_has_an_empty_tool_path_and_finds_no_tool(tmp_path: Path) -> None:
     home = tmp_path / "sandbox-home"
     sandbox.prepare_home(home, None)
-    environment = sandbox.app_environment({**os.environ, "HOME": str(home)}, home)
+    environment = sandbox.app_environment(
+        {**os.environ, "HOME": str(home)}, home, "unix:path=/x"
+    )
 
     assert os.listdir(home / "bin") == []
     assert find_tool("sh", environment) is None
