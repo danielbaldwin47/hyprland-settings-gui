@@ -235,6 +235,21 @@ class TestRoundTrip:
         assert parsed.binds[0].options.locked is True
         assert parsed.binds[0].options.description == "Terminal"
 
+    @pytest.mark.parametrize(
+        "flags",
+        [
+            {"click": True, "release": True},
+            {"drag": True, "release": True},
+            {"auto_consuming": True},
+        ],
+    )
+    def test_click_drag_and_auto_consuming_survive(self, flags: dict[str, bool]) -> None:
+        entities = EntitySet(
+            binds=[exec_bind("SUPER + Q", "kitty", options=BindOptions(**flags))]
+        )
+        parsed = parse_binds_module(render(entities))
+        assert parsed.binds[0].options.as_table() == {name: True for name in flags}
+
     def test_key_code_survives(self) -> None:
         self.assert_round_trips(EntitySet(binds=[exec_bind("SUPER + code:10", "x")]))
 

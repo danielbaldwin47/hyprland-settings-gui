@@ -437,3 +437,165 @@ def test_every_key_of_a_saved_curated_call_survives_an_edit(entry: Dispatcher) -
 
     assert not editor._error.get_visible(), editor._error.get_text()
     assert [b.dispatcher for b in saved] == [call]
+
+
+# --- #105: click, drag and auto_consuming, with ADR-0007's constraints in the form --------
+
+
+def term_bind(**flags: bool) -> Bind:
+    """A saved bind on a working key, as the editor opens it, with these flags on."""
+    return Bind(
+        keys="SUPER + T",
+        dispatcher=DispatcherCall(path="exec_cmd", positional=("kitty",)),
+        options=BindOptions(**flags),
+    )
+
+
+def saved_options(bind: Bind, *flip: str) -> tuple[Any, list[Bind]]:
+    """Open `bind`, turn each flag in `flip` on, save; the editor and what it handed back."""
+    editor, saved = open_editor(bind)
+    for name in flip:
+        editor._flag_switches[name].set_active(True)
+    editor._save()
+    return editor, saved
+
+
+def refusal(editor: Any) -> str:
+    return str(editor._error.get_text()) if editor._error.get_visible() else ""
+
+
+@pytest.mark.parametrize("name", ["click", "drag", "auto_consuming"])
+def test_each_new_flag_has_a_switch_and_reaches_the_saved_bind(name: str) -> None:
+    editor, saved = saved_options(term_bind(), name)
+
+    assert refusal(editor) == ""
+    assert [getattr(b.options, name) for b in saved] == [True]
+
+
+@pytest.mark.parametrize("name", ["click", "drag"])
+def test_click_and_drag_save_release_without_the_user_setting_it(name: str) -> None:
+    editor, saved = saved_options(term_bind(), name)
+
+    assert not editor._error.get_visible()
+    assert [(b.options.release, getattr(b.options, name)) for b in saved] == [(True, True)]
+
+
+@pytest.mark.parametrize(("name", "caption"), [("click", "Click"), ("drag", "Drag")])
+def test_the_release_switch_shows_on_and_locked_while_click_or_drag_is_on(
+    name: str, caption: str
+) -> None:
+    editor, _ = open_editor(term_bind())
+    release = editor._flag_switches["release"]
+    assert (release.get_active(), release.get_sensitive(), release.get_subtitle()) == (
+        False,
+        True,
+        "",
+    )
+
+    editor._flag_switches[name].set_active(True)
+    assert (release.get_active(), release.get_sensitive(), release.get_subtitle()) == (
+        True,
+        False,
+        f"Set by {caption}",
+    )
+
+
+def test_turning_click_off_gives_release_back_to_the_users_own_value() -> None:
+    editor, saved = open_editor(term_bind())
+    release, click = editor._flag_switches["release"], editor._flag_switches["click"]
+
+    click.set_active(True)
+    click.set_active(False)
+    assert (release.get_active(), release.get_sensitive(), release.get_subtitle()) == (
+        False,
+        True,
+        "",
+    )
+    editor._save()
+    assert [(b.options.release, b.options.click) for b in saved] == [(False, False)]
+
+
+def test_a_release_the_user_set_survives_click_going_on_and_off() -> None:
+    editor, saved = open_editor(term_bind(release=True))
+    click = editor._flag_switches["click"]
+
+    click.set_active(True)
+    click.set_active(False)
+
+    assert editor._flag_switches["release"].get_active()
+    editor._save()
+    assert [(b.options.release, b.options.click) for b in saved] == [(True, False)]
+
+
+def test_an_imported_click_bind_opens_with_release_locked_on_and_saves_unchanged() -> None:
+    """The Importer sets release on every click bind, so release is not the user's own."""
+    editor, saved = open_editor(term_bind(click=True, release=True))
+    release = editor._flag_switches["release"]
+
+    assert (release.get_active(), release.get_sensitive(), release.get_subtitle()) == (
+        True,
+        False,
+        "Set by Click",
+    )
+    editor._save()
+    assert [b.options for b in saved] == [BindOptions(click=True, release=True)]
+
+
+def test_turning_an_imported_click_off_does_not_leave_a_release_the_user_never_chose() -> None:
+    editor, saved = open_editor(term_bind(click=True, release=True))
+    editor._flag_switches["click"].set_active(False)
+
+    assert not editor._flag_switches["release"].get_active()
+    editor._save()
+    assert [b.options for b in saved] == [BindOptions()]
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (("click", "drag"), "Click and Drag can't both be on."),
+        (("click", "repeating"), "Click fires on release, so it can't repeat."),
+        (("drag", "repeating"), "Drag fires on release, so it can't repeat."),
+        (("long_press", "repeating"), "Long press can't repeat."),
+        (("release", "repeating"), "Release can't repeat."),
+    ],
+)
+def test_an_invalid_flag_combination_is_refused_in_plain_words_and_not_saved(
+    flags: tuple[str, ...], message: str
+) -> None:
+    editor, saved = saved_options(term_bind(), *flags)
+
+    assert refusal(editor) == message
+    assert saved == []
+
+
+def test_an_imported_click_bind_that_repeats_is_refused_naming_click_not_release() -> None:
+    editor, saved = saved_options(term_bind(click=True, release=True), "repeating")
+
+    assert refusal(editor) == "Click fires on release, so it can't repeat."
+    assert saved == []
+
+
+@pytest.mark.parametrize(
+    "flags", [("click", "long_press"), ("auto_consuming", "non_consuming")]
+)
+def test_pairs_hyprland_loads_are_not_refused(flags: tuple[str, ...]) -> None:
+    """`Hyprland --verify-config` accepts both pairs (probed on 0.56.2, #105)."""
+    editor, saved = saved_options(term_bind(), *flags)
+
+    assert refusal(editor) == ""
+    assert len(saved) == 1
+
+
+def test_a_bind_device_survives_a_click_edit() -> None:
+    from hyprtweaker.engine.model.entities import BindDevice
+
+    device = BindDevice(inclusive=False, names=("kbd",))
+    bind = Bind(
+        keys="SUPER + T",
+        dispatcher=DispatcherCall(path="exec_cmd", positional=("kitty",)),
+        options=BindOptions(device=device),
+    )
+    _, saved = saved_options(bind, "click")
+
+    assert [b.options.device for b in saved] == [device]
