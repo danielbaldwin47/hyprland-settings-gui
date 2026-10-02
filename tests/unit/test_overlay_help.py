@@ -26,6 +26,7 @@ import overlay_help
 import seed_overlay_help
 
 from hyprtweaker.engine.schema import generated as generated_module
+from hyprtweaker.engine.schema import humanise, load_schema
 from hyprtweaker.engine.schema.resolve import available_versions
 
 VERSIONS = list(available_versions(SCHEMA_DIR))
@@ -77,13 +78,27 @@ def test_the_table_names_only_shipped_settings() -> None:
     assert sorted(set(_table()) - shipped) == []
 
 
+def _shown_labels(version: str) -> dict[str, dict[str, str]]:
+    """Each labelled control's stored values and the labels the control shows for them."""
+    shown: dict[str, dict[str, str]] = {}
+    for option in load_schema(version, SCHEMA_DIR):
+        if option.labels:
+            shown[option.name] = dict(option.labels)
+        elif option.map:
+            shown[option.name] = {str(v): humanise(k) for k, v in option.map.items()}
+    return shown
+
+
 def test_every_help_obeys_the_length_and_voice_rules() -> None:
     table = _table()
+    labels = {version: _shown_labels(version) for version in VERSIONS}
     problems = [
         f"{version} {name}: {problem}"
         for version, name, description in _each_shipped_option()
         if (entry := table.get(name)) is not None
-        for problem in overlay_help.entry_problems(entry, description)
+        for problem in overlay_help.entry_problems(
+            entry, description, labels[version].get(name, {})
+        )
     ]
     assert not problems, "\n".join(sorted(set(problems)))
 
@@ -199,6 +214,20 @@ def test_a_copy_of_the_upstream_line_fails_whatever_its_case_or_punctuation() ->
     problems = overlay_help.help_problems("Size of the border around windows.", UPSTREAM)
 
     assert problems == ["is the upstream description; write what it says in full"]
+
+
+def test_a_stored_value_a_labelled_control_never_shows_fails() -> None:
+    labels = {"0": "Disabled", "1": "Enabled", "2": "Auto"}
+
+    problems = overlay_help.help_problems("Set 2 to decide per monitor.", UPSTREAM, labels)
+
+    assert problems == ["quotes the stored value 2, which the control shows as 'Auto'"]
+
+
+def test_a_number_that_is_no_stored_value_passes_on_a_labelled_control() -> None:
+    labels = {"0": "Off", "1": "On"}
+
+    assert overlay_help.help_problems("Waits 500 milliseconds.", UPSTREAM, labels) == []
 
 
 def test_an_entry_needs_exactly_one_of_help_or_skip() -> None:
