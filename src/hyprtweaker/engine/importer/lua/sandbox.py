@@ -16,6 +16,7 @@ Two things are worth stating plainly, because both are easy to get wrong later:
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import json
 import os
@@ -245,20 +246,47 @@ def _run(
         text=True,
         start_new_session=True,
     ) as process:
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+        with _running_lock:
+            _running.add(process)
+        try:
+            return _wait(process, deadline, cancel)
+        finally:
+            with _running_lock:
+                _running.discard(process)
+
+
+def _wait(
+    process: subprocess.Popen[str], deadline: float, cancel: threading.Event | None
+) -> tuple[int, str, str] | None:
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _kill_group(process)
+            return None
+        wait = remaining if cancel is None else min(remaining, CANCEL_POLL_SECONDS)
+        try:
+            stdout, stderr = process.communicate(timeout=wait)
+        except subprocess.TimeoutExpired:
+            if cancel is not None and cancel.is_set():
                 _kill_group(process)
-                return None
-            wait = remaining if cancel is None else min(remaining, CANCEL_POLL_SECONDS)
-            try:
-                stdout, stderr = process.communicate(timeout=wait)
-            except subprocess.TimeoutExpired:
-                if cancel is not None and cancel.is_set():
-                    _kill_group(process)
-                    raise Cancelled("the read was cancelled") from None
-                continue
-            return process.returncode, stdout, stderr
+                raise Cancelled("the read was cancelled") from None
+            continue
+        return process.returncode, stdout, stderr
+
+
+_running: set[subprocess.Popen[str]] = set()
+"""Reads in flight. A worker thread dies with the app, and the config, in a session of
+its own, would then run on with nothing left to time it out (#216)."""
+_running_lock = threading.Lock()
+
+
+@atexit.register
+def _stop_running() -> None:
+    """At exit, kill every read still running, with whatever it started."""
+    with _running_lock:
+        for process in _running:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
 
 
 def _kill_group(process: subprocess.Popen[str]) -> None:

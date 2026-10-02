@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -365,6 +367,45 @@ def test_a_cancelled_read_stops_the_config_and_the_commands_it_started(tmp_path)
         _within(10, lambda: not _alive(command), "the command's end")
     finally:
         if _alive(command):  # a failed run must not leave its `sleep` behind
+            os.kill(command, signal.SIGKILL)
+
+
+EXITS_MID_READ = """
+import sys, threading, time
+from pathlib import Path
+from hyprtweaker.engine.importer.lua import Consent, evaluate
+
+entry, pidfile = Path(sys.argv[1]), Path(sys.argv[2])
+grant = Consent(evaluate=True, passthrough=True)
+threading.Thread(target=evaluate, args=(entry,), kwargs={"consent": grant}, daemon=True).start()
+deadline = time.monotonic() + 10
+while not (pidfile.is_file() and pidfile.read_text().strip()):
+    if time.monotonic() > deadline:
+        sys.exit("the command never started")
+    time.sleep(0.01)
+"""
+"""An app that quits while its read worker runs: the worker thread dies with it."""
+
+
+def test_a_read_still_running_when_the_app_exits_is_stopped(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The config runs in a session of its own, and only the dead worker would have timed
+    it out: without a stop at exit, it would run on, with what it started, for ever."""
+    pidfile = tmp_path / "command.pid"
+    entry = write(tmp_path, f'os.execute("echo $$ > {pidfile}; exec sleep 600")\n')
+    src = Path(__file__).resolve().parents[2] / "src"
+
+    subprocess.run(
+        [sys.executable, "-c", EXITS_MID_READ, str(entry), str(pidfile)],
+        env={**os.environ, "PYTHONPATH": str(src)},
+        check=True,
+        timeout=30,
+    )
+
+    command = int(pidfile.read_text())
+    try:
+        _within(10, lambda: not _alive(command), "the command's end once the app exited")
+    finally:
+        if _alive(command):
             os.kill(command, signal.SIGKILL)
 
 
