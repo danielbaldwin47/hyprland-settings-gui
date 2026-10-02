@@ -18,6 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import main_loop
+
 from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, load_schema
@@ -43,6 +45,7 @@ class FakeSession:
         self.unapplied: frozenset[str] = frozenset()
         self.overridden: frozenset[str] = frozenset()
         self.device_overrides: dict[str, tuple[str, ...]] = {}
+        self.bridge_owners: dict[str, str] = {}
         self.live_hyprland = live_hyprland
         self.unknown: frozenset[str] = frozenset()
         """What `unknown_to_version` answers: the Session's own rule is tested on a real
@@ -330,6 +333,70 @@ def test_a_row_overridden_at_launch_wears_the_pill_before_any_edit() -> None:
     row.chrome.refresh()
 
     assert row.chrome.pill_labels == ()
+
+
+ACTIVE_BORDER = "general:col.active_border"
+
+
+def test_a_tool_owned_row_wears_a_set_by_button_that_opens_the_tool() -> None:
+    """#165: the pill names the tool and leads to it, by pointer and by keyboard."""
+    from gi.repository import Gtk
+
+    opened: list[str] = []
+    session = FakeSession()
+    session.bridge_owners = {ACTIVE_BORDER: "matugen"}
+    row = build_row(ACTIVE_BORDER, session, reveal_backend=opened.append)
+
+    (button,) = row.chrome.pill_buttons
+    assert row.chrome.pill_labels == ("Set by matugen",)
+    assert isinstance(button, Gtk.Button) and button.get_visible()
+    assert button.get_child().get_label() == "Set by matugen"
+    assert button.get_focusable()
+    assert button.get_tooltip_text().startswith("matugen sets this, so Hyprland uses")
+
+    button.emit("clicked")
+    assert opened == ["matugen"]
+
+    # Enter or Space on the focused button: its keybinding signal, which clicks after the
+    # pressed look has shown for a moment -- on a realized button, so in a window.
+    from gi.repository import Adw
+    from started_app import started_application
+
+    group = Adw.PreferencesGroup()
+    group.add(row.widget)
+    window = Adw.ApplicationWindow(application=started_application(), content=group)
+    button.realize()  # and every ancestor up to the window, which is never shown
+    assert button.get_realized()
+    assert button.grab_focus() and window.get_focus() is button
+    assert button.activate()
+    main_loop.wait_until(lambda: len(opened) == 2, "the keyboard activation")
+    assert opened == ["matugen", "matugen"]
+    assert row.control.get_sensitive(), "the control stays editable"
+
+
+def test_a_row_no_tool_owns_has_no_set_by_pill_and_one_that_stops_loses_it() -> None:
+    session = FakeSession()
+    session.bridge_owners = {ACTIVE_BORDER: "matugen"}
+    owned = build_row(ACTIVE_BORDER, session)
+    other = build_row(GAPS_IN, session)
+
+    assert other.chrome.pill_labels == () and other.chrome.pill_buttons == ()
+
+    session.bridge_owners = {}
+    owned.chrome.refresh()
+
+    assert owned.chrome.pill_labels == ()
+    assert owned.chrome.pill_buttons == ()
+
+
+def test_set_by_replaces_overridden_on_the_row() -> None:
+    session = FakeSession()
+    session.bridge_owners = {ACTIVE_BORDER: "matugen"}
+    session.overridden = frozenset({ACTIVE_BORDER})
+
+    row = build_row(ACTIVE_BORDER, session)
+
+    assert row.chrome.pill_labels == ("Set by matugen",)
 
 
 def _lacking(*names: str) -> LiveHyprland:

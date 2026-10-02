@@ -356,6 +356,7 @@ class MainWindow(Adw.ApplicationWindow):
             session,
             on_edited=self._on_option_edited,
             navigate=self.reveal_option,
+            reveal_backend=self.reveal_backend,
         )
         self._prefs_store = PrefsStore(session.paths.state_dir)
         self._prefs = self._prefs_store.load()

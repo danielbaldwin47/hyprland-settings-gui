@@ -69,7 +69,7 @@ from hyprtweaker.engine.scripting import (  # noqa: E402
     layout_label,
 )
 from hyprtweaker.session import Session  # noqa: E402
-from hyprtweaker.ui.rows.chrome import Navigate, RowChrome  # noqa: E402
+from hyprtweaker.ui.rows.chrome import Navigate, RevealBackend, RowChrome  # noqa: E402
 from hyprtweaker.ui.rows.gesture import Gesture  # noqa: E402
 from hyprtweaker.ui.rows.state import (  # noqa: E402
     NO_VALUE,
@@ -184,18 +184,21 @@ class RowFactory:
         *,
         on_edited: Callable[[str], None] | None = None,
         navigate: Navigate | None = None,
+        reveal_backend: RevealBackend | None = None,
     ) -> None:
-        """`on_edited` and `navigate` are the two things a Row cannot do for itself.
+        """`on_edited`, `navigate` and `reveal_backend` are what a Row cannot do for itself.
 
         A control that writes to the model has just changed what *other* Rows show -- its
         own reset arrow, and the dependency badge of everything gated on it -- and only the
         window knows where those Rows are. Same for the badge's click: it names an Option,
-        and turning a name into a visible Row is the window's job. Both default to doing
-        nothing so a Row is still buildable in isolation, which the smoke tier relies on.
+        and turning a name into a visible Row is the window's job, as is opening the Theming
+        page on the tool a "Set by <tool>" pill names (#165). All default to doing nothing so
+        a Row is still buildable in isolation, which the smoke tier relies on.
         """
         self._session = session
         self._on_edited = on_edited
         self._navigate = navigate
+        self._reveal_backend = reveal_backend
         self._echo_guard = False
 
     def build(self, option: ResolvedOption) -> OptionRow:
@@ -292,6 +295,7 @@ class RowFactory:
             self._session,
             on_reset=self._unset,
             navigate=self._navigate,
+            reveal_backend=self._reveal_backend,
         )
 
     # --- every write to the model goes through these ------------------------------------------
