@@ -13,6 +13,7 @@ from _support import SAMPLE_VERSION, SCHEMA_DIR
 
 from hyprtweaker.engine.schema import Visibility, load_schema
 from hyprtweaker.ui.pages.plan import (
+    Disclosure,
     PagePlan,
     View,
     group_title,
@@ -50,7 +51,7 @@ def test_a_section_whose_options_are_all_advanced_still_gets_a_page() -> None:
 def test_with_advanced_on_every_option_in_the_schema_is_on_exactly_one_page() -> None:
     placed = [
         option.name
-        for plan in plan_config_view(SCHEMA, show_advanced=True)
+        for plan in plan_config_view(SCHEMA, Disclosure(show_advanced=True))
         for group in plan.groups
         for option in group.options
     ]
@@ -76,26 +77,41 @@ def test_the_hidden_tier_is_config_view_only_however_the_switch_is_set() -> None
     hidden = next(o for o in SCHEMA if o.visibility is Visibility.HIDDEN)
     advanced = next(o for o in SCHEMA if o.visibility is Visibility.ADVANCED)
 
-    assert not is_visible(hidden, show_advanced=True, view=View.TASKS)
-    assert is_visible(hidden, show_advanced=True, view=View.CONFIG)
-    assert is_visible(advanced, show_advanced=True, view=View.TASKS)
-    assert not is_visible(advanced, show_advanced=False, view=View.TASKS)
+    assert not is_visible(hidden, Disclosure(show_advanced=True, view=View.TASKS))
+    assert is_visible(hidden, Disclosure(show_advanced=True, view=View.CONFIG))
+    assert is_visible(advanced, Disclosure(show_advanced=True, view=View.TASKS))
+    assert not is_visible(advanced, Disclosure(show_advanced=False, view=View.TASKS))
 
 
 def test_a_tasks_page_withholds_the_hidden_tier_it_never_shows() -> None:
     """Withheld, not lost: the count is what an empty Page uses to explain itself."""
-    plan = plan_section(SCHEMA, "debug", show_advanced=True, view=View.TASKS)
+    plan = plan_section(SCHEMA, "debug", Disclosure(show_advanced=True, view=View.TASKS))
 
     assert plan.groups == ()
     assert plan.withheld == len(SCHEMA.section("debug"))
 
 
 def test_the_config_view_is_planned_as_the_config_view() -> None:
-    """The one caller today, stated rather than left to a default."""
-    plans = plan_config_view(SCHEMA, show_advanced=True)
+    """Whatever View the Disclosure names: the window falls back to the Config arrangement
+    while still in the Tasks view when the mapping will not load, and that fallback must
+    admit the hidden tier as the Config view always does."""
+    plans = plan_config_view(SCHEMA, Disclosure(show_advanced=True, view=View.TASKS))
     shown = {name for plan in plans for name in all_options(plan)}
 
     assert shown == {option.name for option in SCHEMA}
+
+
+def test_a_bare_disclosure_is_the_config_view_with_the_switch_off() -> None:
+    """What a fresh window sees: nothing beyond the default tier, and the View whose tier
+    rule admits `hidden` once the switch is on."""
+    hidden = SCHEMA[HIDDEN_OPTION]
+    advanced = next(o for o in SCHEMA if o.visibility is Visibility.ADVANCED)
+    default = next(o for o in SCHEMA if o.visibility is Visibility.DEFAULT)
+
+    assert is_visible(default, Disclosure())
+    assert not is_visible(advanced, Disclosure())
+    assert not is_visible(hidden, Disclosure())
+    assert is_visible(hidden, Disclosure(show_advanced=True))
 
 
 # --- shape ------------------------------------------------------------------------------------
@@ -151,8 +167,10 @@ def test_a_reveal_shows_a_withheld_row_without_the_switch() -> None:
     """What the One-off is for: search reaching a Row the Advanced switch is withholding."""
     option = next(o for o in SCHEMA if o.visibility is Visibility.ADVANCED)
 
-    assert not is_visible(option, show_advanced=False)
-    assert is_visible(option, show_advanced=False, revealed=frozenset({option.name}))
+    assert not is_visible(option, Disclosure(show_advanced=False))
+    assert is_visible(
+        option, Disclosure(show_advanced=False, revealed=frozenset({option.name}))
+    )
 
 
 @pytest.mark.parametrize("revealed", [frozenset(), frozenset({HIDDEN_OPTION})])
@@ -168,7 +186,7 @@ def test_a_reveal_never_puts_the_hidden_tier_in_tasks(revealed: frozenset[str]) 
 
     for show_advanced in (False, True):
         assert not is_visible(
-            option, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
+            option, Disclosure(show_advanced=show_advanced, view=View.TASKS, revealed=revealed)
         )
 
 
@@ -176,7 +194,8 @@ def test_a_reveal_reaches_the_hidden_tier_in_config() -> None:
     """The other half: in Config the tier is admissible, so the One-off applies there."""
     option = SCHEMA[HIDDEN_OPTION]
 
-    assert not is_visible(option, show_advanced=False, view=View.CONFIG)
+    assert not is_visible(option, Disclosure(show_advanced=False, view=View.CONFIG))
     assert is_visible(
-        option, show_advanced=False, view=View.CONFIG, revealed=frozenset({option.name})
+        option,
+        Disclosure(show_advanced=False, view=View.CONFIG, revealed=frozenset({option.name})),
     )
