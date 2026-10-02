@@ -793,7 +793,7 @@ class Session:
     ) -> bool:
         """Change the Bind list and write it, returning whether the edit was accepted.
 
-        `mutate` is handed the live list because for Binds position *is* identity
+        `mutate` is handed the whole list because for Binds position *is* identity
         (ADR-0007): adding is an append at a chosen index, reordering is a move, and there
         is no key to address a bind by. Duplicates are legal, so nothing here de-duplicates.
 
