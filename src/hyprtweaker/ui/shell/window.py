@@ -2110,45 +2110,45 @@ class MainWindow(Adw.ApplicationWindow):
             )
         self._toasts.add_toast(toast)
 
-    def show_held_back(self, titles: tuple[str, ...], files: tuple[str, ...]) -> Adw.Toast:
-        """Changes a file edited outside the app kept off disk (ADR-0005). Returned for tests.
+    def show_refused(self, what: str, module: str) -> Adw.Toast:
+        """A change refused because its file was edited outside the app (ADR-0005), named
+        with that file. Returned for tests.
 
         A toast because it answers the gesture just made, and the Banner stays up after it
-        times out (`Health.held_back`): every later change to that file is refused the same
-        way until the user decides. Withdraws any undo offer: nothing here was saved.
+        times out (`Health.edited_files`): every later change to that file is refused the
+        same way until the user decides. Withdraws any undo offer: nothing here was saved.
         """
         self._dismiss_undo()
         self.sync_banner()
-        what = titles[0] if len(titles) == 1 else f"{len(titles)} changes"
-        verb = "was" if len(titles) == 1 else "were"
-        name = files[0].rsplit("/", 1)[-1] if files else "the file"
+        name = module.rsplit("/", 1)[-1]
         toast = plain_toast(
-            f"{what} {verb} not saved: {name} was edited outside this app", timeout=8
+            f"{what} was not saved: {name} was edited outside this app", timeout=8
         )
-        if files:
-            toast.set_button_label("Details")
-            toast.connect("button-clicked", lambda *_: self.show_edited_file(files[0]))
+        toast.set_button_label("Details")
+        toast.connect("button-clicked", lambda *_: self.show_edited_file(module, what))
         self._toasts.add_toast(toast)
         return toast
 
-    def show_edited_file(self, module: str) -> Adw.AlertDialog:
-        """What a file edited outside the app is holding back, and the three ways on.
+    def show_edited_file(
+        self, module: str, what: str | None = None, *, then: tuple[str, ...] = ()
+    ) -> Adw.AlertDialog:
+        """A file edited outside the app, and the three ways on. Returned for the UI tier.
 
-        Keep (the default: nothing changes), open it to make the change by hand, or replace
-        it with the app's version, which saves the held-back changes and keeps a copy of the
-        edited file. Returned for the UI tier.
+        Keep (the default: nothing changes and the Banner lets the file go), open it to make
+        the change by hand, or replace it with the app's version after keeping a copy of it;
+        the change is then made again. `then` is the Banner's other edited files, each
+        offered in turn once this one is answered.
         """
         name = module.rsplit("/", 1)[-1]
-        titles = self._session.held_back_titles(module)
-        changes = ", ".join(titles) if titles else "your changes"
+        refused = f"{what} was not saved" if what else "Changes to it are not saved"
         copies = self._session.edited_copies_shown
         dialog = Adw.AlertDialog(
             heading=f"{name} was edited outside this app",
             body=(
-                f"This app does not overwrite a file you have edited yourself, so these "
-                f"changes were not saved: {changes}.\n\n"
-                f"Replace the file with the app's version to save them. A copy of your "
-                f"edited file is kept in {copies}. Or open the file and make the change there."
+                f"This app does not overwrite a file you have edited yourself. {refused}.\n\n"
+                f"Replace the file with the app's version, then make the change again: "
+                f"replacing keeps a copy of your edited file in {copies}. Or open the file "
+                f"and make the change there."
             ),
         )
         dialog.add_response("keep", "Keep my file")
@@ -2157,17 +2157,30 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.set_response_appearance("replace", Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.set_default_response("keep")
         dialog.set_close_response("keep")
-        dialog.connect("response", self._on_edited_file_response, module)
+        dialog.connect("response", self._on_edited_file_response, module, then)
         dialog.present(self)
         return dialog
 
     def _on_edited_file_response(
-        self, _dialog: Adw.AlertDialog, response: str, module: str
+        self, _dialog: Adw.AlertDialog, response: str, module: str, then: tuple[str, ...]
     ) -> None:
+        name = module.rsplit("/", 1)[-1]
         if response == "open":
-            self._launch_file(self._session.held_back_path(module))
+            self._launch_file(self._session.edited_file_path(module))
         elif response == "replace":
-            self._session.replace_edited_file(module)
+            if self._session.replace_edited_file(module):
+                said = (
+                    f"{name} was replaced with the app's version. Make your change again. "
+                    f"Your edited file is in {self._session.edited_copies_shown}."
+                )
+            else:
+                said = f"{name} was not replaced: a copy of it could not be kept."
+            self._toasts.add_toast(plain_toast(said, timeout=8))
+        else:
+            self._session.keep_edited_file(module)
+        self.sync_banner()
+        if then:
+            GLib.idle_add(lambda: self.show_edited_file(then[0], then=then[1:]) and False)
 
     def show_notice(self, notice: Notice) -> Adw.Toast:
         """One of ADR-0012's one-time notices: a release removed or renamed settings.
@@ -2207,8 +2220,9 @@ class MainWindow(Adw.ApplicationWindow):
         if health.recovery.unhealthy:
             self.show_errors()
             return
-        if health.held_back:
-            self.show_edited_file(health.held_back[0])
+        if health.edited_files:
+            first, *rest = health.edited_files
+            self.show_edited_file(first, then=tuple(rest))
             return
         # One call for all of them: two releases would be two Entrypoint rewrites racing
         # each other through the queue.

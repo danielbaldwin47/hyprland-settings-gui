@@ -296,12 +296,14 @@ def test_a_foreign_reload_also_re_reads_owned_keys_the_model_does_not_hold(
     """The half a "re-read what the model holds" would miss.
 
     The app owns `general:gaps_in` -- the Manifest records it having written the Module that
-    sets it -- but this session recovered nothing, because at startup the compositor was
-    running a config that never loaded that Module. When the config is fixed and reloaded,
-    a re-read scoped to `model.set_options()` asks about nothing at all and the app stays
-    blind to its own value. ADR-0010 asks for a *full* re-read for this reason.
+    sets it -- but this session recovered nothing, because at startup the Module was not
+    there. When the file is back and reloaded, a re-read scoped to `model.set_options()`
+    asks about nothing at all and the app stays blind to its own value. ADR-0010 asks for a
+    *full* re-read for this reason. The value comes off the Module's own text, not the
+    compositor's answer, which may be `user.lua`'s (#148 review R3).
     """
-    _write_manifest(tmp_path, {"options/general.lua": (GAPS_IN,)})
+    text = "hl.config({ general = { gaps_in = 9 } })\n"
+    _write_manifest(tmp_path, {"options/general.lua": (GAPS_IN,)}, text)
 
     async def scenario(fake: FakeHyprland) -> None:
         runner = Runner()
@@ -309,10 +311,13 @@ def test_a_foreign_reload_also_re_reads_owned_keys_the_model_does_not_hold(
         session.start()
         await runner.settle()
 
-        assert len(session.model) == 0, "the Module was owned but not loaded"
+        assert len(session.model) == 0, "the Module was owned but not there"
 
+        general = tmp_path / "hypr" / "hyprtweaker" / "options" / "general.lua"
+        general.parent.mkdir(parents=True, exist_ok=True)
+        general.write_text(text)
         fake.conversation[f"j/getoption {GAPS_IN}"] = option_reply(
-            SCHEMA[GAPS_IN], CssGaps(9, 9, 9, 9)
+            SCHEMA[GAPS_IN], CssGaps(20, 20, 20, 20)
         )
         await fake.emit("configreloaded")
         await drain_events(runner)
@@ -348,16 +353,16 @@ def _no_instance() -> Instance:
     raise NoInstance("HYPRLAND_INSTANCE_SIGNATURE is unset -- not running under Hyprland")
 
 
-def _write_manifest(root: Path, modules: dict[str, tuple[str, ...]]) -> None:
+def _write_manifest(
+    root: Path, modules: dict[str, tuple[str, ...]], text: str = "-- unread"
+) -> None:
     """An App dir that records what an earlier session wrote, with no Modules on disk."""
     paths = ConfigPaths.rooted_at(root)
     paths.app_dir.mkdir(parents=True, exist_ok=True)
     manifest = Manifest(
         app_version=APP_VERSION,
         schema_version=SCHEMA.hyprland_version,
-        modules={
-            name: ModuleRecord.of("-- unread", options) for name, options in modules.items()
-        },
+        modules={name: ModuleRecord.of(text, options) for name, options in modules.items()},
     )
     paths.manifest.write_text(manifest.render(), encoding="utf-8")
 

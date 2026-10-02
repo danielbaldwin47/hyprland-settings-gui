@@ -573,3 +573,33 @@ def test_a_live_no_value_reply_is_captured_as_no_value(tmp_path: Path) -> None:
         assert preset_file(tmp_path, "plain")["options"] == {font: None}
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_preset_into_a_hand_edited_module_is_refused_whole(tmp_path: Path) -> None:
+    """#148 review R3-R6: per Option, the hand-edit gate would apply the half of a Preset
+    whose Modules were not edited. It is refused whole, naming the file, before anything
+    moves."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        fake.conversation.update(conversation(**{ROUNDING: 4}))
+        session.set_option(ROUNDING, 4)
+        await settle(session, runner)
+        write_preset(tmp_path, "nord", "Nord", NORD)
+        path = tmp_path / "hypr" / "hyprtweaker" / DECORATION_MODULE
+        path.write_text(path.read_text() + "-- edited by hand\n")
+        general = module_text(tmp_path, GENERAL_MODULE)
+
+        result = session.apply_preset("nord")
+        await settle(session, runner)
+
+        assert result == PresetNotApplied(
+            "decoration.lua was edited outside this app, so this preset was not applied. "
+            "Keep, open or replace that file from the bar at the top."
+        )
+        assert session.model.get(BORDER_SIZE) is UNSET
+        assert module_text(tmp_path, GENERAL_MODULE) == general
+        assert session.health.edited_files == (DECORATION_MODULE,)
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))

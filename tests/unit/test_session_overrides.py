@@ -456,3 +456,96 @@ def test_a_write_that_starts_loading_user_lua_marks_what_it_overrides(tmp_path: 
         assert session.overridden == {GAPS_IN}
 
     run_with_fake(scenario, compositor())
+
+
+def _general(root: Path) -> Path:
+    return root / "hypr" / "hyprtweaker" / "options" / "general.lua"
+
+
+GAPS_LINE = "gaps_in = { top = 5, right = 5, bottom = 5, left = 5 },"
+
+
+def test_a_hand_edited_modules_keys_come_from_its_text_never_the_override(
+    tmp_path: Path,
+) -> None:
+    """R3 of the #148 review: a comment added to general.lua made its keys read live, so
+    `user.lua`'s 20 entered the model, and Replace wrote 20 where the app had written 5."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.write_text(path.read_text() + "-- tweaked by hand\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        await foreign_reload(fake, session, runner)
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+        assert session.replace_edited_file("options/general.lua")
+        await session.drain()
+        await runner.settle()
+        assert GAPS_LINE in path.read_text()
+
+    run_with_fake(scenario, compositor())
+
+
+def test_a_module_put_back_by_hand_is_written_as_its_text_says(tmp_path: Path) -> None:
+    """R3, the second route: the user undid their edit in the editor, and the next edit to
+    an unrelated setting re-rendered general.lua with the override's 20."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        original = path.read_bytes()
+        path.write_text(path.read_text() + "-- tweaked by hand\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+        await foreign_reload(fake, session, runner)
+        path.write_bytes(original)
+        await foreign_reload(fake, session, runner)
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+        live_says(fake, "decoration:rounding", 12)
+        await edit(session, runner, "decoration:rounding", 12)
+
+        assert GAPS_LINE in path.read_text()
+
+    run_with_fake(scenario, compositor())
+
+
+def test_a_value_changed_by_hand_is_read_off_the_file(tmp_path: Path) -> None:
+    """The edited Module's own text is the source: a value the user changed there is the
+    model's, while the compositor still answers with `user.lua`'s."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.write_text(path.read_text().replace("top = 5, right = 5", "top = 7, right = 5"))
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        await foreign_reload(fake, session, runner)
+
+        assert session.model.get(GAPS_IN) == CssGaps(7, 5, 5, 5)
+
+    run_with_fake(scenario, compositor())
+
+
+def test_an_entrypoint_recovery_reads_an_edited_module_off_its_text(tmp_path: Path) -> None:
+    """R3 on the recovery route: `_recover_entrypoint` re-read every unverified owned key
+    live, so a hand-edited Module's took the override there too."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.write_text(path.read_text() + "-- tweaked by hand\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        assert session.regenerate_entrypoint()
+        await session.drain()
+        await runner.settle()
+
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+    run_with_fake(scenario, compositor())

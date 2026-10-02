@@ -32,7 +32,7 @@ from ..model.values import parse_lua
 from ..schema import ResolvedOption, Schema
 from ..schema.sources import lua_key_for
 from ..state import Manifest, ModuleRecord, content_hash
-from ..writer import is_option_module
+from ..writer import is_option_module, module_relpath
 from .result import Mismatch
 from .transaction import compare
 
@@ -84,6 +84,30 @@ def written_values(
             values[option.name] = parse_lua(option, raw[option.name])
         except (ValueError, TypeError):
             continue
+    return values
+
+
+def module_values(
+    app_dir: Path, schema: Schema, modules: Collection[str], *, timeout: float = 5.0
+) -> dict[str, Any]:
+    """What each of `modules` sets, read off its own text, for every Option it holds.
+
+    For a Module edited outside the app (#148 review R3): its keys never come from the
+    compositor, whose answer may be `user.lua`'s or a theming tool's, and a key the user
+    added by hand is read as well as the ones the app wrote. Hyprland itself runs the file
+    on every reload, so reading it here runs nothing that does not already run. A key the
+    file does not set, or sets to something its Option cannot take, is left out.
+    """
+    wanted = set(modules)
+    values: dict[str, Any] = {}
+    for module in sorted(wanted):
+        held = {lua_key_for(o.name): o for o in schema.options if module_relpath(o) == module}
+        for key, raw in config_values(app_dir / module, held, timeout=timeout).items():
+            option = held[key]
+            try:
+                values[option.name] = parse_lua(option, raw)
+            except (ValueError, TypeError):
+                continue
     return values
 
 
