@@ -1,7 +1,7 @@
 # search index -- Hyprland 0.56.2
 options indexed: 353
 
-## query: border (18 hits)
+## query: border (14 hits)
 field | match | tier | key | title
 title | prefix | default | general.border_size | Border size
 title | prefix | default | general.extend_border_grab_area | Border grab area
@@ -17,10 +17,6 @@ title | word-prefix | default | group.col.border_active | Active group border co
 title | word-prefix | default | group.col.border_inactive | Inactive group border colour
 title | word-prefix | default | group.col.border_locked_inactive | Locked inactive group border colour
 title | word-prefix | default | group.col.border_locked_active | Locked active group border colour
-description | word-prefix | default | group.groupbar.col.active | Active background
-description | word-prefix | default | group.groupbar.col.inactive | Inactive background
-description | word-prefix | default | group.groupbar.col.locked_active | Locked active background
-description | word-prefix | default | group.groupbar.col.locked_inactive | Locked inactive background
 
 ## query: size (16 hits)
 field | match | tier | key | title

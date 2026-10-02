@@ -72,6 +72,13 @@ def test_finds_by_help_text() -> None:
     assert any(hit.field is Field.DESCRIPTION for hit in hits)
 
 
+def test_finds_a_setting_by_a_word_only_its_curated_help_has() -> None:
+    """`pc105` is in no upstream line: only `input:kb_model`'s written help has it (#129)."""
+    hits = INDEX.query("pc105")
+
+    assert [(hit.name, hit.field) for hit in hits] == [("input:kb_model", Field.DESCRIPTION)]
+
+
 def test_is_case_insensitive() -> None:
     assert [hit.name for hit in INDEX.query("BORDER SIZE")] == [
         hit.name for hit in INDEX.query("border size")

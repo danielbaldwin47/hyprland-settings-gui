@@ -10,6 +10,10 @@ the list), and removes both from every Option no table row names, so the Overlay
 on the table whatever state it was left in. It writes through `overlay_text`, which leaves
 every entry whose values do not change byte-identical; running it twice changes nothing.
 
+`tools/overlay_help.toml` holds each setting's `help` prose (or the reason it has none, see
+`tools/overlay_help.py`); the script writes each `help` the same way, and removes it from
+every Option the table gives none.
+
 `tests/unit/test_curate_overlay.py` fails while the Overlay and the table disagree. The
 conventions a table row follows are in `tests/unit/test_overlay_completeness.py`.
 """
@@ -25,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import overlay_help
 import overlay_text
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,9 +88,13 @@ def _group_entry(group: CuratedGroup) -> dict[str, str]:
     return entry
 
 
-def curate(text: str, tables: Tables) -> str:
+def curate(text: str, tables: Tables, helps: Mapping[str, str] | None = None) -> str:
     """`text` with every Section's Groups and every Option's `group` and `order` set from
-    `tables`: what the tables name is written, what they do not is removed."""
+    `tables`: what the tables name is written, what they do not is removed.
+
+    Given `helps` (the prose of `tools/overlay_help.toml`), each Option's `help` is set the
+    same way: written where the table has it, removed where it does not. Without it, `help`
+    is left as it is."""
     payload = json.loads(text)
 
     sections: dict[str, dict[str, Any]] = {
@@ -97,10 +106,15 @@ def curate(text: str, tables: Tables) -> str:
     options: dict[str, dict[str, Any]] = {
         name: {"group": None, "order": None} for name in payload["options"]
     }
+    if helps is not None:
+        for name in options:
+            options[name]["help"] = None
+        for name, prose in helps.items():
+            options[name] = {**options.get(name, {}), "help": prose}
     for groups in tables.values():
         for group in groups:
             for order, name in enumerate(group.options, start=1):
-                options[name] = {"group": group.title, "order": order}
+                options[name] = {**options[name], "group": group.title, "order": order}
 
     text = overlay_text.set_fields(text, "sections", sections)
     return overlay_text.set_fields(text, "options", options)
@@ -112,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     current = OVERLAY.read_text(encoding="utf-8")
-    curated = curate(current, load_tables())
+    curated = curate(current, load_tables(), overlay_help.helps(overlay_help.load_table()))
     if curated == current:
         return 0
     if args.check:
