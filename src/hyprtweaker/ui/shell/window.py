@@ -104,6 +104,7 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     MigrationDialog,
     export_dialog,
     import_dialog,
+    import_report_dialog,
     migration_dialog,
 )
 from hyprtweaker.ui.dialogs.notices import notice_dialog, notice_title  # noqa: E402
@@ -941,9 +942,9 @@ class MainWindow(Adw.ApplicationWindow):
         if report is None:
             self._toasts.add_toast(plain_toast("No configuration has been imported yet"))
             return
-        dialog = Adw.AlertDialog(heading="Last import", body=report.render())
-        dialog.add_response("close", "Close")
-        dialog.present(self)
+        provenance = self._session.manifest().migration or {}
+        kept = bool(report.source) and provenance.get("source") == report.source
+        import_report_dialog(self, report, kept=kept)
 
     def _write_export(self, target: Path) -> None:
         result = export_render(

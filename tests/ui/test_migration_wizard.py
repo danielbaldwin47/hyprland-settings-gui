@@ -1421,3 +1421,49 @@ def test_the_wizard_cannot_be_closed_between_switch_and_its_ending(tmp_path: Pat
     dialog._finish("Kept", "")
     assert dialog.get_can_close()
     dialog.close()
+
+
+def test_the_last_import_report_reads_as_rows_not_markdown(tmp_path: Path) -> None:
+    """F25 of the #148 review: "Last import" showed report.render(), so the user read
+    `# Import loss report`, `## Needs review (12)`, `- **L30** ...` in an alert."""
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.importer.loss import LossCode, LossItem, LossReport
+
+    window, session = build_window(tmp_path)
+    report = LossReport(
+        items=[
+            LossItem(LossCode("L30"), f"Unsupported keyword number {n}", origin=f"x.conf:{n}")
+            for n in range(15)
+        ],
+        source="/home/u/.config/hypr/hyprland.conf",
+    )
+    report.save(session.paths)
+
+    window.activate_action("win.import-report", None)
+    dialog = window.get_visible_dialog()
+
+    assert isinstance(dialog, Adw.Dialog) and dialog.get_title() == "Last import"
+    labels = _labels_of(dialog)
+    assert "Unsupported keyword number 14" in labels
+    assert not any(label.startswith(("#", "- **")) for label in labels)
+    assert any("was not kept" in label for label in labels)
+    dialog.force_close()
+
+
+def _labels_of(widget: Any) -> list[str]:
+    from gi.repository import Adw, Gtk
+
+    found: list[str] = []
+    stack = [widget]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, Gtk.Label):
+            found.append(current.get_label())
+        if isinstance(current, Adw.PreferencesRow):
+            found.append(current.get_title())
+        child = current.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    return found

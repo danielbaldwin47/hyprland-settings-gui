@@ -418,7 +418,7 @@ class MigrationDialog(Adw.Dialog):
             summary.add(_row(OMARCHY_ENDS, OMARCHY_ENDS_HELP))
         column.append(summary)
 
-        for group in _loss_groups(preview.loss):
+        for group in _loss_groups(preview.loss, _MAX_ITEMS):
             column.append(group)
 
         column.append(_rescue_group(self._flow.rescue_command))
@@ -818,7 +818,7 @@ def _countdown_text(remaining: float) -> str:
     return f"{max(0, int(remaining + 0.5))}s"
 
 
-def _loss_groups(report: LossReport) -> list[Adw.PreferencesGroup]:
+def _loss_groups(report: LossReport, limit: int | None = None) -> list[Adw.PreferencesGroup]:
     """The Loss report as three groups, worst first (ADR-0009).
 
     Breakage is shown, never used to refuse: a config with a `hyprctl dispatch` in an exec
@@ -834,12 +834,47 @@ def _loss_groups(report: LossReport) -> list[Adw.PreferencesGroup]:
             title=f"{CLASS_TITLES[loss_class]} ({len(items)})",
             description=_CLASS_HELP.get(loss_class.value, ""),
         )
-        for item in items[:_MAX_ITEMS]:
+        shown = items if limit is None else items[:limit]
+        for item in shown:
             group.add(_row(item.message, item.origin or ""))
-        if len(items) > _MAX_ITEMS:
-            group.add(_row(f"and {len(items) - _MAX_ITEMS} more", "See the saved report."))
+        if len(items) > len(shown):
+            group.add(
+                _row(f"and {len(items) - len(shown)} more", "Main menu → Last import report.")
+            )
         groups.append(group)
     return groups
+
+
+def import_report_dialog(parent: Gtk.Widget, report: LossReport, *, kept: bool) -> Adw.Dialog:
+    """The last import's Loss report as the wizard shows it, every finding, no Markdown.
+
+    F25 of the #148 review: it was `report.render()` in an alert, so the user read headings,
+    asterisks and loss codes. Says first whether that import is the config in use, since the
+    report is saved at Preview and a backed-out import still shows here. Returned for tests.
+    """
+    page = Adw.PreferencesPage()
+    summary = Adw.PreferencesGroup(
+        title=f"Imported from {report.source}" if report.source else "Imported",
+        description=(
+            "It is the configuration this app works with now."
+            if kept
+            else "It was not kept: it was rolled back, or the switch never finished."
+        ),
+    )
+    page.add(summary)
+    groups = _loss_groups(report)
+    for group in groups:
+        page.add(group)
+    if not groups:
+        clean = Adw.PreferencesGroup()
+        clean.add(_row("Nothing to report", "Everything converted as it was written."))
+        page.add(clean)
+    toolbar = Adw.ToolbarView(content=page)
+    toolbar.add_top_bar(Adw.HeaderBar())
+    dialog = Adw.Dialog(title="Last import", content_width=600, content_height=640)
+    dialog.set_child(toolbar)
+    dialog.present(parent)
+    return dialog
 
 
 def _rescue_group(rescue_command: str) -> Adw.PreferencesGroup:
