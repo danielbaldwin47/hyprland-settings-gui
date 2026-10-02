@@ -11,6 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 APP_VERSION = "0.0.0-test"
 SECTION = "entity:workspace_rules"
 
@@ -728,8 +730,39 @@ def test_a_filter_cannot_go_back_to_the_pickers_and_says_why(tmp_path: Path) -> 
     dialog.mode_switch.set_active(False)
 
     assert modes(dialog) == (True, True)
-    assert dialog.notice_label.get_label() == (
-        "The pickers cannot say this selector, so it stays advanced."
+    assert dialog.notice_label.get_label() == "This selector only works in advanced mode."
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        (0, "Type a workspace number."),
+        (1, "Type a name."),
+        (2, "Type a name for the special workspace."),
+    ],
+)
+def test_a_blank_picker_says_what_to_type_in_its_own_words(
+    tmp_path: Path, kind: int, message: str
+) -> None:
+    """The selector grammar's messages speak advanced syntax (`name:`); the pickers
+    keep that syntax out of sight, so their refusals do too (#151 review, finding 20)."""
+    session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+    dialog.kind_row.set_selected(kind)
+
+    dialog.save()
+
+    assert modes(dialog) == (False, False)
+    assert dialog.error_label.get_label() == message
+    assert session.workspace_rules == []
+
+
+def test_the_advanced_switch_explains_itself_without_selector_syntax(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+
+    assert dialog.mode_switch.get_subtitle() == (
+        "Match workspaces by their windows, monitor or state"
     )
 
 

@@ -52,6 +52,12 @@ _KIND_TITLES = {
     SimpleKind.SPECIAL: "Special name",
 }
 
+_BLANK_PICKER = {
+    SimpleKind.NUMBER: "Type a workspace number.",
+    SimpleKind.NAME: "Type a name.",
+    SimpleKind.SPECIAL: "Type a name for the special workspace.",
+}
+
 Save = Callable[[WorkspaceRule], str | None]
 """Store the rule: `None` when it was stored, else why not, as a sentence fragment."""
 
@@ -118,7 +124,7 @@ class WorkspaceRuleEditor(Adw.Dialog):
 
         self._advanced = Adw.SwitchRow(
             title="Advanced selector",
-            subtitle="Type a raw selector, such as w[tv1] for one tiled window",
+            subtitle="Match workspaces by their windows, monitor or state",
         )
         self._advanced.connect("notify::active", lambda *_: self._on_mode_toggled())
 
@@ -344,9 +350,7 @@ class WorkspaceRuleEditor(Adw.Dialog):
             self._syncing = True
             self._advanced.set_active(True)
             self._syncing = False
-            self._notice.set_label(
-                "The pickers cannot say this selector, so it stays advanced."
-            )
+            self._notice.set_label("This selector only works in advanced mode.")
             self._notice.set_visible(True)
             return
         self._load_selector(text)
@@ -356,12 +360,18 @@ class WorkspaceRuleEditor(Adw.Dialog):
         return compose_simple(_KINDS[self._kind.get_selected()], self._value.get_text())
 
     def _simple_problem(self) -> str | None:
-        """A number picker holds digits only: `abc` there would be read as a name."""
+        """The pickers' own words for a value they cannot compose.
+
+        The grammar's messages speak advanced syntax (`name:`), which the pickers keep out
+        of sight, so a blank picker says what to type here instead. A number picker holds
+        digits only: `abc` there would be read as a name."""
         if self._advanced.get_active():
             return None
         kind = _KINDS[self._kind.get_selected()]
         value = self._value.get_text().strip()
-        if kind is SimpleKind.NUMBER and value and not value.isdigit():
+        if not value:
+            return _BLANK_PICKER[kind]
+        if kind is SimpleKind.NUMBER and not value.isdigit():
             return "A workspace number is digits only, such as 5. Pick Name for a name."
         return None
 
