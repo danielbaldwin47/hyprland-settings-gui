@@ -591,7 +591,7 @@ KINDS: tuple[DeclarationKind, ...] = (
         subtitle_of=_startup_subtitle,
         section=entity_page_id("autostart"),
         title="Autostart",
-        description="Commands Hyprland runs for you, in the order listed.",
+        description="Commands Hyprland runs for you when it starts.",
         empty_hint="Add one to start your bar, notification daemon or wallpaper tool.",
         note=(
             "Startup commands are handed to Hyprland when it starts, so one added here "
