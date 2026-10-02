@@ -342,6 +342,41 @@ _LISTS: tuple[str, ...] = (
 )
 
 
+ENTITY_NOUNS: dict[str, tuple[str, str]] = {
+    "submaps": ("Submap", "Submaps"),
+    "binds": ("Bind", "Binds"),
+    "unbinds": ("Unbind", "Unbinds"),
+    "window_rules": ("Window rule", "Window rules"),
+    "layer_rules": ("Layer rule", "Layer rules"),
+    "workspace_rules": ("Workspace rule", "Workspace rules"),
+    "monitors": ("Monitor rule", "Monitor rules"),
+    "curves": ("Curve", "Curves"),
+    "animations": ("Animation", "Animations"),
+    "gestures": ("Gesture", "Gestures"),
+    "devices": ("Device", "Devices"),
+    "env": ("Variable", "Variables"),
+    "permissions": ("Permission", "Permissions"),
+    "plugins": ("Plugin", "Plugins"),
+    "startup": ("Command", "Commands"),
+}
+"""Each list's name in UI copy, singular and plural, keyed like `_LISTS`.
+
+The undo toast's noun ("Bind removed", "Window rules reordered"). Here rather than beside
+the Pages because the Session titles its undo steps and cannot import a GTK module; the
+declaration kinds' Pages use the same words (`ui/pages/declaration_kinds.py`, `singular`).
+"""
+
+
+def entity_title(kind: str, verb: str, *, plural: bool = False) -> str:
+    """`"Bind removed"`: the kind's noun and what happened to it, for an undo step.
+
+    `plural` for a gesture that moved the list rather than one entity in it: "Binds
+    reordered", or "Binds changed" from a caller that did not say what it did.
+    """
+    singular, plurals = ENTITY_NOUNS[kind]
+    return f"{plurals if plural else singular} {verb}"
+
+
 @dataclass(slots=True)
 class EntitySet:
     """Every Entity in one config, each kind in source order.

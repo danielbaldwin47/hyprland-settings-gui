@@ -23,13 +23,15 @@ in a transaction. Four css-gaps spinners typed into in one breath become one ste
 the queue's debounce already coalesced them into one reload, and a gesture the *compositor*
 saw as one change is one change. And a gesture that fails becomes no step at all: it is never
 pushed, so ADR-0016's "drop the failed gesture from the undo stack (it never becomes a redo)"
-holds by construction rather than by remembering to pop.
+holds by construction rather than by remembering to pop. Entity edits follow the same rule
+(#189): the step is built at the edit, held against its commit's serial, and pushed only when
+the transaction that carried it comes back ok (`_commit_entity_edit`, `_settle_entities`).
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -42,10 +44,14 @@ from hyprtweaker.engine.apply import (
     ApplyOutcome,
     ApplyResult,
     Edit,
+    EntityEdit,
+    EntityStep,
     Mismatch,
     Problem,
     Recovery,
     ReRead,
+    Step,
+    UndoGroup,
     UndoStack,
     UndoStep,
     app_owned_options,
@@ -83,6 +89,7 @@ from hyprtweaker.engine.model.entities import (
     StartupCommand,
     WindowRule,
     WorkspaceRule,
+    entity_title,
 )
 from hyprtweaker.engine.paths import (
     ANIMATIONS_MODULE,
@@ -299,6 +306,19 @@ Notice = RetiredNotice | RenamedNotice
 """A one-time Info notice of ADR-0012's: a release removed settings, or renamed them."""
 
 _NOT_CONNECTED_YET = "Connecting to Hyprland…"
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingEntityStep:
+    """An Entity step waiting for the verdict on the commit that carries it."""
+
+    serial: int
+    """`commit_entities`'s serial: the step stands or falls with the result that reports it."""
+    step: EntityStep
+    group: UndoGroup | None
+    """The undo group holding it, when one was open over its kinds at commit time."""
+
+
 """The reason a session is read-only between construction and `start()` finishing.
 
 A reason rather than a fourth state: the Rows are genuinely not editable yet, and a Banner
@@ -382,7 +402,7 @@ class Session:
 
         A Retired notice keeps coming, start after start, until `notice_seen` records it."""
 
-        self.on_recorded: Callable[[UndoStep], None] | None = None
+        self.on_recorded: Callable[[Step], None] | None = None
         """Called with the gesture a finished transaction put on the undo stack.
 
         The step is handed over rather than left for the window to read off the stack top.
@@ -423,6 +443,16 @@ class Session:
         Opened by any edit that finds no entry, closed by the transaction that carries the
         key. Between those two moments the Option is mid-gesture, however many model writes
         the widget makes -- which is what turns fifty slider ticks into one undo step."""
+
+        self._pending_entities: list[_PendingEntityStep] = []
+        """Entity steps whose commit has not reported yet, oldest first (#189).
+
+        Built where the edit is made -- before and after are both known there -- and held
+        until the transaction carrying the commit says whether it stood (`_applied`): a
+        rejected entity write never reaches the stack, as ADR-0016 has it for Options."""
+
+        self._undo_group: UndoGroup | None = None
+        """The open undo group, if any -- one at a time (`begin_undo_group`)."""
 
         self._reverting = False
         self._recovery_halted = False
@@ -735,7 +765,9 @@ class Session:
         if name not in self._open_gestures:
             self._open_gestures[name] = self._model.get(name)
 
-    def edit_binds(self, mutate: Callable[[list[Bind]], None]) -> bool:
+    def edit_binds(
+        self, mutate: Callable[[list[Bind]], None], *, title: str | None = None
+    ) -> bool:
         """Change the Bind list and write it, returning whether the edit was accepted.
 
         `mutate` is handed the live list because for Binds position *is* identity
@@ -746,19 +778,15 @@ class Session:
         model holding binds that were never written would show them in the list, survive a
         re-read, and get written later without the user asking again.
 
-        Not on the undo stack: undo is keyed by Option name end to end (`_open_gestures`,
-        `UndoStep`), and giving Entities a place on it is its own piece of work rather than
-        a line here. Tracked as a leftover on the inbox issue.
+        On the undo stack as one Entity step titled `title` (`_commit_entity_edit`).
         """
-        if self._refuse("binds"):
-            return False
-        mutate(self._model.entities.binds)
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        return True
+        return self._commit_entity_edit(
+            "binds", lambda: mutate(self._model.entities.binds), title=title
+        )
 
     def add_bind(self, bind: Bind) -> bool:
         """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes."""
-        return self.edit_binds(lambda binds: binds.append(bind))
+        return self.edit_binds(lambda binds: binds.append(bind), title="Bind added")
 
     def replace_bind(self, index: int, bind: Bind) -> bool:
         """Replace the Bind at `index`, keeping its position.
@@ -771,7 +799,7 @@ class Session:
             if 0 <= index < len(binds):
                 binds[index] = bind
 
-        return self.edit_binds(swap)
+        return self.edit_binds(swap, title="Bind changed")
 
     def remove_bind(self, index: int) -> bool:
         """Delete the Bind at `index`."""
@@ -780,7 +808,7 @@ class Session:
             if 0 <= index < len(binds):
                 del binds[index]
 
-        return self.edit_binds(drop)
+        return self.edit_binds(drop, title="Bind removed")
 
     def set_bind_enabled(self, index: int, enabled: bool) -> bool:
         """Enable or disable the Bind at `index`, in place.
@@ -794,7 +822,7 @@ class Session:
             if 0 <= index < len(binds):
                 binds[index] = replace(binds[index], enabled=enabled)
 
-        return self.edit_binds(flip)
+        return self.edit_binds(flip, title="Bind enabled" if enabled else "Bind disabled")
 
     def swap_binds(self, first: int, second: int) -> bool:
         """Exchange the positions of two Binds -- which of two duplicates fires first.
@@ -808,22 +836,22 @@ class Session:
             if 0 <= first < len(binds) and 0 <= second < len(binds) and first != second:
                 binds[first], binds[second] = binds[second], binds[first]
 
-        return self.edit_binds(exchange)
+        return self.edit_binds(exchange, title="Binds reordered")
 
     def save_submap(self, *, original: str | None, name: str, reset_target: str) -> bool:
         """Create a Submap, or rename one and retune its reset target (#66).
 
         The cascade semantics live in `engine.binds_analysis.save_submap`, where they are
         tested headless; this is only the write gate around them, shaped like `edit_binds`.
+        A rename that rewrites binds is one undo step over both lists.
         """
-        if self._refuse("submaps"):
-            return False
-
-        binds_analysis.save_submap(
-            self._model.entities, original=original, name=name, reset_target=reset_target
+        return self._commit_entity_edit(
+            "submaps",
+            lambda: binds_analysis.save_submap(
+                self._model.entities, original=original, name=name, reset_target=reset_target
+            ),
+            title="Submap added" if original is None else "Submap changed",
         )
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        return True
 
     def rules(self, kind: str) -> list[WindowRule] | list[LayerRule]:
         """The live rule list for a kind -- `"window"` or `"layer"`.
@@ -838,23 +866,27 @@ class Session:
             return self._model.entities.layer_rules
         raise ValueError(f"unknown rule kind {kind!r}")
 
-    def edit_rules(self, kind: str, mutate: Callable[[list[Any]], None]) -> bool:
+    def edit_rules(
+        self, kind: str, mutate: Callable[[list[Any]], None], *, title: str | None = None
+    ) -> bool:
         """Change a rule list and write it, returning whether the edit was accepted.
 
         `mutate` is handed the live list because for Rules position *is* identity
         (ADR-0008): later rules win per Effect, and there is no key to address an
-        anonymous rule by. Shaped exactly like `edit_binds`, refusal and all, and like it
-        deliberately not on the undo stack (the same leftover).
+        anonymous rule by. Shaped exactly like `edit_binds`, refusal and undo step and all.
         """
-        if self._refuse(f"{kind} rules"):
-            return False
-        mutate(self.rules(kind))
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        return True
+        rules = self.rules(kind)
+        return self._commit_entity_edit(f"{kind} rules", lambda: mutate(rules), title=title)
+
+    @staticmethod
+    def _rule_title(kind: str, verb: str, *, plural: bool = False) -> str:
+        return entity_title(f"{kind}_rules", verb, plural=plural)
 
     def add_rule(self, kind: str, rule: WindowRule | LayerRule) -> bool:
         """Append a Rule -- last, where it wins over everything it conflicts with."""
-        return self.edit_rules(kind, lambda rules: rules.append(rule))
+        return self.edit_rules(
+            kind, lambda rules: rules.append(rule), title=self._rule_title(kind, "added")
+        )
 
     def replace_rule(self, kind: str, index: int, rule: WindowRule | LayerRule) -> bool:
         """Replace the Rule at `index`, keeping its position."""
@@ -863,7 +895,7 @@ class Session:
             if 0 <= index < len(rules):
                 rules[index] = rule
 
-        return self.edit_rules(kind, swap)
+        return self.edit_rules(kind, swap, title=self._rule_title(kind, "changed"))
 
     def remove_rule(self, kind: str, index: int) -> bool:
         """Delete the Rule at `index`."""
@@ -872,7 +904,7 @@ class Session:
             if 0 <= index < len(rules):
                 del rules[index]
 
-        return self.edit_rules(kind, drop)
+        return self.edit_rules(kind, drop, title=self._rule_title(kind, "removed"))
 
     def set_rule_enabled(self, kind: str, index: int, enabled: bool) -> bool:
         """Enable or disable the Rule at `index`, in place.
@@ -885,7 +917,8 @@ class Session:
             if 0 <= index < len(rules):
                 rules[index] = replace(rules[index], enabled=enabled)
 
-        return self.edit_rules(kind, flip)
+        verb = "enabled" if enabled else "disabled"
+        return self.edit_rules(kind, flip, title=self._rule_title(kind, verb))
 
     def move_rule(self, kind: str, index: int, to: int) -> bool:
         """Move the Rule at `index` to position `to` -- the drag reorder (ADR-0008).
@@ -898,35 +931,61 @@ class Session:
             if 0 <= index < len(rules) and 0 <= to < len(rules) and index != to:
                 rules.insert(to, rules.pop(index))
 
-        return self.edit_rules(kind, shift)
+        return self.edit_rules(
+            kind, shift, title=self._rule_title(kind, "reordered", plural=True)
+        )
 
     # --- monitor rules ----------------------------------------------------------------------
 
-    def _commit_entity_edit(self, what: str, mutate: Callable[[], None]) -> bool:
-        """The write gate every monitor and workspace rule edit shares.
+    def _commit_entity_edit(
+        self, what: str, mutate: Callable[[], None], *, title: str | None = None
+    ) -> bool:
+        """The write gate every Entity edit shares, and where its undo step is made (#189).
 
         Refuse on a read-only session (leaving the model alone, `_refuse`), run the
-        mutation, commit one entity transaction. Extracted so the keyed edits below --
-        which address rules by identity string rather than through a list -- do not each
-        hand-copy the refuse/commit envelope. Like the bind and rule edits, deliberately
-        not on the undo stack (the same Entity-undo leftover); undo matters least here,
-        because display-breaking edits ride Confirm-or-revert, its own take-back.
+        mutation, commit one entity transaction. Every Entity list is snapshotted around
+        `mutate` and the ones that moved become one `EntityStep` -- all of them, so a
+        cascade such as a submap rename rewriting binds is one step over both lists. The
+        step waits for its transaction's verdict (`_pending_entities`); an edit that moved
+        nothing records nothing. `title` is the undo toast's ("Bind removed"); without one
+        the step is "<Kinds> changed" after the first list it moved.
+
+        Entities are frozen and the snapshots share them, so a step is pointer arrays. A
+        `mutate` that changed an entity, or its `fields` dict, in place would change every
+        snapshot holding it: history would silently agree with the present.
         """
         if self._refuse(what):
             return False
+        before = self._entity_lists()
         mutate()
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
+        after = self._entity_lists()
+        serial = self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it
+        edits = [EntityEdit(kind, before[kind], after[kind]) for kind in before]
+        moved = [edit for edit in edits if edit.changed]
+        if not moved:
+            return True
+        step = EntityStep(
+            tuple(moved), title or entity_title(moved[0].kind, "changed", plural=True)
+        )
+        group = self._undo_group
+        held = group if group is not None and step.kinds & group.kinds else None
+        self._pending_entities.append(_PendingEntityStep(serial, step, held))
         return True
+
+    def _entity_lists(self) -> dict[str, tuple[Any, ...]]:
+        return {kind: tuple(items) for kind, items in self._model.entities.kinds()}
 
     @property
     def monitor_rules(self) -> list[MonitorRule]:
         """The live monitor rule list. Identity is the `output` string (ADR-0008)."""
         return self._model.entities.monitors
 
-    def edit_monitor_rules(self, mutate: Callable[[list[MonitorRule]], None]) -> bool:
+    def edit_monitor_rules(
+        self, mutate: Callable[[list[MonitorRule]], None], *, title: str | None = None
+    ) -> bool:
         """Change the monitor rule list and write it, returning whether it was accepted."""
         return self._commit_entity_edit(
-            "monitor rules", lambda: mutate(self._model.entities.monitors)
+            "monitor rules", lambda: mutate(self._model.entities.monitors), title=title
         )
 
     def patch_monitor_rule(self, output: str, fields: Mapping[str, Any]) -> bool:
@@ -951,7 +1010,7 @@ class Session:
                 MonitorRule(output=output, fields=kept), merge=False
             )
 
-        return self._commit_entity_edit("monitor rules", patch)
+        return self._commit_entity_edit("monitor rules", patch, title="Monitor rule changed")
 
     def rename_monitor_rule(self, output: str, to: str) -> bool:
         """Change a rule's identity string, keeping its fields and position.
@@ -973,7 +1032,7 @@ class Session:
         def rename() -> None:
             rules[index] = replace(rules[index], output=to)
 
-        return self._commit_entity_edit("monitor rules", rename)
+        return self._commit_entity_edit("monitor rules", rename, title="Monitor rule changed")
 
     def remove_monitor_rule(self, output: str) -> bool:
         """Delete the rule whose identity is `output`."""
@@ -982,7 +1041,7 @@ class Session:
             rules = self._model.entities.monitors
             rules[:] = [rule for rule in rules if rule.output != output]
 
-        return self._commit_entity_edit("monitor rules", drop)
+        return self._commit_entity_edit("monitor rules", drop, title="Monitor rule removed")
 
     def monitor_snapshot(self) -> tuple[MonitorRule, ...]:
         """The monitor rule list as it stands -- what Confirm-or-revert restores to.
@@ -1005,7 +1064,7 @@ class Session:
         def put_back(rules: list[MonitorRule]) -> None:
             rules[:] = list(snapshot)
 
-        return self.edit_monitor_rules(put_back)
+        return self.edit_monitor_rules(put_back, title="Monitor rule changed")
 
     def watch_monitors(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Call `callback` on every display hotplug; returns the way to stop.
@@ -1036,10 +1095,12 @@ class Session:
         """The live workspace rule list. Identity is the selector string (ADR-0008)."""
         return self._model.entities.workspace_rules
 
-    def edit_workspace_rules(self, mutate: Callable[[list[WorkspaceRule]], None]) -> bool:
+    def edit_workspace_rules(
+        self, mutate: Callable[[list[WorkspaceRule]], None], *, title: str | None = None
+    ) -> bool:
         """Change the workspace rule list and write it. Shaped like `edit_monitor_rules`."""
         return self._commit_entity_edit(
-            "workspace rules", lambda: mutate(self._model.entities.workspace_rules)
+            "workspace rules", lambda: mutate(self._model.entities.workspace_rules), title=title
         )
 
     def save_workspace_rule(self, rule: WorkspaceRule, *, original: str | None = None) -> bool:
@@ -1058,6 +1119,10 @@ class Session:
         ):
             return False
 
+        replacing = original is not None and any(
+            existing.workspace == original for existing in rules
+        )
+
         def save() -> None:
             for index, existing in enumerate(rules):
                 if existing.workspace == original:
@@ -1065,7 +1130,8 @@ class Session:
                     return
             rules.append(rule)
 
-        return self._commit_entity_edit("workspace rules", save)
+        title = "Workspace rule changed" if replacing else "Workspace rule added"
+        return self._commit_entity_edit("workspace rules", save, title=title)
 
     def remove_workspace_rule(self, selector: str) -> bool:
         """Delete the rule whose identity is `selector`."""
@@ -1074,7 +1140,7 @@ class Session:
             rules = self._model.entities.workspace_rules
             rules[:] = [rule for rule in rules if rule.workspace != selector]
 
-        return self._commit_entity_edit("workspace rules", drop)
+        return self._commit_entity_edit("workspace rules", drop, title="Workspace rule removed")
 
     # --- declarative entities (#70) -----------------------------------------------------
 
@@ -1103,13 +1169,15 @@ class Session:
         entities: list[Any] = getattr(self._model.entities, kind)
         return entities
 
-    def edit_declarations(self, kind: str, mutate: Callable[[list[Any]], None]) -> bool:
+    def edit_declarations(
+        self, kind: str, mutate: Callable[[list[Any]], None], *, title: str | None = None
+    ) -> bool:
         """Change one declarative list and write it, returning whether it was accepted.
 
-        Shaped exactly like `edit_rules`, refusal and all, and like it deliberately not on
-        the undo stack -- the same Entity-undo leftover.
+        Shaped exactly like `edit_rules`, refusal and undo step and all.
         """
-        return self._commit_entity_edit(kind, lambda: mutate(self.declarations(kind)))
+        items = self.declarations(kind)
+        return self._commit_entity_edit(kind, lambda: mutate(items), title=title)
 
     def identity_of(self, kind: str, entity: Any) -> str | None:
         """The identity string of one entity, or `None` for a kind that has no identity."""
@@ -1136,7 +1204,9 @@ class Session:
         """
         if self._identity_taken(kind, entity, index=None):
             return False
-        return self.edit_declarations(kind, lambda items: items.append(entity))
+        return self.edit_declarations(
+            kind, lambda items: items.append(entity), title=entity_title(kind, "added")
+        )
 
     def replace_declaration(self, kind: str, index: int, entity: Any) -> bool:
         """Replace the entity at `index`, keeping its position."""
@@ -1147,7 +1217,7 @@ class Session:
             if 0 <= index < len(items):
                 items[index] = entity
 
-        return self.edit_declarations(kind, swap)
+        return self.edit_declarations(kind, swap, title=entity_title(kind, "changed"))
 
     def remove_declaration(self, kind: str, index: int) -> bool:
         """Delete the entity at `index`."""
@@ -1156,7 +1226,7 @@ class Session:
             if 0 <= index < len(items):
                 del items[index]
 
-        return self.edit_declarations(kind, drop)
+        return self.edit_declarations(kind, drop, title=entity_title(kind, "removed"))
 
     @property
     def curves(self) -> list[Curve]:
@@ -1266,14 +1336,19 @@ class Session:
 
         The pointer moves only after the commit is accepted, so a refused write never
         claims a profile the files do not show.
+
+        The one Entity commit that records no undo step, and it forgets every step over
+        the two lists, held ones included (#189). The pointer lives outside the model, so a
+        model-level undo (ADR-0010) could not take an activation back whole, and replaying
+        an older display step over the profile's lists would quietly undo half of it. The
+        activation's own take-back is its Confirm-or-revert countdown (ADR-0015).
         """
-
-        def put() -> None:
-            self._model.entities.monitors[:] = list(monitors)
-            self._model.entities.workspace_rules[:] = list(workspaces)
-
-        if not self._commit_entity_edit("monitor profile", put):
+        if self._refuse("monitor profile"):
             return False
+        self._model.entities.monitors[:] = list(monitors)
+        self._model.entities.workspace_rules[:] = list(workspaces)
+        self._forget_entities(("monitors", "workspace_rules"))
+        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
         self._profile_store.set_active(active)
         return True
 
@@ -1450,7 +1525,7 @@ class Session:
         return self.live and self._undo.can_undo
 
     @property
-    def last_gesture(self) -> UndoStep | None:
+    def last_gesture(self) -> Step | None:
         """The gesture `undo` would reverse, without reversing it.
 
         What the undo toast names its button after, so the toast and Ctrl+Z cannot come to
@@ -1476,11 +1551,95 @@ class Session:
         step = self._undo.pop()
         if step is None:
             return False
+        if isinstance(step, EntityStep):
+            return self._undo_entities(step)
 
         self._restore({edit.name: edit.before for edit in step.edits})
         self._applier.commit(*step.names)
         self._changed()
         return True
+
+    def _undo_entities(self, step: EntityStep) -> bool:
+        """Put each list back to `before` and write it -- or refuse a step gone stale.
+
+        Stale means a list no longer reads as the step left it: something the stack never
+        saw changed it, and writing `before` over it would undo that change too. The step is
+        dropped rather than kept, because it can never become replayable again. The write
+        is a bare `commit_entities`, outside `_commit_entity_edit`, so it records nothing.
+        """
+        entities = self._model.entities
+        if any(tuple(getattr(entities, edit.kind)) != edit.after for edit in step.edits):
+            _log.info("undo: %r is stale, its list changed since; dropped", step.title)
+            return False
+        for edit in step.edits:
+            getattr(entities, edit.kind)[:] = edit.before
+        self._applier.commit_entities()  # type: ignore[union-attr]  # undo checked it is here
+        self._changed()
+        return True
+
+    def begin_undo_group(self, kinds: frozenset[str]) -> UndoGroup:
+        """Hold every Entity step over `kinds` until `end_undo_group` makes it one, or none.
+
+        For a caller whose several commits are one gesture to the user -- a Confirm-or-revert
+        countdown: kept, its edits are one step; reverted (the revert committed inside the
+        group), they cancel out and nothing is recorded. Held steps raise no toast. Steps
+        over other lists go to the stack as usual. One group at a time.
+        """
+        if self._undo_group is not None:
+            raise RuntimeError("an undo group is already open")
+        group = self._undo_group = UndoGroup(frozenset(kinds))
+        return group
+
+    def end_undo_group(self, group: UndoGroup, *, title: str) -> None:
+        """Close `group`: push what it held as one step titled `title`, if anything moved.
+
+        Commits still in flight are waited for -- the merge happens when the last one
+        reports. If any of the group's transactions failed, nothing is pushed. Ending a group
+        twice is a no-op.
+        """
+        if group.title is not None:
+            return
+        group.title = title
+        if self._undo_group is group:
+            self._undo_group = None
+        self._announce(self._close_group(group))
+
+    def _close_group(self, group: UndoGroup) -> EntityStep | None:
+        """The merged step, once `group` is ended and nothing it holds is in flight."""
+        if group.finished or group.title is None:
+            return None
+        if any(pending.group is group for pending in self._pending_entities):
+            return None
+        group.finished = True
+        if group.failed:
+            return None
+        return EntityStep.merge(group.held, group.title)
+
+    def _announce(self, step: EntityStep | None) -> None:
+        if step is None:
+            return
+        self._undo.record(step)
+        if self.on_recorded is not None:
+            self.on_recorded(step)
+
+    def _forget_entities(self, kinds: Collection[str]) -> None:
+        """Drop every Entity step over `kinds`: stacked, in flight and held in a group.
+
+        For lists changed off the stack (S1.5 of #151): a foreign reload adopted a hand edit,
+        or a profile was activated. Replaying any of those steps would overwrite the change.
+        """
+        gone = frozenset(kinds)
+        self._undo.forget(gone)
+        groups = {id(p.group): p.group for p in self._pending_entities if p.group is not None}
+        self._pending_entities = [
+            pending for pending in self._pending_entities if not pending.step.kinds & gone
+        ]
+        if self._undo_group is not None:
+            groups[id(self._undo_group)] = self._undo_group
+        for group in groups.values():
+            group.held = [step for step in group.held if not step.kinds & gone]
+            # A dropped in-flight step may have been all an ended group was waiting for.
+            self._announce(self._close_group(group))
 
     def _restore(self, values: Mapping[str, OptionValue]) -> None:
         """Put the model back to `values`, and forget any gesture open on those Options.
@@ -1731,10 +1890,11 @@ class Session:
             self._applier.forget_previews()
         # Every open gesture is void: the values it started from describe a config that has
         # just been replaced, and the re-read below is about to overwrite the model they
-        # would have been measured against. The *stack* survives -- a recorded step is a
-        # model delta and replays through a normal transaction whatever else has happened
-        # since (ADR-0010 §Undo) -- but a half-open one would produce a delta spanning
-        # somebody else's reload.
+        # would have been measured against. The *stack* survives -- a recorded Option step
+        # is a model delta and replays through a normal transaction whatever else has
+        # happened since (ADR-0010 §Undo) -- but a half-open one would produce a delta
+        # spanning somebody else's reload. Entity steps over a list the re-read changes are
+        # dropped there (`_reread_after_foreign_reload`).
         self._open_gestures.clear()
         self._spawn(self._reread_after_foreign_reload())
 
@@ -1759,10 +1919,15 @@ class Session:
             len(result.adopted),
             len(result.cleared),
         )
+        before = self._entity_lists()
         self._reread_binds()
         self._reread_rules()
         self._reread_monitors()
         self._reread_declarations()
+        # An adopted hand edit changed lists the stack's steps were taken over; replaying
+        # one would write its old list over the edit (ADR-0010 §Undo, amended in #189).
+        after = self._entity_lists()
+        self._forget_entities([kind for kind in before if before[kind] != after[kind]])
         # The other half ADR-0016 asks for: somebody else's reload can break the config just
         # as thoroughly as the app's own, and it surfaces identically.
         await self._scan(client)
@@ -2081,6 +2246,7 @@ class Session:
             return
 
         delta = self._close(result.keys)
+        entity_steps = self._settle_entities(result)
         blamed = self._own_write_errors(result)
         if blamed and self._may_auto_revert(delta):
             # No Banner for this one. The auto-revert is about to reload, and the errors it
@@ -2098,14 +2264,49 @@ class Session:
 
         step = self._step(delta)
         self._undo.record(step)
+        for entity_step in entity_steps:
+            self._undo.record(entity_step)
         self._observe(result)
         self._repoll_if_timed_out(result)
         self._report(result)
-        if step is not None and result.ok and self.on_recorded is not None:
+        newest: Step | None = entity_steps[-1] if entity_steps else step
+        if newest is not None and result.ok and self.on_recorded is not None:
             # After `on_applied`, and only for a transaction that stands: the window shows one
             # toast, and an offer to undo a change that did not land would be an offer to undo
-            # nothing.
-            self.on_recorded(step)
+            # nothing. One toast per transaction, naming the newest gesture it carried.
+            self.on_recorded(newest)
+
+    def _settle_entities(self, result: ApplyResult) -> list[EntityStep]:
+        """The Entity steps this result lets stand, in commit order; the rest are dropped.
+
+        Every pending step with a serial up to `result.entities` was rendered by this
+        transaction. Ok: it is recorded, or handed to its undo group. Not ok: it is dropped,
+        and its group marked failed -- ADR-0016's failed gesture, never on the stack. A group
+        this result completes is merged here, and lands after the steps it was held beside.
+        """
+        if result.entities is None:
+            return []
+        reported = [p for p in self._pending_entities if p.serial <= result.entities]
+        self._pending_entities = [
+            p for p in self._pending_entities if p.serial > result.entities
+        ]
+        steps: list[EntityStep] = []
+        groups: dict[int, UndoGroup] = {}
+        for pending in reported:
+            if pending.group is None:
+                if result.ok:
+                    steps.append(pending.step)
+                continue
+            groups[id(pending.group)] = pending.group
+            if result.ok:
+                pending.group.held.append(pending.step)
+            else:
+                pending.group.failed = True
+        for group in groups.values():
+            merged = self._close_group(group)
+            if merged is not None:
+                steps.append(merged)
+        return steps
 
     def _may_auto_revert(self, delta: Mapping[str, OptionValue]) -> bool:
         """Whether the app is still allowed to answer a rejected write by writing again.
