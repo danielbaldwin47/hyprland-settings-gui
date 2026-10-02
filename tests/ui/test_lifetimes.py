@@ -153,3 +153,52 @@ def test_a_binds_page_refresh_releases_the_rows_it_replaced(
 
     assert len(refs) == TIMES
     assert collected(refs) == [True] * TIMES
+
+
+def test_releasing_a_widget_still_in_the_tree_is_refused_and_leaves_it_working() -> None:
+    import pytest
+    from gi.repository import Gtk
+
+    from hyprtweaker.ui.release import release
+
+    box = Gtk.Box()
+    clicks: list[bool] = []
+    button = Gtk.Button(label="Still here")
+    button.connect("clicked", lambda _button: clicks.append(True))
+    box.append(button)
+
+    with pytest.raises(ValueError, match="still in it"):
+        release(button)
+    button.emit("clicked")
+
+    assert clicks == [True]
+
+
+def test_a_dialog_shown_again_after_one_it_opened_closes_is_released_once(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Capture over the bind editor hands visibility back to the editor when it closes."""
+    from hyprtweaker.ui.release import release
+    from hyprtweaker.ui.shell import window as window_module
+
+    released: list[str] = []
+
+    def counting(widget: Any) -> None:
+        released.append(type(widget).__name__)
+        release(widget)
+
+    monkeypatch.setattr(window_module, "release", counting)
+    window = wired_window(offline_session(tmp_path))
+    add_bind_button(window).emit("clicked")
+    editor = window.get_visible_dialog()
+    editor._choose(None)  # past the door, to the form whose Keys row opens Capture
+    for _ in range(TIMES):
+        editor._capture()
+        window.get_visible_dialog().force_close()
+        main_loop.settle("Capture to close")
+        assert window.get_visible_dialog() is editor
+    editor.force_close()
+    main_loop.settle("the bind editor to close")
+
+    assert released == ["CaptureDialog"] * TIMES + ["BindEditor"]
+    window.close()

@@ -168,9 +168,14 @@ def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> Non
 
     An idle rather than the `closed` handler itself: libadwaita is still finishing the close
     when it emits `closed`, and every handler of it must still find the dialog whole.
+
+    Once per dialog: a dialog becomes visible again each time one it opened (Capture over
+    the bind editor) closes. The mark lives on the wrapper, which PyGObject then keeps for
+    as long as the dialog lives, so it cannot be forgotten and hooked twice.
     """
     dialog = window.get_visible_dialog()
-    if dialog is not None:
+    if dialog is not None and not getattr(dialog, "_release_on_close", False):
+        dialog._release_on_close = True
         dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
 
 
