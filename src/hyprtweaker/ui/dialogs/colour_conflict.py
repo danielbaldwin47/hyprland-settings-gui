@@ -64,6 +64,19 @@ def conflict_body(preset: str, source: Wallpaper | Several) -> str:
     )
 
 
+def remembered_sentence(choice: ColorChoice) -> str:
+    """A remembered answer as one sentence, for the confirm that is not asking again."""
+    if choice is ColorChoice.USE_PRESET:
+        return (
+            "You asked to remember using a preset's colors, so they replace the ones your "
+            "wallpaper makes and that tool is paused. Forget it in the Presets group."
+        )
+    return (
+        "You asked to remember keeping your wallpaper's colors, so the preset's colors are "
+        "left out. Forget it in the Presets group."
+    )
+
+
 def _remember_check() -> Gtk.CheckButton:
     check = Gtk.CheckButton(label=REMEMBER_LABEL)
     check.set_tooltip_text(REMEMBER_HINT)

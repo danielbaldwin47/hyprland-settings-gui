@@ -450,3 +450,28 @@ def test_a_theming_page_refresh_releases_the_rows_it_replaced(
 
     assert len(refs) >= TIMES * 5
     assert collected(refs) == [True] * len(refs)
+
+
+def test_a_presets_group_rebuild_releases_the_rows_it_replaced(tmp_path: Path) -> None:
+    """Every Preset row's buttons hold the group's bound methods, the cycle #219 found; the
+    group rebuilds on a save, a delete, an import and when its revision moved (#171)."""
+    from hyprtweaker.engine.presets import CaptureScope
+
+    session = offline_session(tmp_path)
+    session.model.set("general:border_size", 3)
+    window = wired_window(session)
+    group = window.theming_page.presets
+    session.save_preset("Nord", (CaptureScope.GAPS_LAYOUT,), done=lambda _result: None)
+    session.save_preset("Fjord", (CaptureScope.GAPS_LAYOUT,), done=lambda _result: None)
+
+    refs = []
+    for _ in range(TIMES):
+        group.refresh(force=True)
+        refs.extend(weakref.ref(row) for row in (*group.rows.values(), *group._others))
+        refs.extend(weakref.ref(button) for button in group._buttons.values())
+    group.refresh(force=True)
+    session.delete_preset("nord")
+    group.refresh()  # the revision moved: the rows go and come back as one
+
+    assert len(refs) >= TIMES * 8
+    assert collected(refs) == [True] * len(refs)
