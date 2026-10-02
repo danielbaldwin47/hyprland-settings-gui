@@ -40,6 +40,7 @@ from ...engine.migration.flow import (  # noqa: E402
     SwitchResult,
     asks_consent,
 )
+from ...engine.migration.omarchy import is_omarchy_source  # noqa: E402
 from .wire_consent import ConsentDialog  # noqa: E402
 
 Spawn = Callable[[Any], None]
@@ -126,6 +127,15 @@ DETECTED_BODIES = {
         "hyprland.lua.bak, so nothing you wrote is lost."
     ),
 }
+
+
+OMARCHY_ENDS = (
+    "Omarchy's theme menu and Omarchy updates will no longer change your Hyprland settings"
+)
+OMARCHY_ENDS_HELP = (
+    "Change colours here instead. Restoring the back-up this wizard makes puts you back."
+)
+"""What switching an Omarchy config costs, on the Preview page (#234)."""
 
 
 class MigrationDialog(Adw.Dialog):
@@ -401,6 +411,8 @@ class MigrationDialog(Adw.Dialog):
         summary.add(_row("Settings imported", str(len(preview.model))))
         if self._flow.report_path is not None:
             summary.add(_row("Report saved to", str(self._flow.report_path)))
+        if is_omarchy_source(preview.detection.source):
+            summary.add(_row(OMARCHY_ENDS, OMARCHY_ENDS_HELP))
         column.append(summary)
 
         for group in _loss_groups(preview.loss):

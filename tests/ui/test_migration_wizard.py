@@ -390,6 +390,72 @@ class TestReadingAForeignLua:
         assert _page_title(foreign_window.get_visible_dialog()) == "Detect"
 
 
+OMARCHY_ROW = (
+    "Omarchy's theme menu and Omarchy updates will no longer change your Hyprland settings"
+)
+OMARCHY_ROW_HELP = (
+    "Change colours here instead. Restoring the back-up this wizard makes puts you back."
+)
+
+
+def _omarchy_root(root: Path) -> Path:
+    """The shape of an Omarchy entrypoint: it requires `default.hypr.omarchy`, which here
+    is a module beside it, since the real one lives under `/usr/share/omarchy/`."""
+    entrypoint = _foreign_root(
+        root, 'require("default.hypr.omarchy")\nhl.config({ general = { gaps_in = 7 } })\n'
+    )
+    module = entrypoint.parent / "default" / "hypr" / "omarchy.lua"
+    module.parent.mkdir(parents=True)
+    module.write_text("hl.config({ general = { border_size = 3 } })\n", encoding="utf-8")
+    return entrypoint
+
+
+class TestWhatSwitchingAnOmarchyConfigEnds:
+    """The Preview page tells an Omarchy user what the switch costs (#234)."""
+
+    def test_an_omarchy_config_is_told_its_theme_menu_and_updates_stop(
+        self, tmp_path: Path
+    ) -> None:
+        entrypoint = _omarchy_root(tmp_path)
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+        _read(dialog, "Read it")
+
+        assert _page_title(dialog) == "Preview"
+        assert (OMARCHY_ROW, OMARCHY_ROW_HELP) in _rows(dialog)
+        assert "Switch" not in OMARCHY_ROW  # information, not a gate: Back up stays offered
+        assert "Back up and convert" in [
+            button.get_label() for button in _action_buttons(dialog)
+        ]
+        assert "default/hypr/omarchy.lua" not in entrypoint.read_text(encoding="utf-8")
+
+    def test_another_config_is_not_told_anything_about_omarchy(self, tmp_path: Path) -> None:
+        _foreign_root(tmp_path)
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+        _read(dialog, "Read it")
+
+        assert _page_title(dialog) == "Preview"
+        assert "Omarchy" not in _text_under(dialog)
+
+    def test_a_hyprlang_conf_is_not_told_anything_about_omarchy(self, tmp_path: Path) -> None:
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(
+            'require("default.hypr.omarchy")\n' + CONF, encoding="utf-8"
+        )
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+
+        assert _page_title(dialog) == "Preview"
+        assert "Omarchy" not in _text_under(dialog)
+
+
 class TestImportAChosenFile:
     """Import... reads the file the user chose, not the one detection found."""
 

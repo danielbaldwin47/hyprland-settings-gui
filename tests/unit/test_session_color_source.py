@@ -369,6 +369,40 @@ def test_setting_a_tool_up_adds_its_line_in_one_reload_and_removing_it_takes_it_
     )
 
 
+def test_switching_to_a_backend_not_set_up_is_one_reload_that_sets_it_up_and_switches(
+    tmp_path: Path,
+) -> None:
+    """The Theming page's "Switch to wallust" on a tool not yet wired (#164): `wire`'s
+    register adds the entry and gates the old backend in the same transaction, so there is
+    no reload in between where both backends load."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        put(tmp_path, "hyprtweaker/bridge/matugen.lua")
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        wire(session, MATUGEN)
+        assert session.set_color_source(Wallpaper("matugen"))
+        await settle(session, runner)
+        reloads = fake.requests.count("reload")
+
+        assert session.add_bridge("wallust", source=Wallpaper("wallust"))
+        await settle(session, runner)
+
+        assert fake.requests.count("reload") == reloads + 1
+        assert bridge_lines(tmp_path) == [
+            '-- require("hyprtweaker/bridge/matugen")  -- off: Color source is wallust',
+            '-- require("hyprtweaker/bridge/wallust")  -- waiting for wallust\'s first run',
+        ]
+        assert session.color_source() == Wallpaper("wallust")
+        assert [entry.tool for entry in session.manifest().bridges] == ["matugen", "wallust"]
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
 def test_a_tool_is_not_set_up_while_the_session_is_read_only(tmp_path: Path) -> None:
     async def scenario(fake: FakeHyprland) -> None:
         session = session_for(fake, tmp_path, Runner())

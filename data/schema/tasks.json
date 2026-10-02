@@ -57,6 +57,7 @@
           "title": "Decoration",
           "sections": ["decoration"]
         },
+        { "entity": "theming" },
         {
           "id": "look.animations",
           "title": "Animations",

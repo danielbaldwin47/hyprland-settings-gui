@@ -487,3 +487,25 @@ def _no_compositor() -> Any:
     from hyprtweaker.engine.ipc import NoInstance
 
     raise NoInstance("headless")
+
+
+def test_the_current_wallpaper_is_what_the_daemon_shows_or_none(tmp_path: Path) -> None:
+    """What the Theming page's Regenerate runs a tool on (#164)."""
+    from hyprtweaker.engine.ipc import Instance, NoInstance
+
+    def no_compositor() -> Instance:
+        raise NoInstance("no compositor here")
+
+    def session(wallpapers: Wallpapers) -> Session:
+        return Session(
+            spawn=lambda coro: coro.close(),
+            paths=ConfigPaths.rooted_at(tmp_path),
+            app_version="0",
+            connect=no_compositor,
+            wallpapers=wallpapers,
+        )
+
+    daemon = FakeDaemon(tmp_path / "runtime")
+    assert session(daemon.seam()).current_wallpaper() == MINE
+    assert daemon.calls == [("query",)]
+    assert session(no_daemon()).current_wallpaper() is None

@@ -92,6 +92,7 @@ package_sources = {
     'detect.py',
     'export.py',
     'flow.py',
+    'omarchy.py',
     'sentinel.py',
   ],
   'hyprtweaker/engine/model': [
@@ -165,6 +166,8 @@ package_sources = {
     'rules.py',
     'scripting.py',
     'tasks.py',
+    'theming.py',
+    'theming_state.py',
     'workspace_rules.py',
   ],
   'hyprtweaker/ui/rows': [
