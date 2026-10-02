@@ -607,9 +607,12 @@ def parse_getoption(option: ResolvedOption, payload: dict[str, Any]) -> Any:
     records the expected key and `custom` stays a fallback, so the same reader survives
     both engines (`schema/types.py`).
     """
-    if option.type is OptionType.STRING and GetOptionKey.STR.value not in payload:
-        if GetOptionKey.INT.value in payload:
-            return ColorText.from_getoption(payload[GetOptionKey.INT.value])
+    if (
+        option.type is OptionType.STRING
+        and GetOptionKey.STR.value not in payload
+        and GetOptionKey.INT.value in payload
+    ):
+        return ColorText.from_getoption(payload[GetOptionKey.INT.value])
     raw = getoption_raw(option, payload)
     if (complex_type := COMPLEX_TYPES.get(option.type)) is not None:
         return complex_type.from_getoption(raw)
