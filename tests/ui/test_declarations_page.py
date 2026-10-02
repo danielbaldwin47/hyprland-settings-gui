@@ -377,12 +377,26 @@ def test_the_editor_offers_the_leaves_it_is_handed_in_place_of_the_shipped_list(
 
 
 def test_the_window_hands_the_editor_the_session_schemas_leaves(tmp_path: Path) -> None:
+    """The tree's own leaves, in the tree's order: a leaf the app has no place for yet
+    comes after the ones it knows."""
     _session, window = build_window(tmp_path, _tree_schema("brandNewLeaf", "fade"))
 
     dialog = window.declaration_editor("animations", on_done=lambda _entity: None)
 
     model = dialog._rows["leaf"].get_model()
-    assert [model.get_string(i) for i in range(model.get_n_items())] == ["brandNewLeaf", "fade"]
+    assert [model.get_string(i) for i in range(model.get_n_items())] == ["fade", "brandNewLeaf"]
+
+
+def test_a_new_animation_opens_on_global_not_the_first_leaf_alphabetically(
+    tmp_path: Path,
+) -> None:
+    """#150 review finding 9: the schema records its leaves alphabetically, so an untouched
+    Save wrote `border`; the root of the tree is the one every other leaf inherits from."""
+    _session, window = build_window(tmp_path)
+
+    dialog = window.declaration_editor("animations", on_done=lambda _entity: None)
+
+    assert dialog.collect()["leaf"] == "global"
 
 
 # --- the editor -------------------------------------------------------------------------------

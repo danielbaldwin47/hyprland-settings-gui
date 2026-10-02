@@ -179,14 +179,19 @@ reports but no config should name.
 
 
 def animation_leaves(schema: Schema) -> tuple[str, ...]:
-    """The leaves this Schema's Hyprland has: its own record, else the shipped list.
+    """The leaves this Schema's Hyprland has, in tree order: its own record, else the
+    shipped list.
 
     Callers do not care which served it; a Schema whose block is absent is a version the
-    app has no record of, and the shipped list is the best answer there is.
+    app has no record of, and the shipped list is the best answer there is. The schema
+    records its leaves alphabetically, which put `border` first in the dropdown and on an
+    untouched Save; the shipped list's order is the tree's (`global` at the root), so the
+    known leaves take it and a leaf the app has no place for yet follows them.
     """
-    if schema.animation_leaves is not None:
-        return schema.animation_leaves
-    return SHIPPED_ANIMATION_LEAVES
+    if schema.animation_leaves is None:
+        return SHIPPED_ANIMATION_LEAVES
+    rank = {leaf: index for index, leaf in enumerate(SHIPPED_ANIMATION_LEAVES)}
+    return tuple(sorted(schema.animation_leaves, key=lambda leaf: rank.get(leaf, len(rank))))
 
 
 ANIMATION_SPEED_MIN = 0.0
@@ -834,9 +839,7 @@ def curve_findings(curve: Curve) -> tuple[Finding, ...]:
     return tuple(findings)
 
 
-def animation_findings(
-    animation: Animation, leaves: Collection[str] = SHIPPED_ANIMATION_LEAVES
-) -> tuple[Finding, ...]:
+def animation_findings(animation: Animation, leaves: Collection[str]) -> tuple[Finding, ...]:
     """What Hyprland would say about one animation, curve references aside.
 
     The required-field rules are the binary's, not the wiki's -- probed with
@@ -848,8 +851,9 @@ def animation_findings(
     Both were missing from the research doc's account of `hl.animation`, and both are
     reachable from the Add form in two clicks.
 
-    `leaves` is the tree the compositor has (`animation_leaves`); the default is the shipped
-    list, for callers that hold no Schema.
+    `leaves` is the tree the compositor has (`animation_leaves(schema)`). It has no default:
+    one that fell back to the shipped list would check a newer Hyprland's tree against an
+    older one without anybody noticing.
     """
     findings: list[Finding] = []
     enabled = animation.fields.get("enabled")
@@ -889,9 +893,7 @@ def animation_findings(
     return tuple(findings)
 
 
-def unknown_leaves(
-    entities: EntitySet, leaves: Collection[str] = SHIPPED_ANIMATION_LEAVES
-) -> tuple[str, ...]:
+def unknown_leaves(entities: EntitySet, leaves: Collection[str]) -> tuple[str, ...]:
     """Animation leaves this Hyprland's tree does not have, deduplicated in model order."""
     seen: list[str] = []
     for animation in entities.animations:

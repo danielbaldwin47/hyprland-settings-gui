@@ -40,7 +40,12 @@ def test_the_catalogue_resolves_every_leaf_the_schema_records(version: str) -> N
     assert len(set(leaves)) == len(leaves)
     for leaf in leaves:
         assert LEAF_NAME.fullmatch(leaf), f"{leaf!r} is not a name config can use"
-        assert animation_findings(Animation(leaf, {"enabled": False}), leaves) == (), leaf
+    # The check is against this tree, so a name outside it is flagged and every name in
+    # it is not: a check that passed everything would make the loop above vacuous.
+    assert animation_findings(Animation("noSuchLeaf", {"enabled": False}), leaves)
+    assert all(
+        not animation_findings(Animation(leaf, {"enabled": False}), leaves) for leaf in leaves
+    )
 
 
 @pytest.mark.parametrize("version", VERSIONS)
