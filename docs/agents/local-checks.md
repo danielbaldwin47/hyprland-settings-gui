@@ -42,17 +42,23 @@ It starts a nested Hyprland with a fresh sandbox `$HOME`, launches the app insid
   - `Hyprland`, `hyprland` and `start-hyprland`: start one with the sandbox or the Harness; for the version, `pacman -Q hyprland`.
   - `ydotool`, always: it writes to the kernel's uinput and has no nested form.
 
-  `hyprctl instances -j | jq length`, `systemctl --user show-environment`, `pytest`, and the four words as data (`grep hyprctl docs/`, a quoted string, a heredoc) pass. Without `jq` it refuses any call that names one of the four words. It binds every Claude Code session opened in this repo, the owner's included; the owner's own terminal is unaffected. A script, `bash -c '…'`, `eval`, an alias or a write to the compositor's socket passes it: there the Live probes rule is the only fence.
+  Four more are refused always, each refusal naming the working shape:
+  - `pkill` and `killall`, which match by name across the whole session and can kill the owner's compositor, terminal or apps. Kill a PID you started and recorded: `kill <pid>`, `kill $!`.
+  - A GTK start outside the probe route: `python` code (`-c` or stdin) that names `Gtk`, `Adw`, `Gdk` or `gi.repository`, `python -m hyprtweaker`, or a script under `src/hyprtweaker`. Run `tools/widget_probe.py <probe.py>` or `tools/sandbox.py`, or pytest.
+  - An X server started from the shell: `Xvfb`, `Xorg`, `Xwayland`, `xvfb-run` (§ Private X displays). pytest and `tools/widget_probe.py` start their own Xvfb as children and pass.
+  - `rm`, `unlink`, `rmdir`, `mv`, `ln`, `shred` and `find -delete`/`-exec` on a path under `/tmp/.X11-unix/` or a `/tmp/.X<n>-lock`.
+
+  `kill <pid>`, `pgrep`, `hyprctl instances -j | jq length`, `systemctl --user show-environment`, `pytest`, `mypy`, `ruff`, `grep Gtk src/`, `ls /tmp/.X11-unix`, and the refused words as data (`grep hyprctl docs/`, a quoted string, a heredoc) pass. Without `jq` it refuses any call that names one of the words above. It binds every Claude Code session opened in this repo, the owner's included; the owner's own terminal is unaffected. A script file, `bash -c '…'`, `eval`, an alias, a path relative to a `cd` into `/tmp/.X11-unix` or a write to the compositor's socket passes it: there the Live probes rule is the only fence.
 - Real monitors and input devices exist only on the desktop session; a nested instance shows one virtual output and the host's forwarded keyboard and pointer. A ticket whose proof needs real hardware says so, and the effort PR lists it for the owner (`implement-spec.md` step 8).
 
 ### Private X displays
 
-Read this before starting any X server. An agent's X server takes a display number in **200-999**, chosen by `start_xvfb` in `tests/ui/private_display.py`, which the UI tier and the widget probe runner already call. A script that needs its own X server calls that function too; for a one-off diagnosis, start `Xvfb :<number in 200-999>` with that number written out, and stop it by the PID you recorded.
+Read this before starting any X server. An agent's X server takes a display number in **200-999**, chosen by `start_xvfb` in `tests/ui/private_display.py`, which the UI tier and the widget probe runner already call. A script that needs its own X server calls that function too; the shell fence refuses `Xvfb`, `Xorg`, `Xwayland` and `xvfb-run` typed directly.
 
 - **Why.** An X server unlinks the socket path of the display it binds, `/tmp/.X11-unix/X<n>`, without checking who listens there (xtrans `SocketUNIXCreateListener`), and `-displayfd` also skips the `/tmp/.X<n>-lock` check while it walks up from display 0. The desktop's Xwayland (Hyprland 0.56.2) listens on `/tmp/.X11-unix/X0` with no abstract socket to stop it, so from #146 (2026-10-01) the UI tier's `Xvfb -displayfd` replaced the desktop's `:0`: X11 apps the owner started afterwards reached an agent's Xvfb or nothing. Hence the explicit number, which keeps Xvfb's lock check, and never `-displayfd` or a number below 200.
 - **Leftovers.** `start_xvfb` skips a number whose lock file or socket already exists, live or left by a crashed run, and leaves those files alone; its own Xvfb removes its lock and socket when it exits. Several processes starting at once each get a different number: Xvfb takes its lock file atomically before it creates a socket, and the loser moves to the next number.
 - **Fence.** The UI tier and the widget probe runner refuse a display whose number is the session's own `DISPLAY`, with `refusing display :<n>: it is the desktop session's own DISPLAY …`.
-- **Hands off the session's X files.** `/tmp/.X11-unix/X0`, `X0_` and `/tmp/.X0-lock` belong to the desktop; reading them (`ls`, `ss -xlp`) is the whole of an agent's business there.
+- **Hands off the session's X files.** `/tmp/.X11-unix/X0`, `X0_` and `/tmp/.X0-lock` belong to the desktop; reading them (`ls`, `ss -xlp`) is the whole of an agent's business there, and the shell fence refuses `rm`, `mv`, `ln` and `unlink` on them.
 
 ### Widget probes
 
