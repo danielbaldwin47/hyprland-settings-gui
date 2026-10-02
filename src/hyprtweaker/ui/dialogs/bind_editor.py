@@ -97,9 +97,6 @@ UNKNOWN_ACTION = "This version of the app does not know this action."
 KEPT_TITLE = "Also kept from your config"
 KEPT_NOTE = "The form has no field for these, so Save keeps them as they are."
 
-BOOL_WORDS = {"true": True, "false": False, "yes": True, "no": False}
-"""What a yes-or-no field reads, lower-cased. Anything else is refused, never guessed."""
-
 HELD_NOTE = " (from your config)"
 """Follows a saved value a yes-or-no field cannot read, shown as a choice of its own."""
 
@@ -600,13 +597,11 @@ class BindEditor(Adw.Dialog):
 
 
 def _type_refusal(title: str, arg_type: str, text: str) -> str:
-    """Why `text` cannot be the field's type, or "" when it can.
+    """Why `text` cannot be the field's type, or "" when it can: refused, never guessed.
 
-    Refused rather than guessed: `forward` typed into "Forwards" once saved as
-    `next = false`, the opposite of what was meant (#150 review, finding 11).
+    Only text fields reach here. A yes-or-no argument is a choice row (`_bool_row`), so it
+    has no text to refuse.
     """
-    if arg_type == "bool" and text.lower() not in BOOL_WORDS:
-        return f"{title} must be true or false."
     if arg_type == "int" and not re.fullmatch(r"-?\d+", text):
         return f"{title} must be a whole number."
     return ""
@@ -624,8 +619,6 @@ def _typed(text: str, arg_type: str) -> object:
             return int(text)
         except ValueError:
             return text
-    if arg_type == "bool":
-        return BOOL_WORDS.get(text.lower(), text)
     return text
 
 

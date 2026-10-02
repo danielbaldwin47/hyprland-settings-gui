@@ -395,15 +395,6 @@ def test_a_saved_value_that_is_not_a_boolean_gives_way_to_a_choice() -> None:
     assert saved_lua(saved) == ["hl.dsp.window.cycle_next{ next = false }"]
 
 
-def test_a_text_that_is_not_a_boolean_is_refused_by_name() -> None:
-    """A yes-or-no value reaching the editor as text is refused, never guessed: `forward`
-    once saved as `next = false`, the opposite of what was typed (#150 finding 11)."""
-    from hyprtweaker.ui.dialogs.bind_editor import _type_refusal
-
-    assert _type_refusal("Forwards", "bool", "forward") == "Forwards must be true or false."
-    assert _type_refusal("Forwards", "bool", "No") == ""
-
-
 def test_a_text_argument_shows_its_hint_on_the_row() -> None:
     """The hint is the row's own subtitle, visible without hovering."""
     from gi.repository import Adw, Gtk
