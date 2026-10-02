@@ -64,7 +64,7 @@ TOOLS_TITLE = "Theming tools"
 """The back-up step's Bridge setup page (#187)."""
 
 TOOLS_TEXT = (
-    "Setting one up changes its own config so its colors keep reaching Hyprland after the "
+    "Setting one up changes its own config so its output keeps reaching Hyprland after the "
     "switch. Each one asks first, and nothing changes until you switch. You can also set "
     "them up later on the Theming page."
 )

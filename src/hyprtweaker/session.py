@@ -83,6 +83,7 @@ from hyprtweaker.engine.bridge import (
     owners,
     with_presence,
 )
+from hyprtweaker.engine.bridge.wire import shown as tilde_path
 from hyprtweaker.engine.entities_catalog import (
     IDENTITY_FIELD,
     device_field_bounds,
@@ -2226,7 +2227,9 @@ class Session:
         if not image.is_absolute():
             image = self._paths.app_dir / image
         if not image.is_file():
-            self._say_preset(f"The wallpaper was not changed. {image} is missing.")
+            self._say_preset(
+                f"The wallpaper was not changed. {tilde_path(image, self._paths)} is missing."
+            )
             return None
         daemon = self._wallpapers.detect()
         if daemon is None:
@@ -2328,6 +2331,10 @@ class Session:
             if section in changed
         )
         return PresetPreview(sections, tuple(unchanged), unknown, invalid)
+
+    def import_name(self, preset: Preset) -> str:
+        """The name an import of `preset` lands under: its own, or "<name> 2" when taken."""
+        return self._preset_store.free_name(preset.name)[0]
 
     def import_preset(self, archive: ThemeArchive) -> PresetImportResult:
         """Add a Theme archive's Preset to the store, its wallpaper beside it. Applies nothing.

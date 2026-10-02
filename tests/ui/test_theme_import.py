@@ -144,7 +144,7 @@ def test_the_preview_shows_each_change_and_what_is_left_out(tmp_path: Path) -> N
     [picture] = [w for w in walk(dialog) if isinstance(w, Gtk.Picture)]
     assert picture.get_paintable().get_intrinsic_width() == 4
     assert dialog.get_default_widget() is button(dialog, "Cancel")
-    assert button(dialog, "Add to Presets").get_sensitive()
+    assert button(dialog, "Add to presets").get_sensitive()
     assert session.presets() == ()  # nothing written by showing it
 
 
@@ -171,7 +171,7 @@ def test_adding_while_offline_keeps_the_preset_and_says_it_was_not_applied(
     dialog = ThemeImportDialog(session, archive, on_finished=finished.append)
     dialog.present(window)
 
-    button(dialog, "Add to Presets").emit("clicked")
+    button(dialog, "Add to presets").emit("clicked")
     main_loop.settle("the dialog")
 
     [(slug, preset)] = session.presets()
@@ -199,7 +199,7 @@ def test_confirming_while_live_imports_then_applies_through_the_given_apply(
     dialog.present(window)
     assert dialog.get_default_widget() is button(dialog, "Cancel")
 
-    button(dialog, "Import and Apply").emit("clicked")
+    button(dialog, "Import and apply").emit("clicked")
     main_loop.settle("the dialog")
 
     assert applied == ["nord"]
@@ -224,7 +224,7 @@ def test_a_colour_conflict_adds_the_preset_and_says_where_to_choose(
     )
     dialog.present(window)
 
-    button(dialog, "Import and Apply").emit("clicked")
+    button(dialog, "Import and apply").emit("clicked")
     main_loop.settle("the dialog")
 
     [group] = [
@@ -281,3 +281,32 @@ def test_an_empty_slot_is_hidden(tmp_path: Path) -> None:
     main_loop.settle("the dialog")
 
     assert not dialog.slot.get_visible()
+
+
+def test_the_preview_names_the_preset_it_adds_and_leaves_the_wallpaper(tmp_path: Path) -> None:
+    """Finding 25 of the #153 review: the preview said "Nord" for a preset that landed as
+    "Nord 2", and never said that importing leaves the wallpaper alone."""
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.presets_archive import read_archive
+    from hyprtweaker.ui.dialogs.theme_import import ThemeImportDialog
+
+    window, session, archive = build(tmp_path)
+    session.import_preset(read_archive(archive))
+    dialog = ThemeImportDialog(session, archive)
+    dialog.present(window)
+    main_loop.settle("the dialog")
+
+    descriptions = [
+        w.get_description() for w in walk(dialog) if isinstance(w, Adw.PreferencesGroup)
+    ]
+    assert any(
+        (text or "").endswith(
+            "You already have a preset called Nord, so this one is added as Nord 2."
+        )
+        for text in descriptions
+    )
+    assert (
+        "Saved with the preset. Importing leaves your wallpaper as it is: to show this one, "
+        "apply the preset and choose to change the wallpaper."
+    ) in descriptions

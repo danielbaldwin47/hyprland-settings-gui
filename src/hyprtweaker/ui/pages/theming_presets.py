@@ -34,6 +34,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, Gtk  # noqa: E402
 
 from hyprtweaker.engine.bridge import Several, Wallpaper  # noqa: E402
+from hyprtweaker.engine.bridge.wire import shown as tilde_path  # noqa: E402
 from hyprtweaker.engine.presets import (  # noqa: E402
     CaptureScope,
     ColorChoice,
@@ -374,7 +375,7 @@ class PresetsGroup:
         match result:
             case PresetSaved(slug, preset):
                 self.refresh(force=True)
-                self._actions.toast(f"Saved {preset.name}.")
+                self._actions.toast(f"Saved {preset.name}")
                 self.reveal_preset(slug)
             case PresetNameTaken(_slug, taken):
                 self._confirm_replace(name, taken, scopes)
@@ -458,8 +459,8 @@ class PresetsGroup:
         if isinstance(result, PresetApplied) and result.skipped:
             n = len(result.skipped)
             self._actions.toast(
-                f"{n} {'setting was' if n == 1 else 'settings were'} skipped: this Hyprland "
-                "cannot set them."
+                f"{n} {'setting was' if n == 1 else 'settings were'} skipped: this version of "
+                "Hyprland cannot set them."
             )
 
     def _apply_in_session(
@@ -489,7 +490,7 @@ class PresetsGroup:
             self._tell(f"Could not export {preset.name}", result.reason)
             return
         assert isinstance(result, ArchiveWritten)
-        text = f"Exported {preset.name} to {result.path.name}."
+        text = f"Exported {preset.name} to {tilde_path(result.path, self._session.paths)}"
         if result.wallpaper_left_out:
             text += f" {result.wallpaper_left_out}"
         self._actions.toast(text)

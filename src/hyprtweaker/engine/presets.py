@@ -213,6 +213,15 @@ class PresetStore:
         """
         return self._dir / WALLPAPERS_DIR
 
+    def free_name(self, wanted: str) -> tuple[str, str]:
+        """The name and slug `add` gives a Preset called `wanted`: itself, or the first of
+        "<wanted> 2", "<wanted> 3", ... no Preset or wallpaper has."""
+        name, slug, counter = wanted, self.slug_for(wanted), 2
+        while self.exists(slug) or self._wallpaper_of(slug) is not None:
+            name = f"{wanted} {counter}"
+            slug, counter = self.slug_for(name), counter + 1
+        return name, slug
+
     def add(
         self, preset: Preset, wallpaper: tuple[str, bytes] | None = None
     ) -> tuple[str, Preset]:
@@ -223,10 +232,7 @@ class PresetStore:
         written first and the Preset records where, so a Preset never names a missing image.
         If the Preset cannot be written, the image is removed again. Raises `OSError`.
         """
-        name, slug, counter = preset.name, self.slug_for(preset.name), 2
-        while self.exists(slug) or self._wallpaper_of(slug) is not None:
-            name = f"{preset.name} {counter}"
-            slug, counter = self.slug_for(name), counter + 1
+        name, slug = self.free_name(preset.name)
         image: Path | None = None
         if wallpaper is not None:
             extension, data = wallpaper

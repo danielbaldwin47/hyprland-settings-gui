@@ -126,7 +126,8 @@ def test_the_shown_wallpaper_is_read_per_output(tmp_path: Path) -> None:
         0,
         ": DP-1: 2560x1440, scale: 1, currently displaying: image: /pictures/a b.png\n"
         ": HDMI-A-1: 1920x1080, scale: 1.5, currently displaying: image: /pictures/c.jpg\n"
-        ": eDP-1: 1920x1200, scale: 1, currently displaying: color: 000000\n",
+        ": eDP-1: 1920x1200, scale: 1, currently displaying: color: 000000\n"
+        ": DP-2: 1920x1080, scale: 1, currently displaying: image: -rf.png\n",
         "",
     )
     tools = FakeTools("swww", replies={"query": query})

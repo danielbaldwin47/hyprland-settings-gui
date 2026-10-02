@@ -49,9 +49,9 @@ def changes_text(name: str, preview: PresetPreview) -> str:
         text = f"{name} changes {count}, in {where}. {UNDO_LINE}"
     left = len(preview.unknown) + len(preview.invalid)
     if left == 1:
-        text += " This Hyprland cannot set one setting, so it is skipped."
+        text += " This version of Hyprland cannot set one setting, so it is skipped."
     elif left:
-        text += f" This Hyprland cannot set {left} settings, so they are skipped."
+        text += f" This version of Hyprland cannot set {left} settings, so they are skipped."
     return text
 
 

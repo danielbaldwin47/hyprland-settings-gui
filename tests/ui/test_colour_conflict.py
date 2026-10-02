@@ -87,7 +87,7 @@ def test_a_conflict_asks_with_two_answers_and_a_remember_check(tmp_path: Path) -
     assert dialog.get_heading() == "Use Nord's colors?"
     assert dialog.get_body() == (
         "matugen sets your colors from the wallpaper. Using Nord's colors pauses matugen "
-        "until you choose it again on the Theming page. Ctrl+Z puts both back."
+        "until you choose it again on the Theming page. One Ctrl+Z puts everything back."
     )
     assert dialog.get_response_label("use") == "Use preset's colors"
     assert dialog.get_response_label("keep") == "Keep wallpaper colors"

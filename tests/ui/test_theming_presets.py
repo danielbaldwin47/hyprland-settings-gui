@@ -318,7 +318,7 @@ def test_saving_writes_a_preset_of_the_chosen_scopes_and_lists_it(tmp_path: Path
     assert (slug, preset.name, dict(preset.options)) == ("nord", "Nord", {BORDER_SIZE: 3})
     assert preset.scopes == {CaptureScope.GAPS_LAYOUT}
     assert list(group.rows) == ["nord"]
-    assert "Saved Nord." in toasts(window)
+    assert "Saved Nord" in toasts(window)
 
 
 def test_save_waits_for_a_scope_as_well_as_a_name(tmp_path: Path) -> None:
@@ -695,7 +695,7 @@ def test_export_writes_a_theme_archive_to_the_chosen_file(tmp_path: Path) -> Non
     archive = read_archive(destination)
     assert archive.preset.name == "Nord"
     assert dict(archive.preset.options) == {BORDER_SIZE: 3}
-    assert "Exported Nord to nord.hyprtweaker-theme." in toasts(window)
+    assert f"Exported Nord to {destination}" in toasts(window)
 
 
 def _with(actions: Any, **changes: Any) -> Any:
@@ -736,7 +736,7 @@ def test_import_previews_then_adds_the_preset_to_the_list(tmp_path: Path) -> Non
         "Importing adds Nord to your presets. Applying it would change 1 setting, but "
         "applying is off. This app is not connected to Hyprland."
     ]
-    labelled(dialog, "Add to Presets").emit("clicked")
+    labelled(dialog, "Add to presets").emit("clicked")
     main_loop.settle("the import")
 
     assert list(presets_of(window).rows) == ["nord"]
@@ -786,7 +786,7 @@ def test_the_import_preview_asks_whose_colours_win_only_under_a_wallpaper_source
     assert dialog.choice.use.get_active()
     dialog.choice.keep.set_active(True)
     dialog.choice.remember.set_active(True)
-    labelled(dialog, "Import and Apply").emit("clicked")
+    labelled(dialog, "Import and apply").emit("clicked")
     main_loop.settle("the import")
 
     assert session.applied == [("nord", ColorChoice.KEEP_WALLPAPER, False)]

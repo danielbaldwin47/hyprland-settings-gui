@@ -114,9 +114,15 @@ class ThemeImportDialog(Adw.Dialog):
 
         summary = Adw.PreferencesGroup(
             # The name is the archive's text and may hold `&` or `<`: escaped, not markup.
-            title=GLib.markup_escape_text(f"Import “{preset.name}”?"),
+            title=GLib.markup_escape_text(f"Import {preset.name}?"),
             description=GLib.markup_escape_text(
-                _summary(preset.name, preview, archive, self._session.offline_sentence)
+                _summary(
+                    preset.name,
+                    preview,
+                    archive,
+                    self._session.offline_sentence,
+                    self._session.import_name(preset),
+                )
             ),
         )
         groups: list[Gtk.Widget] = [summary]
@@ -137,7 +143,7 @@ class ThemeImportDialog(Adw.Dialog):
         groups.extend(_left_out_group(preview, archive.dropped))
         page.get_child().set_content(_scrolled(_column(*groups)))
 
-        confirm = _suggested("Import and Apply" if live else "Add to Presets")
+        confirm = _suggested("Import and apply" if live else "Add to presets")
         confirm.connect("clicked", lambda button: self._confirm(button, archive, live))
         cancel = Gtk.Button(label="Cancel")
         cancel.connect("clicked", lambda _button: self.close())
@@ -202,7 +208,11 @@ class ThemeImportDialog(Adw.Dialog):
 
 
 def _summary(
-    name: str, preview: PresetPreview, archive: ThemeArchive, offline: str | None
+    name: str,
+    preview: PresetPreview,
+    archive: ThemeArchive,
+    offline: str | None,
+    landing: str,
 ) -> str:
     """What importing does, in words. `offline` is why applying is off, or `None` when on."""
     changes = sum(len(section.changes) for section in preview.sections)
@@ -220,6 +230,10 @@ def _summary(
         )
     if changes == 0:
         effect += f" Importing adds {name} to your presets."
+    if landing != name:
+        effect += (
+            f" You already have a preset called {name}, so this one is added as {landing}."
+        )
     if archive.newer_format:
         effect += (
             " It was made by a newer version of this app, so anything this version does not "
@@ -241,7 +255,11 @@ def _wallpaper_group(archive: ThemeArchive) -> Adw.PreferencesGroup | None:
     if image is None:
         return None
     group = Adw.PreferencesGroup(
-        title="Wallpaper", description="Saved with the preset, beside its settings."
+        title="Wallpaper",
+        description=(
+            "Saved with the preset. Importing leaves your wallpaper as it is: to show this "
+            "one, apply the preset and choose to change the wallpaper."
+        ),
     )
     try:
         texture = Gdk.Texture.new_from_bytes(GLib.Bytes.new(image.data))

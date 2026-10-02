@@ -75,7 +75,9 @@ class Daemon:
         shown = []
         for line in reply.stdout.splitlines():
             match = _QUERY_LINE.match(line.strip())
-            if match is not None:
+            # Only an absolute path is an image this app can name again: anything else could
+            # be read as an option when it is handed back (finding 6 of the #153 review).
+            if match is not None and Path(match["image"]).is_absolute():
                 shown.append(Shown(match["output"], Path(match["image"])))
         return tuple(shown)
 

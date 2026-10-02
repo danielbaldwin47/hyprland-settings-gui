@@ -7,6 +7,7 @@ theming tool or a wallpaper daemon; nothing here runs a real one.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -175,7 +176,8 @@ def test_a_hook_left_running_in_the_background_does_not_hold_the_run(
         assert time.monotonic() - started < 2
         assert (ran.returncode, ran.stdout) == (0, "done\n")
     finally:
-        os.kill(int(pid_file.read_text()), 9)
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(int(pid_file.read_text()), 9)
 
 
 def test_a_timeout_stops_everything_the_tool_started(

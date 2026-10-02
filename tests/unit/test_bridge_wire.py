@@ -487,7 +487,9 @@ def test_an_entrypoint_that_cannot_be_updated_leaves_every_file(paths: ConfigPat
     )
 
     assert result == NotDone(
-        "matugen", "hyprland.lua could not be updated right now, so nothing was changed. Try again; if it fails again, the banner at the top of the window says why."
+        "matugen",
+        "hyprland.lua could not be updated right now, so nothing was changed. Try again; if "
+        "it fails again, the banner at the top of the window says why.",
     )
     assert tree(paths.config_home.parent) == before
 

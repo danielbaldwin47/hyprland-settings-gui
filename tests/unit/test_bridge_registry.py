@@ -412,3 +412,18 @@ def test_an_entry_survives_json_and_a_malformed_one_is_dropped() -> None:
     assert BridgeEntry.from_json(entry.as_json()) == entry
     assert BridgeEntry.from_json({**entry.as_json(), "state": "sideways"}) is None
     assert BridgeEntry.from_json({**entry.as_json(), "line": 3}) is None
+
+
+def test_an_image_that_reads_as_an_option_is_never_passed() -> None:
+    """Finding 6 of the #153 review."""
+    import pytest
+
+    from hyprtweaker.engine.bridge import MATUGEN
+
+    with pytest.raises(ValueError, match="reads as an option"):
+        MATUGEN.rerun_argv(Path("/bin/matugen"), Path("--help"))
+    assert MATUGEN.rerun_argv(Path("/bin/matugen"), Path("/w.png"))[:3] == (
+        "/bin/matugen",
+        "image",
+        "/w.png",
+    )

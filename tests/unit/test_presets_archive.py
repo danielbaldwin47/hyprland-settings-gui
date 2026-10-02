@@ -176,7 +176,8 @@ def test_a_failed_export_leaves_the_file_that_was_there(tmp_path: Path) -> None:
     written = export_archive(nord(), dest, find=lambda: Broken())
 
     assert written == ArchiveNotWritten(
-        "The theme file could not be written: zstd failed. Check there is free space, then try again."
+        "The theme file could not be written: zstd failed. Check there is free space, then "
+        "try again."
     )
     assert tree(tmp_path) == before
 

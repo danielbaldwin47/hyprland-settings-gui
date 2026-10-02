@@ -215,6 +215,10 @@ class ToolSpec:
         """
         if not self.rerun:
             raise ValueError(f"{self.title} has no regenerate command")
+        if str(image).startswith("-"):
+            # The tool would read it as an option (finding 6 of the #153 review). A real
+            # image is absolute; the page's placeholder for one is not, and is never run.
+            raise ValueError(f"the image cannot be passed as {image}: it reads as an option")
         argv = [str(binary), *(str(image) if arg == "{image}" else arg for arg in self.rerun)]
         for parameter in self.parameters:
             value = values.get(parameter.key, parameter.default)

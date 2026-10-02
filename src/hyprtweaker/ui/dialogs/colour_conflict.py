@@ -60,7 +60,8 @@ def conflict_body(preset: str, source: Wallpaper | Several) -> str:
         tools, sets, them = f"{', '.join(names[:-1])} and {names[-1]}", "set", "one"
     return (
         f"{tools} {sets} your colors from the wallpaper. Using {preset}'s colors pauses "
-        f"{tools} until you choose {them} again on the Theming page. Ctrl+Z puts both back."
+        f"{tools} until you choose {them} again on the Theming page. One Ctrl+Z puts "
+        "everything back."
     )
 
 

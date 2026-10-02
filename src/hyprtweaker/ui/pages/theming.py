@@ -477,7 +477,9 @@ class ThemingPage:
             case TabState.NOT_IN_USE:
                 lead = f"Colors come from {_source_words(self._state.source)} now."
                 if tab.wired:
-                    status = _row("Not in use", f"{lead} {title} stays set up for a switch.")
+                    status = _row(
+                        "Not in use", f"{lead} {title} is set up; switch to it any time."
+                    )
                 else:
                     status = _row(
                         "Not set up",
