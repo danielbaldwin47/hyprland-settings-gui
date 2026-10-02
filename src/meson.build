@@ -145,6 +145,7 @@ package_sources = {
     'rule_editor.py',
     'submap_editor.py',
     'theme_import.py',
+    'wire_consent.py',
     'workspace_fields.py',
     'workspace_rule_editor.py',
   ],
@@ -161,6 +162,8 @@ package_sources = {
     'rules.py',
     'scripting.py',
     'tasks.py',
+    'theming.py',
+    'theming_state.py',
     'workspace_rules.py',
   ],
   'hyprtweaker/ui/rows': [

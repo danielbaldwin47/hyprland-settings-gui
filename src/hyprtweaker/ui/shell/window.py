@@ -140,6 +140,7 @@ from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     load_tasks_mapping,
     plan_tasks_view,
 )
+from hyprtweaker.ui.pages.theming import ThemingActions, ThemingPage  # noqa: E402
 from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
     WorkspaceRuleActions,
     WorkspaceRulesPage,
@@ -377,6 +378,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
         self._scripting_page: ScriptingPage | None = None
+        self._theming_page: ThemingPage | None = None
         self._shown_entities: dict[str, tuple[Any, ...]] = {}
         """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
         self._shown_live = False
@@ -903,6 +905,11 @@ class MainWindow(Adw.ApplicationWindow):
         return self._scripting_page
 
     @property
+    def theming_page(self) -> ThemingPage | None:
+        """The Theming Page (ADR-0014), once built. The UI tier asserts against it."""
+        return self._theming_page
+
+    @property
     def monitors_page(self) -> MonitorsPage | None:
         """The Displays Page, once built. The UI tier asserts against it."""
         return self._monitors_page
@@ -1131,6 +1138,15 @@ class MainWindow(Adw.ApplicationWindow):
         self._stack.add_named(_scrolled(scripting.page), scripting.section)
         self._section_titles[scripting.section] = scripting.title
         self._register(scripting.section, scripting.title, self._scripting_count())
+
+        # The Theming Page (ADR-0014, #164): the Color source and the tools that make it.
+        self._theming_page = ThemingPage(
+            self._session, actions=ThemingActions(toast=self._toast)
+        )
+        theming = self._theming_page
+        self._stack.add_named(_scrolled(theming.page), theming.section)
+        self._section_titles[theming.section] = theming.title
+        self._register(theming.section, theming.title, theming.set_up_count)
 
         self._shown_entities = self._entity_lists()
         self._shown_live = bool(self._session.live)
@@ -1840,6 +1856,10 @@ class MainWindow(Adw.ApplicationWindow):
         # `user.lua` changes: the Scripting inventory re-reads with it, its plugin list too.
         if self._scripting_page is not None:
             self._scripting_page.refresh()
+        # The Color source is read off the Entrypoint, which a transaction or a foreign
+        # reload can have changed: the Theming Page reads it again (ADR-0014).
+        if self._theming_page is not None:
+            self._theming_page.refresh()
         self._draw_entity_pages(self._moved_entities())
         # Always, not only when an Entity list moved: the Scripting count follows `user.lua`.
         self._sync_entity_counts()
@@ -2273,6 +2293,8 @@ class MainWindow(Adw.ApplicationWindow):
             counts[declarations.section] = len(declarations.entities)
         if self._scripting_page is not None:
             counts[self._scripting_page.section] = self._scripting_count()
+        if self._theming_page is not None:
+            counts[self._theming_page.section] = self._theming_page.set_up_count
         index = 0
         while (row := self._sidebar.get_row_at_index(index)) is not None:
             index += 1
@@ -2444,6 +2466,34 @@ class MainWindow(Adw.ApplicationWindow):
                 monitors = self._monitors_page
                 return monitors.reveal_profile(str(key)) if monitors is not None else None
 
+    def reveal_backend(self, tool: str) -> None:
+        """Open the Theming Page on `tool` and flash it: a "Set by <tool>" pill's click (#165).
+
+        Always lands (settled S8): matugen and wallust on their tab, another tool on its
+        "Other tools" row, an unknown one on the Page's top. The scroll waits a turn for
+        the reason `reveal_option` gives.
+        """
+        page = self._theming_page
+        if page is None:
+            return
+        self._end_one_off_reveal()
+        self._select_section(page.section)
+
+        def reveal() -> bool:
+            target = page.reveal_backend(tool)
+            if target is not None:
+                _scroll_when_laid_out(target)
+            return False
+
+        GLib.idle_add(reveal, priority=GLib.PRIORITY_LOW)
+
+    def _toast(self, text: str) -> None:
+        """A short message: plain text, since a tool's name or a path may hold `&`."""
+        toast = Adw.Toast(timeout=4)
+        toast.set_use_markup(False)
+        toast.set_title(text)
+        self._toasts.add_toast(toast)
+
     def _entity_changed(self) -> None:
         """A hit whose entity is gone: refresh the list and say so, rather than fail quietly."""
         self._finder.requery()
@@ -2555,6 +2605,9 @@ class MainWindow(Adw.ApplicationWindow):
             # Showing the Page re-reads the files: "open in editor, save, come back" must
             # not need a reload or a restart to show what was just written.
             self._scripting_page.refresh()
+        if self._theming_page is not None and section == self._theming_page.section:
+            # A tool installed or a config edited while the app ran shows on arrival.
+            self._theming_page.refresh()
         self._stack.set_visible_child_name(section)
         self._content_page.set_title(self._page_title(section))
         self._split.set_show_content(True)

@@ -448,3 +448,36 @@ def test_a_scripting_page_refresh_releases_the_plugin_rows_and_groups_it_replace
     # Per refresh: two rows and their widgets, the lead group and two kinds' groups.
     assert len(refs) == TIMES * 7
     assert collected(refs) == [True] * len(refs)
+
+
+def test_a_theming_page_refresh_releases_the_rows_it_replaced(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """`ThemingPage.refresh` replaces every row of its groups (#164); each row's buttons
+    hold the page's bound methods, the cycle #219 found."""
+    from hyprtweaker.engine.bridge import MATUGEN, Wallpaper, bridge_states_for
+    from hyprtweaker.engine.state import Manifest
+    from hyprtweaker.engine.writer import Writer
+
+    stub_tool("matugen")
+    stub_tool("dms")
+    (tmp_path / "hypr/dms").mkdir(parents=True)
+    (tmp_path / "hypr/dms/colors.lua").write_text("return {}\n")
+    session = offline_session(tmp_path)
+    manifest = Manifest.load(session.paths.manifest, app_version="x", schema_version="y")
+    entries = bridge_states_for(
+        Wallpaper("matugen"), manifest.add_bridge(MATUGEN, present=()).bridges, present=()
+    )
+    Writer(session.paths, app_version=APP_VERSION).record_bridges(session.model, entries)
+    window = wired_window(session)
+    page = window.theming_page
+    assert page.button("Remove…") is not None, page.rows
+
+    refs = []
+    for _ in range(TIMES):
+        page.refresh()
+        refs.extend(weakref.ref(row) for rows in page._rows.values() for row in rows)
+    page.refresh()
+
+    assert len(refs) >= TIMES * 5
+    assert collected(refs) == [True] * len(refs)
