@@ -166,14 +166,15 @@ def _int(value: Any) -> int:
 
 def gap_row(
     title: str,
-    field: GapField,
+    field: Gtk.Widget,
     *,
     subtitle: str | None = None,
     suffix: Gtk.Widget | None = None,
 ) -> Adw.PreferencesRow:
     """The row a `GapField` sits in: its title (and `suffix`, a trash button say) on one
     line, the help under it, the control below. A box in a plain `PreferencesRow`, because
-    the field is too wide to be an `Adw.ActionRow` suffix."""
+    the field is too wide to be an `Adw.ActionRow` suffix. Any control that wide (the
+    Displays page's modeline entry) takes the same row."""
     heading = Gtk.Box(spacing=6)
     heading.append(Gtk.Label(label=title, xalign=0.0, hexpand=True))
     if suffix is not None:

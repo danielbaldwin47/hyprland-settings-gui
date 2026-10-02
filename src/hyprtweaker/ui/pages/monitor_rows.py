@@ -123,14 +123,15 @@ class ModeRows:
         self.refresh = Adw.ComboRow(title="Refresh rate")
         self._rates: list[float | None] = []
 
-        # ADR-0013 §2: the format stays on screen as the subtitle, not in a tooltip.
-        self.modeline = Adw.ActionRow(title="Modeline", subtitle=MODELINE_FORMAT)
-        self.modeline_entry = Gtk.Entry(valign=Gtk.Align.CENTER, hexpand=True)
+        # ADR-0013 §2: the format stays on screen as help, not in a tooltip. A modeline
+        # runs to ~60 characters, so its entry takes a line of its own under the help
+        # (`gap_row`'s stacked shape); as an ActionRow suffix it showed ~12 of them.
+        self.modeline_entry = Gtk.Entry(hexpand=True, css_classes=["monospace"])
         self._written_modeline = ""
         if shown == _CUSTOM_MODELINE:
             self._written_modeline = rule_text[len(MODELINE_PREFIX) :].strip()
             self.modeline_entry.set_text(self._written_modeline)
-        self.modeline.add_suffix(self.modeline_entry)
+        self.modeline = gap_row("Modeline", self.modeline_entry, subtitle=MODELINE_FORMAT)
         self.modeline.set_sensitive(editable)
 
         self._show(shown, wanted, specified=specified)

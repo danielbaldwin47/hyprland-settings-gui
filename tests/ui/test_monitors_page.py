@@ -704,7 +704,7 @@ def test_a_special_mode_in_the_rule_shows_its_plain_name() -> None:
 
 
 def test_a_modeline_rule_shows_custom_modeline_and_edits_ride_the_breaking_lane() -> None:
-    from gi.repository import Gtk
+    from gi.repository import Adw, Gtk
 
     line = "148.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync"
     row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", mode=f"modeline {line}")])
@@ -713,12 +713,16 @@ def test_a_modeline_rule_shows_custom_modeline_and_edits_ride_the_breaking_lane(
     assert not row_titled(row, "Refresh rate").get_sensitive()
     modeline = row_titled(row, "Modeline")
     assert modeline.get_visible()
-    assert modeline.get_subtitle() == (
+    assert (
         "The timings, in order: clock hdisplay hsync_start hsync_end htotal "
         "vdisplay vsync_start vsync_end vtotal, then any flags."
-    )
+    ) in shown_text(modeline)
     entry = suffix_of(modeline, Gtk.Entry)
     assert entry.get_text() == line
+    # A modeline is ~60 characters: the entry gets a line of its own under the help,
+    # not a squeezed suffix beside it.
+    assert not isinstance(modeline, Adw.ActionRow)
+    assert entry.get_hexpand()
     entry.emit("activate")  # unchanged: nothing to write
     assert recorder.breaking == []
 
