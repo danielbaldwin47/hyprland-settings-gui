@@ -142,6 +142,7 @@ package_sources = {
     'notices.py',
     'rule_editor.py',
     'submap_editor.py',
+    'theme_import.py',
     'workspace_fields.py',
     'workspace_rule_editor.py',
   ],
