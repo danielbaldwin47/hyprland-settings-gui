@@ -30,8 +30,8 @@ from hyprtweaker.engine.importer import (
 from hyprtweaker.engine.importer.binds import _KEY_RENAMES
 from hyprtweaker.engine.importer.dispatchers import LEGACY_DISPATCHERS, MAX_SCRIPT_BYTES
 from hyprtweaker.engine.importer.keysyms import known_keysym, validator_available
-from hyprtweaker.engine.schema import load_schema
 from hyprtweaker.engine.model.entities import DispatcherCall
+from hyprtweaker.engine.schema import load_schema
 from hyprtweaker.engine.writer.animations import render_animation
 from hyprtweaker.engine.writer.binds import DISABLED_PREFIX, render_bind
 from hyprtweaker.engine.writer.inputs import render_device
