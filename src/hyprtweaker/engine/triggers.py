@@ -321,10 +321,13 @@ def validate_trigger(
                 "Mouse, wheel and switch triggers cannot be combined with other keys.",
                 f"Use just one of: {', '.join(p for p in parts if _is_exclusive(p))}.",
             )
+        # Probed under #198 (Hyprland 0.56.2): a keysym pair and a key-code pair both pass
+        # `--verify-config`, and the compositor registers only the last key.
+        fires_as = Trigger(trigger.mods, parts[-1]).display()
         return TriggerProblem(
             Severity.WARN,
             "Multi-key binds are shown as written and cannot be captured.",
-            "Edit the text directly if this is what you meant.",
+            f"Hyprland loads it but binds only the last key, so it fires as {fires_as}.",
         )
 
     if lowered in WHEEL:

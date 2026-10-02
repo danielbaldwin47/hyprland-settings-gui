@@ -14,6 +14,7 @@ from hyprtweaker.engine.triggers import (
     CaptureRecorder,
     Severity,
     Trigger,
+    TriggerProblem,
     button_token,
     format_trigger,
     normalise_keysym,
@@ -189,20 +190,26 @@ def test_exclusive_sym_combined_with_another_key_is_blocked(text: str) -> None:
     assert problem is not None and problem.blocking
 
 
+def test_a_multi_key_trigger_warns_and_names_the_key_that_fires() -> None:
+    """Probed under #198 on Hyprland 0.56.2: `SUPER + A + B` passes `--verify-config` and
+    registers as SUPER + B, so it is a loadable bind that fires on only the last key."""
+    problem = validate_trigger("SUPER + A + B")
+    assert problem == TriggerProblem(
+        Severity.WARN,
+        "Multi-key binds are shown as written and cannot be captured.",
+        "Hyprland loads it but binds only the last key, so it fires as SUPER + B.",
+    )
+
+
 def test_keycodes_are_not_exclusive_syms() -> None:
     """`code:N` sits in parseKeyString's "one or more keysyms" branch, not the exclusive
-    one -- so a multi-key bind of two key codes is legal and must not be blocked."""
+    one: `SUPER + code:36 + code:37` passes `--verify-config` (#198), so it is not blocked."""
     problem = validate_trigger("SUPER + code:36 + code:37")
-    assert problem is not None
-    assert problem.severity is Severity.WARN  # multi-key: read-only, not invalid
-    assert not problem.blocking
-
-
-def test_multi_key_warns_rather_than_blocks() -> None:
-    """Imported multi-key binds are read-only, not invalid (ADR-0007)."""
-    problem = validate_trigger("SUPER + A + B")
-    assert problem is not None
-    assert problem.severity is Severity.WARN
+    assert problem == TriggerProblem(
+        Severity.WARN,
+        "Multi-key binds are shown as written and cannot be captured.",
+        "Hyprland loads it but binds only the last key, so it fires as SUPER + key code 37.",
+    )
 
 
 @needs_xkb
