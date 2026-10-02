@@ -19,9 +19,16 @@ Three properties are asserted over them:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
 from _golden import assert_matches_golden
 from _support import CORPUS_DIR, GOLDEN_DIR
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "integration"))
+
+from harness import corpus
 
 from hyprtweaker.engine.importer import import_config, parse
 from hyprtweaker.engine.importer.keywords import (
@@ -30,6 +37,7 @@ from hyprtweaker.engine.importer.keywords import (
     SpecialCategory,
     UnparsedLine,
 )
+from hyprtweaker.engine.importer.loss import LossCode
 from hyprtweaker.engine.importer.lua import Consent, import_lua, lua_binary
 from hyprtweaker.engine.schema import load_schema
 from hyprtweaker.engine.writer.modules import render_module
@@ -248,6 +256,32 @@ class TestLossClassification:
             pytest.skip("hyprv is not checked out")
         codes = {str(item.code) for item in imports["hyprv"].loss}
         assert "L13" in codes
+
+    def test_jakoolits_report_names_the_clamped_border_speed(self, schema, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """The one change the import makes to a value the user chose is said in their
+        words: the speed they wrote and the speed that was written (#205).
+
+        Staged, because jakoolit sources its animations through `$HOME`, which the
+        module's shared imports point nowhere.
+        """
+        staged = corpus.stage(corpus.rice("jakoolit"), tmp_path / "home")
+        result = import_config(
+            staged.entrypoint,
+            schema,
+            env={"HOME": str(staged.home), "XDG_CONFIG_HOME": str(staged.home / ".config")},
+        )
+        clamped = [
+            (item.message, item.replacement)
+            for item in result.loss
+            if item.code is LossCode.ANIMATION_RANGE
+        ]
+        assert clamped == [
+            (
+                "borderangle animation speed 180 is above Hyprland's limit of 100; it was "
+                "set to 100, so it runs faster.",
+                "speed = 100",
+            )
+        ]
 
     def test_no_rice_reports_a_finding_with_an_unknown_code(self, imports) -> None:  # type: ignore[no-untyped-def]
         from hyprtweaker.engine.importer.loss import LOSS_CODES
