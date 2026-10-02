@@ -271,3 +271,19 @@ class TestRestore:
         )
 
         assert restore(before, schema, None) == (before, ())
+
+    def test_an_explicit_null_restores_as_null(self, paths: ConfigPaths) -> None:
+        """The Module spells a null as the Option's `null_value` (`-1` here); parsing that as
+        a value would come back as four `-1` sides, a different statement."""
+        _, restored = restore(
+            kept(general__float_gaps=RetiredValue("0.56.0", -1)), sample_schema(), None
+        )
+        model = ConfigModel(sample_schema())
+        for each in restored:
+            model.set(each.option.name, each.value)
+
+        assert [(r.retired_name, r.value) for r in restored] == [("general:float_gaps", None)]
+        assert (
+            "    float_gaps = -1,\n"
+            in Writer(paths, SAMPLE_APP_VERSION).render_modules(model)["options/general.lua"]
+        )
