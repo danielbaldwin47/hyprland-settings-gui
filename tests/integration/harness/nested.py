@@ -170,6 +170,24 @@ def drm_card_problem(card: Path, sys_drm: Path = SYS_DRM) -> str | None:
     return None
 
 
+def _session_fences(environment: Mapping[str, str]) -> list[str]:
+    """`bwrap` arguments that hide the host's session bus and systemd user manager.
+
+    Belt to `HYPRLAND_NO_SD_VARS`' braces: a config's `hl.env(..., true)` -- which the app's
+    own Writer emits -- or an `exec` of `systemctl --user` would otherwise still reach them
+    through the shared `XDG_RUNTIME_DIR`.
+    """
+    runtime = environment.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        return []
+    fences: list[str] = []
+    if Path(runtime, "bus").exists():
+        fences += ["--ro-bind", "/dev/null", f"{runtime}/bus"]
+    if Path(runtime, "systemd").is_dir():
+        fences += ["--tmpfs", f"{runtime}/systemd"]
+    return fences
+
+
 def drm_wrapped(
     argv: Sequence[str],
     environment: Mapping[str, str],
@@ -193,10 +211,13 @@ def drm_wrapped(
         "--dev-bind", str(card), str(card),
         "--dev-bind", str(render), str(render),
         "--tmpfs", "/dev/input",
+        *_session_fences(environment),
         "--die-with-parent",
         *argv,
     ]  # fmt: skip
-    return wrapped, {**environment, "LIBSEAT_BACKEND": "noop", "AQ_DRM_DEVICES": str(card)}
+    fenced = {**environment, "LIBSEAT_BACKEND": "noop", "AQ_DRM_DEVICES": str(card)}
+    fenced.pop("DBUS_SESSION_BUS_ADDRESS", None)
+    return wrapped, fenced
 
 
 def live_instances(env: Mapping[str, str]) -> dict[str, dict[str, Any]]:
@@ -296,6 +317,13 @@ class NestedHyprland:
         """
         environment = home_environment(self.home)
         environment.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+        # Hyprland exports its session to the systemd user manager and the D-Bus activation
+        # environment at start (`systemctl --user import-environment ...`) and unsets it at
+        # exit, unless told not to: a nested child would repoint the developer's portals and
+        # services at its own socket, then leave them with none.
+        environment["HYPRLAND_NO_SD_VARS"] = "1"
+        environment["HYPRLAND_NO_SD_NOTIFY"] = "1"
+        environment.pop("NOTIFY_SOCKET", None)
         if drm_card() is not None:
             # Windowless: with no host display to nest into, Hyprland takes the DRM backend
             # on the handed card, which has no monitor, so nothing maps on the host.

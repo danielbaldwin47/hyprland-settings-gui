@@ -22,11 +22,13 @@ focused.
 Two more fences, because both processes still share the host's session bus and
 `XDG_RUNTIME_DIR`. The app runs non-unique (`HYPRTWEAKER_NON_UNIQUE=1`), so two sandboxes, or a
 sandbox beside an installed copy, never hand their launch to each other. And a copied
-`--config` has its top-level `hl.exec_cmd(...)` and `hl.env(...)` lines commented out, so a
-rice's autostart (keyrings, idle daemons, `dbus-update-activation-environment`, `systemctl
---user`) never runs against the owner's session. Bind actions (`hl.dsp.exec_cmd`) stay: they
-run only on a key press inside the nested window. SIGTERM and SIGHUP end the run the same way
-closing the app does, so the nested compositor is always stopped.
+`--config` has its top-level `hl.exec_cmd(...)` and `hl.env(...)` lines commented out, which
+covers every rice in `tests/corpus` today; a config that spawns through `os.execute` or an
+alias is not caught. In the default windowless mode the harness's `bwrap` also hides the host's
+session bus and systemd user manager from the compositor, so what does run cannot reach them.
+Bind actions (`hl.dsp.exec_cmd`) stay: they run only on a key press inside the nested
+window. SIGTERM and SIGHUP end the run the same way closing the app does, so the nested
+compositor is always stopped.
 
 """
 
@@ -78,11 +80,14 @@ def neuter_autostart(hypr: Path) -> int:
 
 
 def windowless_card() -> Path | None:
-    """`HARNESS_DRM_CARD` if set, else the first card this user may open that the harness
+    """`HARNESS_DRM_CARD` if set, else the first PCI card this user may open that the harness
     accepts (not NVIDIA, no monitor connected, a render node, `bwrap` present)."""
     if os.environ.get(DRM_CARD_VARIABLE):
         return Path(os.environ[DRM_CARD_VARIABLE])
     for card in sorted(Path("/dev/dri").glob("card[0-9]*")):
+        bus = (Path("/sys/class/drm") / card.name / "device" / "subsystem").resolve().name
+        if bus != "pci":
+            continue  # a virtual KMS device is nobody's spare GPU; name it explicitly if wanted
         if os.access(card, os.R_OK | os.W_OK) and drm_card_problem(card.resolve()) is None:
             return card
     return None

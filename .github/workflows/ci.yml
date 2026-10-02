@@ -12,7 +12,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The draft flag is in the key: a push to a draft and the `ready_for_review` run that
+  # follows on the same SHA must not cancel each other.
+  group: ci-${{ github.ref }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
 permissions:
