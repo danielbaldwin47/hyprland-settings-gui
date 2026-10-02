@@ -37,6 +37,9 @@ COLUMNS = (
     "range",
     "labels",
     "unit",
+    "restart",
+    "known_values",
+    "null_value",
     "title",
 )
 
@@ -79,6 +82,9 @@ def _row(option: ResolvedOption) -> str:
             bounds,
             labels,
             option.unit or "-",
+            str(option.restart.value) if option.restart is not None else "-",
+            "/".join(option.known_values.values) if option.known_values is not None else "-",
+            repr(option.null_value) if option.null_value is not None else "-",
             option.title,
         )
     )
