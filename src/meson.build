@@ -21,6 +21,7 @@ package_sources = {
     'paths.py',
     'prefs.py',
     'presets.py',
+    'presets_archive.py',
     'profiles.py',
     'rule_filter.py',
     'rule_grammars.py',

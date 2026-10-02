@@ -42,6 +42,11 @@ MAY_SPAWN = {
         "from its environment, because --verify-config executes the config with live "
         "bindings and would otherwise reach the session the user is sitting in"
     ),
+    "presets_archive.py": (
+        "the `zstd` binary, compressing or decompressing a Theme archive over pipes when "
+        "`compression.zstd` (Python 3.14+) is missing (#169); an argument list, never a "
+        "shell, with the session's instance signature and displays stripped"
+    ),
 }
 """Engine modules allowed to start a process, and why.
 

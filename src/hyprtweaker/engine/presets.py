@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -43,6 +43,12 @@ _log = logging.getLogger(__name__)
 
 FORMAT = 1
 """The file layout this build writes. Bump it only for a change an older build would misread."""
+
+WALLPAPERS_DIR = "wallpapers"
+"""Under `presets/`: the images imported Theme archives carried (#169)."""
+
+WALLPAPER_EXTENSIONS = ("png", "jpg", "jpeg", "webp")
+"""The image types a Theme archive may carry, by the extension its wallpaper is saved under."""
 
 
 class CaptureScope(StrEnum):
@@ -168,7 +174,7 @@ class PresetStore:
     def load(self, slug: str) -> Preset | None:
         try:
             data = json.loads((self._dir / f"{slug}.json").read_text(encoding="utf-8"))
-            return _from_json(data)
+            return preset_from_json(data)
         except (OSError, ValueError, TypeError, LookupError, AttributeError) as error:
             _log.debug("presets/%s.json is not a readable preset: %s", slug, error)
             return None
@@ -181,19 +187,72 @@ class PresetStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         path = self._dir / f"{slug}.json"
         scratch = path.with_name(f".{path.name}.tmp")
-        scratch.write_text(json.dumps(_to_json(preset), indent=2) + "\n", encoding="utf-8")
+        scratch.write_text(
+            json.dumps(preset_to_json(preset), indent=2) + "\n", encoding="utf-8"
+        )
         scratch.replace(path)
         self._revision += 1
 
     def delete(self, slug: str) -> None:
         (self._dir / f"{slug}.json").unlink(missing_ok=True)
+        for extension in WALLPAPER_EXTENSIONS:
+            (self.wallpaper_dir / f"{slug}.{extension}").unlink(missing_ok=True)
         self._revision += 1
+
+    @property
+    def wallpaper_dir(self) -> Path:
+        """Where an imported Preset's wallpaper is kept: `presets/wallpapers/<slug>.<ext>`.
+
+        Only images an import wrote live here, named by the slug the store chose, so
+        deleting a Preset deletes its image and nothing else.
+        """
+        return self._dir / WALLPAPERS_DIR
+
+    def add(
+        self, preset: Preset, wallpaper: tuple[str, bytes] | None = None
+    ) -> tuple[str, Preset]:
+        """Write `preset` under a slug no Preset or wallpaper has, and return what was written.
+
+        Never an overwrite: a name that is taken becomes "<name> 2", "<name> 3", ..., so the
+        list shows two rows a user can tell apart. `wallpaper` is `(extension, bytes)`; it is
+        written first and the Preset records where, so a Preset never names a missing image.
+        If the Preset cannot be written, the image is removed again. Raises `OSError`.
+        """
+        name, slug, counter = preset.name, self.slug_for(preset.name), 2
+        while self.exists(slug) or self._wallpaper_of(slug) is not None:
+            name = f"{preset.name} {counter}"
+            slug, counter = self.slug_for(name), counter + 1
+        image: Path | None = None
+        if wallpaper is not None:
+            extension, data = wallpaper
+            image = self.wallpaper_dir / f"{slug}.{extension}"
+            image.parent.mkdir(parents=True, exist_ok=True)
+            scratch = image.with_name(f".{image.name}.tmp")
+            scratch.write_bytes(data)
+            scratch.replace(image)
+        added = replace(preset, name=name, wallpaper=None if image is None else str(image))
+        try:
+            self.write(slug, added)
+        except OSError:
+            if image is not None:
+                image.unlink(missing_ok=True)
+            raise
+        return slug, added
+
+    def _wallpaper_of(self, slug: str) -> Path | None:
+        for extension in WALLPAPER_EXTENSIONS:
+            path = self.wallpaper_dir / f"{slug}.{extension}"
+            if path.exists():
+                return path
+        return None
 
 
 # --- JSON shape --------------------------------------------------------------------------
 
 
-def _to_json(preset: Preset) -> dict[str, Any]:
+def preset_to_json(preset: Preset) -> dict[str, Any]:
+    """The file's JSON object for `preset`: `presets/<slug>.json`, and a Theme archive's
+    `preset.json`."""
     return {
         "format": FORMAT,
         "name": preset.name,
@@ -206,7 +265,9 @@ def _to_json(preset: Preset) -> dict[str, Any]:
     }
 
 
-def _from_json(data: Any) -> Preset | None:
+def preset_from_json(data: Any) -> Preset | None:
+    """`preset_to_json` read back: `None` for a wrong-typed field; raises `LookupError`,
+    `ValueError`, `TypeError` or `AttributeError` for a missing or malformed one."""
     fmt = data["format"]
     if not isinstance(fmt, int) or isinstance(fmt, bool) or fmt < 1:
         return None
