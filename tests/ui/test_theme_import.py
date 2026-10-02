@@ -191,7 +191,7 @@ def test_confirming_while_live_imports_then_applies_through_the_given_apply(
     monkeypatch.setattr(Session, "live", property(lambda _self: True))
     applied: list[str] = []
 
-    def apply(slug: str) -> PresetApplied:
+    def apply(slug: str, **_choices: object) -> PresetApplied:
         applied.append(slug)
         return PresetApplied(applied=("general:border_size",), skipped=())
 
@@ -209,7 +209,7 @@ def test_confirming_while_live_imports_then_applies_through_the_given_apply(
 def test_a_colour_conflict_adds_the_preset_and_says_where_to_choose(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Until #171 puts the choice in this dialog, a conflict applies nothing (#170)."""
+    """A colour question the dialog did not ask applies nothing and says where to choose."""
     from gi.repository import Adw
 
     from hyprtweaker.engine.bridge import Wallpaper
@@ -220,7 +220,7 @@ def test_a_colour_conflict_adds_the_preset_and_says_where_to_choose(
     window, session, archive = build(tmp_path)
     monkeypatch.setattr(Session, "live", property(lambda _self: True))
     dialog = ThemeImportDialog(
-        session, archive, apply=lambda _slug: PresetColorConflict(Wallpaper("matugen"))
+        session, archive, apply=lambda _slug, **_: PresetColorConflict(Wallpaper("matugen"))
     )
     dialog.present(window)
 

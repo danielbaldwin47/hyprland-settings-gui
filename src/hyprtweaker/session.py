@@ -881,6 +881,14 @@ class Session:
             return None
         return shown[0].image if shown else None
 
+    def wallpaper_absent_reason(self) -> str | None:
+        """Why a Preset's wallpaper cannot be saved or changed from here, or `None` when a
+        daemon this app can drive is running. A sentence for the Presets group (#171). Reads
+        the tool path and runtime directory only, so it is safe on the main loop."""
+        if self._wallpapers.detect() is not None:
+            return None
+        return self._wallpapers.absent_reason()
+
     def manifest(self) -> Manifest:
         """The Manifest as it is on disk now: what #166's `detect` and `unwire` take."""
         return self._manifest()

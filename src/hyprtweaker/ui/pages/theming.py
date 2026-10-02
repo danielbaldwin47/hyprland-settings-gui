@@ -18,6 +18,9 @@ sentence and "Check again" stand where the tabs would.
 same confirm, their on/off read from their entries, and the sentence for a version this app
 cannot load.
 
+**Presets.** The group below the rest (`theming_presets.py`, #171) saves, applies, exports and
+imports Presets; `reveal_preset(slug)` is its entry point for a search hit.
+
 **Rebuilt in place.** The groups are made once and only their rows are replaced on refresh,
 each released (#219), so a group another ticket adds below (`add_group`) never moves. Nothing
 here runs a tool unless the user pressed Regenerate or agreed to a command a confirm named.
@@ -74,6 +77,7 @@ from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.dialogs.wire_consent import ConsentDialog  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
+from hyprtweaker.ui.pages.theming_presets import PresetActions, PresetsGroup  # noqa: E402
 from hyprtweaker.ui.pages.theming_state import (  # noqa: E402
     BACKENDS,
     IN_USE_STATES,
@@ -143,6 +147,9 @@ class ThemingActions:
     choose_image: ChooseImage = choose_image
     find: Find = find_tool
     run: Run = run_tool
+    presets: PresetActions = field(default_factory=PresetActions)
+    """What the Presets group asks of the window: apply with its toast, the remembered
+    colour answer, file choosers (#171)."""
 
 
 def _row(title: str, subtitle: str = "") -> Adw.ActionRow:
@@ -189,8 +196,10 @@ class ThemingPage:
             self._tabs.append(button)
             self._tab_buttons[tool] = button
         self._backends.set_header_suffix(self._tabs)
+        self._presets = PresetsGroup(session, actions.presets)
         for group in (self._source, self._backends, self._options, self._other):
             self._page.add(group)
+        self._page.add(self._presets.group)
         self._rows: dict[Adw.PreferencesGroup, list[Gtk.Widget]] = {
             group: [] for group in (self._source, self._backends, self._options, self._other)
         }
@@ -299,6 +308,17 @@ class ThemingPage:
             flash(target)
         return target
 
+    @property
+    def presets(self) -> PresetsGroup:
+        """The Presets group (#171): its rows, buttons and dialogs, for the window and tests."""
+        return self._presets
+
+    def reveal_preset(self, slug: str) -> Gtk.Widget | None:
+        """Flash Preset `slug`'s row in the Presets group and return it, for a search hit
+        (#172, settled S8). `None` when there is no such Preset."""
+        self._presets.refresh()
+        return self._presets.reveal_preset(slug)
+
     # --- refresh --------------------------------------------------------------------------
 
     def refresh(self) -> None:
@@ -307,6 +327,7 @@ class ThemingPage:
         self._draw_backends()
         self._draw_source()
         self._draw_other()
+        self._presets.refresh()
 
     def _read(self) -> _Read:
         manifest = self._session.manifest()

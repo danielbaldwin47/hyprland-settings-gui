@@ -11,10 +11,11 @@ preview is `Session.preview_preset`, adding is `Session.import_preset` (never an
 and applying is the `apply` it is given, `Session.apply_preset` by default: one Apply
 transaction, one Ctrl+Z (#168).
 
-For #171: `slot` is an empty box under the summary, where the colour-conflict choice row
-(#170) goes, and `apply` is how its choice reaches the apply, e.g.
-`apply=lambda slug: session.apply_preset(slug, colors=row.choice())`. The menu entry and the
-file chooser are #171's too.
+The colour question (#170, #171). When the Preset carries colours and a wallpaper tool sets
+them now, the preview asks whose win, in `slot` under the summary, because the answer changes
+what "Import and Apply" does. A remembered answer is not asked again: one sentence says it
+applies. The choice reaches the apply as `apply(slug, colors=...)`, and a ticked "Remember my
+choice" goes to `on_remember`. The file chooser and the menu entry are the Presets group's.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 from ...engine.presets import (  # noqa: E402
+    ColorChoice,
     PresetApplied,
     PresetApplyResult,
     PresetColorConflict,
@@ -48,6 +50,7 @@ from ...engine.presets_archive import (  # noqa: E402
 )
 from ...session import Session  # noqa: E402
 from ..rows.state import value_label  # noqa: E402
+from .colour_conflict import ColourConflictChoice, remembered_sentence  # noqa: E402
 from .migration import _actions, _column, _page, _scrolled, _suggested  # noqa: E402
 
 UNKNOWN_SUBTITLE = "This version of Hyprland does not have it"
@@ -62,7 +65,9 @@ class ThemeImportDialog(Adw.Dialog):
         session: Session,
         source: Path,
         *,
-        apply: Callable[[str], PresetApplyResult] | None = None,
+        apply: Callable[..., PresetApplyResult] | None = None,
+        remembered: ColorChoice | None = None,
+        on_remember: Callable[[ColorChoice], None] | None = None,
         on_finished: Callable[[PresetImported], None] | None = None,
         find: Callable[[], Codec | None] = find_codec,
     ) -> None:
@@ -70,6 +75,10 @@ class ThemeImportDialog(Adw.Dialog):
         self._session = session
         self._apply = apply or session.apply_preset
         self._on_finished = on_finished
+        self._remembered = remembered
+        self._on_remember = on_remember
+        self.choice: ColourConflictChoice | None = None
+        """The colour question, while it is being asked in the preview."""
         self._defaults: dict[Adw.NavigationPage, Gtk.Widget] = {}
         """Each page's safe button, made the dialog's default while that page shows."""
         self.slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -109,6 +118,14 @@ class ThemeImportDialog(Adw.Dialog):
             description=GLib.markup_escape_text(_summary(preset.name, preview, archive, live)),
         )
         groups: list[Gtk.Widget] = [summary]
+        source = self._session.preset_color_conflict(preset) if live else None
+        if source is not None and self._remembered is None:
+            self.choice = ColourConflictChoice(preset.name, source)
+            self.slot.append(self.choice)
+        elif source is not None and self._remembered is not None:
+            note = Gtk.Label(label=remembered_sentence(self._remembered), xalign=0, wrap=True)
+            note.add_css_class("dim-label")
+            self.slot.append(note)
         picture = _wallpaper_group(archive)
         if picture is not None:
             groups.append(picture)
@@ -133,10 +150,14 @@ class ThemeImportDialog(Adw.Dialog):
             self._view.push(self._stopped_page("Nothing was imported", imported.reason))
             return
         if live:
-            applied = self._apply(imported.slug)
+            colors = self.choice.choice if self.choice is not None else self._remembered
+            remembering = self.choice is not None and self.choice.remember.get_active()
+            if self.choice is not None and remembering and self._on_remember is not None:
+                self._on_remember(self.choice.choice)
+            applied = self._apply(imported.slug, colors=colors)
             if not isinstance(applied, PresetApplied):
-                # A conflict applied nothing: until the choice is in this dialog (#171),
-                # the Presets list is where it is asked (#170).
+                # A colour question this dialog did not ask (the sources moved between the
+                # preview and the click) applied nothing: the Presets list asks it.
                 reason = (
                     "Its colors and the ones your wallpaper sets would compete, so apply it "
                     "from your presets to choose which win."

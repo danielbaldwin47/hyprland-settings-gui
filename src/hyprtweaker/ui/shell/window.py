@@ -153,6 +153,7 @@ from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     plan_tasks_view,
 )
 from hyprtweaker.ui.pages.theming import ThemingActions, ThemingPage  # noqa: E402
+from hyprtweaker.ui.pages.theming_presets import PresetActions  # noqa: E402
 from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
     WorkspaceRuleActions,
     WorkspaceRulesPage,
@@ -1008,6 +1009,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._prefs = prefs
         self._prefs_store.save(prefs)
         self._forget_action.set_enabled(bool(prefs.remembered))
+        if self._theming_page is not None:
+            # The Presets group shows a remembered colour answer, with "Forget" (#171).
+            self._theming_page.presets.refresh()
 
     def _on_choose_theme(self, action: Gio.SimpleAction, parameter: Any) -> None:
         theme = _theme_from(parameter.get_string())
@@ -1163,7 +1167,19 @@ class MainWindow(Adw.ApplicationWindow):
         self._theming_page = ThemingPage(
             self._session,
             actions=ThemingActions(
-                toast=self._toast, current_wallpaper=self._session.current_wallpaper
+                toast=self._toast,
+                current_wallpaper=self._session.current_wallpaper,
+                presets=PresetActions(
+                    apply=self.apply_preset,
+                    remembered=lambda: remembered_choice(self._prefs.remembered),
+                    forget=lambda: self._remember(
+                        self._prefs.without_remembered(COLOR_CONFLICT_DIALOG)
+                    ),
+                    remember=lambda choice: self._remember(
+                        self._prefs.with_remembered(COLOR_CONFLICT_DIALOG, choice.value)
+                    ),
+                    toast=self._toast,
+                ),
             ),
         )
         theming = self._theming_page
@@ -2167,7 +2183,12 @@ class MainWindow(Adw.ApplicationWindow):
         return self._colour_conflict
 
     def apply_preset(
-        self, slug: str, *, wallpaper: bool = False, colors: ColorChoice | None = None
+        self,
+        slug: str,
+        *,
+        wallpaper: bool = False,
+        colors: ColorChoice | None = None,
+        remember: bool = False,
     ) -> PresetApplyResult:
         """Apply a Preset, asking first whose colours win while a wallpaper sets them.
 
@@ -2176,6 +2197,8 @@ class MainWindow(Adw.ApplicationWindow):
         the group's "change / keep mine". A refusal is said as a toast; what the wallpaper
         part could not do arrives through `show_preset_note`.
         """
+        if remember and colors is not None:
+            self._remember(self._prefs.with_remembered(COLOR_CONFLICT_DIALOG, colors.value))
         if colors is None:
             colors = remembered_choice(self._prefs.remembered)
         result = self._session.apply_preset(slug, colors=colors, wallpaper=wallpaper)
