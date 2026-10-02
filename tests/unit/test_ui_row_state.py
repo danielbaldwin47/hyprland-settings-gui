@@ -25,6 +25,7 @@ from hyprtweaker.engine.schema import (
     Visibility,
     Widget,
     load_schema,
+    supplement,
 )
 from hyprtweaker.ui.rows.state import (
     ADVANCED_PILL,
@@ -64,8 +65,9 @@ class FakeContext:
         device_overrides: Mapping[str, tuple[str, ...]] | None = None,
         live_hyprland: LiveHyprland | None = None,
         retired: Mapping[str, str] | None = None,
+        schema: Schema = SCHEMA,
     ) -> None:
-        self.schema: Schema = SCHEMA
+        self.schema = schema
         self.live = live
         self.pending_restart = pending_restart
         self.unapplied = unapplied
@@ -74,7 +76,7 @@ class FakeContext:
         self.live_hyprland = live_hyprland
         self.retired: Mapping[str, str] = retired or {}
         """Retired Option name -> the release that retired it."""
-        self.model = ConfigModel(SCHEMA)
+        self.model = ConfigModel(schema)
 
     def unknown_to_version(self, option: ResolvedOption) -> bool:
         return self.live_hyprland is not None and option.name not in self.live_hyprland.names
@@ -369,6 +371,43 @@ def test_a_row_matching_more_than_two_pills_shows_the_top_two_and_lists_the_rest
     assert first.tooltip == "This was written to your config, but Hyprland is not using it."
     assert second.tooltip.endswith("\nAlso: Not in this Hyprland, Restart, Advanced.")
     assert second.tooltip.startswith("Something loaded after the app's own settings")
+
+
+def _supplemented(record: dict[str, Any]) -> tuple[ResolvedOption, Schema]:
+    """An Option a newer Hyprland 0.58.0 described beyond the shipped Schema (#177)."""
+    schema = supplement(SCHEMA, (record,), version="0.58.0")
+    return schema[str(record["name"])], schema
+
+
+def test_an_option_only_a_newer_hyprland_has_wears_a_new_in_pill_and_stays_editable() -> None:
+    option, schema = _supplemented(
+        {"name": "general:snap_new", "description": "x", "default": False}
+    )
+    context = FakeContext(schema=schema)
+
+    state = row_state(option, context)
+
+    assert [(pill.label, pill.tooltip) for pill in state.pills] == [
+        (
+            "New in 0.58.0",
+            "Not in the shipped schema; shown with a generic control until the next "
+            "release check.",
+        )
+    ]
+    assert state.editable
+    assert _pills(SCHEMA["general:gaps_in"], context) == (), "a shipped option has none"
+
+
+def test_the_new_in_pill_ranks_below_what_failed_and_above_advanced() -> None:
+    option, schema = _supplemented(
+        {"name": "debug:new_trace", "description": "x", "default": False}
+    )
+    context = FakeContext(unapplied=frozenset({option.name}), schema=schema)
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "New in 0.58.0")
+    assert second.tooltip.endswith("\nAlso: Advanced.")
 
 
 def test_a_pending_restart_replaces_the_restart_pill_rather_than_joining_it() -> None:

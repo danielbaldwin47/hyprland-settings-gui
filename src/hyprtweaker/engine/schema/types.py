@@ -279,6 +279,30 @@ class SectionOverlay:
     visibility: Visibility | None = None
 
 
+class SupplementKind(enum.StrEnum):
+    """Why an Option came from the running compositor rather than a shipped schema."""
+
+    NEWER_VERSION = "newer-version"
+    """A Hyprland newer than every shipped schema has it (ADR-0012 §Pinning, #177)."""
+
+    PLUGIN = "plugin"
+    """A loaded plugin declares it (`plugin:*`, #175)."""
+
+
+@dataclass(frozen=True, slots=True)
+class Supplement:
+    """An Option inferred at runtime from the live `descriptions` reply (ADR-0012).
+
+    Minimal and shape-inferred: no stub, no source, no Overlay entry, so a conservative
+    control. A degradation state, not a schema source -- the next release check replaces
+    it with a real Generated record.
+    """
+
+    kind: SupplementKind
+    version: str
+    """The running Hyprland's version, whose `descriptions` reply the record came from."""
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedOption:
     """Generated plus Overlay: the only Option shape the app above this package sees.
@@ -331,6 +355,10 @@ class ResolvedOption:
     added_in: str | None = None
     """The Hyprland version that added this Option, from the Generated schema. The Tasks
     view groups an uncurated Option with one under `New in <added_in>` (ADR-0012)."""
+
+    supplement: Supplement | None = None
+    """Set only on an Option no shipped schema has, inferred from the running compositor's
+    own description of it (`engine/schema/supplement.py`). Its Row is flagged."""
 
     @property
     def dotted_key(self) -> str:

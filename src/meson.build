@@ -90,6 +90,7 @@ package_sources = {
     'overlay.py',
     'resolve.py',
     'sources.py',
+    'supplement.py',
     'types.py',
   ],
   'hyprtweaker/engine/state': [

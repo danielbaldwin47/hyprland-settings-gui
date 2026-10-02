@@ -38,6 +38,7 @@ from hyprtweaker.engine.schema import (
     ResolvedOption,
     Restart,
     Schema,
+    SupplementKind,
     Visibility,
     Widget,
     humanise,
@@ -530,6 +531,19 @@ def _restart_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     return Pill(RESTART_PILL, f"Changing this takes effect {_RESTART_EFFECT[option.restart]}.")
 
 
+def _new_in_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # ADR-0012 §Pinning: a Hyprland newer than every shipped schema described this Option
+    # and the app inferred a minimal record for it, so it renders flagged -- a generic
+    # control, no curated title or help -- until a real Generated schema replaces it.
+    flag = option.supplement
+    if flag is None or flag.kind is not SupplementKind.NEWER_VERSION:
+        return None
+    return Pill(
+        f"New in {flag.version}",
+        "Not in the shipped schema; shown with a generic control until the next release check.",
+    )
+
+
 def _device_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     # The `device-override` Row state (ADR-0013, CONTEXT.md). Distinct from
     # "Overridden", which is about a *file* loaded after the app's own and is therefore
@@ -567,6 +581,7 @@ class PillKind(enum.Enum):
     NOT_IN_HYPRLAND = enum.auto()
     PENDING_RESTART = enum.auto()
     RESTART = enum.auto()
+    NEW_IN = enum.auto()
     DEVICE = enum.auto()
     ADVANCED = enum.auto()
 
@@ -591,7 +606,7 @@ PILL_PRECEDENCE: Final[tuple[PillRule, ...]] = (
     PillRule(PillKind.NOT_IN_HYPRLAND, _not_in_hyprland_pill),
     PillRule(PillKind.PENDING_RESTART, _pending_restart_pill, frozenset({PillKind.RESTART})),
     PillRule(PillKind.RESTART, _restart_pill),
-    # `New in <version>` (#177).
+    PillRule(PillKind.NEW_IN, _new_in_pill),
     # `Plugin option` (#175).
     PillRule(PillKind.DEVICE, _device_pill),
     PillRule(PillKind.ADVANCED, _advanced_pill),

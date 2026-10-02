@@ -29,6 +29,7 @@ from hyprtweaker.engine.schema.resolve import schema_dir, version_key
 
 from .plan import (
     DEFAULT_DISCLOSURE,
+    NEW_IN_GROUP_DESCRIPTION,
     Disclosure,
     GroupPlan,
     PagePlan,
@@ -36,6 +37,7 @@ from .plan import (
     group_title,
     is_visible,
     is_withheld,
+    new_in_group_title,
 )
 
 TASKS_FILENAME = "tasks.json"
@@ -56,28 +58,6 @@ A plain word rather than the `New in <version>` heading: that string names a *Gr
 uncurated Options (`CONTEXT.md`: a Group is the titled block inside a Page), and reusing it
 one level up would put a Group's name where a category's belongs, telling the reader that a
 whole sidebar section is a version rather than a subject.
-"""
-
-
-def new_in_group_title(version: str) -> str:
-    """The heading uncurated Options appear under (ADR-0012, #7).
-
-    Named for the Hyprland version rather than a bare "Other" because the version is the
-    actionable part: it tells the user these arrived with an upgrade, and it tells whoever
-    curates next exactly which release to diff.
-    """
-    return f"New in {version}"
-
-
-NEW_IN_GROUP_DESCRIPTION = (
-    "Settings this version of Hyprland has that the curated pages do not place yet. "
-    "They work exactly as they do in the Config view."
-)
-"""The flag #7 and ADR-0012 ask for ("appears ... flagged, until it is curated").
-
-The heading alone reads as *new*, which is not the same claim: it would leave a user to
-wonder whether an uncurated setting is half-supported. Saying it plainly is what makes the
-degradation legible rather than merely visible.
 """
 
 
@@ -407,16 +387,21 @@ def _with_fallbacks(
             # Every Option here is either curated elsewhere by name or is the hidden tier.
             # Nothing to show, and nothing the user could turn on to see.
             continue
-        groups = (
-            (
-                GroupPlan(
-                    title=new_in_group_title(schema.hyprland_version),
-                    options=tuple(visible),
-                    description=NEW_IN_GROUP_DESCRIPTION,
-                ),
+        # Titled with the release that added each Option where it is known (`added_in`,
+        # which a runtime-supplemented Option carries too), so a Section only the running
+        # Hyprland has is not announced as new in the shipped one.
+        by_version: dict[str, list[ResolvedOption]] = {}
+        for option in visible:
+            by_version.setdefault(option.added_in or schema.hyprland_version, []).append(option)
+        groups = tuple(
+            GroupPlan(
+                title=new_in_group_title(version),
+                options=tuple(members),
+                description=NEW_IN_GROUP_DESCRIPTION,
             )
-            if visible
-            else ()
+            for version, members in sorted(
+                by_version.items(), key=lambda item: version_key(item[0])
+            )
         )
         fallbacks.append(
             PagePlan(

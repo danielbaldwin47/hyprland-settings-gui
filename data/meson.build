@@ -8,6 +8,7 @@
 # app that starts with no options at all. tests/unit/test_schema_data_installed.py diffs
 # these names against what is on disk.
 schema_files = files(
+  'schema/hyprland-0.56.1.json',
   'schema/hyprland-0.56.2.json',
   'schema/overlay.json',
   'schema/tasks.json',
