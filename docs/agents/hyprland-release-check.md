@@ -21,16 +21,26 @@ Confirm it on the same machine with `HARNESS_DRM_CARD=/dev/dri/card0 pytest test
 
 ## 2. Diff
 
-Compare against the previous newest schema, at four layers:
+Compare against the previous newest schema, at five layers:
 
 1. **Schema diff** — classify every change: added / removed / **renamed** (heuristic: identical description + default across a removed/added pair — confirm against the release notes before recording) / retyped / range change / enum-map change / default change / new Section or subsection.
 2. **Stub API diff** — `hl.meta.lua` old vs new: entity constructors and their arg tables, the `hl.dsp.*` dispatcher table, `BindOptions` fields, rule match props and effects, `HL.EventName`.
 3. **Wiki diff** — `hyprwm/hyprland-wiki` `content/Configuring/**` at the matching point: re-run the restart-required regex (the `restart` overlay field is wiki prose only — nothing in source or IPC exports it), and note changed help anchors.
 4. **Entity catalogue diff** — `src/hyprtweaker/engine/entities_catalog.py`, the hand-curated half of the Entity surface (#70). Nothing in CI covers it, so it is the one layer that rots in silence: re-probe the new version and compare. The animation leaves are not in this layer: step 1's `tools/gen_schema.py` records them into the schema from `hyprctl -j animations`, and the completeness test fails the build on a tree the catalogue cannot resolve (`SHIPPED_ANIMATION_LEAVES` is only the fallback for a schema without the block). The `hl.device` key set, `GESTURE_DIRECTIONS`/`GESTURE_ACTIONS`, `PERMISSION_TYPES`/`PERMISSION_MODES` and the required-field rules against `Hyprland --verify-config` (a rejected key names itself); `GESTURE_DIRECTION_COVERS` by re-running the direction-pair sweep. Step 1 already stands up a Hyprland of `<ver>`, so all of it runs in that session.
+5. **Dispatcher catalogue diff** — `CATALOG` in `src/hyprtweaker/engine/dispatchers.py`, curated from what the compositor answers (#126, ADR-0007); a changed signature leaves a bind form that offers the wrong keys. From the repo root, against a nested Hyprland of `<ver>` only:
+
+   ```sh
+   env -u HYPRLAND_INSTANCE_SIGNATURE HARNESS_DRM_CARD=/dev/dri/card0 UPDATE_GOLDEN=1 \
+     .venv/bin/pytest tests/integration/test_dispatcher_probe.py -m hyprland
+   ```
+
+   - The run writes the probed shapes to `tests/golden/dispatcher-probe-<ver>.json`; `diff` it against the previous version's file for the record diff.
+   - The run's other tests are the catalogue diff. A drifted dispatcher fails by path with both shapes, for example `window.float: required keys ['window'] differ from the compositor's []` or `omits keys the compositor reads: ['action']`.
+   - It needs `foot`. Name the file by path: a bare `tests/integration -m hyprland` also runs `test_ipc_live.py`.
 
 Output: `data/schema/hyprland-<ver>.diff.json` (machine, shipped beside the schema — the app's *New in \<version\>* grouping and Retired detection read it) plus a human summary for the PR.
 
-Done when every change in all four layers is classified — an unclassified change is a diff bug, not a skippable line.
+Done when every change in all five layers is classified — an unclassified change is a diff bug, not a skippable line.
 
 ## 3. Curate
 
@@ -42,6 +52,7 @@ Update `data/schema/overlay.json`:
 - **Restart-list change** → update `restart` fields, hand-verified against the wiki prose.
 - **Stub API changes** (new dispatcher, new match prop, new effect, changed arg table) → update the engine's typed tables. A **new entity kind** is out of this protocol's scope: open a `ready-for-human` issue for it and say so in the PR.
 - **Entity catalogue changes** → update `entities_catalog.py` in the same PR. A leaf or field the app does not know is not a cosmetic gap: an unknown `hl.device` key is a hard error that takes the whole Module down, and a leaf the catalogue lacks is one the user cannot set. Unknown values already degrade to *shown, flagged* (ADR-0012's rule for Options, applied to Entities), so the PR is a curation update, never a rescue.
+- **Dispatcher catalogue changes** → edit the entries layer 5 named in `dispatchers.py`, then rerun its command without `UPDATE_GOLDEN=1` until all three tests pass. A curated entry lists every key the probe saw the compositor read; a shape `ArgSpec` cannot state in full stays `free_form` with its `free_form_reason`, so a saved bind never loses a key on edit. Commit the new record.
 
 Done when the CI overlay completeness test passes against the new schema locally.
 

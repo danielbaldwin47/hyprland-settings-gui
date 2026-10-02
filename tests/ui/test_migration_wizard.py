@@ -443,6 +443,76 @@ class TestExport:
 # --- widget-tree helpers ---------------------------------------------------------------------
 
 
+def _import_entry(window):  # type: ignore[no-untyped-def]
+    """The main menu's Import entry as a user meets it: its widget in the popover."""
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gtk
+
+    from hyprtweaker.ui.shell.window import IMPORT_LABEL
+
+    button = next(w for w in _walk(window) if isinstance(w, Gtk.MenuButton) and w.get_popover())
+    entries = [
+        w
+        for w in _walk(button.get_popover())
+        if type(w).__name__ == "GtkModelButton" and w.get_property("text") == IMPORT_LABEL
+    ]
+    assert len(entries) == 1, "the main menu should have exactly one Import entry"
+    return entries[0]
+
+
+class TestImportBelowTheFloor:
+    """Below Hyprland 0.56 the compositor cannot read Lua, so Import must lead nowhere it
+    cannot finish (#101): the entry is unavailable and says why in the Banner's own words."""
+
+    def _window_under(self, tmp_path: Path, version: str):  # type: ignore[no-untyped-def]
+        from hyprtweaker.engine.ipc import LiveHyprland
+
+        live = LiveHyprland(version, ({"name": "general:border_size"},))
+        window, session = build_window(tmp_path, live)
+        window.route_first_run()
+        session.start()
+        window.sync()
+        return window, session
+
+    def test_the_entry_is_unavailable_and_says_why(self, tmp_path: Path) -> None:
+        window, _ = self._window_under(tmp_path, "0.55.0")
+        entry = _import_entry(window)
+
+        assert entry.get_property("text") == "Import..."
+        assert entry.get_sensitive() is False
+        assert entry.get_tooltip_text() == (
+            "Hyprland 0.55.0 is running, and this app needs Hyprland 0.56 or newer"
+            " — settings are read-only."
+        )
+        assert entry.get_tooltip_text() == window._banner.get_title()
+
+    def test_activating_it_anyway_opens_no_wizard_and_no_file_picker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from hyprtweaker.ui.shell import window as shell
+
+        opened: list[str] = []
+        monkeypatch.setattr(shell, "import_dialog", lambda *args: opened.append("picker"))
+        monkeypatch.setattr(
+            shell, "migration_dialog", lambda *args, **kw: opened.append("wizard")
+        )
+        window, _ = self._window_under(tmp_path, "0.55.0")
+
+        window.activate_action("import-config", None)
+        window._on_import(None, None)
+
+        assert opened == []
+
+    def test_a_supported_hyprland_keeps_the_entry_as_it_was(self, tmp_path: Path) -> None:
+        window, _ = self._window_under(tmp_path, "0.56.2")
+
+        entry = _import_entry(window)
+        assert entry.get_sensitive() is True
+        assert entry.get_tooltip_text() is None
+
+
 def _walk(widget):  # type: ignore[no-untyped-def]
     yield widget
     child = widget.get_first_child() if hasattr(widget, "get_first_child") else None

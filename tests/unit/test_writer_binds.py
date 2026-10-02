@@ -15,7 +15,11 @@ from hyprtweaker.engine.model.entities import (
     Unbind,
 )
 from hyprtweaker.engine.paths import BINDS_MODULE
-from hyprtweaker.engine.writer.binds import parse_binds_module, render_binds_module
+from hyprtweaker.engine.writer.binds import (
+    live_bind_count,
+    parse_binds_module,
+    render_binds_module,
+)
 
 VERSION = "0.1.0"
 
@@ -38,6 +42,44 @@ def exec_bind(keys: str, command: str, **kwargs: object) -> Bind:
         dispatcher=DispatcherCall(path="exec_cmd", positional=(command,)),
         **kwargs,  # type: ignore[arg-type]
     )
+
+
+class TestLiveBindCount:
+    """How many binds the compositor registers once the Module has loaded (#101)."""
+
+    def test_counts_only_the_binds_the_module_registers(self) -> None:
+        entities = EntitySet(
+            binds=[
+                exec_bind("SUPER + Q", "kitty"),
+                exec_bind("SUPER + W", "firefox", enabled=False),
+                Bind(keys="SUPER + F", dispatcher=None),
+                exec_bind("J", "x", submap="resize"),
+            ],
+            unbinds=[Unbind(keys="SUPER + P")],
+        )
+
+        assert live_bind_count(entities) == 2
+
+    def test_agrees_with_the_hl_bind_lines_the_module_actually_has(self) -> None:
+        entities = EntitySet(
+            binds=[
+                exec_bind("SUPER + Q", "kitty"),
+                exec_bind("SUPER + W", "firefox", enabled=False),
+                Bind(keys="SUPER + F", dispatcher=None),
+                exec_bind("J", "x", submap="resize"),
+                exec_bind("K", "y", submap="resize", enabled=False),
+            ],
+        )
+        live_lines = [
+            line
+            for line in render(entities).splitlines()
+            if line.lstrip().startswith("hl.bind(")
+        ]
+
+        assert live_bind_count(entities) == len(live_lines) == 2
+
+    def test_no_binds_is_zero(self) -> None:
+        assert live_bind_count(EntitySet()) == 0
 
 
 class TestRender:
