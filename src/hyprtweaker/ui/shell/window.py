@@ -125,6 +125,7 @@ from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     ORPHAN_CATEGORY_TITLE,
     CategoryPlan,
     TasksMapping,
+    entity_page_id,
     load_tasks_mapping,
     plan_tasks_view,
 )
@@ -133,8 +134,18 @@ from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
     WorkspaceRulesPage,
 )
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
-from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
+from hyprtweaker.ui.search import (  # noqa: E402
+    EntityHit,
+    EntityKind,
+    Hit,
+    OptionHit,
+    SearchIndex,
+    resolve,
+)
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
+
+ENTITY_CHANGED = "That item changed. Results updated."
+"""The toast for a search hit whose entity was removed or rewritten since it was listed."""
 
 IMPORT_ACTION = "import-config"
 IMPORT_LABEL = "Import..."
@@ -308,12 +319,14 @@ class MainWindow(Adw.ApplicationWindow):
         Held because it outranks the health Banner: "settings can't be saved yet, Convert..."
         is more use to someone on an unmigrated box than "no compositor", and it is the only
         Banner state with a way out on its own button."""
-        self._index = SearchIndex.build(session.schema)
-        """The finder's index, built once here (ADR-0017 §Index build).
+        self._index = SearchIndex.build(session.schema, session)
+        """The finder's index (ADR-0017 §Index build): its Options built here, its Entities
+        on the first query and whenever a query finds the model moved since.
 
-        At construction rather than on first Ctrl+F: the build is one pass over the Schema
-        and the alternative is a first search that stutters, which is the one search the
-        user judges the feature by."""
+        The Options at construction rather than on first Ctrl+F: the build is one pass over
+        the Schema and the alternative is a first search that stutters, which is the one
+        search the user judges the feature by. The Entities are read from the session at
+        query time, so startup pays nothing for them and no edit has to announce itself."""
         self._revealed: frozenset[str] = frozenset()
         """The Options a search hit has earned a place for on this visit (the One-off reveal).
 
@@ -1676,6 +1689,9 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.sync_banner()
         self._undo_action.set_enabled(self._session.can_undo)
+        # A result list on screen follows the model too: an undo or a foreign reload must
+        # not leave a row that opens something no longer there (settled S2b).
+        self._finder.requery()
 
     def sync_banner(self) -> None:
         """Make the one Banner agree with `Session.health`, and nothing else.
@@ -2036,7 +2052,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.start_search()
 
     def open_hit(self, hit: Hit) -> None:
-        """Navigate to a search result: the active View first, Config only if it must.
+        """Navigate to a search result: an Option's Row, or an Entity's row on its Page."""
+        if isinstance(hit, EntityHit):
+            self._open_entity_hit(hit)
+        else:
+            self._open_option_hit(hit)
+
+    def _open_option_hit(self, hit: OptionHit) -> None:
+        """Navigate to an Option's Row: the active View first, Config only if it must.
 
         ADR-0017's navigation rule, in the order it states it. A hit resolves against the
         View the user chose; the switch to Config happens only when the Row has no home
@@ -2054,6 +2077,68 @@ class MainWindow(Adw.ApplicationWindow):
         self._revealed = frozenset({hit.name})
         self.rebuild()
         self.reveal_option(hit.name, flash_row=True)
+
+    def _open_entity_hit(self, hit: EntityHit) -> None:
+        """Open the hit's Page and flash its row -- or say it changed, never land elsewhere.
+
+        The hit is re-resolved first (settled S2b): the entity may have moved since the
+        results were listed, or be gone. Gone is said in a toast over a refreshed list, so
+        the user sees why nothing opened and what the list holds now; a reveal by the old
+        position would open a different bind, which is worse than opening nothing.
+
+        Every Entity Page is in both Views, so there is no View fallback here. An Option's
+        One-off reveal still standing ends, as any navigation ends it. The reveal waits a
+        low-priority turn for the reason `reveal_option` gives: a `GtkStack` lays out only
+        its visible child, so the Page has no geometry to scroll until then.
+        """
+        position = resolve(hit, self._session)
+        if position is None:
+            self._entity_changed()
+            return
+        self._end_one_off_reveal()
+        key: int | str = position
+        if hit.kind is EntityKind.MONITOR_RULE:
+            key = self._session.monitor_rules[position].output
+        elif hit.kind is EntityKind.MONITOR_PROFILE:
+            key = self._session.monitor_profiles()[position][0]
+        self._select_section(entity_page_id(hit.kind.page_kind))
+        GLib.idle_add(self._reveal_entity, hit.kind, key, priority=GLib.PRIORITY_LOW)
+
+    def _reveal_entity(self, kind: EntityKind, key: int | str) -> bool:
+        """Flash the entity's row on its Page and scroll it into view explicitly.
+
+        Explicitly because the Pages reveal by focus, and an insensitive row -- every row
+        of a read-only session -- cannot take focus, so focus alone would scroll nowhere.
+        """
+        row = self._entity_row(kind, key)
+        if row is None:
+            self._entity_changed()
+        else:
+            _scroll_into_view(row)
+        return False
+
+    def _entity_row(self, kind: EntityKind, key: int | str) -> Gtk.Widget | None:
+        """The Page's reveal for one entity: its row, flashed, or `None` when it has none."""
+        match kind:
+            case EntityKind.BIND:
+                page = self._binds_page
+                return page.reveal(key) if page is not None and isinstance(key, int) else None
+            case EntityKind.WINDOW_RULE | EntityKind.LAYER_RULE:
+                rules = self._rules_page(
+                    "window" if kind is EntityKind.WINDOW_RULE else "layer"
+                )
+                return rules.reveal(key) if rules is not None and isinstance(key, int) else None
+            case EntityKind.MONITOR_RULE:
+                monitors = self._monitors_page
+                return monitors.reveal_rule(str(key)) if monitors is not None else None
+            case EntityKind.MONITOR_PROFILE:
+                monitors = self._monitors_page
+                return monitors.reveal_profile(str(key)) if monitors is not None else None
+
+    def _entity_changed(self) -> None:
+        """A hit whose entity is gone: refresh the list and say so, rather than fail quietly."""
+        self._finder.requery()
+        self._toasts.add_toast(Adw.Toast(title=ENTITY_CHANGED, timeout=4))
 
     def _end_one_off_reveal(self) -> None:
         """The visit is over: the user navigated somewhere themselves.

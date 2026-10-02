@@ -37,6 +37,9 @@ HIDDEN_OPTION = "debug:manual_crash"
 ROUNDING_OPTION = "decoration:rounding"
 BINDS_OPTION = "binds:workspace_back_and_forth"
 
+AT_STARTUP: dict[str, Any] = {}
+"""What the shared window's index held the moment `MainWindow` returned, before any query."""
+
 
 @pytest.fixture(scope="module")
 def state_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
@@ -66,6 +69,7 @@ def window(state_dir: Path) -> Iterator[Any]:
     )
     app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
     built = MainWindow(session, application=app)
+    AT_STARTUP["entity entries"] = built._index.entity_count
     # Mapped, because one assertion below is about *mapping* and nothing else can stand in
     # for it (see `test_type_to_search_survives_the_title_swap`). Destroyed at teardown: a
     # window left mapped keeps its `GtkApplication` alive and the next module's `app.run()`
@@ -274,3 +278,242 @@ def test_the_reveal_ends_when_the_user_navigates(window: Any) -> None:
 
     assert window.revealed == frozenset()
     assert all(page.row(HIDDEN_OPTION) is None for page in window.pages)
+
+
+# --- the Rules & entities group (#75) -------------------------------------------------------
+
+
+def test_startup_builds_no_entity_entries() -> None:
+    """Startup pays for the Schema only: the first query builds the Entity entries (S2b)."""
+    assert AT_STARTUP == {"entity entries": None}
+
+
+@pytest.fixture
+def entities(window: Any) -> Iterator[dict[str, Any]]:
+    """One entity of each kind, seeded into the shared window's model and Pages, then removed.
+
+    Seeded the way `test_binds_page.py` seeds: into the model's lists, then each Page
+    refreshed, as the window does after an edit. The profile goes through the Session,
+    which a read-only session allows (a capture is App-dir JSON, not a config write).
+    """
+    from hyprtweaker.engine.model.entities import (
+        Bind,
+        DispatcherCall,
+        LayerRule,
+        MonitorRule,
+        WindowRule,
+    )
+
+    session = window._session
+    model = session.model.entities
+    seeded = {
+        "bind": Bind(
+            keys="SUPER + Z",
+            dispatcher=DispatcherCall(path="exec_cmd", args={"command": "zathura"}),
+        ),
+        "dead": Bind(
+            keys="SUPER + zzdeadkey",
+            dispatcher=DispatcherCall(path="exec_cmd", args={"command": "zzdead"}),
+            enabled=False,
+        ),
+        "multi": Bind(
+            keys="SUPER + Y&U",
+            dispatcher=DispatcherCall(path="exec_cmd", args={"command": "zzmulti"}),
+            enabled=False,
+        ),
+        "window_rule": WindowRule(
+            name="Zz float zathura", match={"class": "zathura"}, effects={"float": True}
+        ),
+        "layer_rule": LayerRule(
+            name="Zz blur zbar", match={"namespace": "zbar"}, effects={"blur": True}
+        ),
+        "monitor_rule": MonitorRule(output="ZZ-1", fields={"mode": "1920x1080@60"}),
+    }
+    model.binds.extend([seeded["bind"], seeded["dead"], seeded["multi"]])
+    model.window_rules.append(seeded["window_rule"])
+    model.layer_rules.append(seeded["layer_rule"])
+    model.monitors.append(seeded["monitor_rule"])
+    seeded["profile"] = session.save_monitor_profile("Zz studio")
+    _refresh_entity_pages(window)
+    yield seeded
+
+    for name in ("binds", "window_rules", "layer_rules", "monitors"):
+        getattr(model, name)[:] = [
+            entity for entity in getattr(model, name) if entity not in seeded.values()
+        ]
+    session.delete_monitor_profile(seeded["profile"])
+    _refresh_entity_pages(window)
+
+
+def _refresh_entity_pages(window: Any) -> None:
+    for page in (
+        window.binds_page,
+        window.window_rules_page,
+        window.layer_rules_page,
+        window.monitors_page,
+    ):
+        page.refresh()
+    settle()
+
+
+def test_results_group_settings_first_then_rules_and_entities(
+    window: Any, entities: Any
+) -> None:
+    """ADR-0017's two groups, in order, each under its own heading."""
+    from hyprtweaker.ui.search import EntityHit, OptionHit
+
+    window.search("float")
+    settle()
+    kinds = [type(hit) for hit in window.hits]
+    assert OptionHit in kinds and EntityHit in kinds
+    assert kinds == sorted(kinds, key=[OptionHit, EntityHit].index)
+
+    headings = [
+        (index, row.get_header().get_label())
+        for index in range(len(window.hits))
+        if (row := window.finder.results.get_row_at_index(index)).get_header() is not None
+    ]
+    assert headings == [(0, "Settings"), (kinds.index(EntityHit), "Rules & entities")]
+
+
+@pytest.mark.parametrize(
+    ("query", "seed", "page_kind"),
+    [
+        ("super + z", "bind", "binds"),
+        ("zz float", "window_rule", "window_rules"),
+        ("zz blur", "layer_rule", "layer_rules"),
+        ("zz-1", "monitor_rule", "monitors"),
+        ("zz studio", "profile", "monitors"),
+    ],
+)
+def test_an_entity_hit_opens_its_page_and_flashes_its_row(
+    window: Any, entities: Any, query: str, seed: str, page_kind: str
+) -> None:
+    from hyprtweaker.ui.flash import FLASH_CLASS
+    from hyprtweaker.ui.pages.tasks import entity_page_id
+
+    window.search(query)
+    settle()
+    hit = next(hit for hit in window.hits if getattr(hit, "target", None) == entities[seed])
+
+    window.open_hit(hit)
+    settle()
+
+    assert window.visible_section == entity_page_id(page_kind)
+    flashed = _flashed_rows(window, FLASH_CLASS)
+    assert len(flashed) == 1, f"expected one flashed row, found {len(flashed)}"
+    if seed == "profile":
+        assert flashed[0] in window.monitors_page.profile_rows, "not in the Profiles group"
+
+
+def _flashed_rows(window: Any, css_class: str) -> list[Any]:
+    """Every row on the visible Page wearing the flash, found by walking its widgets."""
+    found = []
+    stack = [window._stack.get_visible_child()]
+    while stack:
+        widget = stack.pop()
+        if widget.has_css_class(css_class):
+            found.append(widget)
+        child = widget.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    return found
+
+
+@pytest.mark.parametrize("view_name", ["CONFIG", "TASKS"])
+def test_a_bind_hit_opens_entity_binds_in_both_views(
+    window: Any, entities: Any, view_name: str
+) -> None:
+    """The Binds Page id is `entity:binds` (#120), built by `entity_page_id` (#200)."""
+    from hyprtweaker.ui.pages.plan import View
+
+    window.set_view(View[view_name])
+    settle()
+    window.search("super + z")
+    settle()
+    window.open_hit(
+        next(hit for hit in window.hits if getattr(hit, "target", None) == entities["bind"])
+    )
+    settle()
+
+    assert window.view is View[view_name], "an Entity Page is in both Views: no fallback"
+    assert window.visible_section == "entity:binds"
+    assert window.binds_page.page.is_ancestor(window._stack.get_visible_child())
+
+
+@pytest.mark.parametrize("seed", ["dead", "multi"])
+def test_a_bind_hit_reads_its_rows_badge(window: Any, entities: Any, seed: str) -> None:
+    """A dead-keysym or multi-key bind is described in the words its row's badge uses."""
+    bind = entities[seed]
+    window.search(bind.keys)
+    settle()
+    hit = next(hit for hit in window.hits if getattr(hit, "target", None) == bind)
+    row = next(row for row in window.binds_page.rows if row.bind == bind)
+
+    assert hit.badge == row.badge_label.get_label()
+    assert (
+        hit.badge
+        in window.finder.results.get_row_at_index(window.hits.index(hit)).get_subtitle()
+    )
+
+
+def test_a_rule_hit_clears_the_filter_that_hid_it(window: Any, entities: Any) -> None:
+    """A filter that hides the rule would make the hit land on "No rules match"."""
+    from hyprtweaker.ui.flash import FLASH_CLASS
+
+    page = window.window_rules_page
+    page.set_filter("nothing matches this")
+    assert page.rows == ()
+
+    window.search("zz float")
+    settle()
+    window.open_hit(
+        next(
+            hit
+            for hit in window.hits
+            if getattr(hit, "target", None) == entities["window_rule"]
+        )
+    )
+    settle()
+
+    assert page.filter_entry.get_text() == ""
+    assert [
+        row.widget.has_css_class(FLASH_CLASS)
+        for row in page.rows
+        if row.rule == entities["window_rule"]
+    ] == [True]
+
+
+def test_a_hit_for_a_removed_entity_refreshes_the_results(window: Any, entities: Any) -> None:
+    """Never a dead end, never a crash: the list updates and the Page stays where it was."""
+    window.search("super + z")
+    settle()
+    hit = next(hit for hit in window.hits if getattr(hit, "target", None) == entities["bind"])
+    before = window.visible_section
+
+    window._session.model.entities.binds.remove(entities["bind"])
+    window.open_hit(hit)
+    settle()
+
+    assert window.visible_section == before
+    assert hit not in window.hits
+
+
+def test_sync_reruns_the_open_query(window: Any, entities: Any) -> None:
+    """An edit landing while results show reaches them on the window's next `sync`."""
+    from hyprtweaker.engine.model.entities import Bind, DispatcherCall
+
+    window.search("zzlate")
+    settle()
+    assert window.hits == ()
+
+    late = Bind(
+        keys="SUPER + X", dispatcher=DispatcherCall(path="exec_cmd", args={"command": "zzlate"})
+    )
+    window._session.model.entities.binds.append(late)
+    try:
+        window.sync()
+        assert [hit.title for hit in window.hits] == ["SUPER + X"]
+    finally:
+        window._session.model.entities.binds.remove(late)
