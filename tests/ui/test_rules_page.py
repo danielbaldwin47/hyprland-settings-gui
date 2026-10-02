@@ -560,6 +560,40 @@ def test_alt_up_and_down_move_a_rule_past_its_visible_neighbours(tmp_path: Path)
     assert calls == [("move", 4, 1), ("move", 4, 6)]
 
 
+def test_after_alt_down_the_moved_rule_keeps_the_focus(tmp_path: Path) -> None:
+    """The move rebuilds every row; without this a second Alt+Down needs a Tab back first.
+    A filter the user set stays set: focusing is not revealing."""
+    import main_loop
+    from _live_window import live_entity_window
+    from gi.repository import Gtk
+
+    session, window, applier = live_entity_window(tmp_path)
+    for name in ("kitty", "firefox", "mpv"):
+        session.add_rule("window", window_rule(match={"class": name}))
+        applier.settle()
+    page = window.window_rules_page
+    page.refresh()
+    window.present()
+    window._select_section(page.section)
+    main_loop.settle("the Rules page to show")
+    row = page.rows[0]
+    row.widget.grab_focus()
+
+    for controller in row.widget.observe_controllers():
+        if isinstance(controller, Gtk.ShortcutController):
+            for each in controller:
+                if each.get_trigger().to_string() == "<Alt>Down":
+                    each.get_action().activate(Gtk.ShortcutActionFlags(0), row.widget, None)
+    applier.settle()
+    main_loop.settle("the rebuild after the move")
+
+    assert [r.rule.match["class"] for r in page.rows] == ["firefox", "kitty", "mpv"]
+    focus = window.get_focus()
+    moved = page.rows[1].widget
+    assert focus is not None and (focus is moved or focus.is_ancestor(moved))
+    window.close()
+
+
 def test_the_page_hands_each_row_the_neighbours_it_is_shown_next_to(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
     chip_rules(session)

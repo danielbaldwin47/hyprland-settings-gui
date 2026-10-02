@@ -272,6 +272,31 @@ def test_a_loaded_list_answered_after_the_page_was_released_is_dropped(
     window.close()
 
 
+def test_after_alt_down_the_moved_plugin_keeps_the_focus(tmp_path: Path) -> None:
+    """The move rebuilds every row; without this a second Alt+Down needs a Tab back first."""
+    import main_loop
+    from gi.repository import Gtk
+
+    _session, window, applier = window_with(tmp_path, plugin(BARS), plugin(EXPO), plugin(BARS2))
+    window.present()
+    window._select_section(window.scripting_page.section)
+    main_loop.settle("the Scripting page to show")
+    row = group_of(window).rows[0]
+    row.widget.grab_focus()
+
+    shortcut(row, "<Alt>Down").get_action().activate(
+        Gtk.ShortcutActionFlags(0), row.widget, None
+    )
+    applier.settle()
+    main_loop.settle("the rebuild after the move")
+
+    moved = group_of(window).rows[1]
+    assert moved.widget.get_subtitle() == BARS
+    focus = window.get_focus()
+    assert focus is not None and (focus is moved.widget or focus.is_ancestor(moved.widget))
+    window.close()
+
+
 def test_adding_a_path_already_listed_is_refused_with_a_reason(tmp_path: Path) -> None:
     session, window, _applier = window_with(tmp_path, plugin(BARS))
     toasts: list[str] = []

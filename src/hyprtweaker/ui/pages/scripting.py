@@ -295,6 +295,12 @@ class PluginsGroup:
         self._render()
         self._session.fetch_loaded_plugins(self._on_loaded)
 
+    def focus(self, index: int) -> None:
+        """Put the keyboard focus on the row for entry `index`: a move rebuilds every row,
+        and the next Alt+Up/Down must reach the one that moved without a Tab back."""
+        if 0 <= index < len(self.rows):
+            self.rows[index].widget.grab_focus()
+
     def _on_destroy(self, _group: Adw.PreferencesGroup) -> None:
         self._released = True
 

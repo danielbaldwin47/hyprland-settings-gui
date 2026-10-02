@@ -1372,6 +1372,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _move_rule(self, kind: str, index: int, to: int) -> None:
         if self._session.move_rule(kind, index, to):
             self._refresh_rules(kind)
+            if (page := self._rules_page(kind)) is not None:
+                page.focus(to)
 
     def _refresh_rules(self, kind: str) -> None:
         page = self._rules_page(kind)
@@ -2074,6 +2076,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _move_plugin(self, index: int, to: int) -> None:
         if self._session.move_declaration("plugins", index, to):
             self._refresh_plugins()
+            if self._scripting_page is not None:
+                self._scripting_page.plugins.focus(to)
 
     def _refresh_plugins(self) -> None:
         # `sync` refreshes the Scripting Page, its plugin list included.

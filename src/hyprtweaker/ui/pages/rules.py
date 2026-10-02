@@ -353,10 +353,18 @@ class RulesPage:
             self._filter_text = ""
             self._filter.set_text("")
             self.refresh()
+        widget = self.focus(index)
+        if widget is not None:
+            flash(widget)
+        return widget
+
+    def focus(self, index: int) -> Gtk.Widget | None:
+        """Put the keyboard focus on the row for the rule at `index`, filters untouched:
+        after a move, the next Alt+Up/Down reaches the rule that moved. `None` when no
+        shown row holds it."""
         for row in self._rows:
             if row.index == index:
                 row.widget.grab_focus()
-                flash(row.widget)
                 return row.widget
         return None
 
