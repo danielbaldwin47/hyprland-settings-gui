@@ -963,3 +963,36 @@ def test_the_raw_editor_refuses_a_scale_below_a_quarter() -> None:
     entry.set_text("auto")
     entry.emit("apply")
     assert recorder.benign == [("DP-9", {"scale": "auto"})]
+
+
+def test_match_by_names_the_display_in_its_subtitle_not_its_choice() -> None:
+    """Ruling A11 of the #148 review: "This exact display (<description>)" was cut short.
+    The choices are short and the subtitle leads with the description."""
+    from gi.repository import Adw
+
+    page, _recorder = build_page([monitor_rule("desc:BOE 0x0791", scale=1.5)])
+    page.set_connected(MONITORS)
+    rows = [w for w in _descendants(page.page) if isinstance(w, Adw.ComboRow)]
+    match_by = next(row for row in rows if row.get_title() == "Match by")
+    model = match_by.get_model()
+
+    assert [model.get_string(i) for i in range(model.get_n_items())] == [
+        "This display",
+        "Port eDP-1",
+    ]
+    assert match_by.get_subtitle() == (
+        "BOE 0x0791. A description survives replug; a port survives identical twins."
+    )
+
+
+def _descendants(widget: Any) -> list[Any]:
+    found = []
+    stack = [widget]
+    while stack:
+        current = stack.pop()
+        found.append(current)
+        child = current.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    return found

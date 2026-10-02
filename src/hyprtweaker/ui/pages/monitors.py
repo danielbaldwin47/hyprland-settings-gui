@@ -755,15 +755,16 @@ class MonitorsPage:
             # The per-rule identity toggle (ADR-0008): the same rule addressed by what
             # the display *is* or by where it is plugged in. Only offered once a rule
             # exists -- before that, the first edit picks desc-when-unique on its own.
+            # The description leads the subtitle rather than the choice, where it was cut
+            # short (ruling A11 of the #148 review).
             match_by = Adw.ComboRow(
                 title="Match by",
-                subtitle="A description survives replug; a port survives identical twins.",
-                model=Gtk.StringList.new(
-                    [
-                        f"This exact display ({description or 'no description'})",
-                        f"Port {connector}",
-                    ]
-                ),
+                use_markup=False,
+                model=Gtk.StringList.new(["This display", f"Port {connector}"]),
+            )
+            match_by.set_subtitle(
+                f"{description or 'This display has no description'}. "
+                "A description survives replug; a port survives identical twins."
             )
             match_by.set_selected(0 if description_of(rule.output) is not None else 1)
             match_by.set_sensitive(editable and bool(description))
