@@ -97,7 +97,14 @@ class Finder:
 
         self.results = Gtk.ListBox(css_classes=["navigation-sidebar"])
         self.results.connect("row-activated", self._on_row_activated)
-        self.results.set_header_func(self._result_header)
+        self._groups: list[str] = []
+        """Each listed hit's group, kept in step with `_hits` for the header function.
+
+        Handed to GTK as the function's data rather than read off `self`: a bound method as
+        the header function is a reference from the C side of the ListBox back to this
+        Finder, a cycle the collector cannot see through, and the closed window it reaches
+        through `on_activate` would never be released (#219's lifetime test)."""
+        self.results.set_header_func(_result_header, self._groups)
 
         self.button = Gtk.ToggleButton(
             icon_name="system-search-symbolic",
@@ -208,6 +215,7 @@ class Finder:
             else None
         )
         self._hits = self._index.query(self.entry.get_text(), limit=RESULT_LIMIT)
+        self._groups[:] = [hit.group for hit in self._hits]
         self.results.remove_all()
 
         if self.mode == RESULTS_MODE:
@@ -240,29 +248,6 @@ class Finder:
         index = row.get_index()
         if 0 <= index < len(self._hits):
             self._on_activate(self._hits[index])
-
-    def _result_header(self, row: Gtk.ListBoxRow, before: Gtk.ListBoxRow | None) -> None:
-        """A group heading above the first row of each group, and nothing above the rest.
-
-        Asked of the hits rather than of the rows: each hit knows its group (ADR-0017's
-        Settings, then Rules & entities), and a row only knows where it sits.
-        """
-        index = row.get_index()
-        group = self._hits[index].group if 0 <= index < len(self._hits) else None
-        above = before.get_index() if before is not None else -1
-        if group is None or (0 <= above < len(self._hits) and self._hits[above].group == group):
-            row.set_header(None)
-            return
-        row.set_header(
-            Gtk.Label(
-                label=group,
-                xalign=0.0,
-                css_classes=["heading", "dim-label"],
-                margin_start=12,
-                margin_top=8,
-                margin_bottom=4,
-            )
-        )
 
 
 def _result_row(hit: Hit) -> Gtk.ListBoxRow:
@@ -322,3 +307,29 @@ def _no_matches_row() -> Gtk.ListBoxRow:
     row.set_activatable(False)
     row.set_selectable(False)
     return row
+
+
+def _result_header(
+    row: Gtk.ListBoxRow, before: Gtk.ListBoxRow | None, groups: list[str]
+) -> None:
+    """A group heading above the first row of each group, and nothing above the rest.
+
+    Asked of the hits' groups rather than of the rows: each hit knows its group (ADR-0017's
+    Settings, then Rules & entities), and a row only knows where it sits.
+    """
+    index = row.get_index()
+    group = groups[index] if 0 <= index < len(groups) else None
+    above = before.get_index() if before is not None else -1
+    if group is None or (0 <= above < len(groups) and groups[above] == group):
+        row.set_header(None)
+        return
+    row.set_header(
+        Gtk.Label(
+            label=group,
+            xalign=0.0,
+            css_classes=["heading", "dim-label"],
+            margin_start=12,
+            margin_top=8,
+            margin_bottom=4,
+        )
+    )
