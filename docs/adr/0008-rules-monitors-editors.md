@@ -19,7 +19,7 @@ Rules are the second-largest Entity class in the corpus (window rules 3–332 pe
 
 ### Canonical modules, write-only IPC — the ADR-0007 contract, generalised
 
-`window_rules.lua`, `layer_rules.lua`, `workspace_rules.lua`, `monitors.lua` are emitted in the same **canonical, machine-parseable form** as `binds.lua`: the model is source of truth, nothing is reconstructed from IPC (`hyprctl -j clients/monitors` feeds *helpers only*), post-reload verification is `configerrors`. On external change the app re-parses its own canonical file; constructs the parser can't represent become read-only rows with an adopt-into-`legacy.lua` offer.
+`window_rules.lua`, `layer_rules.lua`, `workspace_rules.lua`, `monitors.lua` are emitted in the same **canonical, machine-parseable form** as `binds.lua`: the model is source of truth, nothing is reconstructed from IPC (`hyprctl -j clients/monitors` feeds *helpers only*), post-reload verification is `configerrors` (the Migration switch's one-time count checks, ADR-0009, compare counts only). On external change the app re-parses its own canonical file; constructs the parser can't represent become read-only rows with an adopt-into-`legacy.lua` offer.
 
 ### Window rule entity & list
 

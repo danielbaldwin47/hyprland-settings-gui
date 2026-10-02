@@ -105,9 +105,22 @@ Requires a live session; without an IPC socket the wizard runs Detect/Preview on
 1. Write a `migration-pending` sentinel to the state dir, then the Entrypoint.
 2. `hyprctl reload full-reset`; treat socket2 `configreloaded` as "reload started", then poll.
 3. Live checks over the IPC socket (spoken directly — no `hyprctl` spawns): `configerrors`
-   empty; bind count vs model (`code:N` counted from source); monitor arrangement matches;
-   window/layer/workspace rule counts match. `hl.env`/`hl.permission` are excluded and noted
-   as "applies at next login"; autostart entries are noted as possibly re-run by the switch.
+   empty; bind count; workspace-rule count; monitor arrangement. `hl.env`/`hl.permission` are
+   excluded and noted as "applies at next login"; autostart entries are noted as possibly
+   re-run by the switch.
+   - **Bind count** is hard. The expected count is what the Writer emits (`live_bind_count`: a
+     disabled bind is a comment and a function-valued one is never written), and the check
+     is `live >= expected`, because `legacy.lua` and preserved scripts can register more. It
+     is hard only because a Harness run over every `tests/corpus/` rice showed no false
+     rollback; a config that loads with no keybinds is ADR-0016's emergency.
+   - **Workspace-rule count** and **monitor arrangement** are soft: reported on the Keep or
+     roll back page under "What this could not confirm", never a rollback, because each
+     compares against what Hyprland *did* with a request (merged a selector, picked the
+     closest mode). Monitor arrangement compares scale, resolution, position and rotation
+     where a rule states them as numbers, for each connected display.
+   - **Window and layer rule counts are not readable over IPC** (probed on Hyprland 0.56.2:
+     no `hyprctl` listing, no `hl.get_*` getter), so those two kinds are verified by
+     `configerrors` only, and the switch shows no row for them.
 4. Any hard check fails → automatic rollback, report shown.
 
 ### Keep or roll back
