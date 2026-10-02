@@ -26,6 +26,7 @@ from .flow import (
     VerifyGate,
     fresh_start,
 )
+from .omarchy import is_omarchy_source
 from .sentinel import Sentinel
 
 __all__ = [
@@ -46,6 +47,7 @@ __all__ = [
     "create",
     "detect",
     "fresh_start",
+    "is_omarchy_source",
     "latest",
     "render",
     "restore",

@@ -12,7 +12,9 @@ and a double-click on "Convert" would start a second migration over the first on
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +25,11 @@ gi.require_version("Gtk", "4.0")
 
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
+from ...engine.bridge.wire import WireConsent  # noqa: E402
 from ...engine.importer.loss import CLASS_ORDER, CLASS_TITLES, LossReport  # noqa: E402
-from ...engine.importer.lua.sandbox import Consent  # noqa: E402
+from ...engine.importer.lua.sandbox import Cancelled, Consent  # noqa: E402
+from ...engine.migration.backup import Backup  # noqa: E402
+from ...engine.migration.bridge_setup import CannotSetUp, Offer, SetUp, ToolOffer  # noqa: E402
 from ...engine.migration.detect import ConfigKind  # noqa: E402
 from ...engine.migration.flow import (  # noqa: E402
     ROLLBACK_SECONDS,
@@ -35,6 +40,8 @@ from ...engine.migration.flow import (  # noqa: E402
     SwitchResult,
     asks_consent,
 )
+from ...engine.migration.omarchy import is_omarchy_source  # noqa: E402
+from .wire_consent import ConsentDialog  # noqa: E402
 
 Spawn = Callable[[Any], None]
 
@@ -46,6 +53,63 @@ CONSENT_TEXT = (
 `Consent(evaluate=True)` is `Policy.BLOCK`, which is what makes it true: the config's
 commands and writes are faked, and the importer's own directory listing quotes the path it
 is given (`runner.lua`), so a quote in a folder name cannot start one either."""
+
+READING_TITLE = "Reading"
+"""The progress page's title, while a read runs in a worker (#216)."""
+
+READER_THREAD = "hyprtweaker: reading a config"
+"""The read worker's thread name: what a test looks for to see that none is left."""
+
+TOOLS_TITLE = "Theming tools"
+"""The back-up step's Bridge setup page (#187)."""
+
+TOOLS_TEXT = (
+    "Setting one up changes its own config so its output keeps reaching Hyprland after the "
+    "switch. Each one asks first, and nothing changes until you switch. You can also set "
+    "them up later on the Theming page."
+)
+
+NOT_SET_UP = "Not set up"
+WILL_SET_UP = "Set up when you switch"
+SET_UP_LABEL = "Set up…"
+UNDO_LABEL = "Don't set up"
+
+LONG_READ_SECONDS = 5.0
+"""When the progress page adds that a read can take up to a minute (the importer's
+timeout, `sandbox.DEFAULT_TIMEOUT`). Ticket #216's open call 1."""
+
+
+@dataclass(eq=False)
+class _Read:
+    """One read running in a worker. Compared by identity: a result is the dialog's only
+    while its read is still `MigrationDialog._reading`."""
+
+    cancel: threading.Event
+    origin: Adw.NavigationPage
+    """The page the read started from, insensitive until the read ends."""
+    hint: int = 0
+    """The pending "up to a minute" timer's source id; 0 once it ran or was removed."""
+
+
+def _read_off_the_loop(
+    read_preview: Callable[..., Preview],
+    source: Path | None,
+    consent: Consent,
+    read: _Read,
+    deliver: Callable[[_Read, Preview | Exception], bool],
+) -> None:
+    """The worker: read, and hand the outcome to the main loop. Touches no widget.
+
+    A cancelled read hands back nothing: whoever cancelled it has already moved on.
+    """
+    try:
+        outcome: Preview | Exception = read_preview(source, consent=consent, cancel=read.cancel)
+    except Cancelled:
+        return
+    except Exception as error:
+        outcome = error
+    GLib.idle_add(deliver, read, outcome)
+
 
 DETECTED_TITLES = {
     ConfigKind.LEGACY_CONF: "You have a hyprland.conf",
@@ -63,6 +127,16 @@ DETECTED_BODIES = {
         "hyprland.lua.bak, so nothing you wrote is lost."
     ),
 }
+
+
+OMARCHY_ENDS = (
+    "Omarchy's theme menu and Omarchy updates will no longer change your Hyprland settings"
+)
+OMARCHY_ENDS_HELP = (
+    "Change colors on the Theming page, or set up a color tool there. Restoring the backup "
+    "this wizard makes puts you back."
+)
+"""What switching an Omarchy config costs, on the Preview page (#234)."""
 
 
 class MigrationDialog(Adw.Dialog):
@@ -86,8 +160,13 @@ class MigrationDialog(Adw.Dialog):
         self._countdown_label: Gtk.Label | None = None
         self._defaults: dict[Adw.NavigationPage, Gtk.Widget] = {}
         """Each page's safe button, made the dialog's default while that page shows."""
-        self._pressed: set[Gtk.Button] = set()
-        """Buttons whose read is running or just ran: spent until the main loop settles."""
+        self._reading: _Read | None = None
+        """The read running in a worker, if one is (#216)."""
+        self._confirm: ConsentDialog | None = None
+        """The last Bridge setup confirm shown (#187): what a test or probe answers."""
+        self._tool_rows: dict[str, tuple[Offer, Adw.ActionRow, Gtk.Button]] = {}
+        """Each offered tool's row, so confirming one wallpaper color tool redraws the other."""
+        self.connect("closed", lambda _dialog: self._stop_read())
 
         self._view = Adw.NavigationView()
         self._view.connect("notify::visible-page", self._on_visible_page)
@@ -132,23 +211,121 @@ class MigrationDialog(Adw.Dialog):
         page.get_child().add_bottom_bar(_actions(convert, self._close_button("Not now")))
         return page
 
-    def _go_preview(self, consent: Consent | None = None) -> None:
+    def _go_preview(self) -> None:
+        """Convert...: ask before running a `.lua`; a `hyprland.conf` is parsed, at once."""
         detected = self._flow.detection.source if self._flow.detection else None
         reading = self._source or detected
-        if consent is None and reading is not None and asks_consent(reading):
+        if reading is not None and asks_consent(reading):
             self._view.push(self._consent_page(reading))
             return
+        outcome: Preview | Exception
         try:
-            preview = self._flow.build_preview(self._source, consent=consent)
+            outcome = self._flow.read_preview(self._source)
         except Exception as error:
+            outcome = error
+        self._land(outcome)
+
+    def _land(self, outcome: Preview | Exception) -> None:
+        """Show where a finished read leads: its failure, its commands, or its Preview."""
+        if isinstance(outcome, Exception):
             # Any importer failure is a page, not a crash: the wizard always has somewhere
             # to show the user, and the config is untouched at this point either way.
-            self._view.push(self._failed_page("Could not read the configuration", str(error)))
+            self._view.push(self._failed_page("Could not read the configuration", str(outcome)))
             return
-        if preview.offered:
-            self._view.push(self._commands_page(preview))
+        self._flow.hold(outcome)
+        if outcome.offered:
+            self._view.push(self._commands_page(outcome))
             return
         self._show_preview()
+
+    # --- a read off the main loop (#216) ----------------------------------------------------
+
+    def _read(self, consent: Consent) -> None:
+        """Run the config with `consent` in a worker, behind a progress page.
+
+        Running a config can take up to a minute, and the window has to keep drawing and
+        answer Cancel and Close meanwhile. One read at a time: a press while one runs (a
+        double click) starts nothing. The page it came from is insensitive underneath, and
+        comes back as it was on Cancel.
+        """
+        if self._reading is not None:
+            return
+        origin = self._view.get_visible_page()
+        assert origin is not None
+        read = _Read(cancel=threading.Event(), origin=origin)
+        self._reading = read
+        origin.set_sensitive(False)
+        self._view.push(self._progress_page(read))
+        worker = threading.Thread(
+            target=_read_off_the_loop,
+            args=(self._flow.read_preview, self._source, consent, read, self._read_done),
+            name=READER_THREAD,
+            daemon=True,
+        )
+        worker.start()
+
+    def _read_done(self, read: _Read, outcome: Preview | Exception) -> bool:
+        """The worker's result, on the main loop. Dropped if the read was cancelled.
+
+        Touches nothing until it knows the read is still the dialog's: after a Close the
+        dialog may already be released, and its widgets with it.
+        """
+        if read is not self._reading:
+            return GLib.SOURCE_REMOVE
+        self._forget_read()
+        self._return_to(read.origin)
+        self._land(outcome)
+        return GLib.SOURCE_REMOVE
+
+    def _forget_read(self) -> _Read | None:
+        """The running read, now no longer the dialog's, with its timer gone."""
+        read = self._reading
+        if read is None:
+            return None
+        self._reading = None
+        if read.hint:
+            GLib.source_remove(read.hint)
+            read.hint = 0
+        return read
+
+    def _stop_read(self) -> _Read | None:
+        """Stop the running read, if any: Cancel's path, and Close's.
+
+        Close touches no widget past this point: the dialog is on its way to release.
+        """
+        read = self._forget_read()
+        if read is not None:
+            read.cancel.set()
+        return read
+
+    def _cancel_read(self) -> None:
+        """Cancel: stop the read and return to the page it came from, as it was."""
+        read = self._stop_read()
+        if read is not None:
+            self._return_to(read.origin)
+
+    def _return_to(self, origin: Adw.NavigationPage) -> None:
+        origin.set_sensitive(True)
+        self._view.pop_to_page(origin)
+
+    def _progress_page(self, read: _Read) -> Adw.NavigationPage:
+        page = _page(READING_TITLE)
+        page.set_can_pop(False)  # Cancel is the way back: it stops the read too
+        status = Adw.StatusPage(title="Reading your config…", vexpand=True)
+        status.set_paintable(Adw.SpinnerPaintable(widget=status))
+        page.get_child().set_content(status)
+        cancel = Gtk.Button(label="Cancel")
+        cancel.connect("clicked", lambda _button: self._cancel_read())
+        page.get_child().add_bottom_bar(_actions(cancel))
+
+        def say_it_is_long() -> bool:
+            read.hint = 0
+            if read is self._reading:
+                status.set_description("This can take up to a minute.")
+            return GLib.SOURCE_REMOVE
+
+        read.hint = GLib.timeout_add(int(LONG_READ_SECONDS * 1000), say_it_is_long)
+        return page
 
     def _show_preview(self) -> None:
         self._flow.save_report()
@@ -177,7 +354,7 @@ class MigrationDialog(Adw.Dialog):
         page.get_child().set_content(_column(group))
 
         read = Gtk.Button(label="Read it")
-        read.connect("clicked", lambda button: self._once(button, Consent(evaluate=True)))
+        read.connect("clicked", lambda _button: self._read(Consent(evaluate=True)))
         not_now = self._close_button("Not now")
         page.get_child().add_bottom_bar(_actions(read, not_now))
         self._defaults[page] = not_now
@@ -206,13 +383,8 @@ class MigrationDialog(Adw.Dialog):
 
         run = Gtk.Button(label="Run them and read", css_classes=["destructive-action"])
         run.connect(
-            "clicked",
-            lambda button: self._once(button, Consent(evaluate=True, passthrough=True)),
+            "clicked", lambda _button: self._read(Consent(evaluate=True, passthrough=True))
         )
-        # The read behind this page blocked the window, so a click aimed at "Read it" may
-        # still be queued: Run arrives unclickable and is armed once that queue has drained.
-        run.set_sensitive(False)
-        GLib.idle_add(_arm, run)
         not_now = self._close_button("Not now")
         buttons = [run]
         safe: Gtk.Button = not_now
@@ -223,27 +395,6 @@ class MigrationDialog(Adw.Dialog):
         page.get_child().add_bottom_bar(_actions(*buttons, not_now))
         self._defaults[page] = safe
         return page
-
-    def _once(self, button: Gtk.Button, consent: Consent) -> None:
-        """Read with `consent`, once per press, however many clicks queued behind it.
-
-        The read is synchronous and may block the window for up to a minute (follow-up:
-        read off the main loop). Clicks queued meanwhile are delivered after it returns,
-        before the idle that releases the button, so they find it spent.
-        """
-        if button in self._pressed:
-            return
-        self._pressed.add(button)
-        button.set_sensitive(False)
-        try:
-            self._go_preview(consent)
-        finally:
-            GLib.idle_add(self._release, button)
-
-    def _release(self, button: Gtk.Button) -> bool:
-        self._pressed.discard(button)
-        button.set_sensitive(True)
-        return GLib.SOURCE_REMOVE
 
     # --- step 2: preview ------------------------------------------------------------------
 
@@ -263,6 +414,8 @@ class MigrationDialog(Adw.Dialog):
         summary.add(_row("Settings imported", str(len(preview.model))))
         if self._flow.report_path is not None:
             summary.add(_row("Report saved to", str(self._flow.report_path)))
+        if is_omarchy_source(preview.detection.source):
+            summary.add(_row(OMARCHY_ENDS, OMARCHY_ENDS_HELP))
         column.append(summary)
 
         for group in _loss_groups(preview.loss):
@@ -297,7 +450,92 @@ class MigrationDialog(Adw.Dialog):
     # --- step 3: back up ------------------------------------------------------------------
 
     def _go_backup(self) -> None:
+        """Back up, then offer Bridge setup if a tool can be set up, then the static gate.
+
+        The offer sits between the two (ADR-0009 §Back up, bridge, static gate) so the gate
+        judges the tree with the chosen tools' lines in it. No page when nothing can be set
+        up: a user who only wants to migrate meets no extra step.
+        """
         backup = self._flow.back_up()
+        offers = self._flow.bridge_offers()
+        if any(isinstance(offer, Offer) for offer in offers):
+            self._view.push(self._tools_page(backup, offers))
+            return
+        self._gate(backup)
+
+    def _tools_page(self, backup: Backup, offers: tuple[ToolOffer, ...]) -> Adw.NavigationPage:
+        """One row per tool, each set up only through its own confirm (settled S3).
+
+        "Continue" is the default, and it continues with whatever was confirmed: skipping
+        every tool is the safe answer, since a tool left alone keeps working as it does now.
+        """
+        page = _page(TOOLS_TITLE)
+        group = Adw.PreferencesGroup(
+            title="Theming tools on this computer", description=TOOLS_TEXT
+        )
+        self._tool_rows.clear()
+        for offer in offers:
+            group.add(self._tool_row(offer))
+        page.get_child().set_content(_scrolled(_column(group)))
+
+        go_on = _suggested("Continue")
+        go_on.connect("clicked", lambda _button: self._gate(backup))
+        page.get_child().add_bottom_bar(_actions(go_on, self._close_button("Cancel")))
+        self._defaults[page] = go_on
+        return page
+
+    def _tool_row(self, offer: ToolOffer) -> Adw.ActionRow:
+        match offer:
+            case SetUp(title=title):
+                return _row(title, "Already set up. It keeps working after the switch.")
+            case CannotSetUp(title=title, reason=reason):
+                return _row(title, reason)
+            case Offer():
+                button = Gtk.Button(valign=Gtk.Align.CENTER)
+                row = _row(offer.title, "", suffix=button)
+                button.connect("clicked", lambda _button: self._toggle_tool(offer, row, button))
+                self._tool_rows[offer.tool] = (offer, row, button)
+                self._show_tool(offer, row, button)
+                return row
+
+    def _consented(self, tool: str) -> bool:
+        return any(consent.plan.tool == tool for consent in self._flow.consents)
+
+    def _show_tool(self, offer: Offer, row: Adw.ActionRow, button: Gtk.Button) -> None:
+        chosen = self._consented(offer.tool)
+        row.set_subtitle(WILL_SET_UP if chosen else NOT_SET_UP)
+        button.set_label(UNDO_LABEL if chosen else SET_UP_LABEL)
+
+    def _toggle_tool(self, offer: Offer, row: Adw.ActionRow, button: Gtk.Button) -> None:
+        """Set up asks first; taking a choice back before the switch needs no question."""
+        if self._consented(offer.tool):
+            self._flow.withdraw(offer.tool)
+            self._show_tool(offer, row, button)
+            return
+
+        def agree() -> None:
+            # Confirming one wallpaper color tool withdraws the other: every row says so.
+            self._flow.consent(WireConsent(offer.plan))
+            for shown in self._tool_rows.values():
+                self._show_tool(*shown)
+
+        title = offer.title
+        self._confirm = ConsentDialog(
+            heading=f"Set up {title}?",
+            body=(
+                f"When you switch, these files change so that {title}'s output loads in "
+                "Hyprland. Nothing changes before then."
+                if offer.plan.files
+                else f"Nothing of {title}'s changes. When you switch, Hyprland loads what "
+                f"{title} writes."
+            ),
+            verb=f"Set up {title}",
+            on_agree=agree,
+            plan=offer.plan,
+        )
+        self._confirm.present(self)
+
+    def _gate(self, backup: Backup) -> None:
         gate = self._flow.stage_and_gate()
 
         if gate.blocks:
@@ -317,6 +555,9 @@ class MigrationDialog(Adw.Dialog):
         )
         group.add(_row("Backup", str(backup.path)))
         group.add(_row("Files copied", str(backup.count())))
+        chosen = [consent.plan.title for consent in self._flow.consents]
+        if chosen:
+            group.add(_row(WILL_SET_UP, ", ".join(chosen)))
         group.add(
             _row(
                 "Checked",
@@ -343,7 +584,12 @@ class MigrationDialog(Adw.Dialog):
         result = await self._flow.switch()
         if not result.ok:
             await self._flow.roll_back_live()
-            detail = "\n".join(check.detail for check in result.failures if check.detail)
+            detail = "\n".join(
+                [
+                    *(check.detail for check in result.failures if check.detail),
+                    *self._flow.rollback_notes,
+                ]
+            )
             self._view.push(
                 self._failed_page(
                     "The new configuration did not load, so it was rolled back",
@@ -395,6 +641,12 @@ class MigrationDialog(Adw.Dialog):
                 unverified.add(_row(note, ""))
             column.append(unverified)
 
+        if result.bridges:
+            tools = Adw.PreferencesGroup(title=TOOLS_TITLE)
+            for note in result.bridges:
+                tools.add(_row(note, ""))
+            column.append(tools)
+
         page.get_child().set_content(_scrolled(column))
 
         keep = _suggested("Keep")
@@ -413,12 +665,12 @@ class MigrationDialog(Adw.Dialog):
                 "Your settings are now set up here. Your old configuration is backed up.",
             )
         else:
-            self._finish(
-                "Rolled back",
+            said = (
                 "Nothing was kept. You are on the configuration you started with."
                 if decision is Decision.ROLLED_BACK
-                else "Nobody confirmed the switch, so it was rolled back automatically.",
+                else "Nobody confirmed the switch, so it was rolled back automatically."
             )
+            self._finish("Rolled back", "\n\n".join([said, *self._flow.rollback_notes]))
 
     def _tick(self, remaining: float) -> None:
         if self._countdown_label is not None:
@@ -491,8 +743,9 @@ def _scrolled(child: Gtk.Widget) -> Gtk.Widget:
 
 
 def _row(title: str, subtitle: str, *, suffix: Gtk.Widget | None = None) -> Adw.ActionRow:
-    row = Adw.ActionRow(title=title, subtitle=subtitle, subtitle_selectable=True)
-    row.set_use_markup(False)
+    row = Adw.ActionRow(use_markup=False, subtitle_selectable=True)
+    row.set_title(title)
+    row.set_subtitle(subtitle)
     if suffix is not None:
         row.add_suffix(suffix)
     return row
@@ -515,11 +768,6 @@ def _actions(*buttons: Gtk.Button) -> Gtk.Widget:
 
 def _suggested(label: str) -> Gtk.Button:
     return Gtk.Button(label=label, css_classes=["suggested-action"])
-
-
-def _arm(button: Gtk.Button) -> bool:
-    button.set_sensitive(True)
-    return GLib.SOURCE_REMOVE
 
 
 def _commands_description(imported: int) -> str:
@@ -614,7 +862,7 @@ def migration_dialog(
     return dialog
 
 
-def _pick_file(
+def pick_file(
     parent: Gtk.Widget,
     dialog: Gtk.FileDialog,
     *,
@@ -645,7 +893,7 @@ def _pick_file(
 
 def export_dialog(parent: Gtk.Widget, on_chosen: Callable[[Path], None]) -> Gtk.FileDialog:
     """Ask where to write a flattened export, then hand the path back."""
-    return _pick_file(
+    return pick_file(
         parent,
         Gtk.FileDialog(title="Export configuration", initial_name="hyprland.lua"),
         saving=True,
@@ -655,7 +903,7 @@ def export_dialog(parent: Gtk.Widget, on_chosen: Callable[[Path], None]) -> Gtk.
 
 def import_dialog(parent: Gtk.Widget, on_chosen: Callable[[Path], None]) -> Gtk.FileDialog:
     """Ask which `hyprland.lua` or `hyprland.conf` to import, then hand the path back."""
-    return _pick_file(
+    return pick_file(
         parent,
         Gtk.FileDialog(title="Import configuration", filters=_config_filters()),
         saving=False,

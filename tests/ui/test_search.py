@@ -28,6 +28,7 @@ from typing import Any
 
 import main_loop
 import pytest
+from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
 
@@ -67,7 +68,7 @@ def window(state_dir: Path) -> Iterator[Any]:
         app_version=APP_VERSION,
         connect=no_compositor,
     )
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     built = MainWindow(session, application=app)
     AT_STARTUP["entity entries"] = built._index.entity_count
     # Mapped, because one assertion below is about *mapping* and nothing else can stand in
@@ -280,7 +281,7 @@ def test_the_reveal_ends_when_the_user_navigates(window: Any) -> None:
     assert all(page.row(HIDDEN_OPTION) is None for page in window.pages)
 
 
-# --- the Keybinds, rules & displays group (#75) -----------------------------------------------
+# --- the Keybinds, rules, displays & presets group (#75, #172) --------------------------------
 
 
 def test_startup_builds_no_entity_entries() -> None:
@@ -293,8 +294,9 @@ def entities(window: Any) -> Iterator[dict[str, Any]]:
     """One entity of each kind, seeded into the shared window's model and Pages, then removed.
 
     Seeded the way `test_binds_page.py` seeds: into the model's lists, then each Page
-    refreshed, as the window does after an edit. The profile goes through the Session,
-    which a read-only session allows (a capture is App-dir JSON, not a config write).
+    refreshed, as the window does after an edit. The profile and the Preset go through the
+    Session, which a read-only session allows (each is App-dir JSON, not a config write).
+    A workspace rule and a Preset are seeded by the string that is their identity.
     """
     from hyprtweaker.engine.model.entities import (
         Bind,
@@ -302,7 +304,9 @@ def entities(window: Any) -> Iterator[dict[str, Any]]:
         LayerRule,
         MonitorRule,
         WindowRule,
+        WorkspaceRule,
     )
+    from hyprtweaker.engine.presets import CaptureScope, PresetSaved
 
     session = window._session
     model = session.model.entities
@@ -334,6 +338,14 @@ def entities(window: Any) -> Iterator[dict[str, Any]]:
     model.layer_rules.append(seeded["layer_rule"])
     model.monitors.append(seeded["monitor_rule"])
     seeded["profile"] = session.save_monitor_profile("Zz studio")
+    model.workspace_rules.append(WorkspaceRule(workspace="name:zzcode", fields={"gaps_in": 0}))
+    seeded["workspace_rule"] = "name:zzcode"
+    saved: list[Any] = []
+    session.model.set("general:border_size", 3)  # a Preset holds values: give it one
+    session.save_preset("Zz evening", (CaptureScope.GAPS_LAYOUT,), done=saved.append)
+    session.model.unset("general:border_size")
+    assert [type(result) for result in saved] == [PresetSaved]
+    seeded["preset"] = saved[0].slug
     _refresh_entity_pages(window)
     yield seeded
 
@@ -341,7 +353,11 @@ def entities(window: Any) -> Iterator[dict[str, Any]]:
         getattr(model, name)[:] = [
             entity for entity in getattr(model, name) if entity not in seeded.values()
         ]
+    model.workspace_rules[:] = [
+        rule for rule in model.workspace_rules if rule.workspace != "name:zzcode"
+    ]
     session.delete_monitor_profile(seeded["profile"])
+    session.delete_preset(seeded["preset"])
     _refresh_entity_pages(window)
 
 
@@ -350,7 +366,9 @@ def _refresh_entity_pages(window: Any) -> None:
         window.binds_page,
         window.window_rules_page,
         window.layer_rules_page,
+        window.workspace_rules_page,
         window.monitors_page,
+        window.theming_page,
     ):
         page.refresh()
     settle()
@@ -373,7 +391,10 @@ def test_results_group_settings_first_then_rules_and_entities(
         for index in range(len(window.hits))
         if (row := window.finder.results.get_row_at_index(index)).get_header() is not None
     ]
-    assert headings == [(0, "Settings"), (kinds.index(EntityHit), "Keybinds, rules & displays")]
+    assert headings == [
+        (0, "Settings"),
+        (kinds.index(EntityHit), "Keybinds, rules, displays & presets"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -384,6 +405,8 @@ def test_results_group_settings_first_then_rules_and_entities(
         ("zz blur", "layer_rule", "layer_rules"),
         ("zz-1", "monitor_rule", "monitors"),
         ("zz studio", "profile", "monitors"),
+        ("name:zzcode", "workspace_rule", "workspace_rules"),
+        ("zz evening", "preset", "theming"),
     ],
 )
 def test_an_entity_hit_opens_its_page_and_flashes_its_row(
@@ -404,6 +427,11 @@ def test_an_entity_hit_opens_its_page_and_flashes_its_row(
     assert len(flashed) == 1, f"expected one flashed row, found {len(flashed)}"
     if seed == "profile":
         assert flashed[0] in window.monitors_page.profile_rows, "not in the Profiles group"
+    if seed == "workspace_rule":
+        assert flashed[0].get_title() == "name:zzcode"
+    if seed == "preset":
+        assert flashed[0] is window.theming_page.presets.rows[entities["preset"]]
+        assert flashed[0].get_title() == "Zz evening"
 
 
 def _flashed_rows(window: Any, css_class: str) -> list[Any]:
@@ -498,6 +526,43 @@ def test_a_hit_for_a_removed_entity_refreshes_the_results(window: Any, entities:
 
     assert window.visible_section == before
     assert hit not in window.hits
+
+
+@pytest.mark.parametrize(
+    ("query", "seed"), [("name:zzcode", "workspace_rule"), ("zz evening", "preset")]
+)
+def test_a_workspace_rule_or_preset_removed_since_the_query_says_so(
+    window: Any, entities: Any, query: str, seed: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removed between the query and the click: a toast over a re-run list, never a raise."""
+    from hyprtweaker.ui.shell.window import ENTITY_CHANGED
+
+    shown: list[str] = []
+
+    class Overlay:
+        """The window's toast overlay, reduced to what this test reads: each title."""
+
+        def add_toast(self, toast: Any) -> None:
+            shown.append(toast.get_title())
+
+    monkeypatch.setattr(window, "_toasts", Overlay())
+
+    window.search(query)
+    settle()
+    hit = next(hit for hit in window.hits if getattr(hit, "target", None) == entities[seed])
+    before = window.visible_section
+
+    if seed == "preset":
+        window._session.delete_preset(entities["preset"])
+    else:  # a read-only session: removed under the window, as a foreign reload would
+        rules = window._session.model.entities.workspace_rules
+        rules[:] = [rule for rule in rules if rule.workspace != entities["workspace_rule"]]
+    window.open_hit(hit)
+    settle()
+
+    assert window.visible_section == before
+    assert hit not in window.hits
+    assert shown == [ENTITY_CHANGED]
 
 
 def test_sync_reruns_the_open_query(window: Any, entities: Any) -> None:

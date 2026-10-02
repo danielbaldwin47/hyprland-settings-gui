@@ -12,18 +12,27 @@ module scope makes collection itself fail on a machine with no display.
 from __future__ import annotations
 
 import sys
+import threading
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import main_loop
 import pytest
+from started_app import started_application
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 APP_VERSION = "0.0.0-test"
-APP_ID = "io.github.danielbaldwin47.Hyprtweaker.Test"
 
 CONF = "general {\n    gaps_in = 5\n}\n"
+
+READING = "Reading"
+"""The progress page's title, shown while a read runs (#216)."""
+
+READER_THREAD = "hyprtweaker: reading a config"
+"""The name the wizard gives its read worker, so a test can see that none is left."""
 
 
 def build_window(tmp_path: Path, live: object = None):  # type: ignore[no-untyped-def]
@@ -43,7 +52,7 @@ def build_window(tmp_path: Path, live: object = None):  # type: ignore[no-untype
     from hyprtweaker.ui.shell.window import MainWindow
 
     Adw.init()
-    app = Adw.Application(application_id=APP_ID)
+    app = started_application()
 
     def no_compositor():  # type: ignore[no-untyped-def]
         raise NoInstance("no compositor in the test tier")
@@ -300,7 +309,7 @@ class TestReadingAForeignLua:
         assert "Could not read the configuration" not in _text_under(dialog)
         assert dialog.get_default_widget().get_label() == "Not now"
 
-        _click(dialog, "Read it")
+        _read(dialog, "Read it")
 
         assert _page_title(dialog) == "Preview"
         assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(7)
@@ -332,7 +341,7 @@ class TestReadingAForeignLua:
         window, _ = build_window(tmp_path)
         dialog = window.show_migration()
         _click(dialog, "Convert...")
-        _click(dialog, "Read it")
+        _read(dialog, "Read it")
 
         assert _page_title(dialog) == "Commands"
         assert _row_titles(dialog) == [command]
@@ -341,7 +350,7 @@ class TestReadingAForeignLua:
         assert not run.has_css_class("suggested-action")
         assert not marker.exists()
 
-        _click(dialog, "Run them and read")
+        _read(dialog, "Run them and read")
 
         assert marker.exists()
         assert _page_title(dialog) == "Preview"
@@ -355,7 +364,7 @@ class TestReadingAForeignLua:
         window, session = build_window(tmp_path)
         first = window.show_migration()
         _click(first, "Convert...")
-        _click(first, "Read it")
+        _read(first, "Read it")
         assert _page_title(first) == "Preview"
         first.close()
 
@@ -381,6 +390,75 @@ class TestReadingAForeignLua:
         assert _page_title(foreign_window.get_visible_dialog()) == "Detect"
 
 
+OMARCHY_ROW = (
+    "Omarchy's theme menu and Omarchy updates will no longer change your Hyprland settings"
+)
+OMARCHY_ROW_HELP = (
+    "Change colors on the Theming page, or set up a color tool there. Restoring the backup "
+    "this wizard makes puts you back."
+)
+
+
+def _omarchy_root(root: Path) -> Path:
+    """The shape of an Omarchy entrypoint: it requires `default.hypr.omarchy`, which here
+    is a module beside it, since the real one lives under `/usr/share/omarchy/`."""
+    entrypoint = _foreign_root(
+        root, 'require("default.hypr.omarchy")\nhl.config({ general = { gaps_in = 7 } })\n'
+    )
+    module = entrypoint.parent / "default" / "hypr" / "omarchy.lua"
+    module.parent.mkdir(parents=True)
+    module.write_text("hl.config({ general = { border_size = 3 } })\n", encoding="utf-8")
+    return entrypoint
+
+
+class TestWhatSwitchingAnOmarchyConfigEnds:
+    """The Preview page tells an Omarchy user what the switch costs (#234)."""
+
+    def test_an_omarchy_config_is_told_its_theme_menu_and_updates_stop(
+        self, tmp_path: Path
+    ) -> None:
+        entrypoint = _omarchy_root(tmp_path)
+        omarchy = entrypoint.parent / "default" / "hypr" / "omarchy.lua"
+        before = (entrypoint.read_bytes(), omarchy.read_bytes())
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+        _read(dialog, "Read it")
+
+        assert _page_title(dialog) == "Preview"
+        assert (OMARCHY_ROW, OMARCHY_ROW_HELP) in _rows(dialog)
+        # Information, not a gate: Back up stays offered.
+        assert "Back up and convert" in [
+            button.get_label() for button in _action_buttons(dialog)
+        ]
+        assert (entrypoint.read_bytes(), omarchy.read_bytes()) == before
+
+    def test_another_config_is_not_told_anything_about_omarchy(self, tmp_path: Path) -> None:
+        _foreign_root(tmp_path)
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+        _read(dialog, "Read it")
+
+        assert _page_title(dialog) == "Preview"
+        assert "Omarchy" not in _text_under(dialog)
+
+    def test_a_hyprlang_conf_is_not_told_anything_about_omarchy(self, tmp_path: Path) -> None:
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(
+            'require("default.hypr.omarchy")\n' + CONF, encoding="utf-8"
+        )
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+
+        assert _page_title(dialog) == "Preview"
+        assert "Omarchy" not in _text_under(dialog)
+
+
 class TestImportAChosenFile:
     """Import... reads the file the user chose, not the one detection found."""
 
@@ -400,7 +478,7 @@ class TestImportAChosenFile:
 
         assert _page_title(dialog) == "Read your config"
         assert str(chosen) in _text_under(dialog)
-        _click(dialog, "Read it")
+        _read(dialog, "Read it")
         assert _page_title(dialog) == "Preview"
         assert dialog._flow.preview.detection.source == chosen
         assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(7)
@@ -438,7 +516,7 @@ class TestTheCommandsPage:
         window, _ = build_window(tmp_path)
         dialog = window.show_migration()
         _click(dialog, "Convert...")
-        _click(dialog, "Read it")
+        _read(dialog, "Read it")
         assert _page_title(dialog) == "Commands"
         return dialog
 
@@ -516,10 +594,9 @@ class TestTheCommandsPage:
             ("a.lua -> b.lua", "Moves or renames this file"),
         ]
 
-    def test_a_click_queued_behind_a_read_runs_nothing_twice(self, tmp_path: Path) -> None:
-        """A read blocks the window for up to a minute, so a second click can queue behind
-        it. The pressed button is spent until the page settles, and the Run button arrives
-        unclickable, so a click aimed at "Read it" cannot land on it."""
+    def test_a_second_click_while_a_read_runs_starts_nothing(self, tmp_path: Path) -> None:
+        """One read at a time: a second press of the button that started it, before its
+        page has gone, does not start another read or run the commands twice."""
         marker = tmp_path / "ran"
         _foreign_root(
             tmp_path,
@@ -534,13 +611,23 @@ class TestTheCommandsPage:
         read.emit("clicked")
         read.emit("clicked")
 
-        assert dialog._view.get_navigation_stack().get_n_items() == 3
+        assert [_title(page) for page in _stack(dialog)] == [
+            "Detect",
+            "Read your config",
+            READING,
+        ]
+        _wait_for_the_read(dialog, "Read it")
+        assert [_title(page) for page in _stack(dialog)] == [
+            "Detect",
+            "Read your config",
+            "Commands",
+        ]
         run = _button(dialog, "Run them and read")
-        assert run.get_sensitive() is False
 
         run.emit("clicked")
         run.emit("clicked")
 
+        _wait_for_the_read(dialog, "Run them and read")
         assert marker.read_text(encoding="utf-8") == "x\n"
         assert _page_title(dialog) == "Preview"
 
@@ -560,6 +647,183 @@ class TestTheCommandsPage:
         assert "Read <mine> & co.lua?" in shown
 
 
+NEVER_ENDS = "hl.config({ general = { gaps_in = 7 } })\nwhile true do end\n"
+"""A config that only stops when it is stopped: a read the user has to cancel."""
+
+
+class HeldRead:
+    """`MigrationFlow.read_preview`, held until the test releases it, then read for real.
+
+    A read whose length the test controls, with no sleeping: while held, it gives up when
+    the wizard sets its cancel token (as the real read does), unless `ignore_cancel` makes
+    it the read that finishes just as the wizard closes.
+    """
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.ignore_cancel = False
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from hyprtweaker.engine.importer.lua.sandbox import Cancelled
+        from hyprtweaker.engine.migration.flow import MigrationFlow
+
+        real = MigrationFlow.read_preview
+
+        def held(flow, *args, cancel=None, **kwargs):  # type: ignore[no-untyped-def]
+            self.started.set()
+            deadline = time.monotonic() + main_loop.SETTLE_SECONDS
+            while not self.release.wait(0.005):
+                if cancel is not None and cancel.is_set() and not self.ignore_cancel:
+                    raise Cancelled("cancelled while held")
+                if time.monotonic() > deadline:
+                    raise AssertionError("the held read was never released")
+            return real(flow, *args, **kwargs)
+
+        monkeypatch.setattr(MigrationFlow, "read_preview", held)
+
+
+@pytest.fixture
+def held_read(monkeypatch: pytest.MonkeyPatch) -> Iterator[HeldRead]:
+    held = HeldRead()
+    held.install(monkeypatch)
+    yield held
+    held.release.set()
+    for thread in _readers():
+        thread.join(main_loop.SETTLE_SECONDS)
+
+
+class TestAReadOffTheMainLoop:
+    """Reading runs the config, which can take up to a minute: the wizard reads in a
+    worker behind a progress page, and Cancel or Close stops the read (#216)."""
+
+    def _on_consent(self, tmp_path: Path, source: str = FOREIGN_LUA):  # type: ignore[no-untyped-def]
+        _foreign_root(tmp_path, source)
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+        return dialog
+
+    def test_the_window_stays_live_behind_a_progress_page_until_the_read_ends(
+        self, tmp_path: Path, held_read: HeldRead
+    ) -> None:
+        from gi.repository import Adw, GLib
+
+        dialog = self._on_consent(tmp_path)
+        consent = _visible(dialog)
+
+        _click(dialog, "Read it")
+        assert held_read.started.wait(main_loop.SETTLE_SECONDS)
+
+        turns: list[int] = []
+        GLib.timeout_add(1, lambda: turns.append(1) or len(turns) < 3)
+        main_loop.wait_until(lambda: len(turns) == 3, "three main-loop turns during the read")
+        assert _page_title(dialog) == READING
+        status = _status(dialog)
+        assert status.get_title() == "Reading your config…"
+        assert status.get_description() in (None, "")
+        assert isinstance(status.get_paintable(), Adw.SpinnerPaintable)
+        assert [b.get_label() for b in _action_buttons(dialog)] == ["Cancel"]
+        assert {
+            label: button.is_sensitive() for label, button in _buttons_on(consent).items()
+        } == {"Read it": False, "Not now": False}
+        assert dialog._flow.preview is None
+
+        held_read.release.set()
+        _wait_for_the_read(dialog, "Read it")
+
+        assert _page_title(dialog) == "Preview"
+        assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(7)
+        assert [_title(page) for page in _stack(dialog)] == [
+            "Detect",
+            "Read your config",
+            "Preview",
+        ]
+
+    def test_a_long_read_says_it_can_take_up_to_a_minute(
+        self, tmp_path: Path, held_read: HeldRead, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from hyprtweaker.ui.dialogs import migration
+
+        monkeypatch.setattr(migration, "LONG_READ_SECONDS", 0.0)
+        dialog = self._on_consent(tmp_path)
+
+        _click(dialog, "Read it")
+
+        main_loop.wait_until(
+            lambda: _status(dialog).get_description() == "This can take up to a minute.",
+            "the progress page's second line",
+        )
+
+    def test_cancel_stops_the_read_and_returns_to_the_page_it_came_from(
+        self, tmp_path: Path
+    ) -> None:
+        dialog = self._on_consent(tmp_path, NEVER_ENDS)
+        _click(dialog, "Read it")
+        assert _page_title(dialog) == READING
+
+        _click(dialog, "Cancel")
+
+        assert _page_title(dialog) == "Read your config"
+        main_loop.wait_until(lambda: not _readers(), "the cancelled read's worker to end")
+        assert dialog._flow.preview is None
+        assert {
+            label: button.is_sensitive()
+            for label, button in _buttons_on(_visible(dialog)).items()
+        } == {"Read it": True, "Not now": True}
+        assert dialog.get_default_widget().get_label() == "Not now"
+        main_loop.settle("anything the cancelled read left queued")
+        assert _page_title(dialog) == "Read your config"
+        assert dialog._flow.preview is None
+
+    def test_cancel_on_the_commands_page_read_returns_to_the_commands_page(
+        self, tmp_path: Path
+    ) -> None:
+        # Read blocked, the pipe is faked and comes back empty; run for real, it never ends.
+        dialog = self._on_consent(
+            tmp_path,
+            'if io.popen("echo 5"):read("*a") ~= "" then while true do end end\n',
+        )
+        _read(dialog, "Read it")
+        assert _page_title(dialog) == "Commands"
+        blocked = dialog._flow.preview
+
+        _click(dialog, "Run them and read")
+        assert _page_title(dialog) == READING
+        _click(dialog, "Cancel")
+
+        assert _page_title(dialog) == "Commands"
+        main_loop.wait_until(lambda: not _readers(), "the cancelled read's worker to end")
+        assert _button(dialog, "Run them and read").is_sensitive()
+        assert dialog.get_default_widget().get_label() == "Not now"
+        assert dialog._flow.preview is blocked  # the cancelled read held nothing
+
+    def test_closing_the_wizard_mid_read_stops_the_read(self, tmp_path: Path) -> None:
+        dialog = self._on_consent(tmp_path, NEVER_ENDS)
+        _click(dialog, "Read it")
+
+        dialog.close()
+
+        main_loop.wait_until(lambda: not _readers(), "the read's worker to end on close")
+        main_loop.settle("the closed wizard's release")
+        assert dialog._flow.preview is None
+
+    def test_a_read_that_ends_as_the_wizard_closes_is_dropped(
+        self, tmp_path: Path, held_read: HeldRead
+    ) -> None:
+        held_read.ignore_cancel = True
+        dialog = self._on_consent(tmp_path)
+        _click(dialog, "Read it")
+        dialog.close()
+        main_loop.settle("the closed wizard's release")
+
+        held_read.release.set()
+
+        main_loop.wait_until(lambda: not _readers(), "the late read's worker to end")
+        main_loop.settle("the late read's result reaching the main loop")
+        assert dialog._flow.preview is None
+
+
 def test_reading_without_lua_stops_on_a_page_that_says_what_to_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -571,7 +835,7 @@ def test_reading_without_lua_stops_on_a_page_that_says_what_to_install(
     dialog = window.show_migration()
     _click(dialog, "Convert...")
 
-    _click(dialog, "Read it")
+    _read(dialog, "Read it")
 
     assert _page_title(dialog) == "Stopped"
     assert _descriptions(dialog) == [
@@ -762,3 +1026,283 @@ def _button(dialog, label: str):  # type: ignore[no-untyped-def]
 
 def _click(dialog, label: str) -> None:  # type: ignore[no-untyped-def]
     _button(dialog, label).emit("clicked")
+
+
+def _readers() -> list[threading.Thread]:
+    """The wizard's read workers still running in this process."""
+    return [thread for thread in threading.enumerate() if thread.name == READER_THREAD]
+
+
+def _wait_for_the_read(dialog, label: str) -> None:  # type: ignore[no-untyped-def]
+    main_loop.wait_until(
+        lambda: _page_title(dialog) != READING and not _readers(),
+        f"the read {label!r} started to reach its page and its worker to end",
+    )
+
+
+def _read(dialog, label: str) -> None:  # type: ignore[no-untyped-def]
+    """Press `label`, which reads the config in a worker, and wait for where it lands."""
+    _click(dialog, label)
+    _wait_for_the_read(dialog, label)
+
+
+def _stack(dialog) -> list:  # type: ignore[type-arg]
+    stack = dialog._view.get_navigation_stack()
+    return [stack.get_item(i) for i in range(stack.get_n_items())]
+
+
+def _title(page) -> str:  # type: ignore[no-untyped-def]
+    return str(page.get_title())
+
+
+def _buttons_on(page) -> dict[str, object]:  # type: ignore[no-untyped-def]
+    from gi.repository import Gtk
+
+    return {
+        widget.get_label(): widget
+        for widget in _walk(page)
+        if isinstance(widget, Gtk.Button) and widget.get_label()
+    }
+
+
+def _status(dialog):  # type: ignore[no-untyped-def]
+    from gi.repository import Adw
+
+    (status,) = _of_type(dialog, Adw.StatusPage)
+    return status
+
+
+MATUGEN_TOML = """\
+[templates.hyprland]
+input_path = '~/.config/matugen/templates/hyprland-colors.lua'
+output_path = '~/.config/hypr/colors.lua'
+"""
+
+WALLUST_TOML = """\
+[templates]
+kitty = { template = 'kitty.conf', target = '~/.config/kitty/colors.conf' }
+"""
+
+
+class LiveClient:
+    """A compositor that loaded the switched config cleanly. Nothing reaches a real one."""
+
+    async def configerrors(self) -> tuple[str, ...]:
+        return ()
+
+    async def bind_count(self) -> int:
+        return 0
+
+    async def workspace_rule_count(self) -> int:
+        return 0
+
+    async def monitors(self) -> tuple[dict[str, object], ...]:
+        return ()
+
+    async def reload_full_reset(self) -> None:
+        return None
+
+
+def _run_the_switch_only(coro) -> None:  # type: ignore[no-untyped-def]
+    """The wizard's `spawn`: runs Switch to its end; the 60-s countdown after it is not run."""
+    import asyncio
+
+    if coro.__name__ == "_switch":
+        asyncio.run(coro)
+    else:
+        coro.close()
+
+
+def _wizard(  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+    stub_tool: Callable[..., Path],
+    tools: tuple[str, ...],
+    *,
+    live: bool = True,
+):
+    """The wizard over a `hyprland.conf` in the fenced home, with `tools` installed (stubs
+    on the fenced tool path, never run) and matugen's and wallust's configs present. The
+    static gate is stood in for: `test_bridge_verify_config.py` runs the real one."""
+    import subprocess
+
+    from hyprtweaker.engine.migration import flow as flow_module
+    from hyprtweaker.engine.migration.flow import MigrationFlow
+    from hyprtweaker.engine.paths import ConfigPaths
+    from hyprtweaker.engine.schema import load_schema
+    from hyprtweaker.ui.dialogs.migration import MigrationDialog
+
+    paths = ConfigPaths.default()
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+    for relpath, text in (
+        ("matugen/config.toml", MATUGEN_TOML),
+        ("wallust/wallust.toml", WALLUST_TOML),
+    ):
+        (paths.config_home / relpath).parent.mkdir(parents=True, exist_ok=True)
+        (paths.config_home / relpath).write_text(text, encoding="utf-8")
+    for tool in tools:
+        stub_tool(tool, "exit 99")
+
+    monkeypatch.setattr(
+        flow_module,
+        "_verify_config",
+        lambda entrypoint, runtime: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(flow_module, "_hyprland_installed", lambda: True)
+    flow = MigrationFlow(
+        paths=paths,
+        schema=load_schema("0.56.2", ROOT / "data" / "schema"),
+        app_version=APP_VERSION,
+        client=LiveClient() if live else None,
+    )
+    started_application()
+    from started_app import presented
+
+    dialog = presented(MigrationDialog(flow, spawn=_run_the_switch_only))
+    _click(dialog, "Convert...")
+    _click(dialog, "Back up and convert")
+    return dialog, flow, paths
+
+
+def _tool_configs(paths) -> dict[str, bytes]:  # type: ignore[no-untyped-def]
+    root = paths.config_home
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and not path.is_relative_to(paths.hypr_dir)
+    }
+
+
+def _row_button(dialog, title: str):  # type: ignore[no-untyped-def]
+    from gi.repository import Adw, Gtk
+
+    (row,) = [row for row in _of_type(dialog, Adw.ActionRow) if row.get_title() == title]
+    (button,) = [widget for widget in _walk(row) if isinstance(widget, Gtk.Button)]
+    return button
+
+
+class TestBridgeSetup:
+    """#187: the back-up step offers each installed theming tool, each behind its own
+    confirm; skipping all is the default and nothing of a tool's is written before Switch."""
+
+    def test_two_installed_tools_are_listed_and_confirming_one_wires_only_that_one(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, flow, paths = _wizard(monkeypatch, stub_tool, ("matugen", "wallust"))
+        wallust = (paths.config_home / "wallust/wallust.toml").read_bytes()
+
+        assert _page_title(dialog) == "Theming tools"
+        assert _rows(dialog) == [("matugen", "Not set up"), ("wallust", "Not set up")]
+        assert dialog.get_default_widget().get_label() == "Continue"
+
+        _row_button(dialog, "matugen").emit("clicked")
+        confirm = dialog._confirm
+        assert confirm.get_heading() == "Set up matugen?"
+        assert confirm.get_default_response() == "cancel"
+        assert confirm.get_response_label("agree") == "Set up matugen"
+        assert "~/.config/matugen/config.toml (changed)" in confirm.lines
+        confirm.emit("response", "agree")
+
+        assert _rows(dialog) == [
+            ("matugen", "Set up when you switch"),
+            ("wallust", "Not set up"),
+        ]
+        assert _row_button(dialog, "matugen").get_label() == "Don't set up"
+        assert (paths.config_home / "matugen/config.toml").read_text() == MATUGEN_TOML
+
+        _click(dialog, "Continue")
+        assert _page_title(dialog) == "Back up"
+        assert ("Set up when you switch", "matugen") in _rows(dialog)
+        _click(dialog, "Switch and verify")
+
+        assert _page_title(dialog) == "Keep or roll back"
+        assert "bridge/matugen.lua" in (paths.config_home / "matugen/config.toml").read_text()
+        assert (paths.config_home / "wallust/wallust.toml").read_bytes() == wallust
+        assert "matugen is set up. Its colors load from matugen's next run." in _row_titles(
+            dialog
+        )
+        flow.keep()
+
+    def test_declining_the_confirm_leaves_every_tool_config_as_it_was(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, flow, paths = _wizard(monkeypatch, stub_tool, ("matugen", "wallust"))
+        before = _tool_configs(paths)
+
+        _row_button(dialog, "matugen").emit("clicked")
+        dialog._confirm.emit("response", "cancel")
+        assert _rows(dialog)[0] == ("matugen", "Not set up")
+        _click(dialog, "Continue")
+        _click(dialog, "Switch and verify")
+
+        assert _page_title(dialog) == "Keep or roll back"
+        assert flow.consents == ()
+        assert _tool_configs(paths) == before
+        assert "matugen" not in _text_under(dialog._view.get_visible_page())
+        flow.keep()
+
+    def test_a_confirmed_tool_can_be_unchecked_before_the_switch(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, flow, _paths = _wizard(monkeypatch, stub_tool, ("matugen",))
+        _row_button(dialog, "matugen").emit("clicked")
+        dialog._confirm.emit("response", "agree")
+
+        _row_button(dialog, "matugen").emit("clicked")
+
+        assert _rows(dialog) == [("matugen", "Not set up")]
+        assert flow.consents == ()
+
+    def test_with_no_tool_installed_the_wizard_goes_straight_to_the_back_up_page(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, _flow, _paths = _wizard(monkeypatch, stub_tool, ())
+
+        assert _page_title(dialog) == "Back up"
+        assert "Theming tools" not in [_title(page) for page in _stack(dialog)]
+
+    def test_without_a_compositor_no_tool_is_offered(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, _flow, _paths = _wizard(
+            monkeypatch, stub_tool, ("matugen", "wallust"), live=False
+        )
+
+        assert _page_title(dialog) == "Back up"
+
+
+def test_a_relaunched_roll_back_says_which_tool_file_it_left(tmp_path: Path) -> None:
+    """Finding 21 of the #153 review: the relaunched app's Roll back dropped its notes, so a
+    tool config left as the user changed it was never mentioned."""
+    from datetime import UTC, datetime
+
+    from hyprtweaker.engine.bridge.wire import WireConsent, plan_wire, wire
+    from hyprtweaker.engine.migration import sentinel as sentinels
+    from hyprtweaker.engine.paths import ConfigPaths
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    config = paths.config_home / "matugen/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text("[config]\n", encoding="utf-8")
+    plan = plan_wire("matugen", paths=paths)
+    wire(plan, WireConsent(plan), register=lambda _t: True, unregister=lambda _t: True)
+    config.write_text(config.read_text(encoding="utf-8") + "# mine\n", encoding="utf-8")
+    edited = config.read_bytes()
+    sentinels.write(paths, kind="legacy-conf", bridge_tools=("matugen",), now=datetime.now(UTC))
+    window, _ = build_window(tmp_path)
+
+    window.route_first_run()
+    offer = window.get_visible_dialog()
+    assert offer.get_heading() == "A configuration switch was not finished"
+    offer.emit("response", "roll-back")
+    offer.force_close()
+    main_loop.settle("the notes to show")
+
+    said = window.get_visible_dialog()
+    assert said.get_heading() == "Rolled back"
+    assert said.get_body() == (
+        f"{tmp_path}/matugen/config.toml changed after matugen was set up, so it was left "
+        f"as it is. The copy from before setup is in {tmp_path}/state/bridge-backups/."
+    )
+    assert config.read_bytes() == edited
+    said.force_close()

@@ -13,6 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from started_app import started_application
+
 APP_VERSION = "0.0.0-test"
 RESIZE = "general:resize_on_border"
 GONE = "misc:removed_long_ago"
@@ -52,7 +54,7 @@ def build_window(tmp_path: Path) -> tuple[Any, Any]:
         connect=no_compositor,
         read_live=lambda: None,
     )
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     return session, MainWindow(session, application=app)
 
 

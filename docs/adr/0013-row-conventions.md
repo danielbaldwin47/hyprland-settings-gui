@@ -31,6 +31,20 @@ State pills: at most two, the two highest-ranked in the precedence table in `ui/
 
 3. **`depends_on`-disabled Rows stay visible**: only the *control* is made insensitive (title/subtitle remain readable), plus a suffix badge "Requires \<controlling option title\>" that navigates to the controlling Row on click. Never hide the Row — hiding makes options undiscoverable and makes group layouts jump. Control-only insensitivity is deliberate: libadwaita's row-level `sensitive` dims the whole Row including its text.
 
+   *Amended by #215 — Rows the running Hyprland does not take are read-only.* A Row with a kept value in the Manifest's `retired` table (every retirement reason, pill or not) and a Row wearing "Not in this Hyprland" get the same control-only insensitivity, because every edit to either would be written, rejected as a config error and auto-reverted. The Row says why in its subtitle, under the description, since a pill's tooltip is out of reach of the keyboard and of a screen reader: a Retired Row reads "Your value: \<value\>. …" and its control renders the kept value, not the default it is not using; a set "Not in this Hyprland" Row keeps its reset arrow, the user's way out of the config error its key raises, and says so. `Session` refuses every edit and reset of a Retired name as well, so no other caller (Search, scripts) reaches it. Editable and resettable, per pill:
+
+   | Pill | Control | Reset arrow |
+   |---|---|---|
+   | Retired in \<ver\> (or a quietly kept value, no pill) | read-only, shows the kept value | none (the model holds it Unset) |
+   | Not in this Hyprland, set | read-only | yes |
+   | Not in this Hyprland, unset | read-only | none (nothing to reset) |
+   | New in \<ver\>, Plugin option | editable | when modified |
+   | Didn't apply, Overridden, Pending restart, Restart, Per-device, Advanced | editable | when modified |
+   | Set by \<tool\> (spec #153: a theming tool's loading Bridge module sets it; the subtitle says so, and the pill opens the tool on the Theming page) | editable: the value is kept and applies once the tool no longer sets it | when modified |
+   | Not confirmed (review of spec #153: a timed-out apply; it hides Didn't apply and Overridden until the next reading of the key) | editable | when modified |
+
+   A read-only session and an unmet `depends_on` still dim every Row as before; a read-only session also disables the reset arrow.
+
 4. **ExpanderRow collapsed summary**: a dim-label value preview as a suffix — gradient: colour-swatch strip + angle ("45°"); css-gaps: "8" when uniform, "8 · 12 · 8 · 12" (top·right·bottom·left) otherwise; vec2: "0.0, 0.5". The Row answers "what is it set to?" without expanding.
 
 5. **Advanced/hidden disclosure**: one global **"Show advanced settings"** switch in the primary (hamburger) menu — not per-page. Advanced Rows render in place inside their normal Groups. The `hidden` tier (`debug`, `quirks`, `experimental`, `input-capture`) appears only in the Config view with the switch on, never in Tasks. Search always indexes everything; navigating to a hit reveals that Row one-off even with the switch off.

@@ -163,7 +163,9 @@ class PluginRow:
         self.index = index
         name = plugin.path.rsplit("/", 1)[-1] or plugin.path
         # A path is user text: as Pango markup an `&` renders blank.
-        self.widget = Adw.ActionRow(title=name, subtitle=plugin.path, use_markup=False)
+        self.widget = Adw.ActionRow(use_markup=False)
+        self.widget.set_title(name)
+        self.widget.set_subtitle(plugin.path)
         self.widget.set_subtitle_selectable(True)
 
         self.handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
@@ -276,11 +278,11 @@ class PluginsGroup:
             self.add_button.connect("clicked", lambda _button: actions.add())
         self.group.set_header_suffix(self.add_button)
 
-        self.empty_row = Adw.ActionRow(title=PLUGINS_EMPTY, use_markup=False)
+        self.empty_row = Adw.ActionRow(use_markup=False)
+        self.empty_row.set_title(PLUGINS_EMPTY)
         self.empty_row.add_css_class("dim-label")
-        self.also_loaded = Adw.ActionRow(
-            subtitle="Loaded by Hyprland, but not from this list", use_markup=False
-        )
+        self.also_loaded = Adw.ActionRow(use_markup=False)
+        self.also_loaded.set_subtitle("Loaded by Hyprland, but not from this list")
         self.footer = Gtk.Label(
             label=PLUGIN_SETTINGS_FOOTER,
             wrap=True,
@@ -379,7 +381,9 @@ class ScriptingRow:
         self.title = title
         self.subtitle = subtitle
         # User text (an event name, a path): as Pango markup an `&` renders blank.
-        self.widget = Adw.ActionRow(title=title, subtitle=subtitle, use_markup=False)
+        self.widget = Adw.ActionRow(use_markup=False)
+        self.widget.set_title(title)
+        self.widget.set_subtitle(subtitle)
         self.open_button: Gtk.Button | None = None
         if open_file is not None:
             button = Gtk.Button(icon_name="document-open-symbolic", valign=Gtk.Align.CENTER)

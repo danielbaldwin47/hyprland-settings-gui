@@ -211,20 +211,6 @@ class ApplyResult:
     """
 
     @property
-    def reloaded(self) -> bool:
-        """Whether a reload ran, so `errors` is news about the config.
-
-        Refused, failed mid-write, or nothing to write: the compositor was never asked, and
-        an empty `errors` then means "not read", not "clean". Observing one as clean would
-        clear a Banner whose cause is still on disk.
-        """
-        return self.outcome not in (
-            ApplyOutcome.ABORTED,
-            ApplyOutcome.WRITE_FAILED,
-            ApplyOutcome.NOTHING_TO_DO,
-        )
-
-    @property
     def ok(self) -> bool:
         """Nothing is known to have gone wrong -- so there is nothing to tell the user.
 
@@ -233,6 +219,22 @@ class ApplyResult:
         stricter question, and the one to ask before treating a write as good.
         """
         return self.outcome in (ApplyOutcome.OK, ApplyOutcome.NOTHING_TO_DO)
+
+    @property
+    def reloaded(self) -> bool:
+        """Hyprland answered a reload this transaction issued, so `errors` (empty included)
+        describe the config as it now is.
+
+        False for every outcome that learnt nothing about the config: no reload ran
+        (`ABORTED`, `WRITE_FAILED`, `NOTHING_TO_DO`), or one ran unanswered (`TIMEOUT`, whose
+        re-read is what finds out; `COMPOSITOR_GONE`). Their empty `errors` mean "not asked",
+        never "clean" -- reading them as clean would clear a Banner whose cause is on disk.
+        """
+        return self.outcome in (
+            ApplyOutcome.OK,
+            ApplyOutcome.CONFIG_ERRORS,
+            ApplyOutcome.READ_BACK_MISMATCH,
+        )
 
     @property
     def confirmed(self) -> bool:

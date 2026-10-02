@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from started_app import started_application
+
 APP_VERSION = "0.0.0-test"
 
 
@@ -53,7 +55,7 @@ def live_entity_window(tmp_path: Path) -> Any:
     applier = SettlingApplier()
     session._applier = applier
     session._offline_reason = None
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     window = MainWindow(session, application=app)
     session.on_recorded = window.offer_undo
     return session, window, applier

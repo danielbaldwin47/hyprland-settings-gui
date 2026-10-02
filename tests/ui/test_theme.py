@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
 
@@ -47,7 +48,7 @@ def build_window(tmp_path: Path) -> Any:
         app_version=APP_VERSION,
         connect=no_compositor,
     )
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     return MainWindow(session, application=app)
 
 

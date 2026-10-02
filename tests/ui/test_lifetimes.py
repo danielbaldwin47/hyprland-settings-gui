@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import main_loop
+from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
 TIMES = 3
@@ -45,7 +46,7 @@ def wired_window(session: Any) -> Any:
     from hyprtweaker.ui.shell.window import MainWindow
 
     Adw.init()
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     window = MainWindow(session, application=app)
     session.on_state_changed = window.sync
     session.on_applied = window.show_result
@@ -92,6 +93,32 @@ def test_a_bind_editor_closed_on_one_window_is_released_each_time(tmp_path: Path
 
     assert window.get_visible_dialog() is None
     assert collected(refs) == [True] * TIMES
+    window.close()
+
+
+def test_a_dialog_is_released_once_its_animation_out_takes_it_out_of_the_window(
+    tmp_path: Path,
+) -> None:
+    """libadwaita emits `closed` as a dialog starts to animate out, still in the window (#228).
+
+    It takes the dialog out when the animation ends (`adw-dialog.c`: `sheet_closing_cb` emits
+    `closed`, `sheet_closed_cb` removes it). A release queued on `closed` alone ran in
+    between whenever the main loop went idle mid-animation, was refused, and the dialog
+    stayed for as long as the window did. The animation's timing is the main loop's, so the
+    test plays its two ends itself: `closed` first, the removal after the loop has settled.
+    """
+    window = wired_window(offline_session(tmp_path))
+    add_bind_button(window).emit("clicked")
+    dialog = window.get_visible_dialog()
+    ref = weakref.ref(dialog)
+
+    dialog.emit("closed")
+    main_loop.settle("what the animation's first frames leave queued")
+    assert dialog.get_parent() is not None
+    dialog.force_close()
+    del dialog
+
+    assert collected([ref]) == [True]
     window.close()
 
 
@@ -389,4 +416,62 @@ def test_a_scripting_page_refresh_releases_the_plugin_rows_and_groups_it_replace
 
     # Per refresh: two rows and their widgets, the lead group and two kinds' groups.
     assert len(refs) == TIMES * 7
+    assert collected(refs) == [True] * len(refs)
+
+
+def test_a_theming_page_refresh_releases_the_rows_it_replaced(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """`ThemingPage.refresh` replaces every row of its groups (#164); each row's buttons
+    hold the page's bound methods, the cycle #219 found."""
+    from hyprtweaker.engine.bridge import MATUGEN, Wallpaper, bridge_states_for
+    from hyprtweaker.engine.state import Manifest
+    from hyprtweaker.engine.writer import Writer
+
+    stub_tool("matugen")
+    stub_tool("dms")
+    (tmp_path / "hypr/dms").mkdir(parents=True)
+    (tmp_path / "hypr/dms/colors.lua").write_text("return {}\n")
+    session = offline_session(tmp_path)
+    manifest = Manifest.load(session.paths.manifest, app_version="x", schema_version="y")
+    entries = bridge_states_for(
+        Wallpaper("matugen"), manifest.add_bridge(MATUGEN, present=()).bridges, present=()
+    )
+    Writer(session.paths, app_version=APP_VERSION).record_bridges(session.model, entries)
+    window = wired_window(session)
+    page = window.theming_page
+    assert page.button("Remove…") is not None, page.rows
+
+    refs = []
+    for _ in range(TIMES):
+        page.refresh()
+        refs.extend(weakref.ref(row) for rows in page._rows.values() for row in rows)
+    page.refresh()
+
+    assert len(refs) >= TIMES * 5
+    assert collected(refs) == [True] * len(refs)
+
+
+def test_a_presets_group_rebuild_releases_the_rows_it_replaced(tmp_path: Path) -> None:
+    """Every Preset row's buttons hold the group's bound methods, the cycle #219 found; the
+    group rebuilds on a save, a delete, an import and when its revision moved (#171)."""
+    from hyprtweaker.engine.presets import CaptureScope
+
+    session = offline_session(tmp_path)
+    session.model.set("general:border_size", 3)
+    window = wired_window(session)
+    group = window.theming_page.presets
+    session.save_preset("Nord", (CaptureScope.GAPS_LAYOUT,), done=lambda _result: None)
+    session.save_preset("Fjord", (CaptureScope.GAPS_LAYOUT,), done=lambda _result: None)
+
+    refs = []
+    for _ in range(TIMES):
+        group.refresh(force=True)
+        refs.extend(weakref.ref(row) for row in (*group.rows.values(), *group._others))
+        refs.extend(weakref.ref(button) for button in group._buttons.values())
+    group.refresh(force=True)
+    session.delete_preset("nord")
+    group.refresh()  # the revision moved: the rows go and come back as one
+
+    assert len(refs) >= TIMES * 8
     assert collected(refs) == [True] * len(refs)

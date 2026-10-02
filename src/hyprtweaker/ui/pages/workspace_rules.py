@@ -12,9 +12,9 @@ included, because a config the app declines to keep is one the user cannot fix i
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import gi
 
@@ -24,29 +24,13 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import WorkspaceRule  # noqa: E402
-from hyprtweaker.engine.rule_filter import value_text  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import fields_summary  # noqa: E402
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
-
-NO_FIELDS = "Nothing set yet"
-"""The subtitle of a rule with no fields: a new rule, until its fields are set."""
-
-
-def fields_summary(fields: Mapping[str, Any]) -> str:
-    """The row subtitle: `monitor DP-1, default, decorate off`, the Rules pages' grammar."""
-    parts = []
-    for name, value in fields.items():
-        if value is True:
-            parts.append(name)
-        elif value is False:
-            parts.append(f"{name} off")
-        else:
-            parts.append(f"{name} {value_text(value)}")
-    return ", ".join(parts) or NO_FIELDS
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,9 +51,9 @@ class WorkspaceRuleRow:
         self.rule = rule
         selector = rule.workspace
         # The selector is user text (`w[tv1]`, `name:a&b`): as Pango markup `&` renders blank.
-        self.widget = Adw.ActionRow(
-            title=selector, subtitle=fields_summary(rule.fields), use_markup=False
-        )
+        self.widget = Adw.ActionRow(use_markup=False)
+        self.widget.set_title(selector)
+        self.widget.set_subtitle(fields_summary(rule.fields))
 
         self.edit_button = Gtk.Button(
             icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER
@@ -185,8 +169,9 @@ class WorkspaceRulesPage:
             self._group.add(empty)
             self._listed.append(empty)
 
-    def reveal(self, selector: str) -> bool:
-        """Bring the row for `selector` into view and flash it; False when there is none.
+    def reveal(self, selector: str) -> Gtk.Widget | None:
+        """Bring the row for `selector` into view, flash it and return it; `None` when there
+        is none -- the row, so a search hit's window scrolls to it once (#75, #172).
 
         Navigate + flash, the `BindsPage.reveal` shape: focus scrolls every ancestor to the
         row, and the pulse marks it for a reader whose eyes were elsewhere -- on the dialog
@@ -196,5 +181,5 @@ class WorkspaceRulesPage:
             if row.rule.workspace == selector:
                 row.widget.grab_focus()
                 flash(row.widget)
-                return True
-        return False
+                return row.widget
+        return None

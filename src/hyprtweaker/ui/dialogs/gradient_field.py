@@ -59,9 +59,9 @@ class GradientRow(GrammarRow[Gradient]):
         self.add_button.add_css_class("flat")
         self.add_button.connect("clicked", self._on_add)
 
-        colours = Adw.ActionRow(
-            title="Colours", subtitle="Blended in order, along the angle", use_markup=False
-        )
+        colours = Adw.ActionRow(use_markup=False)
+        colours.set_title("Colours")
+        colours.set_subtitle("Blended in order, along the angle")
         colours.add_suffix(self._stops)
         colours.add_suffix(self.add_button)
 
@@ -82,7 +82,8 @@ class GradientRow(GrammarRow[Gradient]):
         )
         self.angle.set_format_value_func(lambda _scale, value: f"{value:.0f}°")
         self.angle.connect("value-changed", self._changed)
-        angle = Adw.ActionRow(title="Angle", use_markup=False)
+        angle = Adw.ActionRow(use_markup=False)
+        angle.set_title("Angle")
         angle.add_suffix(self.angle)
         return [colours, angle]
 

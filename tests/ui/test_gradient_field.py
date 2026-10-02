@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from started_app import presented
+
 TABLE = {"colors": ["#ff0000", "#00ff00"], "angle": 45}
 PAIR = "rgba(33ccffee) rgba(595959aa)"
 
@@ -28,7 +30,7 @@ def open_editor(effects: dict[str, Any]) -> tuple[Any, list[Any]]:
     Adw.init()
     collected: list[Any] = []
     rule = window_rule(match={"class": "x"}, effects=effects)
-    return RuleEditor(kind="window", on_done=collected.append, rule=rule), collected
+    return presented(RuleEditor(kind="window", on_done=collected.append, rule=rule)), collected
 
 
 def row_of(editor: Any, name: str) -> Any:

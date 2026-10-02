@@ -48,7 +48,7 @@ Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/do
 
 Read `CONTEXT.md` first; delegate anything broader to a read-only subagent (Explore) and take targeted-range reads only — whole-file surveys of this repo have cost sessions 90k+ context. Build on the investigator's returned map — the #131 session re-derived it with its own reads and greps and spent 78k before its first edit. Map:
 
-- `src/hyprtweaker/engine/` — config engine: `importer/` (hyprlang → model), `schema/` (option schema: sources/resolve/infer), `model/` (options, values), `writer/` (Lua emit), `apply/` (transaction pipeline), `ipc/` (hyprctl commands/events), `state/` (manifest)
+- `src/hyprtweaker/engine/` — config engine: `importer/` (hyprlang → model), `schema/` (option schema: sources/resolve/infer), `model/` (options, values), `writer/` (Lua emit), `apply/` (transaction pipeline), `ipc/` (hyprctl commands/events), `state/` (manifest), `bridge/` (theming-tool registry, Bridge entries, wire/unwire of a tool's config)
 - `src/hyprtweaker/session.py` — session layer bridging engine and UI
 - `src/hyprtweaker/ui/` — `shell/` (window, runtime), `pages/` (plan, config), `rows/` (factory, chrome, state), `dialogs/`
 - `tests/` — `unit/`, `integration/`, `ui/`, `golden/`, `static/`; `corpus/` is third-party rice fixtures, excluded from lint

@@ -18,6 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import main_loop
+
 from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, load_schema
@@ -42,12 +44,16 @@ class FakeSession:
         self.pending_restart: frozenset[str] = frozenset()
         self.unapplied: frozenset[str] = frozenset()
         self.overridden: frozenset[str] = frozenset()
+        self.unconfirmed: frozenset[str] = frozenset()
         self.device_overrides: dict[str, tuple[str, ...]] = {}
+        self.bridge_owners: dict[str, str] = {}
         self.live_hyprland = live_hyprland
         self.unknown: frozenset[str] = frozenset()
         """What `unknown_to_version` answers: the Session's own rule is tested on a real
         Session (`test_session_live_version.py`), so the fake holds the answer."""
         self.retired: dict[str, str] = {}
+        self.kept: dict[str, Any] = {}
+        """What `kept_value` answers; the real one is tested in `test_session_retirement.py`."""
         self.model = ConfigModel(SCHEMA)
         self.applied: list[str] = []
 
@@ -56,6 +62,9 @@ class FakeSession:
 
     def retired_in(self, option: ResolvedOption) -> str | None:
         return self.retired.get(option.name)
+
+    def kept_value(self, name: str) -> OptionValue:
+        return self.kept.get(name, UNSET)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         return self.model.get(option.name)
@@ -310,21 +319,145 @@ def test_a_restart_flagged_row_swaps_its_pill_once_the_write_lands() -> None:
     assert row.chrome.pill_labels == ("Pending restart",)
 
 
-def test_a_row_the_running_hyprland_lacks_says_so_and_still_writes() -> None:
-    """#181: the pill informs, the control stays live, and an edit is written as before."""
-    live = LiveHyprland("0.56.0", tuple({"name": o.name} for o in SCHEMA if o.name != ROUNDING))
-    session = FakeSession(live_hyprland=live)
+def test_a_row_overridden_at_launch_wears_the_pill_before_any_edit() -> None:
+    """The launch drift scan (#191) fills `overridden` before the window is built: the Row
+    shows it on sight, and clears it when a later scan finds the override gone."""
+    session = FakeSession()
+    session.overridden = frozenset({GAPS_IN})
+
+    row = build_row(GAPS_IN, session)
+
+    assert row.chrome.pill_labels == ("Overridden",)
+    assert session.applied == [], "nothing was edited"
+
+    session.overridden = frozenset()
+    row.chrome.refresh()
+
+    assert row.chrome.pill_labels == ()
+
+
+ACTIVE_BORDER = "general:col.active_border"
+
+
+def test_a_tool_owned_row_wears_a_set_by_button_that_opens_the_tool() -> None:
+    """#165: the pill names the tool and leads to it, by pointer and by keyboard."""
+    from gi.repository import Gtk
+
+    opened: list[str] = []
+    session = FakeSession()
+    session.bridge_owners = {ACTIVE_BORDER: "matugen"}
+    row = build_row(ACTIVE_BORDER, session, reveal_backend=opened.append)
+
+    (button,) = row.chrome.pill_buttons
+    assert row.chrome.pill_labels == ("Set by matugen",)
+    assert isinstance(button, Gtk.Button) and button.get_visible()
+    assert button.get_child().get_label() == "Set by matugen"
+    assert button.get_focusable()
+    assert button.get_tooltip_text().startswith("matugen sets this, so Hyprland uses")
+
+    button.emit("clicked")
+    assert opened == ["matugen"]
+
+    # Enter or Space on the focused button: its keybinding signal, which clicks after the
+    # pressed look has shown for a moment -- on a realized button, so in a window.
+    from gi.repository import Adw
+    from started_app import started_application
+
+    group = Adw.PreferencesGroup()
+    group.add(row.widget)
+    window = Adw.ApplicationWindow(application=started_application(), content=group)
+    button.realize()  # and every ancestor up to the window, which is never shown
+    assert button.get_realized()
+    assert button.grab_focus() and window.get_focus() is button
+    assert button.activate()
+    main_loop.wait_until(lambda: len(opened) == 2, "the keyboard activation")
+    assert opened == ["matugen", "matugen"]
+    assert row.control.get_sensitive(), "the control stays editable"
+
+
+def test_a_row_no_tool_owns_has_no_set_by_pill_and_one_that_stops_loses_it() -> None:
+    session = FakeSession()
+    session.bridge_owners = {ACTIVE_BORDER: "matugen"}
+    owned = build_row(ACTIVE_BORDER, session)
+    other = build_row(GAPS_IN, session)
+
+    assert other.chrome.pill_labels == () and other.chrome.pill_buttons == ()
+
+    session.bridge_owners = {}
+    owned.chrome.refresh()
+
+    assert owned.chrome.pill_labels == ()
+    assert owned.chrome.pill_buttons == ()
+
+
+def test_set_by_replaces_overridden_on_the_row() -> None:
+    session = FakeSession()
+    session.bridge_owners = {ACTIVE_BORDER: "matugen"}
+    session.overridden = frozenset({ACTIVE_BORDER})
+
+    row = build_row(ACTIVE_BORDER, session)
+
+    assert row.chrome.pill_labels == ("Set by matugen",)
+
+
+def _lacking(*names: str) -> LiveHyprland:
+    return LiveHyprland(
+        "0.56.0", tuple({"name": o.name} for o in SCHEMA if o.name not in names)
+    )
+
+
+def test_a_retired_row_is_read_only_and_shows_the_value_it_keeps() -> None:
+    """#215: the control shows the kept 8, not the default, and nothing on the Row edits."""
+    session = FakeSession(live_hyprland=_lacking(ROUNDING))
+    session.retired = {ROUNDING: "0.57.0"}
+    session.kept = {ROUNDING: 8}
+    row = build_row(ROUNDING, session)
+
+    assert row.chrome.pill_labels == ("Retired in 0.57.0",)
+    assert not row.control.get_sensitive()
+    assert row.control.get_value() == 8
+    assert row.widget.get_subtitle().endswith(
+        "\nYour value: 8. Hyprland 0.57.0 removed this setting; it is kept for when the "
+        "setting returns."
+    )
+    assert not row.chrome.reset.get_visible() and not row.chrome.reset.get_sensitive()
+    assert row.chrome.help.get_sensitive(), "the ⓘ stays reachable from the keyboard"
+
+
+def test_a_set_row_the_running_hyprland_lacks_is_read_only_and_reset_takes_it_out() -> None:
+    """#215: Reset stays on a set Not in this Hyprland Row; once unset, the Row says so."""
+    session = FakeSession(live_hyprland=_lacking(ROUNDING))
     session.unknown = frozenset({ROUNDING})
+    session.model.set(ROUNDING, 8)
     row = build_row(ROUNDING, session)
 
     assert row.chrome.pill_labels == ("Not in this Hyprland",)
-    assert row.control.get_sensitive()
+    assert not row.control.get_sensitive()
+    assert row.control.get_value() == 8
+    assert row.widget.get_subtitle().endswith(
+        "\nHyprland 0.56.0 does not have this setting. Reset removes it from your config."
+    )
+    assert row.chrome.reset.get_visible() and row.chrome.reset.get_sensitive()
 
-    row.control.set_value(9)
+    row.chrome.reset.emit("clicked")
 
     assert session.applied == [ROUNDING]
-    assert session.model.get(ROUNDING) == 9
-    assert build_row(GAPS_IN, session).chrome.pill_labels == ()
+    assert session.model.get(ROUNDING) is UNSET
+    assert not row.control.get_sensitive()
+    assert not row.chrome.reset.get_visible()
+    assert row.widget.get_subtitle().endswith(
+        "\nHyprland 0.56.0 does not have this setting, so it cannot be changed here."
+    )
+
+
+def test_an_unset_row_the_running_hyprland_lacks_is_read_only() -> None:
+    session = FakeSession(live_hyprland=_lacking(ROUNDING))
+    session.unknown = frozenset({ROUNDING})
+    row = build_row(ROUNDING, session)
+
+    assert not row.control.get_sensitive()
+    assert not row.chrome.reset.get_visible()
+    assert build_row(GAPS_IN, session).control.get_sensitive(), "only the Option it lacks"
 
 
 # --- the help popover -------------------------------------------------------------------------
