@@ -378,6 +378,21 @@ def test_a_switch_name_the_bind_syntax_would_split_cannot_be_set() -> None:
     assert recorded == []
 
 
+def test_a_refused_pick_clears_the_trigger_it_replaces() -> None:
+    """The entry would otherwise show the last trigger beside a disabled Set, as if that
+    trigger were the refused one (#151 review, finding 29)."""
+    odd = {"address": "0x3", "name": "Foo + Bar"}
+    dialog, _ = make_dialog(fetch_switches=answering(LID, odd))
+    choose(dialog, "Lid Switch")
+    assert dialog._manual.get_text() == "switch:on:Lid Switch"
+
+    choose(dialog, "Foo + Bar")
+
+    assert dialog._manual.get_text() == ""
+    assert dialog._problem.get_visible()
+    assert not dialog._confirm.get_sensitive()
+
+
 def test_a_switch_name_with_an_ampersand_cannot_be_set() -> None:
     """`&` passes `validate_trigger` for a switch; only `trigger_load_problem` refuses it,
     so Capture has to ask the predicate and not only the validator (#199)."""
