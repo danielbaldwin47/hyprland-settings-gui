@@ -12,6 +12,14 @@ project(
 # have installed.
 python = import('python').find_installation('python3', modules: ['gi'])
 
+# The PyGObject floor, checked by capability rather than by version string: live apply
+# runs coroutines on the GTK main loop through `gi.events`, which PyGObject 3.50 added.
+# One number: MINIMUM_PYGOBJECT in src/hyprtweaker/ui/shell/runtime.py and the
+# PKGBUILD's python-gobject pin say the same (tests/unit/test_packaging.py).
+if run_command(python, '-c', 'import gi.events', check: false).returncode() != 0
+  error('PyGObject >= 3.50 is required (`import gi.events` failed for ' + python.full_path() + '). Update python-gobject (python3-gi) and configure again.')
+endif
+
 subdir('src')
 subdir('data')
 subdir('tests')
