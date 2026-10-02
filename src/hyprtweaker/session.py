@@ -2071,14 +2071,6 @@ class Session:
         )
         client = self._client
         if not self.live or client is None:
-            if not self._model_read:
-                done(
-                    PresetNotSaved(
-                        f"Your settings have not been read, so there is nothing to save. "
-                        f"{self.offline_sentence or ''}".rstrip()
-                    )
-                )
-                return
             if CaptureScope.COLORS in chosen and isinstance(
                 self.color_source(), Wallpaper | Several
             ):
@@ -2103,6 +2095,16 @@ class Session:
                 for option in options
                 if (value := self._model.get(option.name)) is not UNSET
             }
+            if not values and not self._model_read:
+                # Empty because nothing was read, not because it is all default (#148
+                # hand-test 12): saying "at Hyprland's default" would be false.
+                done(
+                    PresetNotSaved(
+                        f"Your settings have not been read, so there is nothing to save. "
+                        f"{self.offline_sentence or ''}".rstrip()
+                    )
+                )
+                return
             done(self._write_preset(name, chosen, values, replace=replace))
             return
         daemon = self._wallpapers.detect() if CaptureScope.WALLPAPER in chosen else None

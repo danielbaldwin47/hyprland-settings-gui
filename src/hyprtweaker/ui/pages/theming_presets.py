@@ -76,7 +76,15 @@ from hyprtweaker.ui.release import release  # noqa: E402
 
 TITLE = "Presets"
 DESCRIPTION = "Save your current look, switch back to it later, or share it as a theme file."
-READ_ONLY_DESCRIPTION = "Applying is off. {reason} You can still save, export and import."
+SAVE_NEEDS_HYPRLAND = (
+    "Presets are captured from the running Hyprland. Open this app inside your Hyprland "
+    "session to save one."
+)
+"""Why Save is insensitive offline (#148 hand-test 12, ruling A3): a preset of the model alone
+would freeze what this app last wrote, not the look on screen."""
+READ_ONLY_DESCRIPTION = (
+    "Applying is off. {reason} " + SAVE_NEEDS_HYPRLAND + " You can still export and import."
+)
 """Filled with `Session.offline_sentence`, which is true for an old Hyprland as well as for
 one this app cannot reach."""
 SAVE_LABEL = "Save current as preset…"
@@ -247,6 +255,10 @@ class PresetsGroup:
         self._others = []
         self._buttons = {}
         live = self._session.live
+        self.save_button.set_sensitive(live)
+        self.save_button.set_tooltip_text(
+            "Keep the current look as a preset" if live else SAVE_NEEDS_HYPRLAND
+        )
         self.group.set_description(
             DESCRIPTION
             if live

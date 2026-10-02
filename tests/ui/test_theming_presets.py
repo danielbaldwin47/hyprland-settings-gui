@@ -394,7 +394,10 @@ def test_a_refused_save_returns_to_the_dialog_with_the_reason(tmp_path: Path) ->
     answer(group.dialog, "save")
 
     again = group.dialog
-    assert again.get_body() == "Nothing to save: everything you chose is at Hyprland's default."
+    assert again.get_body() == (
+        "Your settings have not been read, so there is nothing to save. "
+        "This app is not connected to Hyprland."
+    )
     assert again.entry.get_text() == "Empty"
 
 
@@ -541,10 +544,12 @@ def test_a_read_only_session_cannot_apply_and_the_button_says_why(tmp_path: Path
     )
     assert group.button(slug, "export").get_sensitive() is True
     assert group.button(slug, "delete").get_sensitive() is True
-    assert group.save_button.get_sensitive() is True
+    # Ruling A3 of the #148 review: presets are captured from the running Hyprland.
+    assert group.save_button.get_sensitive() is False
     assert group.group.get_description() == (
-        "Applying is off. This app is not connected to Hyprland. You can still save, "
-        "export and import."
+        "Applying is off. This app is not connected to Hyprland. Presets are captured from "
+        "the running Hyprland. Open this app inside your Hyprland session to save one. You "
+        "can still export and import."
     )
 
 
@@ -857,3 +862,16 @@ def test_reveal_preset_returns_the_row_flashed_and_none_for_a_stranger(tmp_path:
     assert row is not None and row.get_title() == "Nord"
     assert FLASH_CLASS in row.get_css_classes()
     assert window.theming_page.reveal_preset("nope") is None
+
+
+def test_offline_save_is_insensitive_and_says_why(tmp_path: Path) -> None:
+    """#148 hand-test 12, ruling A3: offline, Save current as preset answered "everything
+    you chose is at Hyprland's default" over a model nothing had read."""
+    _session, window = build(tmp_path)
+    group = window.theming_page.presets
+
+    assert group.save_button.get_sensitive() is False
+    assert group.save_button.get_tooltip_text() == (
+        "Presets are captured from the running Hyprland. Open this app inside your Hyprland "
+        "session to save one."
+    )

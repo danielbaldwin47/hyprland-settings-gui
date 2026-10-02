@@ -212,8 +212,12 @@ def test_a_save_with_nothing_to_hold_says_why(tmp_path: Path) -> None:
         PresetNotSaved("Give the preset a name.")
     ]
     assert save(session, "Empty") == [PresetNotSaved("Choose at least one thing to save.")]
+    # Never read (no compositor, no files): not "at Hyprland's default" (#148 hand-test 12).
     assert save(session, "Defaults", CaptureScope.GAPS_LAYOUT) == [
-        PresetNotSaved("Nothing to save: everything you chose is at Hyprland's default.")
+        PresetNotSaved(
+            "Your settings have not been read, so there is nothing to save. "
+            "This app is not connected to Hyprland."
+        )
     ]
     assert session.presets() == ()
 
