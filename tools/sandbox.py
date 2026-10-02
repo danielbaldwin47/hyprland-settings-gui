@@ -187,8 +187,10 @@ def app_environment(nested: Mapping[str, str], home: Path, bus: str) -> dict[str
     return environment
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+def build_parser() -> argparse.ArgumentParser:
+    """The options, spelled out in full: an abbreviation such as `--wi` would be read as
+    `--window` past the desktop fence, which matches the whole word (#270)."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0], allow_abbrev=False)
     parser.add_argument("--config", type=Path, help="a hypr config dir to copy in")
     parser.add_argument("--home", type=Path, help="sandbox $HOME to create or reuse")
     parser.add_argument("--shot", type=Path, help="screenshot the nested output, then exit")
@@ -196,7 +198,11 @@ def main() -> int:
     parser.add_argument(
         "--window", action="store_true", help="show the nested Hyprland as a host window"
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     problem = argument_problem(window=args.window, home=args.home)
     if problem is not None:

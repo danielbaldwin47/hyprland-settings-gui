@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -113,3 +114,14 @@ def test_window_with_a_reused_home_is_refused(tmp_path: Path) -> None:
     )
     assert sandbox.argument_problem(window=False, home=home) is None
     assert sandbox.argument_problem(window=True, home=None) is None
+
+
+def test_an_abbreviated_window_option_is_an_error_not_the_window(capsys: Any) -> None:
+    """#270: argparse read `--wi` as `--window`, which the desktop fence matches whole."""
+    import pytest
+
+    with pytest.raises(SystemExit) as stopped:
+        sandbox.build_parser().parse_args(["--wi"])
+
+    assert stopped.value.code == 2
+    assert "unrecognized arguments: --wi" in capsys.readouterr().err
