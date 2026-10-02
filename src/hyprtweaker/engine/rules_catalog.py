@@ -165,7 +165,7 @@ WINDOW_EFFECTS: tuple[Effect, ...] = (
     # Appearance -- how the window is drawn.
     Effect("opacity", EffectType.STRING, _APPEARANCE, grammar="opacity"),
     Effect("opaque", EffectType.BOOL, _APPEARANCE),
-    Effect("border_color", EffectType.STRING, _APPEARANCE),
+    Effect("border_color", EffectType.STRING, _APPEARANCE, grammar="gradient"),
     Effect("border_size", EffectType.INT, _APPEARANCE),
     Effect("rounding", EffectType.INT, _APPEARANCE),
     Effect("rounding_power", EffectType.FLOAT, _APPEARANCE),

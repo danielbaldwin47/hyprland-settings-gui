@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from hyprtweaker.engine import rule_grammars as grammars
+from hyprtweaker.engine.model.values import Color, Gradient
 from hyprtweaker.engine.rule_grammars import (
     FullscreenState,
     Opacity,
@@ -185,3 +186,128 @@ class TestSuppressEvent:
             "fullscreenoutput",
             "x11configurerequest",
         )
+
+
+def stops(*texts: str) -> tuple[Color, ...]:
+    return tuple(Color.parse(text) for text in texts)
+
+
+class TestBorderColor:
+    """`border_color` is one gradient as a table, or the legacy string (#156).
+
+    A Lua table describes one gradient only, so the active+inactive pair, which only the
+    legacy string can say, has to stay text.
+    """
+
+    def test_a_table_is_one_gradient(self) -> None:
+        parsed = grammars.parse_border_color({"colors": ["#ff0000", "#00ff00"], "angle": 45})
+
+        assert parsed == Gradient(stops("#ff0000", "#00ff00"), 45.0)
+
+    def test_a_table_without_an_angle_is_angle_zero(self) -> None:
+        assert grammars.parse_border_color({"colors": ["#ff0000"]}) == Gradient(
+            stops("#ff0000"), 0.0
+        )
+
+    def test_a_plain_colour_is_one_stop(self) -> None:
+        assert grammars.parse_border_color("rgba(afc6ffAA)") == Gradient(
+            stops("rgba(afc6ffAA)"), 0.0
+        )
+
+    def test_a_legacy_gradient_with_one_angle_is_one_gradient(self) -> None:
+        parsed = grammars.parse_border_color("rgba(33ccffee) rgba(00ff99ee) 45deg")
+
+        assert parsed == Gradient(stops("rgba(33ccffee)", "rgba(00ff99ee)"), 45.0)
+
+    def test_any_spelling_colour_parse_reads_is_read(self) -> None:
+        parsed = grammars.parse_border_color({"colors": ["#f00", "0xff00ff00", "rgb(0,0,255)"]})
+
+        assert parsed is not None
+        assert [str(color) for color in parsed.colors] == ["ffff0000", "ff00ff00", "ff0000ff"]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "rgba(afc6ffAA) rgba(afc6ff77)",  # active + inactive pair
+            "rgba(33ccffee) 45deg rgba(595959aa)",  # an angle in the middle
+            "rgba(33ccffee) 45deg rgba(595959aa) 90deg",  # two gradients
+            "45deg",  # an angle and no colour
+            "",
+            "   ",
+            "notacolour",
+            "rgba(33ccffee) 45.5deg",  # a scale takes whole degrees
+            "rgba(33ccffee) -45deg",
+            "rgba(33ccffee) 361deg",
+        ],
+    )
+    def test_text_the_editor_cannot_carry_unchanged_is_none(self, text: str) -> None:
+        assert grammars.parse_border_color(text) is None
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            {"colors": [], "angle": 0},
+            {"colors": ["#ff0000"], "angle": 45.5},
+            {"colors": ["#ff0000"], "angle": -10},
+            {"colors": ["#ff0000"], "angle": 400},
+            {"colors": ["#ff0000"], "angle": "45"},
+            {"colors": ["#ff0000"], "angle": True},
+            {"colors": ["bogus"], "angle": 0},
+            {"colors": [0xFF0000FF], "angle": 0},
+            {"colors": "#ff0000", "angle": 0},
+            {"colors": ["#ff0000"], "angle": 0, "extra": 1},
+            {"angle": 0},
+            {"colors": ["#ff0000"] * (grammars.MAX_STOPS + 1)},
+            None,
+            True,
+            42,
+            ["#ff0000"],
+        ],
+    )
+    def test_a_table_or_value_it_cannot_carry_unchanged_is_none(self, value: object) -> None:
+        assert grammars.parse_border_color(value) is None
+
+    def test_a_whole_float_angle_is_whole(self) -> None:
+        parsed = grammars.parse_border_color({"colors": ["#ff0000"], "angle": 45.0})
+
+        assert parsed == Gradient(stops("#ff0000"), 45.0)
+
+    def test_emit_is_a_table_with_rgba_stops_and_a_whole_angle(self) -> None:
+        emitted = grammars.emit_border_color(Gradient(stops("#ff0000", "#00ff0080"), 45.0))
+
+        assert emitted == {"colors": ["rgba(ff0000ff)", "rgba(00ff0080)"], "angle": 45}
+        assert type(emitted["angle"]) is int
+
+    def test_emit_reads_back(self) -> None:
+        gradient = Gradient(stops("#12345678", "#abcdef01", "#ffffffff"), 270.0)
+
+        assert grammars.parse_border_color(grammars.emit_border_color(gradient)) == gradient
+
+    def test_text_of_two_stops_names_the_angle_so_it_is_not_a_pair(self) -> None:
+        text = grammars.border_color_text(Gradient(stops("#ff0000", "#00ff00"), 0.0))
+
+        assert text == "rgba(ff0000ff) rgba(00ff00ff) 0deg"
+        assert grammars.parse_border_color(text) == Gradient(stops("#ff0000", "#00ff00"), 0.0)
+
+    def test_text_of_one_stop_without_an_angle_is_the_colour(self) -> None:
+        assert grammars.border_color_text(Gradient(stops("#ff0000"), 0.0)) == "rgba(ff0000ff)"
+
+    def test_text_of_one_stop_with_an_angle(self) -> None:
+        assert (
+            grammars.border_color_text(Gradient(stops("#ff0000"), 90.0))
+            == "rgba(ff0000ff) 90deg"
+        )
+
+    @pytest.mark.parametrize(
+        ("value", "text"),
+        [
+            ("rgba(1,2,3,1) rgba(4,5,6,1)", "rgba(1,2,3,1) rgba(4,5,6,1)"),
+            ({"colors": ["#ff0000", "bogus"], "angle": 45}, "#ff0000 bogus 45deg"),
+            ({"colors": ["#ff0000"], "angle": 45.5}, "#ff0000 45.5deg"),
+            ({"colors": ["#ff0000"]}, "#ff0000"),
+        ],
+    )
+    def test_the_source_text_is_the_original_in_its_own_spelling(
+        self, value: object, text: str
+    ) -> None:
+        assert grammars.border_color_source_text(value) == text

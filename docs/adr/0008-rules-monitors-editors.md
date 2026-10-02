@@ -42,7 +42,7 @@ Same list model and editor shell; match is practically `namespace` (regex), effe
 
 ### Workspace rules
 
-**Identity is the workspace selector string** (Hyprland merges duplicates), so the list enforces one row per selector — adding a duplicate focuses the existing row. Selector input has two modes: **simple** (workspace id / `name:x` / `special:x` pickers) and **advanced** (raw selector string — `w[]`, `r[]`, `f[]`, `s[]`, `n[]`, `m[]` — validated against the grammar). Fields are Schema-generated rows; `layout_opts` is a free key/value table.
+**Identity is the workspace selector string** (Hyprland merges duplicates), so the list enforces one row per selector — adding a duplicate focuses the existing row. Selector input has two modes: **simple** (workspace id / `name:x` / `special:x` pickers) and **advanced** (raw selector string — `w[]`, `r[]`, `f[]`, `s[]`, `n[]`, `m[]` — validated against the grammar). Fields are Schema-generated rows; `layout_opts` is a free key/value table. Until entity-schema rows land, the rows are generated from the hand-written `engine/workspace_catalog.py` (amended during #160).
 
 ### Monitors
 

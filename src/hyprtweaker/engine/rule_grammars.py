@@ -11,15 +11,19 @@ have to guess. The editor then opens that value as text, so nothing is dropped o
 mangled. A value that is not a `str` at all (the importer keeps these effects as strings)
 is `None` too.
 
-Gradient (`border_color`, #156) adds its own `parse_border_color`/`emit_border_color`
-here.
+`border_color` (#156) is the one grammar whose value may be a table: one gradient as
+`{colors = {...}, angle = N}`, which `emit_border_color` returns as a dict. The legacy
+string for the active+inactive pair has no table form, so it stays text.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+
+from hyprtweaker.engine.model.values import Color, Gradient
 
 _OVERRIDE = "override"
 """Opacity's keyword: use the value as it is rather than multiplying it into the global
@@ -171,3 +175,96 @@ def emit_suppress_event(events: tuple[str, ...]) -> str:
 
 def _tokens(value: object) -> list[str]:
     return value.split() if isinstance(value, str) else []
+
+
+# --- border_color -------------------------------------------------------------------------
+
+MAX_STOPS = 10
+"""The most colour stops the editor shows in a row; a longer list stays text."""
+
+MAX_ANGLE = 360
+"""The angle scale runs 0 to this many whole degrees."""
+
+_GRADIENT_ANGLE = re.compile(r"([0-9]+)deg")
+
+
+def parse_border_color(value: object) -> Gradient | None:
+    """One gradient: a table `{colors = {...}, angle = N}` or a legacy `colors... [Ndeg]`.
+
+    The other shapes the legacy string takes -- an active+inactive pair (`"c1 c2"`),
+    a second gradient, an angle between colours -- have no table form, and nor does a
+    colour `Color.parse` rejects, a fractional or out-of-range angle, a key the table does
+    not know, or more than `MAX_STOPS` stops: those are `None`, so the editor opens them as
+    text. A plain colour is one stop at angle 0.
+    """
+    if isinstance(value, str):
+        return _parse_gradient_text(value)
+    if isinstance(value, Mapping):
+        return _parse_gradient_table(value)
+    return None
+
+
+def _parse_gradient_text(text: str) -> Gradient | None:
+    tokens = text.split()
+    angle: int | None = None
+    if tokens and (match := _GRADIENT_ANGLE.fullmatch(tokens[-1])) is not None:
+        angle = int(match.group(1))
+        tokens = tokens[:-1]
+    if angle is None and len(tokens) > 1:
+        return None  # two colours and no angle: the active+inactive pair
+    return _gradient(tokens, 0 if angle is None else angle)
+
+
+def _parse_gradient_table(table: Mapping[object, object]) -> Gradient | None:
+    if not set(table) <= {"colors", "angle"}:
+        return None
+    colors = table.get("colors")
+    angle = table.get("angle", 0)
+    if not isinstance(colors, list | tuple) or not all(isinstance(c, str) for c in colors):
+        return None
+    if isinstance(angle, bool) or not isinstance(angle, int | float) or angle % 1:
+        return None
+    return _gradient([str(color) for color in colors], int(angle))
+
+
+def _gradient(colors: list[str], angle: int) -> Gradient | None:
+    if not 1 <= len(colors) <= MAX_STOPS or not 0 <= angle <= MAX_ANGLE:
+        return None
+    try:
+        return Gradient(tuple(Color.parse(color) for color in colors), float(angle))
+    except ValueError:
+        return None
+
+
+def emit_border_color(gradient: Gradient) -> dict[str, object]:
+    """The table the Lua API reads: `rgba(rrggbbaa)` strings (the form `Color.lua()` commits
+    to, minus the Lua quoting, which the writer adds) and a whole-number angle."""
+    return {
+        "colors": [_stop_text(color) for color in gradient.colors],
+        "angle": round(gradient.angle),
+    }
+
+
+def border_color_text(gradient: Gradient) -> str:
+    """The gradient as the legacy string. Two or more stops always carry their angle: the
+    same colours without it would read back as an active+inactive pair."""
+    colors = " ".join(_stop_text(color) for color in gradient.colors)
+    if len(gradient.colors) == 1 and not gradient.angle:
+        return colors
+    return f"{colors} {round(gradient.angle)}deg"
+
+
+def border_color_source_text(value: object) -> str:
+    """An original `border_color` as text, for a value `parse_border_color` rejected: the
+    string as it was, or a table's colours and angle in the legacy order, spelling kept."""
+    if isinstance(value, Mapping):
+        colors = value.get("colors")
+        parts = [str(color) for color in colors] if isinstance(colors, list | tuple) else []
+        if "angle" in value:
+            parts.append(f"{value['angle']}deg")
+        return " ".join(parts)
+    return str(value)
+
+
+def _stop_text(color: Color) -> str:
+    return f"rgba({color.rgba:08x})"

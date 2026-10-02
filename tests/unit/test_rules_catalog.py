@@ -119,6 +119,7 @@ class TestGrammars:
         graded = {e.name: e.grammar for e in catalog.WINDOW_EFFECTS if e.grammar is not None}
 
         assert graded == {
+            "border_color": "gradient",
             "fullscreen_state": "fullscreen_state",
             "opacity": "opacity",
             "suppress_event": "suppress_event",

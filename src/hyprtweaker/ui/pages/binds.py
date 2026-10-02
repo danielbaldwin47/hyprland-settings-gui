@@ -30,8 +30,10 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.engine.binds_analysis import (  # noqa: E402
+    empty_submaps,
     find_conflicts,
     submap_names,
+    submap_target,
     unreachable_submaps,
 )
 from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup  # noqa: E402
@@ -107,6 +109,11 @@ UNREACHABLE = "Nothing switches to this submap, so its keybinds can never fire."
 than hidden in a tooltip: the person most likely to hit this just made the submap and has
 not yet bound a key to enter it, and a sentence in place is the difference between a
 puzzle and a to-do."""
+
+EMPTY_SUBMAP = "Hyprland cannot enter a submap with no binds. Add a bind to it."
+"""The empty-submap flag's sentence (#208). A group description and the tooltip of the badge
+on each bind that enters the submap carry it alike. It leads the unreachable sentence: a
+submap with neither gets the bind first, then the way in."""
 
 
 def ordinal(number: int) -> str:
@@ -188,17 +195,21 @@ class BadgeKind(Enum):
     - `LUA_FUNCTION`: the action is a Lua function in `user.lua`, which the app does not
       write. Badge only: no edit, no Enable, and no Remove of a line it cannot see.
     - `DISABLED`: commented out by the user. One-click Enable, edit and Remove.
+    - `EMPTY_SUBMAP`: an enabled bind that enters a submap with no live bind (#208), which
+      Hyprland never registers, so the bind fires and then errors. The bind itself is fine,
+      so nothing is taken away: Edit and Remove stay, and the fix is a bind in the submap.
     """
 
     ERROR = "error"
     MULTI_KEY = "multi-key"
     LUA_FUNCTION = "lua-function"
     DISABLED = "disabled"
+    EMPTY_SUBMAP = "empty-submap"
 
     @property
     def editable(self) -> bool:
         """Whether the row offers the bind editor."""
-        return self in (BadgeKind.ERROR, BadgeKind.DISABLED)
+        return self in (BadgeKind.ERROR, BadgeKind.DISABLED, BadgeKind.EMPTY_SUBMAP)
 
     @property
     def removable(self) -> bool:
@@ -208,7 +219,11 @@ class BadgeKind(Enum):
     @property
     def style(self) -> str:
         """The badge label's style class: loud where the badge asks the user to act."""
-        return {BadgeKind.ERROR: "error", BadgeKind.MULTI_KEY: "warning"}.get(self, "dim-label")
+        return {
+            BadgeKind.ERROR: "error",
+            BadgeKind.MULTI_KEY: "warning",
+            BadgeKind.EMPTY_SUBMAP: "warning",
+        }.get(self, "dim-label")
 
     @property
     def dims_row(self) -> bool:
@@ -234,7 +249,7 @@ class BindBadge:
     tooltip: str
 
 
-def bind_badge(bind: Bind) -> BindBadge | None:
+def bind_badge(bind: Bind, *, empty_submaps: frozenset[str] = frozenset()) -> BindBadge | None:
     """The badge this Bind's row carries, or `None` for an enabled, editable bind.
 
     Recomputed from the Bind rather than carried on the model: the Trigger already says
@@ -248,6 +263,10 @@ def bind_badge(bind: Bind) -> BindBadge | None:
     libxkbcommon will not load it answers nothing, so a bind reads as plain disabled -- but
     on such a machine the Importer could not have found the dead key either, so the row
     never claims more than the import knew.
+
+    `empty_submaps` is `binds_analysis.empty_submaps` of the whole model, which one Bind
+    cannot know. It is read last: a bind that cannot load, or is off, has a reason that
+    comes before it, and only an enabled bind that would fire can fail on entering one.
     """
     if bind.dispatcher is None:
         return BindBadge(
@@ -265,6 +284,13 @@ def bind_badge(bind: Bind) -> BindBadge | None:
             "out; remove it, or add a keybind with a single key instead.",
         )
     if bind.enabled:
+        if (target := submap_target(bind)) is not None and target in empty_submaps:
+            return BindBadge(
+                BadgeKind.EMPTY_SUBMAP,
+                "Submap has no binds",
+                f"This keybind enters the submap {target}. {EMPTY_SUBMAP} "
+                "Or remove this keybind.",
+            )
         return None
     match problem:
         case DeadKeys(names=dead):
@@ -396,17 +422,18 @@ class BindRow:
         conflict: RowConflict | None = None,
         drag: BindDrag | None = None,
         neighbours: tuple[int | None, int | None] = (None, None),
+        empty_submaps: frozenset[str] = frozenset(),
     ) -> None:
         """`drag` is the Page's one `BindDrag`, shared by its rows; `neighbours` are the
         flat indices of the binds just above and below this one *in its group*, where the
-        keyboard move goes."""
+        keyboard move goes. `empty_submaps` are the submaps no bind makes enterable."""
         self.bind = bind
         self.index = index
         self.drag_handle: Gtk.Image | None = None
         """The drag source, on rows the app may move: those whose badge offers Edit."""
         self.conflict = conflict
         self.conflict_badge: Gtk.MenuButton | None = None
-        self.badge = bind_badge(bind)
+        self.badge = bind_badge(bind, empty_submaps=empty_submaps)
         self.badge_label: Gtk.Label | None = None
         self.enable_button: Gtk.Button | None = None
         """Enable for a plain disabled bind; "Fix trigger…" (re-capture) for an error one."""
@@ -741,6 +768,7 @@ class BindsPage:
         binds = self.binds
         conflicts = find_conflicts(binds)
         unreachable = unreachable_submaps(entities)
+        empty = frozenset(empty_submaps(entities))
 
         root = Adw.PreferencesGroup(title="Keybinds")
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -767,7 +795,7 @@ class BindsPage:
         rooted = [(index, bind) for index, bind in indexed if bind.submap is None]
         if rooted:
             for (index, bind), neighbours in zip(rooted, _neighbours(rooted), strict=True):
-                root.add(self._row(bind, index, editable, binds, conflicts, neighbours))
+                root.add(self._row(bind, index, editable, binds, conflicts, neighbours, empty))
         else:
             root.add(
                 Adw.ActionRow(
@@ -778,6 +806,8 @@ class BindsPage:
 
         for name in submap_names(entities):
             description = "These keybinds only fire while this submap is active."
+            if name in empty:
+                description += f" {EMPTY_SUBMAP}"
             if name in unreachable:
                 description += f" {UNREACHABLE}"
             # The title is Pango markup: a name with `&` would render blank unescaped.
@@ -806,7 +836,7 @@ class BindsPage:
 
             owned = [(index, bind) for index, bind in indexed if bind.submap == name]
             for (index, bind), neighbours in zip(owned, _neighbours(owned), strict=True):
-                group.add(self._row(bind, index, editable, binds, conflicts, neighbours))
+                group.add(self._row(bind, index, editable, binds, conflicts, neighbours, empty))
             if not owned:
                 group.add(
                     Adw.ActionRow(
@@ -845,6 +875,7 @@ class BindsPage:
         binds: list[Bind],
         conflicts: dict[int, tuple[int, ...]],
         neighbours: tuple[int | None, int | None],
+        empty: frozenset[str],
     ) -> Gtk.Widget:
         conflict: RowConflict | None = None
         if index in conflicts:
@@ -877,6 +908,7 @@ class BindsPage:
             conflict=conflict,
             drag=self._drag,
             neighbours=neighbours,
+            empty_submaps=empty,
         )
         self._rows.append(row)
         return row.widget

@@ -396,3 +396,370 @@ def test_the_move_action_reorders_and_the_reorder_would_persist(tmp_path: Path) 
     text = render_window_rules_module(rules, app_version=APP_VERSION)
     assert text is not None
     assert text.index('class = "c"') < text.index('class = "a"')
+
+
+# --- filter chips (#113) ------------------------------------------------------------------
+
+
+def chip_rules(session: Any) -> None:
+    session.model.entities.window_rules.extend(
+        [
+            window_rule(match={"class": "kitty"}, effects={"float": True}),
+            window_rule(
+                match={"class": "helium", "title": "Setup"}, effects={"opacity": "0.9"}
+            ),
+            window_rule(match={"class": "mpv"}, effects={"float": True, "pin": True}),
+        ]
+    )
+
+
+def chip(group: str, name: str) -> Any:
+    from hyprtweaker.engine.rule_filter import Chip, ChipGroup
+
+    return Chip(ChipGroup(group), name)
+
+
+def test_the_chips_are_the_props_and_effects_the_list_uses(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path)
+    chip_rules(session)
+    page = window.window_rules_page
+    page.refresh()
+
+    assert [(c.group.value, c.name) for c in page.chip_buttons] == [
+        ("match", "class"),
+        ("match", "title"),
+        ("effect", "float"),
+        ("effect", "opacity"),
+        ("effect", "pin"),
+    ]
+    assert [b.get_label() for b in page.chip_buttons.values()] == [
+        "Class",
+        "Title",
+        "Float",
+        "Opacity",
+        "Pin",
+    ]
+
+
+def test_clicking_a_chip_narrows_the_list_and_clicking_again_widens_it(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path)
+    chip_rules(session)
+    page = window.window_rules_page
+    page.refresh()
+
+    page.chip_buttons[chip("effect", "float")].set_active(True)
+    assert [row.index for row in page.rows] == [0, 2]
+
+    page.chip_buttons[chip("effect", "pin")].set_active(True)
+    assert [row.index for row in page.rows] == [2]
+
+    page.chip_buttons[chip("effect", "float")].set_active(False)
+    page.chip_buttons[chip("effect", "pin")].set_active(False)
+    assert [row.index for row in page.rows] == [0, 1, 2]
+
+
+def test_chips_and_free_text_compose(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path)
+    chip_rules(session)
+    page = window.window_rules_page
+    page.refresh()
+
+    page.chip_buttons[chip("effect", "float")].set_active(True)
+    page.set_filter("mpv")
+
+    assert [row.index for row in page.rows] == [2]
+
+
+def test_a_chip_whose_rules_are_gone_disappears_and_stops_filtering(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path)
+    chip_rules(session)
+    page = window.window_rules_page
+    page.refresh()
+    page.chip_buttons[chip("match", "title")].set_active(True)
+    assert [row.index for row in page.rows] == [1]
+
+    del session.model.entities.window_rules[1]
+    page.refresh()
+
+    assert chip("match", "title") not in page.chip_buttons
+    assert [row.index for row in page.rows] == [0, 1]  # not stranded on an empty list
+
+
+def test_a_list_with_no_rules_shows_no_chips(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path)
+
+    assert window.window_rules_page.chip_buttons == {}
+    assert not window.window_rules_page.chip_box.get_visible()
+
+
+def test_chips_that_match_nothing_with_the_text_say_so_and_can_be_cleared(
+    tmp_path: Path,
+) -> None:
+    session, window = build_window(tmp_path)
+    chip_rules(session)
+    page = window.window_rules_page
+    page.refresh()
+
+    page.chip_buttons[chip("match", "title")].set_active(True)
+    page.set_filter("kitty")
+
+    assert page.rows == ()
+    assert any("Clear the search or chips" in text for text in shown(page.page))
+
+
+def test_the_layer_page_has_chips_too(tmp_path: Path) -> None:
+    from hyprtweaker.engine.model.entities import LayerRule
+
+    session, window = build_window(tmp_path)
+    session.model.entities.layer_rules.append(
+        LayerRule(match={"namespace": "waybar"}, effects={"blur": True})
+    )
+    page = window.layer_rules_page
+    page.refresh()
+
+    assert [(c.group.value, c.name) for c in page.chip_buttons] == [
+        ("match", "namespace"),
+        ("effect", "blur"),
+    ]
+
+
+# --- keyboard reorder (#113, the Binds page's Alt+Up / Alt+Down) ---------------------------
+
+
+def test_alt_up_and_down_move_a_rule_past_its_visible_neighbours(tmp_path: Path) -> None:
+    from gi.repository import Gtk
+
+    from hyprtweaker.ui.pages.rules import RuleActions, RuleRow
+
+    calls: list[tuple[str, int, int]] = []
+    actions = RuleActions(
+        add=lambda: None,
+        edit=lambda _i: None,
+        remove=lambda _i: None,
+        enable=lambda _i, _on: None,
+        move=lambda i, to: calls.append(("move", i, to)),
+    )
+    build_window(tmp_path)
+    row = RuleRow(
+        window_rule(match={"class": "kitty"}),
+        4,
+        actions=actions,
+        editable=True,
+        neighbours=(1, 6),
+    )
+
+    pressed = {}
+    for controller in row.widget.observe_controllers():
+        if isinstance(controller, Gtk.ShortcutController):
+            for each in controller:
+                pressed[each.get_trigger().to_string()] = each.get_action().activate(
+                    Gtk.ShortcutActionFlags(0), row.widget, None
+                )
+
+    assert pressed == {"<Alt>Up": True, "<Alt>Down": True}
+    assert calls == [("move", 4, 1), ("move", 4, 6)]
+
+
+def test_the_page_hands_each_row_the_neighbours_it_is_shown_next_to(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path)
+    chip_rules(session)
+    page = window.window_rules_page
+    page.refresh()
+    page.chip_buttons[chip("effect", "float")].set_active(True)  # shows rules 0 and 2
+
+    assert [row.neighbours for row in page.rows] == [(None, 2), (0, None)]
+
+
+# --- matches N, and the implicit anchors, in the editor (#113) ----------------------------
+
+
+def captured_windows() -> tuple[Any, ...]:
+    """The nested-compositor capture: probe.tiled, probe.float (floating, pinned, tagged
+    demo), probe.fs (fullscreen) -- all on workspace 1."""
+    import json
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent.parent / "unit"))
+    from _fake_hyprland import CLIENTS
+
+    return tuple(json.loads(CLIENTS))
+
+
+def editor_over(payload: Any, *, rule: Any = None, kind: str = "window") -> Any:
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    return RuleEditor(
+        kind=kind,
+        on_done=lambda _rule: None,
+        rule=rule,
+        fetch_targets=lambda done: done(payload),
+    )
+
+
+def badge(editor: Any) -> str | None:
+    """The badge as drawn: its text, or `None` when it is not shown."""
+    label = editor.match_badge
+    return label.get_label() if label.get_visible() else None
+
+
+def test_the_badge_counts_the_open_windows_the_match_would_catch(tmp_path: Path) -> None:
+    build_window(tmp_path)
+    editor = editor_over(
+        captured_windows(), rule=window_rule(match={"class": r"^(probe\.float)$"})
+    )
+
+    assert badge(editor) == "Matches 1 open window"
+
+
+def test_the_badge_follows_every_edit_of_the_match_rows(tmp_path: Path) -> None:
+    build_window(tmp_path)
+    editor = editor_over(captured_windows(), rule=window_rule(match={"class": "probe"}))
+    assert badge(editor) == "Matches 0 open windows"
+
+    editor._set_match_text("class", r"probe\..*")
+    assert badge(editor) == "Matches 3 open windows"
+
+    editor._set_match_bool("float", True)
+    assert badge(editor) == "Matches 1 open window"
+
+    editor._match_rows["float"][1].set_active(False)
+    assert badge(editor) == "Matches 2 open windows"
+
+    editor._match_rows["class"][2].set_active(True)  # the Not toggle
+    assert badge(editor) == "Matches 0 open windows"
+
+    editor._on_remove_match(None, "class", editor._match_rows["class"][1])
+    assert badge(editor) == "Matches 2 open windows"
+
+
+def test_a_number_row_counts_too(tmp_path: Path) -> None:
+    build_window(tmp_path)
+    editor = editor_over(
+        captured_windows(), rule=window_rule(match={"fullscreen_state_internal": 2})
+    )
+    assert badge(editor) == "Matches 1 open window"
+
+    editor._match_rows["fullscreen_state_internal"][1].set_value(0)
+    assert badge(editor) == "Matches 2 open windows"
+
+
+def test_the_badge_names_what_it_could_not_check(tmp_path: Path) -> None:
+    build_window(tmp_path)
+    editor = editor_over(
+        captured_windows(), rule=window_rule(match={"float": True, "modal": True})
+    )
+
+    assert badge(editor) == "Matches 1 open window, not checking modal"
+
+
+def test_no_compositor_means_no_badge_not_zero(tmp_path: Path) -> None:
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    build_window(tmp_path)
+    offline = RuleEditor(
+        kind="window",
+        on_done=lambda _rule: None,
+        rule=window_rule(match={"class": "kitty"}),
+        fetch_targets=None,
+    )
+    silent = editor_over(None, rule=window_rule(match={"class": "kitty"}))
+
+    assert badge(offline) is None
+    assert badge(silent) is None
+
+
+def test_a_compositor_with_no_windows_is_a_real_zero(tmp_path: Path) -> None:
+    build_window(tmp_path)
+    editor = editor_over((), rule=window_rule(match={"class": "kitty"}))
+
+    assert badge(editor) == "Matches 0 open windows"
+
+
+def test_the_badge_waits_for_the_answer(tmp_path: Path) -> None:
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    build_window(tmp_path)
+    pending: list[Any] = []
+    editor = RuleEditor(
+        kind="window",
+        on_done=lambda _rule: None,
+        rule=window_rule(match={"class": r"probe\.fs"}),
+        fetch_targets=pending.append,
+    )
+    assert badge(editor) is None
+
+    pending[0](captured_windows())
+
+    assert badge(editor) == "Matches 1 open window"
+
+
+def test_one_fetch_serves_every_edit(tmp_path: Path) -> None:
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    build_window(tmp_path)
+    asked: list[int] = []
+
+    def fetch(done: Any) -> None:
+        asked.append(1)
+        done(captured_windows())
+
+    editor = RuleEditor(
+        kind="window",
+        on_done=lambda _rule: None,
+        rule=window_rule(match={"class": "probe"}),
+        fetch_targets=fetch,
+    )
+    for text in ("p", "pr", "probe.*"):
+        editor._set_match_text("class", text)
+
+    assert len(asked) == 1
+    assert badge(editor) == "Matches 3 open windows"
+
+
+def test_an_invalid_regex_hides_the_badge_instead_of_raising(tmp_path: Path) -> None:
+    build_window(tmp_path)
+    editor = editor_over(captured_windows(), rule=window_rule(match={"class": "probe.*"}))
+    assert badge(editor) == "Matches 3 open windows"
+
+    editor._set_match_text("class", "(unclosed")
+
+    assert badge(editor) is None
+
+
+def test_a_rule_with_no_match_has_no_badge(tmp_path: Path) -> None:
+    build_window(tmp_path)
+
+    assert badge(editor_over(captured_windows())) is None
+
+
+def test_a_layer_rule_counts_layer_surfaces(tmp_path: Path) -> None:
+    build_window(tmp_path)
+    surfaces = ({"namespace": "wallpaper"}, {"namespace": "waybar"}, {"namespace": "waybar"})
+    editor = editor_over(
+        surfaces, kind="layer", rule=window_rule(match={"namespace": "waybar"})
+    )
+
+    assert badge(editor) == "Matches 2 layer surfaces"
+
+
+def test_a_regex_entry_shows_the_anchors_hyprland_applies_without_storing_them(
+    tmp_path: Path,
+) -> None:
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    build_window(tmp_path)
+    collected: list[Any] = []
+    editor = RuleEditor(
+        kind="window",
+        on_done=collected.append,
+        rule=window_rule(match={"class": "kitty", "tag": "demo", "float": True}),
+    )
+
+    assert "^(" in shown(editor._match_rows["class"][1])
+    assert ")$" in shown(editor._match_rows["class"][1])
+    # Anchors belong to a regex: a tag is a name, a switch has no text.
+    assert ")$" not in shown(editor._match_rows["tag"][1])
+    assert ")$" not in shown(editor._match_rows["float"][1])
+
+    editor._save()
+    assert collected[0].match["class"] == "kitty"  # the stored value gains no anchors

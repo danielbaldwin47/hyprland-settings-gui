@@ -1521,6 +1521,17 @@ class Session:
         """Live layer surfaces for the Pick-a-layer helper, or `None` when unanswerable."""
         self._fetch_helper_data("layers", lambda client: client.layers(), done)
 
+    def fetch_switches(
+        self, done: Callable[[tuple[Mapping[str, Any], ...] | None], None]
+    ) -> None:
+        """Live switch devices for the switch picker, or `None` when unanswerable.
+
+        Helper data only, never rule state (ADR-0008). `None` is "nobody is there to ask";
+        `()` is "the compositor answered and has no switch", and the picker words the two
+        differently: the first points at manual entry, the second explains the empty list.
+        """
+        self._fetch_helper_data("switches", lambda client: client.switches(), done)
+
     def _fetch_helper_data(
         self,
         what: str,

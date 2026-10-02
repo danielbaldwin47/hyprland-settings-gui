@@ -420,7 +420,7 @@ class Parser:
 
     def parse_file(self, path: Path, origin: Origin | None = None) -> None:
         """Read one file into the stream, following its `source =` lines."""
-        resolved = Path(os.path.abspath(os.path.expanduser(str(path))))
+        resolved = Path(os.path.abspath(self._expand_home(str(path))))
         where = origin or Origin(resolved, 0)
 
         if resolved in self._open_files:
@@ -739,6 +739,18 @@ class Parser:
 
     # -- source = --------------------------------------------------------------------------
 
+    def _expand_home(self, path: str) -> str:
+        """A leading `~` is the parse environment's `HOME`, as Hyprland reads `getenv("HOME")`.
+
+        Not `os.path.expanduser`: that reads this process's home, so a tree staged under
+        another home (the Harness, a preview of someone else's dotfiles) would source the
+        running user's files, or none.
+        """
+        home = self.environment.get("HOME")
+        if home and (path == "~" or path.startswith("~/")):
+            return home + path[1:]
+        return os.path.expanduser(path)
+
     def _source(self, rhs: str, origin: Origin) -> None:
         """Glob a `source =` and inline every regular file it matched.
 
@@ -760,7 +772,7 @@ class Parser:
             )
             return
 
-        pattern = os.path.expanduser(raw)
+        pattern = self._expand_home(raw)
         if not os.path.isabs(pattern):
             pattern = os.path.join(str(origin.file.parent), pattern)
 

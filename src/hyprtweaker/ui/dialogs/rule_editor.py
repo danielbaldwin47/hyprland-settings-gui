@@ -15,9 +15,18 @@ shelved by category. An effect the catalog does not know -- a plugin's, or a new
 Hyprland's -- shows as a raw custom row and passes through *unedited by identity*: its
 value object is only replaced when the user actually changes the text, so a table-valued
 effect survives an unrelated edit byte-for-byte (ADR-0008: "never dropped"). The string-
-grammar effects (`opacity`, `fullscreen_state`, `suppress_event`) get a helper row instead
+grammar effects (`opacity`, `fullscreen_state`, `suppress_event`, and `border_color`'s
+gradient editor, #156) get a helper row instead
 of a text entry (`effect_helpers`, picked by `Effect.grammar` through `EFFECT_HELPERS`),
 with the same untouched-keeps-the-original rule and an "Edit as text" toggle.
+
+**Matches N.** The Match group carries a live "Matches 3 open windows" badge (layers:
+"layer surfaces"): a client-side approximation over one fetch of the open windows, taken
+when the dialog opens and recounted from that copy on every edit of a match row
+(`rule_matching`). It says which props it could not check, and is simply not shown when no
+compositor answered, when the Match is empty, or when a pattern does not compile -- never
+a zero for a question nobody could answer. Regex entries wear the `^(` and `)$` Hyprland
+applies implicitly, as labels around the text: the stored value never gains them.
 
 **Pick a window / Pick a layer.** Prefills a Match from `hyprctl -j clients` (or the
 layer namespaces) -- helper data only, thrown away after the prefill, and the button
@@ -40,6 +49,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import LayerRule, WindowRule  # noqa: E402
+from hyprtweaker.engine.rule_matching import badge_text, count_matches  # noqa: E402
 from hyprtweaker.engine.rules_catalog import (  # noqa: E402
     CATEGORIES,
     NEGATABLE_KINDS,
@@ -64,6 +74,7 @@ from hyprtweaker.ui.dialogs.effect_helpers import (  # noqa: E402
     SuppressEventRow,
     effect_text,
 )
+from hyprtweaker.ui.dialogs.gradient_field import GradientRow  # noqa: E402
 
 Rule = WindowRule | LayerRule
 
@@ -88,15 +99,22 @@ _SPIN_BOUNDS: dict[str, tuple[float, float]] = {
 
 _DEFAULT_INT_BOUNDS = (0.0, 100000.0)
 
+ANCHOR_OPEN = "^("
+ANCHOR_CLOSE = ")$"
+ANCHOR_HINT = (
+    "Hyprland matches the whole value, as if it were written between ^( and )$. "
+    "You do not need to add them."
+)
+
 EFFECT_HELPERS: dict[str, EffectHelperBuilder] = {
     "opacity": OpacityRow,
     "fullscreen_state": FullscreenStateRow,
     "suppress_event": SuppressEventRow,
+    "gradient": GradientRow,
 }
 """Helper widget per string grammar: the key is `Effect.grammar` from the catalog, the
 value builds the row from the effect's original value (`None` for a new effect). An effect
-whose grammar has no entry here falls back to a text entry. The gradient editor (#156)
-adds `"gradient"`."""
+whose grammar has no entry here falls back to a text entry."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +158,9 @@ class RuleEditor(Adw.Dialog):
         self._original = rule
         self._taken = tuple(name for name in taken_names if name)
         self._fetch = fetch_targets
+        self._targets: tuple[Mapping[str, Any], ...] | None = None
+        """The last answer to `fetch_targets`: `None` until one arrives and whenever
+        nobody answered, `()` for a compositor with nothing open."""
 
         # One ordered list per group, so the collected dict keeps the rule's own order.
         self._match_rows: dict[str, tuple[MatchProp, Gtk.Widget, Gtk.ToggleButton | None]] = {}
@@ -163,6 +184,9 @@ class RuleEditor(Adw.Dialog):
                 self._add_match_row(prop, value)
             for name, value in rule.effects.items():
                 self._add_effect_row(name, value)
+
+        if self._fetch is not None:
+            self._fetch(self._on_counting_targets)
 
     # --- the form -------------------------------------------------------------------------
 
@@ -191,6 +215,20 @@ class RuleEditor(Adw.Dialog):
             else "Which layer surfaces this rule applies to.",
         )
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.match_badge = Gtk.Label(
+            visible=False,
+            wrap=True,
+            max_width_chars=34,
+            justify=Gtk.Justification.RIGHT,
+            valign=Gtk.Align.CENTER,
+            margin_end=6,
+            css_classes=["dim-label", "caption"],
+        )
+        self.match_badge.set_tooltip_text(
+            "An estimate from the windows open right now. Hyprland's own matching can "
+            "differ on unusual patterns."
+        )
+        header.append(self.match_badge)
         if self._fetch is not None:
             pick = Gtk.Button(icon_name="find-location-symbolic", valign=Gtk.Align.CENTER)
             pick.add_css_class("flat")
@@ -299,6 +337,7 @@ class RuleEditor(Adw.Dialog):
         if prop.kind is MatchKind.BOOL:
             switch = Adw.SwitchRow(title=prop_title(prop.name))
             switch.set_active(bool(value) if value is not None else True)
+            switch.connect("notify::active", self._on_match_edited)
             widget = switch
         elif prop.kind is MatchKind.INT:
             low, high = _SPIN_BOUNDS.get(prop.name, _DEFAULT_INT_BOUNDS)
@@ -306,11 +345,20 @@ class RuleEditor(Adw.Dialog):
             spin.set_title(prop_title(prop.name))
             if value is not None:
                 spin.set_value(float(value))
+            spin.connect("notify::value", self._on_match_edited)
             widget = spin
         else:
             entry = Adw.EntryRow(title=prop_title(prop.name))
             if value is not None:
                 entry.set_text(strip_negation(str(value)))
+            if prop.kind is MatchKind.REGEX:
+                for anchor, add in (
+                    (ANCHOR_OPEN, entry.add_prefix),
+                    (ANCHOR_CLOSE, entry.add_suffix),
+                ):
+                    mark = Gtk.Label(label=anchor, css_classes=["dim-label", "monospace"])
+                    mark.set_tooltip_text(ANCHOR_HINT)
+                    add(mark)
             if prop.kind in NEGATABLE_KINDS:
                 negate = Gtk.ToggleButton(label="Not", valign=Gtk.Align.CENTER)
                 negate.add_css_class("flat")
@@ -318,7 +366,9 @@ class RuleEditor(Adw.Dialog):
                     f"Match windows that do not match this (the {NEGATIVE_PREFIX} prefix)"
                 )
                 negate.set_active(is_negated(value))
+                negate.connect("toggled", self._on_match_edited)
                 entry.add_suffix(negate)
+            entry.connect("changed", self._on_match_edited)
             widget = entry
 
         remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
@@ -329,10 +379,40 @@ class RuleEditor(Adw.Dialog):
 
         self._match_rows[prop.name] = (prop, widget, negate)
         self._match_group.add(widget)
+        self._refresh_badge()
 
-    def _on_remove_match(self, _button: Gtk.Button, name: str, widget: Gtk.Widget) -> None:
+    def _on_remove_match(
+        self, _button: Gtk.Button | None, name: str, widget: Gtk.Widget
+    ) -> None:
         self._match_rows.pop(name, None)
         self._match_group.remove(widget)
+        self._refresh_badge()
+
+    # --- the matches-N badge ----------------------------------------------------------------
+
+    def _on_match_edited(self, *_args: object) -> None:
+        self._refresh_badge()
+
+    def _on_counting_targets(self, payload: tuple[Mapping[str, Any], ...] | None) -> None:
+        self._targets = payload
+        self._refresh_badge()
+
+    def _refresh_badge(self) -> None:
+        """Recount from the cached answer; show nothing when there is nothing to say.
+
+        Never asks the compositor again: an edit fires this per keystroke, and one fetch
+        per keystroke would be one IPC round trip per letter.
+        """
+        result = (
+            count_matches(self._kind, self._collect_match(), self._targets)
+            if self._targets is not None
+            else None
+        )
+        if result is None:
+            self.match_badge.set_visible(False)
+            return
+        self.match_badge.set_label(badge_text(self._kind, result))
+        self.match_badge.set_visible(True)
 
     def _add_effect_row(self, name: str, value: Any) -> None:
         spec = find_effect(self._kind, name)
@@ -422,6 +502,8 @@ class RuleEditor(Adw.Dialog):
         self._fetch(self._on_targets)
 
     def _on_targets(self, payload: tuple[Mapping[str, Any], ...] | None) -> None:
+        # The picker asked fresh, so its answer is the newest the badge can count over.
+        self._on_counting_targets(payload)
         for row in self._picker_rows:
             self._picker_group.remove(row)
         self._picker_rows = []

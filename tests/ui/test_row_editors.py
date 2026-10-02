@@ -370,6 +370,29 @@ def test_a_nullable_gaps_row_shows_its_label_rather_than_four_minus_ones() -> No
     assert row.chrome.summary_text == "Same as outer gaps"
 
 
+def test_an_imported_float_gaps_minus_one_shows_its_label_and_writes_back_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Import, show, write, untouched (#207): the user's `-1` is never four sides."""
+    import pytest
+
+    from hyprtweaker.engine.importer.lua import Consent, import_lua, lua_binary
+    from hyprtweaker.engine.writer import render_module
+
+    if lua_binary() is None:
+        pytest.skip("no Lua interpreter installed")
+    entry = tmp_path / "hyprland.lua"
+    entry.write_text("hl.config({ general = { float_gaps = -1 } })\n", encoding="utf-8")
+    session = PreviewSession()
+    session.model = import_lua(entry, SCHEMA, consent=Consent(evaluate=True)).model
+    row = build_row(FLOAT_GAPS, session)
+
+    assert row.control.get_visible_child_name() == "none"
+    assert row.chrome.summary_text == "Same as outer gaps"
+    general = render_module(session.model.section("general"), app_version="0.0.0-test")
+    assert "  float_gaps = -1,\n" in general
+
+
 # --- vec2 -------------------------------------------------------------------------------------
 
 
