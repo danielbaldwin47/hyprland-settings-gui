@@ -1,6 +1,6 @@
 """Harness tier: a running Hyprland loads every font weight the app offers (#194).
 
-`tests/static/test_font_weight_names.py` proves `--verify-config` accepts each one. This
+`test_font_weight_verify.py` proves `--verify-config` accepts each one. This
 loads the same values into a nested compositor and reads `configerrors`, in case the
 parser that runs at load passes a value the verifier would not, or the other way round.
 `getoption` cannot read either setting back on 0.56.2 ("invalid type", ADR-0010).

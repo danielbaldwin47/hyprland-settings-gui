@@ -412,7 +412,8 @@ Copied from Hyprland's own table, `CFontWeightConfigValueData::WEIGHTS`
 looks names up in (`src/config/lua/types/LuaConfigFontWeight.cpp:31`). Any other name is a
 config error ("font weight "extrabold" was not found"). A number is any non-negative integer
 to that parser; the app offers 100 to 1000, the range Pango's weights span
-(`FONT_WEIGHT_RANGE`). Proven against the binary by `tests/static/test_font_weight_names.py`.
+(`FONT_WEIGHT_RANGE`). Proven against the binary by
+`tests/integration/test_font_weight_verify.py`.
 The Overlay's `labels` for the two font-weight settings name exactly these keys, in this
 order (`tests/unit/test_font_weight_labels.py`).
 """

@@ -1,9 +1,9 @@
 """The font-weight Rows offer exactly the names Hyprland knows, in weight order (#194).
 
 The Overlay's `labels` give each name its display text; `FONT_WEIGHT_NAMES` gives it its
-weight, and `tests/static/test_font_weight_names.py` proves Hyprland accepts each one. A name
-in one table and not the other is a choice the Row cannot match to a weight, or a weight it
-never offers.
+weight, and `tests/integration/test_font_weight_verify.py` proves Hyprland accepts each
+one. A name in one table and not the other is a choice the Row cannot match to a
+weight, or a weight it never offers.
 """
 
 from __future__ import annotations
