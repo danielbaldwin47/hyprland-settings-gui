@@ -33,6 +33,14 @@ def exec_bind(keys: str = "SUPER + Q", command: str = "kitty", **kwargs: object)
     )
 
 
+def submap_bind(keys: str, target: str, **kwargs: object) -> Bind:
+    return Bind(
+        keys=keys,
+        dispatcher=DispatcherCall(path="submap", positional=(target,)),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
 class TestTrigger:
     def test_plain_keys_read_back_as_written(self) -> None:
         assert trigger_text(exec_bind("SUPER + SHIFT + Q")) == "SUPER + SHIFT + Q"
@@ -132,6 +140,45 @@ class TestBindBadge:
         assert (badge.kind, badge.text) == (
             BadgeKind.LUA_FUNCTION,
             "Defined by a Lua function in user.lua",
+        )
+
+    def test_a_bind_entering_an_empty_submap_warns_with_the_reason(self) -> None:
+        badge = bind_badge(
+            submap_bind("SUPER + R", "resize"), empty_submaps=frozenset({"resize"})
+        )
+        assert badge is not None
+        assert (badge.kind, badge.text) == (BadgeKind.EMPTY_SUBMAP, "Submap has no binds")
+        assert (
+            "Hyprland cannot enter a submap with no binds. Add a bind to it." in badge.tooltip
+        )
+        assert badge.kind.style == "warning"
+
+    def test_the_empty_submap_badge_leaves_the_bind_editable_and_removable(self) -> None:
+        """The bind is fine; the submap is what is missing a bind, so nothing is taken away."""
+        kind = BadgeKind.EMPTY_SUBMAP
+        assert (kind.editable, kind.removable, kind.verb) == (True, True, None)
+
+    def test_a_bind_entering_another_submap_has_no_badge(self) -> None:
+        badge = bind_badge(
+            submap_bind("SUPER + R", "resize"), empty_submaps=frozenset({"other"})
+        )
+        assert badge is None
+
+    def test_a_bind_that_is_not_an_entry_has_no_badge(self) -> None:
+        assert bind_badge(exec_bind(), empty_submaps=frozenset({"resize"})) is None
+
+    def test_an_earlier_reason_wins_over_the_empty_submap(self) -> None:
+        empty = frozenset({"resize"})
+        disabled = bind_badge(
+            submap_bind("SUPER + R", "resize", enabled=False), empty_submaps=empty
+        )
+        multi = bind_badge(submap_bind("SUPER + A&B", "resize"), empty_submaps=empty)
+        function = bind_badge(Bind(keys="SUPER + R", dispatcher=None), empty_submaps=empty)
+        assert disabled is not None and multi is not None and function is not None
+        assert (disabled.kind, multi.kind, function.kind) == (
+            BadgeKind.DISABLED,
+            BadgeKind.MULTI_KEY,
+            BadgeKind.LUA_FUNCTION,
         )
 
     def test_multi_key_and_lua_function_carry_different_reasons(self) -> None:
