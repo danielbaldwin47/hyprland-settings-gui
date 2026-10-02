@@ -93,11 +93,15 @@ class GrammarRow(Generic[T]):
         default: T,
         text: Callable[[T], str] | None = None,
         source_text: Callable[[object], str] = effect_text,
+        explain: Callable[[str], str | None] | None = None,
     ) -> None:
         """`emit` is the value to save for the controls; `text` is how a typed value reads
         as text (the emitted string when `emit` returns one); `source_text` is how an
-        original value reads as text, for one `parse` rejected or text mode opened on."""
+        original value reads as text, for one `parse` rejected or text mode opened on;
+        `explain` says why the controls cannot show a text, where the grammar knows more
+        than "cannot show this value"."""
         self._original = original
+        self._explain = explain
         self._parse = parse
         self._emit = emit
         self._text_of = text
@@ -245,11 +249,27 @@ class GrammarRow(Generic[T]):
             self.widget.set_subtitle(text.strip())
         else:
             self.raw_toggle.set_tooltip_text("The controls cannot show this text as it is")
-            self.widget.set_subtitle(
-                "The controls cannot show this value. Edit it as text."
-                if text.strip()
-                else "Needs a value."
-            )
+            reason = self._explain(text) if self._explain is not None else None
+            if reason is None:
+                reason = (
+                    "The controls cannot show this value. Edit it as text."
+                    if text.strip()
+                    else "Needs a value."
+                )
+            self.widget.set_subtitle(reason)
+
+
+def border_pair_reason(text: str) -> str | None:
+    """Why a `border_color` text stays text, when it is the active+inactive pair: two
+    colours and no angle, which the legacy string means and one gradient cannot say."""
+    tokens = text.split()
+    if len(tokens) == 2 and all(
+        rule_grammars.parse_border_color(t) is not None for t in tokens
+    ):
+        return (
+            "Two colors without an angle are the active and inactive border. Edit them as text."
+        )
+    return None
 
 
 # --- opacity ------------------------------------------------------------------------------

@@ -27,7 +27,7 @@ from gi.repository import Adw, Gdk, Gtk  # noqa: E402
 
 from hyprtweaker.engine import rule_grammars  # noqa: E402
 from hyprtweaker.engine.model.values import Color, Gradient  # noqa: E402
-from hyprtweaker.ui.dialogs.effect_helpers import GrammarRow  # noqa: E402
+from hyprtweaker.ui.dialogs.effect_helpers import GrammarRow, border_pair_reason  # noqa: E402
 
 _DEFAULT_STOP = Color(0xFFFFFFFF)
 """What a new `border_color` effect, and a stop the user adds to nothing, starts as."""
@@ -44,6 +44,7 @@ class GradientRow(GrammarRow[Gradient]):
             default=Gradient((_DEFAULT_STOP,), 0.0),
             text=rule_grammars.border_color_text,
             source_text=rule_grammars.border_color_source_text,
+            explain=border_pair_reason,
         )
 
     def _build(self) -> list[Gtk.Widget]:
