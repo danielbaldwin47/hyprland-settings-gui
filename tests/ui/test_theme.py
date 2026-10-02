@@ -356,3 +356,50 @@ def test_an_opaque_stop_is_one_flat_colour() -> None:
     row = {drawn.at(x, 4) for x in range(2, drawn.width - 2)}
 
     assert row == {(0x33, 0xCC, 0xFF)}
+
+
+# --- the Displays canvas legible on both grounds (ADR-0019) -----------------------------------
+
+
+def drawn_canvas(scheme: Any) -> tuple[Any, Drawn]:
+    """Two displays, one with a rule (solid outline), one without (dashed), under `scheme`."""
+    from gi.repository import Adw, Gtk
+    from main_loop import settle
+
+    from hyprtweaker.ui.pages.monitors import ArrangementCanvas, DisplayRect
+
+    Adw.init()
+    Adw.StyleManager.get_default().set_color_scheme(scheme)
+    canvas = ArrangementCanvas(on_moved=lambda *_: None)
+    canvas.set_displays(
+        [
+            DisplayRect("eDP-1", 0, 0, 1280, 720, True),
+            DisplayRect("DP-3", 1280, 0, 2560, 1440, False),
+        ]
+    )
+    window = Gtk.Window(child=canvas, default_width=600, default_height=260)
+    window.present()
+    deadline = 200
+    while not (canvas.get_mapped() and canvas.get_width() > 0) and deadline:
+        settle("the canvas to map")
+        deadline -= 1
+    settle("the canvas to draw")
+    return canvas, Drawn(canvas, margin=0)
+
+
+@pytest.mark.parametrize("scheme_name", ["FORCE_DARK", "FORCE_LIGHT"])
+def test_every_display_outline_on_the_canvas_stands_off_the_ground(scheme_name: str) -> None:
+    """The dashed outline of a display with no rule is its only boundary: 3:1 (WCAG 1.4.11)."""
+    from gi.repository import Adw
+
+    canvas, drawn = drawn_canvas(getattr(Adw.ColorScheme, scheme_name))
+    ground = drawn.at(2, 2)
+
+    for display in canvas.displays:
+        x, y, w, h = canvas.canvas_rect(display)
+        bottom = [
+            drawn.at(column, round(y + h) - 1) for column in range(round(x), round(x + w))
+        ]
+        strongest = max(contrast(pixel, ground) for pixel in bottom)
+
+        assert strongest >= 3.0, (display.name, ground, bottom[:12])
