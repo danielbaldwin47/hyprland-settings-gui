@@ -148,6 +148,7 @@ package_sources = {
     'rule_editor.py',
     'submap_editor.py',
     'theme_import.py',
+    'wire_consent.py',
     'workspace_fields.py',
     'workspace_rule_editor.py',
   ],
