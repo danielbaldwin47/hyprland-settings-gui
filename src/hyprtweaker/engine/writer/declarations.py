@@ -77,8 +77,10 @@ def parse_declarations_module(
     """
     text = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
     # A disabled plugin is a `-- disabled: hl.plugin.load(...)` comment (#174), revived
-    # line-for-line so the evaluated call's line number says it was disabled.
-    revived, disabled_lines = revive_disabled(text)
+    # line-for-line so the evaluated call's line number says it was disabled. Nothing else
+    # in these Modules is ever disabled, so nothing else revives: prose after the prefix
+    # in a hand edit stays a comment rather than failing the all-or-none read.
+    revived, disabled_lines = revive_disabled(text, call="hl.plugin.load(")
 
     # Evaluated from a scratch copy keeping the module's basename, so origins read as
     # `gestures.lua:N` with `N` the line in the real file.

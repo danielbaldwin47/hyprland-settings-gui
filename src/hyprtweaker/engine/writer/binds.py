@@ -279,13 +279,13 @@ def parse_binds_module(source: str | Path, *, timeout: float = 5.0) -> ParsedBin
         return _parse_path(path, timeout=timeout, disabled_lines=disabled_lines)
 
 
-def revive_disabled(text: str) -> tuple[str, frozenset[int]]:
+def revive_disabled(text: str, *, call: str = "hl.") -> tuple[str, frozenset[int]]:
     """Uncomment every `DISABLED_PREFIX` line, remembering which 1-based lines they were.
 
     Line-for-line, never inserting or removing one, because the line numbers are how the
     evaluated calls are matched back to their disabledness. Only the canonical spelling is
-    revived -- `DISABLED_PREFIX` followed by an `hl.` call -- so an ordinary hand-written
-    comment stays a comment.
+    revived -- `DISABLED_PREFIX` followed by `call`, the start of a call this Module's
+    Writer disables -- so an ordinary hand-written comment stays a comment.
     """
     lines = text.split("\n")
     disabled: set[int] = set()
@@ -293,7 +293,7 @@ def revive_disabled(text: str) -> tuple[str, frozenset[int]]:
         stripped = line.lstrip()
         if stripped.startswith(DISABLED_PREFIX):
             rest = stripped[len(DISABLED_PREFIX) :]
-            if rest.startswith("hl."):
+            if rest.startswith(call):
                 indent = line[: len(line) - len(stripped)]
                 lines[number - 1] = f"{indent}{rest}"
                 disabled.add(number)

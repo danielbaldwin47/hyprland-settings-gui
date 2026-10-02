@@ -23,7 +23,7 @@ Shortcuts: **Ctrl+F** focuses search, and **type-to-search** — typing while fo
 Two result groups, in order:
 
 - **Settings** — every Option, searched by title, description/curated help, and dotted key. All visibility tiers, per ADR-0013.
-- **Rules & entities** — Binds by key combo, dispatcher name, and command; window/layer Rules by Label and Match; Workspace rules by selector; Monitor rules by connector and description; Monitor profiles and Presets by name.
+- **Keybinds, rules & displays** — Binds by key combo, dispatcher name, and command; window/layer Rules by Label and Match; Workspace rules by selector; Monitor rules by connector and description; Monitor profiles and Presets by name. Named for what the user owns, never "entities" (the app's internal word); #172 widens the heading to **Keybinds, rules, displays & presets** when Presets join the index.
 
 **Actions are cut.** The mock's third group ("Reset every gap to its default", "Show gaps in the wiki") is a generated-bulk-command feature wearing a search costume. Wiki links already live in every Row's Help popover (ADR-0013); per-Row reset plus undo covers resetting. Deliberately dropped, not deferred fog.
 

@@ -20,6 +20,7 @@ package_sources = {
     'monitors_catalog.py',
     'paths.py',
     'prefs.py',
+    'presets.py',
     'profiles.py',
     'rule_filter.py',
     'rule_grammars.py',

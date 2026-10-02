@@ -21,6 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from _live_window import live_entity_window
 
 APP_VERSION = "0.0.0-test"
@@ -138,6 +139,19 @@ def test_a_landed_gesture_is_offered_back(tmp_path: Path) -> None:
     assert toast.get_title() == f"{session.schema[ROUNDING].title} changed"
 
 
+def test_an_applied_preset_is_offered_back_by_its_name(tmp_path: Path) -> None:
+    from hyprtweaker.engine.apply import PresetStep
+
+    _session, window = build_window(tmp_path)
+
+    window.offer_undo(PresetStep("Nord", a_gesture()))
+
+    toast = window.undo_toast
+    assert toast is not None
+    assert toast.get_title() == "Applied Nord. Press Ctrl+Z to undo."
+    assert toast.get_button_label() == "Undo"
+
+
 def test_the_toasts_button_asks_the_session_to_undo(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
     window.offer_undo(a_gesture())
@@ -190,6 +204,34 @@ def test_an_auto_revert_toasts_and_withdraws_the_undo_offer(tmp_path: Path) -> N
     )
 
     assert window.undo_toast is None
+
+
+@pytest.mark.parametrize(
+    ("outcome", "restored", "title"),
+    [
+        ("config-errors", True, "Hyprland rejected the change — reverted."),
+        ("config-errors", False, "Hyprland rejected the change, and it could not be reverted."),
+        ("write-failed", True, "The change could not be saved — reverted."),
+        ("write-failed", False, "The change could not be saved, and it could not be reverted."),
+    ],
+)
+def test_the_revert_toast_says_what_refused_the_change(
+    outcome: str, restored: bool, title: str
+) -> None:
+    """#227: a write the disk refused is reverted too, and Hyprland never saw it."""
+    from hyprtweaker.engine.apply import ApplyOutcome
+    from hyprtweaker.session import AutoRevert
+    from hyprtweaker.ui.shell.window import _revert_summary
+
+    revert = AutoRevert(
+        keys=(ROUNDING,),
+        modules=("options/general.lua",),
+        errors=(),
+        restored=restored,
+        outcome=ApplyOutcome(outcome),
+    )
+
+    assert _revert_summary(revert) == title
 
 
 def test_the_error_dialog_shows_the_lines_verbatim(tmp_path: Path) -> None:

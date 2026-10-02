@@ -16,14 +16,14 @@ refinement is the word-prefix boost -- `round` should reach "Rounding" before it
 "Blur passes (rounding aware)" -- and it is a *tie-break within a field*, not a rank of its
 own, so the field order below still decides first.
 
-**Two groups** (ADR-0017 §Index scope): Settings, then Rules & entities. The Options are
-indexed once, at construction; the Entities are not, because they change under the window
--- an edit, an undo, a foreign reload, a profile saved. Rather than a change signal fired
-from every site that mutates a list (and forgotten at the next one), the index *pulls*: each
-query compares the model's lists with the ones its entity entries were built from and
-rebuilds only when they differ (settled S2b, amended into ADR-0017 §Index build during #75).
-Monitor profiles live in files, not the model, so their store's revision counter stands in
-for the comparison there.
+**Two groups** (ADR-0017 §Index scope): Settings, then Keybinds, rules & displays. The
+Options are indexed once, at construction; the Entities are not, because they change under
+the window -- an edit, an undo, a foreign reload, a profile saved. Rather than a change
+signal fired from every site that mutates a list (and forgotten at the next one), the index
+*pulls*: each query compares the model's lists with the ones its entity entries were built
+from and rebuilds only when they differ (settled S2b, amended into ADR-0017 §Index build
+during #75). Monitor profiles live in files, not the model, so their store's revision
+counter stands in for the comparison there.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ from hyprtweaker.ui.pages.entity_text import (
 )
 
 SETTINGS_GROUP = "Settings"
-ENTITIES_GROUP = "Rules & entities"
+ENTITIES_GROUP = "Keybinds, rules & displays"
 """ADR-0017's two result groups, in the order the finder lists them."""
 
 

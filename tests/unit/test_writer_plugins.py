@@ -121,6 +121,22 @@ class TestReadBack:
 
         assert entries(parsed.plugins) == [("/p/a.so", True)]
 
+    def test_prose_after_the_prefix_in_a_hand_edit_stays_a_comment(self) -> None:
+        """Spec #152 review finding 17: the Writer disables only `hl.plugin.load` lines in
+        these Modules, so only those revive. Prose that happens to start with `hl.` once
+        became a syntax error and lost the whole read, every Module's lists with it."""
+        text = (
+            'hl.env("A", "1")\n'
+            "-- disabled: hl.env is set in user.lua for now\n"
+            '-- disabled: hl.plugin.load("/p/off.so")\n'
+        )
+
+        parsed = parse_declarations_module(text, module="env.lua")
+
+        assert parsed.ok, parsed.errors
+        assert [(v.name, v.value) for v in parsed.env] == [("A", "1")]
+        assert entries(parsed.plugins) == [("/p/off.so", False)]
+
     def test_a_plugin_misfiled_into_another_module_still_comes_back(self) -> None:
         text = 'hl.env("A", "1")\nhl.plugin.load("/p/a.so")\n'
 

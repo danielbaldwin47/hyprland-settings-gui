@@ -304,9 +304,13 @@ def test_a_waiting_undo_is_dropped_when_its_edit_fails(tmp_path: Path) -> None:
 
     applier.settle("config-errors")
 
+    # The rejected removal is auto-reverted (#227); the waiting undo is spent, not run as well.
     assert not session.undo_queued
-    assert keys(session) == ["SUPER + B"], "an undo ran for a gesture that never stood"
+    assert keys(session) == ["SUPER + A", "SUPER + B"]
+    assert applier.serial == 3, "an undo wrote something for a gesture that never stood"
     assert entity_top(session).title == "Keybind added"
+    assert session.undo()
+    assert keys(session) == ["SUPER + A"]
 
 
 def test_undo_never_drops_a_step_an_open_group_holds_edits_over(tmp_path: Path) -> None:
