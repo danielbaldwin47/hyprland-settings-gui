@@ -26,8 +26,9 @@ MAY_SPAWN = {
     "writer/syntax.py": "the `luac -p` syntax gate (ADR-0010 step 3)",
     "importer/lua/sandbox.py": (
         "the Lua interpreter a foreign hyprland.lua is evaluated by (ADR-0009) -- run "
-        "against `runner.lua`'s block-all sandbox, with the compositor's instance "
-        "signature stripped from its environment so nothing it does can reach the session"
+        "against `runner.lua`'s block-all sandbox, with no stdin and with the compositor's "
+        "instance signature, the runtime dir and the session bus address stripped from its "
+        "environment"
     ),
     "importer/lua/scripts.py": (
         "`luac -l` reads the globals a preserved closure loads straight out of its "

@@ -436,3 +436,34 @@ def test_the_wildcard_listing_is_recorded_even_though_it_is_ours(tmp_path) -> No
 
     assert recording.calls, "the wildcard require loaded nothing"
     assert "importer.listdir" in {use.kind for use in recording.shell}
+
+
+def test_nothing_a_config_runs_can_reach_the_session_even_under_passthrough() -> None:
+    """Addendum 40 of the #153 review: with the session bus address passed through, a
+    config's `systemctl --user import-environment` rewrote the user manager's environment."""
+    from hyprtweaker.engine.importer.lua.sandbox import _child_env
+
+    child = _child_env(
+        {
+            "PATH": "/usr/bin",
+            "HYPRLAND_INSTANCE_SIGNATURE": "sig",
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+        }
+    )
+
+    assert child == {"PATH": "/usr/bin"}
+
+
+def test_the_config_reads_no_stdin_of_the_apps(tmp_path: Path) -> None:
+    from hyprtweaker.engine.importer.lua.sandbox import _run
+
+    code, out, _err = _run(
+        ["sh", "-c", "cat; echo end"],
+        cwd=tmp_path,
+        env=dict(os.environ),
+        timeout=5,
+        cancel=None,
+    ) or (None, "", "")
+
+    assert (code, out) == (0, "end\n")

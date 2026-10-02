@@ -46,8 +46,13 @@ CANCEL_POLL_SECONDS = 0.05
 #: Stripped from the child's environment even under passthrough: with these set, anything
 #: the config shells out to can reach the *running* compositor and reconfigure the session
 #: the user is importing from. The prototype found this the hard way via
-#: `Hyprland --verify-config`, which executes the file it is checking.
-STRIPPED_ENV: frozenset[str] = frozenset({"HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR"})
+#: `Hyprland --verify-config`, which executes the file it is checking. The session bus goes
+#: too: through it a config's `systemctl --user import-environment` or
+#: `dbus-update-activation-environment` rewrites the user manager's environment (addendum 40
+#: of the #153 review).
+STRIPPED_ENV: frozenset[str] = frozenset(
+    {"HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"}
+)
 
 
 class Policy(StrEnum):
@@ -241,6 +246,7 @@ def _run(
         command,
         cwd=cwd,
         env=env,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
