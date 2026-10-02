@@ -36,13 +36,17 @@ WAIT_SECONDS = 60.0
 class Run:
     """A child pytest controller on the probe, its output read line by line as it comes."""
 
-    def __init__(self, tmp_path: Path, name: str, *args: str) -> None:
+    def __init__(
+        self, tmp_path: Path, name: str, *args: str, extra: dict[str, str] | None = None
+    ) -> None:
         self.record = tmp_path / f"{name}.record"
         env = {
             key: value
             for key, value in os.environ.items()
-            if key not in ("CI", "PYTEST_ADDOPTS")  # CI skips the lock; ADDOPTS could add -n
+            # A GitHub runner skips the lock; ADDOPTS could add -n.
+            if key not in ("GITHUB_ACTIONS", "PYTEST_ADDOPTS")
         }
+        env.update(extra or {})
         env["HYPRTWEAKER_SUITE_LOCK"] = str(tmp_path / "suite.lock")
         env["SUITE_LOCK_PROBE_RECORD"] = str(self.record)
         env["SUITE_LOCK_PROBE_RELEASE"] = str(tmp_path / "release")
@@ -144,3 +148,41 @@ def test_a_parallel_run_holds_the_lock_while_its_own_workers_run(tmp_path: Path)
     assert run.process.returncode == 0, output
     assert "2 passed" in output
     assert "waiting for" not in output
+
+
+def test_ci_set_in_a_shell_still_takes_the_lock(tmp_path: Path) -> None:
+    """Ruling A13 of the #148 review: `CI=1 pytest` from an agent's shell ran unlocked."""
+    first = Run(tmp_path, "first", extra={"CI": "1"})
+    second = None
+    try:
+        first.wait_for_records("start", 1)
+        second = Run(tmp_path, "second", extra={"CI": "1"})
+        waiting = second.wait_for_line("waiting for")
+        (tmp_path / "release").touch()
+        first.finish(), second.finish()
+    finally:
+        first.kill()
+        if second is not None:
+            second.kill()
+
+    assert waiting.startswith(f"pytest: waiting for {tmp_path / 'suite.lock'}, held by PID")
+
+
+def test_an_explicit_worker_count_above_the_cap_is_lowered_to_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import importlib.util
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location("root_conftest", ROOT / "conftest.py")
+    assert spec is not None and spec.loader is not None
+    root_conftest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(root_conftest)
+    config = SimpleNamespace(option=SimpleNamespace(numprocesses=20, maxprocesses=None))
+
+    root_conftest.pytest_cmdline_main(config)
+
+    assert config.option.maxprocesses == 8
+    assert capsys.readouterr().err == (
+        "pytest: -n 20 lowered to 8 workers (MAX_WORKERS, conftest.py)\n"
+    )

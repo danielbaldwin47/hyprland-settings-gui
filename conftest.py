@@ -62,7 +62,13 @@ def _say(config: pytest.Config, line: str) -> None:
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config: pytest.Config) -> None:
-    if hasattr(config, "workerinput") or os.environ.get("CI") or config.option.help:
+    # Only a GitHub runner skips it: `CI=1` typed in an agent's shell ran unlocked beside
+    # other suites, the shape of the 2026-10-01 oomd kill (ruling A13 of the #148 review).
+    if (
+        hasattr(config, "workerinput")
+        or os.environ.get("GITHUB_ACTIONS") == "true"
+        or config.option.help
+    ):
         return
     path = _lock_path()
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
@@ -100,6 +106,27 @@ MAX_WORKERS = 8
 uncapped run is 20 workers at about 0.73 GB each plus 21 Xvfb, and available memory fell to
 7.4 GB; systemd-oomd had already killed the owner's terminal once. Here rather than in a doc,
 so it holds for every caller."""
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_cmdline_main(config: pytest.Config) -> None:
+    """Cap every `-n`, an explicit number included, at `MAX_WORKERS` (ruling A13).
+
+    Through xdist's own `maxprocesses`, which it applies after resolving `-n auto` or a
+    number, so `-n 20` runs 8 workers. Says so in one line when it lowers a number.
+    """
+    requested = getattr(config.option, "numprocesses", None)
+    if requested is None:  # xdist is not installed
+        return
+    if isinstance(requested, int) and requested > MAX_WORKERS:
+        print(
+            f"pytest: -n {requested} lowered to {MAX_WORKERS} workers "
+            "(MAX_WORKERS, conftest.py)",
+            file=sys.stderr,
+            flush=True,
+        )
+    current = getattr(config.option, "maxprocesses", None)
+    config.option.maxprocesses = min(current or MAX_WORKERS, MAX_WORKERS)
 
 
 @pytest.hookimpl(optionalhook=True)
