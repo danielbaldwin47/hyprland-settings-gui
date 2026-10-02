@@ -80,3 +80,16 @@ def test_text_typed_over_a_held_value_keeps_the_type_the_value_had() -> None:
 def test_text_that_no_longer_reads_as_the_held_type_stays_text() -> None:
     assert catalog.retype_like(5, "five") == "five"
     assert catalog.retype_like(True, "maybe") == "maybe"
+
+
+def test_layout_choices_drop_the_schemas_lua_placeholder() -> None:
+    assert catalog.layout_choices(("dwindle", "master", "lua:<name>")) == ("dwindle", "master")
+
+
+def test_layout_choices_fall_back_to_the_shipped_layouts() -> None:
+    assert catalog.layout_choices(("lua:<name>",)) == (
+        "dwindle",
+        "master",
+        "scrolling",
+        "monocle",
+    )
