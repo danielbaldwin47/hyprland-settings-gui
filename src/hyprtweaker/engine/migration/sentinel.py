@@ -53,6 +53,14 @@ class Sentinel:
     own (which is what keeps "delete `hyprland.lua`" a complete rollback).
     """
 
+    bridge_tools: tuple[str, ...] = ()
+    """Theming tools this switch wires (#187): Roll back unwires each.
+
+    Written before the first tool file changes, so a crash part-way through wiring still
+    names the tool. Additive, without a `FORMAT_VERSION` bump: a sentinel without the key
+    wired nothing, and `unwire` of a tool that was never wired is a no-op.
+    """
+
     version: int = FORMAT_VERSION
 
     def as_json(self) -> dict[str, object]:
@@ -66,6 +74,7 @@ def write(
     source: Path | None = None,
     backup: Path | None = None,
     restore: Path | None = None,
+    bridge_tools: tuple[str, ...] = (),
     now: datetime | None = None,
 ) -> Sentinel:
     """Record that a switch is under way. Call this before writing the Entrypoint.
@@ -80,6 +89,7 @@ def write(
         source=str(source) if source else None,
         backup=str(backup) if backup else None,
         restore=str(restore) if restore else None,
+        bridge_tools=bridge_tools,
     )
     paths.sentinel.parent.mkdir(parents=True, exist_ok=True)
     with paths.sentinel.open("w", encoding="utf-8") as handle:
@@ -127,12 +137,16 @@ def read(paths: ConfigPaths) -> Sentinel | None:
         return value if isinstance(value, str) else None
 
     version = data.get("version")
+    tools = data.get("bridge_tools")
     return Sentinel(
         started=text("started") or "",
         kind=text("kind") or "",
         source=text("source"),
         backup=text("backup"),
         restore=text("restore"),
+        bridge_tools=tuple(
+            each for each in (tools if isinstance(tools, list) else []) if isinstance(each, str)
+        ),
         version=version if isinstance(version, int) else FORMAT_VERSION,
     )
 
