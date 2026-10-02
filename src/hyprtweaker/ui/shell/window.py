@@ -162,7 +162,7 @@ from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
     WorkspaceRuleActions,
     WorkspaceRulesPage,
 )
-from hyprtweaker.ui.release import release  # noqa: E402
+from hyprtweaker.ui.release import release, release_when_unparented  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
 from hyprtweaker.ui.search import (  # noqa: E402
     EntityHit,
@@ -220,20 +220,9 @@ def _release_once_out(dialog: Adw.Dialog) -> None:
     """Release a closed dialog when it is out of the window (#228).
 
     libadwaita emits `closed` as the dialog starts to animate out and takes it out of the
-    window when the animation ends; `release` refuses a widget still in a window. An idle
-    either way, not the handler itself: every handler of `closed` and of the removal must
-    still find the dialog whole.
+    window when the animation ends; `release` refuses a widget still in a window.
     """
-    if dialog.get_parent() is None:
-        GLib.idle_add(release, dialog)
-        return
-
-    def out(widget: Adw.Dialog, _pspec: Any) -> None:
-        if widget.get_parent() is None:
-            widget.disconnect(handler)
-            GLib.idle_add(release, widget)
-
-    handler = dialog.connect("notify::parent", out)
+    release_when_unparented(dialog)
 
 
 UNDO_ACTION = "undo"

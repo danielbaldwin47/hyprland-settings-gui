@@ -20,7 +20,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gio, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, GObject, Gtk  # noqa: E402
 
 PARENTED = "release() needs a widget already removed from its parent, not a {} still in it"
 
@@ -64,6 +64,25 @@ def release(widget: Gtk.Widget) -> None:
         if live is not None:
             for controller in list(live.observe_controllers()):
                 live.remove_controller(controller)
+
+
+def release_when_unparented(widget: Gtk.Widget) -> None:
+    """Release `widget` from an idle once it is out of its parent, now or when it leaves.
+
+    For a widget libadwaita takes out only after an animation: a dialog that is closing, a
+    navigation page that was popped (F18 of the #148 review). An idle either way: every
+    handler of the removal must still find the widget whole.
+    """
+    if widget.get_parent() is None:
+        GLib.idle_add(release, widget)
+        return
+
+    def out(current: Gtk.Widget, _pspec: GObject.ParamSpec) -> None:
+        if current.get_parent() is None:
+            current.disconnect(handler)
+            GLib.idle_add(release, current)
+
+    handler = widget.connect("notify::parent", out)
 
 
 def _unhook_combo_row(row: Adw.ComboRow) -> None:

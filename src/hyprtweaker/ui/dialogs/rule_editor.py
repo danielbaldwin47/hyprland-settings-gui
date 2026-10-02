@@ -76,7 +76,7 @@ from hyprtweaker.ui.dialogs.effect_helpers import (  # noqa: E402
     effect_text,
 )
 from hyprtweaker.ui.dialogs.gradient_field import GradientRow  # noqa: E402
-from hyprtweaker.ui.release import release  # noqa: E402
+from hyprtweaker.ui.release import release, release_when_unparented  # noqa: E402
 
 Rule = WindowRule | LayerRule
 
@@ -589,7 +589,9 @@ class RuleEditor(Adw.Dialog):
             for row in self._pick_switches():
                 self._picker_options.remove(row)
         self._picker_group = None
-        GLib.idle_add(release, page)
+        # Not a plain idle: in a mapped dialog the view keeps the page parented until the
+        # pop animation ends, and releasing it before then raised (F18).
+        release_when_unparented(page)
 
     def _on_closed(self, _dialog: Adw.Dialog) -> None:
         self._closed = True

@@ -475,3 +475,33 @@ def test_a_presets_group_rebuild_releases_the_rows_it_replaced(tmp_path: Path) -
 
     assert len(refs) >= TIMES * 8
     assert collected(refs) == [True] * len(refs)
+
+
+def test_a_picker_page_popped_in_a_mapped_dialog_is_released_after_its_animation(
+    tmp_path: Path,
+) -> None:
+    """F18 of the #148 review: libadwaita keeps a popped page parented until the pop
+    animation ends, so in a mapped dialog the idle `release` raised ValueError (the UI
+    tier's gate fails a test whose idle raises). The page goes once it is out."""
+    import time
+
+    window = wired_window(offline_session(tmp_path))
+    window.present()
+    editor = rule_editor(window, lambda done: done(WINDOWS))
+    main_loop.settle("the rule editor to map")
+    editor._open_picker()
+    main_loop.settle("the picker page to push")
+    page = weakref.ref(editor._view.get_visible_page())
+    editor._view.pop()
+    deadline = time.monotonic() + 3
+    while (
+        page() is not None and page().get_parent() is not None and time.monotonic() < deadline
+    ):
+        main_loop.settle("the pop animation")
+        time.sleep(0.05)
+    main_loop.settle("the popped page's release")
+
+    assert page() is None or page().get_parent() is None
+    editor.force_close()
+    main_loop.settle("the rule editor to close")
+    window.close()
