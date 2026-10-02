@@ -209,7 +209,7 @@ def test_a_hit_navigates_and_flashes(window: Any) -> None:
 def test_a_binds_option_hit_opens_the_binds_section_not_the_keybinds_page(
     window: Any,
 ) -> None:
-    """`binds:*` Options live on the Section page, which once shared its id with Keybinds (#120).
+    """`binds:*` Options live on the Section page, which once shared an id with Keybinds (#120).
 
     The Config view is the one where the two sit side by side, and the visible stack child
     is asserted rather than the id alone: a shared id selected the right name and showed
