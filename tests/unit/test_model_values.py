@@ -241,3 +241,23 @@ class TestGetOptionReplies:
 @pytest.fixture(scope="module")
 def schema() -> Schema:
     return load_schema(SAMPLE_VERSION, SCHEMA_DIR)
+
+
+@pytest.mark.parametrize(
+    ("option_type", "raw"),
+    [
+        (OptionType.INT, "inf"),
+        (OptionType.INT, "1e999"),
+        (OptionType.CSS_GAPS, "1e999"),
+        (OptionType.FLOAT, "nan"),
+        (OptionType.FLOAT, "-inf"),
+        (OptionType.FLOAT, float("inf")),
+    ],
+)
+def test_a_number_no_config_can_hold_is_a_value_error(
+    option_type: OptionType, raw: object
+) -> None:
+    """A Preset file or Theme archive is read through `parse_value` with `ValueError` caught:
+    an overflow or a non-finite float must land there, not as a traceback (#169)."""
+    with pytest.raises(ValueError):
+        parse_value(option_type, raw)
