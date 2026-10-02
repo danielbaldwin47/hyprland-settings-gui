@@ -123,6 +123,7 @@ def test_every_entity_page_is_reachable_from_the_curated_sidebar(tmp_path: Path)
         "entity:monitors",
         "entity:window_rules",
         "entity:layer_rules",
+        "entity:workspace_rules",
     } <= listed
 
 

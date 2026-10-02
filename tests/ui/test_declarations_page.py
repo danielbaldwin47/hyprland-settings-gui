@@ -79,6 +79,7 @@ def _every_page(window: Any) -> list[tuple[str, str, Any]]:
         window.binds_page,
         window.window_rules_page,
         window.layer_rules_page,
+        window.workspace_rules_page,
         window.monitors_page,
         *window.declaration_pages,
     ]
