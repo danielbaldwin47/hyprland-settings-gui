@@ -35,7 +35,7 @@ from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from hyprtweaker.engine import binds_analysis
 from hyprtweaker.engine.apply import (
@@ -87,6 +87,7 @@ from hyprtweaker.engine.model.entities import (
     LayerRule,
     MonitorRule,
     Permission,
+    PluginLoad,
     StartupCommand,
     WindowRule,
     WorkspaceRule,
@@ -102,6 +103,7 @@ from hyprtweaker.engine.paths import (
     LAYER_RULES_MODULE,
     MONITORS_MODULE,
     PERMISSIONS_MODULE,
+    PLUGINS_MODULE,
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
@@ -134,13 +136,21 @@ from hyprtweaker.engine.state.retirement import (
     UnkeptNotice,
 )
 from hyprtweaker.engine.triggers import trigger_load_problem
-from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
+from hyprtweaker.engine.writer import (
+    BeforeReplace,
+    LuaSyntaxError,
+    ModuleSet,
+    Writer,
+)
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
 from hyprtweaker.engine.writer.monitors import parse_monitors_module
 from hyprtweaker.engine.writer.rules import parse_rules_module
 
 _log = logging.getLogger(__name__)
+
+_Answer = TypeVar("_Answer")
+"""What one helper-data query answers: a tuple of mappings, or of names."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1210,6 +1220,7 @@ class Session:
         "env",
         "permissions",
         "startup",
+        "plugins",
     )
     """The Entity kinds the one generic list API below serves, named as `EntitySet` names.
 
@@ -1217,7 +1228,8 @@ class Session:
     `rules(kind)` gives: every caller is already parameterised by kind, because the seven
     Pages are one Page class seven times over a field catalogue. The names are `EntitySet`'s
     own attribute names so this list and that dataclass cannot drift into disagreeing about
-    what a kind is called.
+    what a kind is called. `plugins` is the eighth (#174): its editor is a group on the
+    Scripting Page rather than a Page of its own, but its list is edited the same way.
     """
 
     def declarations(self, kind: str) -> list[Any]:
@@ -1285,6 +1297,21 @@ class Session:
                 del items[index]
 
         return self.edit_declarations(kind, drop, title=entity_title(kind, "removed"))
+
+    def move_declaration(self, kind: str, index: int, to: int) -> bool:
+        """Move the entity at `index` to position `to`: the plugin list's reorder (#174).
+
+        A move, as `move_rule` is, because that is what a drag is; a move off either end
+        or onto itself changes nothing and so records nothing.
+        """
+
+        def shift(items: list[Any]) -> None:
+            if 0 <= index < len(items) and 0 <= to < len(items) and index != to:
+                items.insert(to, items.pop(index))
+
+        return self.edit_declarations(
+            kind, shift, title=entity_title(kind, "reordered", plural=True)
+        )
 
     @property
     def curves(self) -> list[Curve]:
@@ -1551,11 +1578,23 @@ class Session:
         """
         self._fetch_helper_data("switches", lambda client: client.switches(), done)
 
+    def fetch_loaded_plugins(self, done: Callable[[tuple[str, ...] | None], None]) -> None:
+        """The names of the plugins Hyprland has loaded right now, or `None` if unanswerable.
+
+        Asked every time and never cached: a reload loads and unloads plugins, so the only
+        current answer is a fresh one. `hyprctl plugin list` rather than the `eval` of
+        `hl.get_loaded_plugins()` ADR-0018 first named: on 0.56.2 `eval` answers `ok`
+        whatever the Lua prints or returns, and `eval` clears `configerrors` on entry, while
+        `plugin list` is a plain read that is safe between a reload and its read-back
+        (probed on a nested instance, #174).
+        """
+        self._fetch_helper_data("plugins", lambda client: client.loaded_plugins(), done)
+
     def _fetch_helper_data(
         self,
         what: str,
-        query: Callable[[CommandClient], Coroutine[Any, Any, tuple[Mapping[str, Any], ...]]],
-        done: Callable[[tuple[Mapping[str, Any], ...] | None], None],
+        query: Callable[[CommandClient], Coroutine[Any, Any, _Answer]],
+        done: Callable[[_Answer | None], None],
     ) -> None:
         """The shared shape of a fire-and-callback helper query, failure spelled `None`."""
         client = self._client
@@ -2238,8 +2277,9 @@ class Session:
         ENV_MODULE,
         PERMISSIONS_MODULE,
         AUTOSTART_MODULE,
+        PLUGINS_MODULE,
     )
-    """The six Modules `_load_declarations` reads, in Entrypoint order (#70)."""
+    """The seven Modules `_load_declarations` reads: the six of #70 and `plugins.lua` (#174)."""
 
     def _load_declarations(self) -> bool:
         """Read the six declarative Entity Modules into the model.
@@ -2261,6 +2301,7 @@ class Session:
         env: list[EnvVar] = []
         permissions: list[Permission] = []
         startup: list[StartupCommand] = []
+        plugins: list[PluginLoad] = []
 
         for module in self.DECLARATION_MODULES:
             path = self._paths.app_dir / module
@@ -2279,10 +2320,11 @@ class Session:
             env.extend(parsed.env)
             permissions.extend(parsed.permissions)
             startup.extend(parsed.startup)
+            plugins.extend(parsed.plugins)
 
         _log.info(
             "read %d curve(s), %d animation(s), %d gesture(s), %d device(s), "
-            "%d env var(s), %d permission(s), %d startup command(s)",
+            "%d env var(s), %d permission(s), %d startup command(s), %d plugin(s)",
             len(curves),
             len(animations),
             len(gestures),
@@ -2290,6 +2332,7 @@ class Session:
             len(env),
             len(permissions),
             len(startup),
+            len(plugins),
         )
         self._model.entities.curves[:] = curves
         self._model.entities.animations[:] = animations
@@ -2298,6 +2341,7 @@ class Session:
         self._model.entities.env[:] = env
         self._model.entities.permissions[:] = permissions
         self._model.entities.startup[:] = startup
+        self._model.entities.plugins[:] = plugins
         return True
 
     def _on_stream_lost(self) -> None:
@@ -2676,17 +2720,29 @@ class Session:
         which requires are quarantined, so there is nothing in it a regeneration could lose.
         """
         return self._recovery_write(
-            lambda: self._writer.regenerate_entrypoint(self._model),
+            lambda before: self._writer.regenerate_entrypoint(
+                self._model, before_replace=before
+            ),
+            self.quarantined,
             "regenerate the Entrypoint",
         )
 
     def _set_quarantine(self, requires: set[str]) -> bool:
+        ordered = sorted(requires)
         return self._recovery_write(
-            lambda: self._writer.set_quarantine(self._model, sorted(requires)),
+            lambda before: self._writer.set_quarantine(
+                self._model, ordered, before_replace=before
+            ),
+            ordered,
             "change the Quarantine",
         )
 
-    def _recovery_write(self, write: Callable[[], object], what: str) -> bool:
+    def _recovery_write(
+        self,
+        write: Callable[[BeforeReplace | None], bool],
+        quarantined: Sequence[str],
+        what: str,
+    ) -> bool:
         """Rewrite the Entrypoint out of band, then reload. `False` if it could not be done.
 
         One body for the two recoveries that work by changing which files are required, since
@@ -2694,23 +2750,30 @@ class Session:
         live session to reload into, a write that may fail without taking the app down, and a
         reload that is *not* an apply -- an apply would render the model over the App dir and
         reload with the require list it would have generated rather than the one just written.
+
+        The Entrypoint `quarantined` would produce is rendered and syntax-gated here, so a
+        recovery the gate refuses answers `False` and leaves the Banner as it is. The write
+        itself runs queued (`EntrypointTransaction`): its Journal draft stays open until the
+        reload answers, and nothing else may open one meanwhile.
         """
         if not self.live or self._applier is None:
             return False
         try:
-            write()
-        except (LuaSyntaxError, ProtectedFile, OSError, ValueError) as error:
+            self._writer.entrypoint_text(self._model, quarantined)
+        except (LuaSyntaxError, ValueError) as error:
             _log.error("could not %s: %s", what, error)
             return False
-        self._spawn(self._reload_after_recovery())
+        self._spawn(self._recover_entrypoint(write, what))
         return True
 
-    async def _reload_after_recovery(self) -> None:
-        """Make an Entrypoint rewrite take effect, and re-read what the config now says.
+    async def _recover_entrypoint(
+        self, write: Callable[[BeforeReplace | None], bool], what: str
+    ) -> None:
+        """Rewrite the Entrypoint, reload, and re-read what the config now says.
 
         A plain apply would do the wrong thing here: it renders the model over the App dir,
-        and the file that just changed is the one file the model does not describe. So this
-        restores nothing and writes nothing -- it reloads, and finds out what happened.
+        and the file that changes is the one file the model does not describe. So this
+        renders nothing -- it rewrites one file, reloads, and finds out what happened.
         """
         applier = self._applier
         if applier is None:
@@ -2720,11 +2783,13 @@ class Session:
         # without asking about all of them.
         wanted = tuple(option.name for option in self._owned())
         try:
-            result = await applier.restore_now(applier.reload_only(wanted))
+            result = await applier.restore_now(applier.recover_entrypoint(write, wanted))
         except (IpcError, RuntimeError) as error:
             _log.error("could not reload after a recovery: %s", error)
             self._changed()
             return
+        if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+            _log.error("could not %s: %s", what, result.detail)
         self._observe(result)
         self._report(result)
         self._changed()

@@ -39,11 +39,10 @@ from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     sdr_eotf_name,
 )
 from hyprtweaker.ui.gap_field import GapField, commit_on_settle  # noqa: E402
+from hyprtweaker.ui.rows.state import NOT_SET  # noqa: E402
 
 Apply = Callable[[Mapping[str, Any]], None]
 """One edit to the display's rule: `{field: value}`, `UNSET` meaning "remove this key"."""
-
-NOT_SET = "Not set"
 
 FRACTIONAL_WARNING = "Fractional scales can look blurry in apps that don't support them."
 

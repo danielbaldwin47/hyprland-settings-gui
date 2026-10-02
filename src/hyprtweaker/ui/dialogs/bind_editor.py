@@ -30,6 +30,7 @@ from gi.repository import Adw, Gtk  # noqa: E402
 from hyprtweaker.engine.dispatchers import (  # noqa: E402
     EXEC_PATH,
     NAMESPACE_LABELS,
+    ArgSpec,
     Dispatcher,
     lookup,
     namespaces,
@@ -43,6 +44,7 @@ from hyprtweaker.engine.triggers import (  # noqa: E402
 from hyprtweaker.engine.writer.binds import lua_value  # noqa: E402
 from hyprtweaker.engine.writer.lua import table_key  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
+from hyprtweaker.ui.rows.state import NOT_SET  # noqa: E402
 
 TRIGGER_HELP = "Modifiers and one key, joined by +. For example: SUPER + SHIFT + Q"
 
@@ -98,6 +100,9 @@ KEPT_NOTE = "The form has no field for these, so Save keeps them as they are."
 BOOL_WORDS = {"true": True, "false": False, "yes": True, "no": False}
 """What a yes-or-no field reads, lower-cased. Anything else is refused, never guessed."""
 
+HELD_NOTE = " (from your config)"
+"""Follows a saved value a yes-or-no field cannot read, shown as a choice of its own."""
+
 _NUMBER = re.compile(r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
 
@@ -127,6 +132,7 @@ class BindEditor(Adw.Dialog):
         self._fetch_switches = fetch_switches
         self._chosen: Dispatcher | None = None
         self._arg_entries: dict[str, Gtk.Widget] = {}
+        self._bool_choices: dict[str, list[object]] = {}
         self._kept: dict[str, object] = {}
         self._flag_switches: dict[str, Adw.SwitchRow] = {}
         self._own_release = False
@@ -271,22 +277,71 @@ class BindEditor(Adw.Dialog):
             return group
 
         self._arg_entries = {}
+        self._bool_choices = {}
         for spec in entry.args:
-            row = Adw.EntryRow(title=spec.title())
-            if spec.placeholder:
-                row.set_tooltip_text(spec.placeholder)
+            current = None
             if existing is not None:
                 current = existing.args.get(spec.name)
                 if current is None and existing.positional:
                     current = existing.positional[0]
-                if _is_scalar(current):
-                    row.set_text(_field_text(current))
-            self._arg_entries[spec.name] = row
+                if not _is_scalar(current):
+                    current = None
+            row = (
+                self._bool_row(spec, current)
+                if spec.type == "bool"
+                else self._text_row(spec, current)
+            )
             group.add(row)
 
         if not entry.args:
             group.set_description("This action takes no arguments.")
         return group
+
+    def _text_row(self, spec: ArgSpec, current: object) -> Adw.ActionRow:
+        """A text argument: the hint is the row's subtitle, so it shows without hovering.
+
+        `Adw.EntryRow` has no subtitle, so the row is an `Adw.ActionRow` with the entry as
+        its suffix. `_arg_entries` holds the entry.
+        """
+        entry = Gtk.Entry(width_chars=26, valign=Gtk.Align.CENTER)
+        entry.update_property([Gtk.AccessibleProperty.LABEL], [spec.title()])
+        if current is not None:
+            entry.set_text(_field_text(current))
+        row = Adw.ActionRow(
+            title=spec.title(),
+            subtitle=spec.placeholder or None,
+            subtitle_lines=0,
+            use_markup=False,
+        )
+        row.add_suffix(entry)
+        row.set_activatable_widget(entry)
+        self._arg_entries[spec.name] = entry
+        return row
+
+    def _bool_row(self, spec: ArgSpec, current: object) -> Adw.PreferencesRow:
+        """A yes-or-no argument as a choice, so nobody types `true`.
+
+        Required and holding a boolean (or nothing): a switch. Optional: "Not set", "Yes",
+        "No", where "Not set" writes no key and the compositor's default holds. A saved
+        value that is not a boolean (`next = "yes"`) is a last choice of its own, as written
+        and selected: Save writes it back unchanged and nothing moves it silently (ADR-0007).
+        """
+        held = current is not None and not isinstance(current, bool)
+        if spec.required and not held:
+            switch = Adw.SwitchRow(title=spec.title(), active=current is True)
+            self._arg_entries[spec.name] = switch
+            return switch
+        values: list[object] = [True, False] if spec.required else [None, True, False]
+        labels = ["Yes", "No"] if spec.required else [NOT_SET, "Yes", "No"]
+        if held:
+            values.append(current)
+            labels.append(f"{lua_value(current)}{HELD_NOTE}")
+        row = Adw.ComboRow(title=spec.title(), model=Gtk.StringList.new(labels))
+        # Not `values.index`: it compares by equality, and `1 == True`.
+        row.set_selected(len(values) - 1 if held else values.index(current))
+        self._bool_choices[spec.name] = values
+        self._arg_entries[spec.name] = row
+        return row
 
     def _kept_args(self, entry: Dispatcher | None) -> dict[str, object]:
         """The saved keys of this action the form has no field for, to carry through Save.
@@ -399,12 +454,17 @@ class BindEditor(Adw.Dialog):
         specs = {spec.name: spec for spec in entry.args}
         values: dict[str, object] = {}
         for name, row in self._arg_entries.items():
-            if not isinstance(row, Adw.EntryRow):
-                continue
-            text = row.get_text().strip()
-            if not text:
-                continue
-            values[name] = _typed(text, specs[name].type if name in specs else "string")
+            if isinstance(row, Gtk.Entry):
+                text = row.get_text().strip()
+                if text:
+                    values[name] = _typed(text, specs[name].type if name in specs else "string")
+            elif isinstance(row, Adw.SwitchRow):
+                values[name] = row.get_active()
+            elif isinstance(row, Adw.ComboRow):
+                if (chosen := self._bool_choices[name][row.get_selected()]) is not None:
+                    values[name] = chosen
+            else:
+                raise TypeError(f"argument {name!r} has a row the editor cannot read")
 
         if entry.positional:
             first = entry.args[0].name if entry.args else ""
@@ -484,7 +544,7 @@ class BindEditor(Adw.Dialog):
         if entry is not None and entry.free_form_reason is None:
             for spec in entry.args:
                 row = self._arg_entries.get(spec.name)
-                text = row.get_text().strip() if isinstance(row, Adw.EntryRow) else ""
+                text = row.get_text().strip() if isinstance(row, Gtk.Entry) else ""
                 if text and (refusal := _type_refusal(spec.title(), spec.type, text)):
                     return refusal
             args, positional = self._collect_args()

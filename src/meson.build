@@ -114,6 +114,7 @@ package_sources = {
     'lua.py',
     'modules.py',
     'monitors.py',
+    'plugins.py',
     'rules.py',
     'session_scope.py',
     'syntax.py',

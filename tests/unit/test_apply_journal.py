@@ -31,6 +31,7 @@ from hyprtweaker.engine.apply import (
     ApplyOutcome,
     ApplyResult,
     ApplyTransaction,
+    EntrypointTransaction,
     RestoreTransaction,
 )
 from hyprtweaker.engine.ipc import CommandClient, EventStream
@@ -355,6 +356,42 @@ def test_a_rescue_killed_before_its_commit_keeps_the_hand_edit_it_overwrote(
     recovered = Journal(paths).recover()
     assert recovered is not None
     change = recovered.change(GENERAL_MODULE)
+    assert change is not None
+    assert Journal(paths).snapshot(change.before) == hand_edit
+
+
+def test_an_entrypoint_fix_killed_before_its_commit_keeps_the_hand_edit_it_overwrote(
+    tmp_path: Path,
+) -> None:
+    """ADR-0010 §Rollback, for ADR-0016's Entrypoint Fix: it overwrites a hand-edited
+    `hyprland.lua` by design, so a crash before the commit must still leave that edit."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    model = fresh_model()
+    model.set(GAPS_IN, 6)
+    hand_edit = b"this is not lua {\n"
+
+    async def scenario(transaction: ApplyTransaction, fake: FakeHyprland) -> None:
+        await transaction.run([GAPS_IN])
+        paths.entrypoint.write_bytes(hand_edit)
+        writer = Writer(paths, SAMPLE_APP_VERSION)
+
+        fix = EntrypointTransaction(
+            model=model,
+            client=CommandClient(fake.instance),
+            reloader=transaction.reloader,
+            write=lambda before: writer.regenerate_entrypoint(model, before_replace=before),
+            journal=Journal(paths),
+        )
+        await crash_after_the_write(fix.run(()))
+        assert paths.entrypoint.read_bytes() != hand_edit, (
+            "the precondition: the fix overwrote the hand edit"
+        )
+
+    with_transaction(tmp_path, model, scenario)
+
+    recovered = Journal(paths).recover()
+    assert recovered is not None and recovered.outcome == "interrupted"
+    change = recovered.change(ENTRYPOINT_NAME)
     assert change is not None
     assert Journal(paths).snapshot(change.before) == hand_edit
 

@@ -1,4 +1,4 @@
-"""Reading the seven declarative Entity Modules of #70 back into Entities.
+"""Reading the declarative Entity Modules of #70, and `plugins.lua` (#174), back into Entities.
 
 One reader for all seven files rather than one per file, which is the same call
 `parse_rules_module` and `parse_monitors_module` each make for their pair and for the same
@@ -40,9 +40,11 @@ from ..model.entities import (
     EnvVar,
     Gesture,
     Permission,
+    PluginLoad,
     StartupCommand,
 )
 from ..paths import ANIMATIONS_MODULE
+from .binds import revive_disabled
 from .inputs import DISPATCH_FIELD
 
 
@@ -57,6 +59,7 @@ class ParsedDeclarations:
     env: tuple[EnvVar, ...] = ()
     permissions: tuple[Permission, ...] = ()
     startup: tuple[StartupCommand, ...] = ()
+    plugins: tuple[PluginLoad, ...] = ()
     errors: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -73,16 +76,21 @@ def parse_declarations_module(
     hand edit that put an entity in the wrong file still comes back as what it is.
     """
     text = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
+    # A disabled plugin is a `-- disabled: hl.plugin.load(...)` comment (#174), revived
+    # line-for-line so the evaluated call's line number says it was disabled.
+    revived, disabled_lines = revive_disabled(text)
 
     # Evaluated from a scratch copy keeping the module's basename, so origins read as
     # `gestures.lua:N` with `N` the line in the real file.
     with tempfile.TemporaryDirectory(prefix="hyprtweaker-declarations-") as scratch:
         path = Path(scratch) / module
-        path.write_text(text, encoding="utf-8")
-        return _parse_path(path, timeout=timeout)
+        path.write_text(revived, encoding="utf-8")
+        return _parse_path(path, timeout=timeout, disabled_lines=disabled_lines)
 
 
-def _parse_path(path: Path, *, timeout: float) -> ParsedDeclarations:
+def _parse_path(
+    path: Path, *, timeout: float, disabled_lines: frozenset[int]
+) -> ParsedDeclarations:
     try:
         recording = evaluate(
             path, consent=Consent(evaluate=True), timeout=timeout, run_handlers=True
@@ -119,6 +127,12 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedDeclarations:
             # out of a swipe.
             _attach_dispatch(entities, call)
             continue
+        if call.line in disabled_lines:
+            # Only a plugin entry has a disabled spelling. Any other kind behind the prefix
+            # is a comment the user wrote, and stays one rather than coming back live.
+            if call.name == "plugin_load":
+                _collect_plugin(entities, call, enabled=False)
+            continue
         _collect(entities, call, event=event)
 
     return ParsedDeclarations(
@@ -129,6 +143,7 @@ def _parse_path(path: Path, *, timeout: float) -> ParsedDeclarations:
         env=tuple(entities.env),
         permissions=tuple(entities.permissions),
         startup=tuple(entities.startup),
+        plugins=tuple(entities.plugins),
         errors=tuple(recording.errors),
     )
 
@@ -150,6 +165,15 @@ def _attach_dispatch(entities: EntitySet, call: Call) -> None:
     fields.pop("action", None)
     fields[DISPATCH_FIELD] = dispatcher
     entities.gestures[-1] = replace(gesture, fields=fields)
+
+
+def _collect_plugin(entities: EntitySet, call: Call, *, enabled: bool) -> None:
+    """One `hl.plugin.load` entry. Duplicates stay: the list is what the file says."""
+    positional = positional_args(call)
+    if positional and isinstance(positional[0], str):
+        entities.plugins.append(
+            PluginLoad(path=positional[0], enabled=enabled, origin=call.origin)
+        )
 
 
 def _collect(entities: EntitySet, call: Call, *, event: str) -> None:
@@ -221,6 +245,10 @@ def _collect(entities: EntitySet, call: Call, *, event: str) -> None:
                     origin=call.origin,
                 )
             )
+        return
+
+    if call.name == "plugin_load":
+        _collect_plugin(entities, call, enabled=True)
         return
 
     if call.name == "exec_cmd":

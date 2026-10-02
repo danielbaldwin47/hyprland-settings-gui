@@ -313,14 +313,132 @@ def cycle_next(**args: object) -> tuple[Any, list[Bind]]:
     )
 
 
-def test_a_yes_or_no_field_refuses_a_word_it_cannot_read() -> None:
-    """`forward` once saved as `next = false`: the opposite of what was typed."""
-    editor, saved = cycle_next()
-    editor._arg_entries["next"].set_text("forward")
+def arg_rows(editor: Any) -> dict[str, Any]:
+    """The "Action" group's rows by title, as a reader finds them: text, choice or switch."""
+    from gi.repository import Adw
+
+    (action,) = groups_titled(editor, "Action")
+    return {str(w.get_title()): w for w in walk(action) if isinstance(w, Adw.ActionRow)}
+
+
+def choices(row: Any) -> list[str]:
+    model = row.get_model()
+    return [model.get_string(i) for i in range(model.get_n_items())]
+
+
+def save_cycle_next(editor: Any, saved: list[Bind]) -> list[str]:
+    editor._trigger.set_text("SUPER + w")
+    editor._save()
+    assert not editor._error.get_visible(), editor._error.get_text()
+    return saved_lua(saved)
+
+
+def test_an_optional_yes_or_no_field_is_a_three_choice_row_on_not_set() -> None:
+    from gi.repository import Adw
+
+    editor, saved = add_flow_saving(lookup("window.cycle_next"))
+    forwards = arg_rows(editor)["Forwards"]
+
+    assert isinstance(forwards, Adw.ComboRow)
+    assert choices(forwards) == ["Not set", "Yes", "No"]
+    assert forwards.get_selected() == 0
+    forwards.set_selected(2)
+    assert save_cycle_next(editor, saved) == ["hl.dsp.window.cycle_next{ next = false }"]
+
+
+def test_not_set_writes_no_key() -> None:
+    editor, saved = add_flow_saving(lookup("window.cycle_next"))
+
+    assert save_cycle_next(editor, saved) == ["hl.dsp.window.cycle_next()"]
+
+
+def test_a_required_yes_or_no_field_is_a_switch() -> None:
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.dispatchers import ArgSpec
+
+    entry = Dispatcher(
+        path="window.sticky",
+        label="Stick",
+        args=(ArgSpec(name="on", type="bool", required=True, label="Sticky"),),
+    )
+    editor, saved = add_flow_saving(entry)
+    sticky = arg_rows(editor)["Sticky"]
+
+    assert isinstance(sticky, Adw.SwitchRow)
+    assert sticky.get_active() is False
+    sticky.set_active(True)
+    editor._trigger.set_text("SUPER + w")
+    editor._save()
+    assert [b.dispatcher for b in saved] == [
+        DispatcherCall(path="window.sticky", args={"on": True})
+    ]
+
+
+def test_a_saved_yes_or_no_opens_on_its_value() -> None:
+    editor, _saved = cycle_next(next=True)
+
+    assert arg_rows(editor)["Forwards"].get_selected() == 1
+
+
+@pytest.mark.parametrize(
+    ("saved_value", "label"), [("yes", '"yes" (from your config)'), (1, "1 (from your config)")]
+)
+def test_a_saved_value_that_is_not_a_boolean_is_a_choice_and_saved_back(
+    saved_value: object, label: str
+) -> None:
+    editor, saved = cycle_next(next=saved_value)
+    forwards = arg_rows(editor)["Forwards"]
+
+    assert choices(forwards) == ["Not set", "Yes", "No", label]
+    assert forwards.get_selected() == 3
+    editor._save()
+    assert [b.dispatcher.args for b in saved if b.dispatcher] == [{"next": saved_value}]
+
+
+def test_a_saved_value_that_is_not_a_boolean_gives_way_to_a_choice() -> None:
+    editor, saved = cycle_next(next="yes")
+    arg_rows(editor)["Forwards"].set_selected(2)
     editor._save()
 
-    assert saved == []
-    assert editor._error.get_text() == "Forwards must be true or false."
+    assert saved_lua(saved) == ["hl.dsp.window.cycle_next{ next = false }"]
+
+
+def test_a_text_that_is_not_a_boolean_is_refused_by_name() -> None:
+    """A yes-or-no value reaching the editor as text is refused, never guessed: `forward`
+    once saved as `next = false`, the opposite of what was typed (#150 finding 11)."""
+    from hyprtweaker.ui.dialogs.bind_editor import _type_refusal
+
+    assert _type_refusal("Forwards", "bool", "forward") == "Forwards must be true or false."
+    assert _type_refusal("Forwards", "bool", "No") == ""
+
+
+def test_a_text_argument_shows_its_hint_on_the_row() -> None:
+    """The hint is the row's own subtitle, visible without hovering."""
+    from gi.repository import Adw, Gtk
+
+    editor = add_flow(lookup("window.fullscreen"))
+    mode = arg_rows(editor)["Mode"]
+
+    assert isinstance(mode, Adw.ActionRow)
+    assert mode.get_subtitle() == "fullscreen or maximized"
+    assert mode.get_tooltip_text() is None
+    hint = [
+        w
+        for w in walk(mode)
+        if isinstance(w, Gtk.Label) and w.get_label() == mode.get_subtitle()
+    ]
+    assert [w.get_visible() for w in hint] == [True]
+
+
+def test_a_text_argument_row_is_labelled_for_screen_readers() -> None:
+    from gi.repository import Gtk
+
+    editor = add_flow(lookup("window.fullscreen"))
+    entry = editor._arg_entries["mode"]
+
+    assert isinstance(entry, Gtk.Entry)
+    assert arg_rows(editor)["Mode"].get_activatable_widget() is entry
 
 
 def test_a_whole_number_field_refuses_a_fraction() -> None:
@@ -333,12 +451,16 @@ def test_a_whole_number_field_refuses_a_fraction() -> None:
     assert editor._error.get_text() == "Seconds must be a whole number."
 
 
-def test_a_saved_yes_or_no_reads_as_true_or_false_and_saves_back() -> None:
+def test_saved_yes_or_no_values_open_on_their_choice_and_save_back() -> None:
     editor, saved = cycle_next(next=False, tiled=True)
+    rows = arg_rows(editor)
 
-    assert editor._arg_entries["next"].get_text() == "false"
-    assert editor._arg_entries["tiled"].get_text() == "true"
-    editor._arg_entries["floating"].set_text("True")
+    assert [rows[t].get_selected() for t in ("Forwards", "Tiled only", "Floating only")] == [
+        2,
+        1,
+        0,
+    ]
+    rows["Floating only"].set_selected(1)
     editor._save()
     assert saved_lua(saved) == [
         "hl.dsp.window.cycle_next{ next = false, tiled = true, floating = true }"
@@ -389,16 +511,11 @@ SAMPLE = {"string": "abc", "int": 3, "bool": True, "window": "class:foo", "works
 def test_a_curated_dispatcher_gets_one_labelled_field_per_argument(entry: Dispatcher) -> None:
     """The add flow shows a generated form, not the raw table (#127): a field per
     `ArgSpec`, titled as the catalog says, and no free-form view among them."""
-    from gi.repository import Adw
-
     editor = add_flow(entry)
 
     assert editor._chosen is entry
     assert set(editor._arg_entries) == {spec.name for spec in entry.args}
-    assert all(isinstance(row, Adw.EntryRow) for row in editor._arg_entries.values())
-    assert {name: row.get_title() for name, row in editor._arg_entries.items()} == {
-        spec.name: spec.title() for spec in entry.args
-    }
+    assert sorted(arg_rows(editor)) == sorted(spec.title() for spec in entry.args)
     assert FREE_FORM_NOTE not in action_group_description(editor)
 
 

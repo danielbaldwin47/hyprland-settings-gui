@@ -299,10 +299,30 @@ class Permission:
 
 @dataclass(frozen=True, slots=True)
 class PluginLoad:
-    """`hl.plugin.load(path)`."""
+    """`hl.plugin.load(path)`: one entry of the ordered plugin load list (ADR-0018).
+
+    `path` is kept exactly as written: Hyprland neither expands `~` nor resolves a relative
+    path here (probed on 0.56.2, #174), so a rewritten path would load a different file or
+    none. A disabled entry stays in the list, written as a comment, so switching it back on
+    puts it where it was.
+    """
 
     path: str
+    enabled: bool = True
     origin: str = ""
+
+    @property
+    def name(self) -> str:
+        """The name Hyprland most likely reports for this file once it is loaded.
+
+        A loaded plugin is listed by the name it gives itself, never by its path, so this is
+        the file's stem lower-cased with a leading `lib` dropped: `libhyprbars.so` and
+        `hyprbars.so` both answer `hyprbars`. A guess, which is why a loaded plugin no entry
+        matches is still shown rather than dropped.
+        """
+        stem = self.path.rsplit("/", 1)[-1].lower()
+        stem = stem.removesuffix(".so")
+        return stem.removeprefix("lib")
 
 
 @dataclass(frozen=True, slots=True)

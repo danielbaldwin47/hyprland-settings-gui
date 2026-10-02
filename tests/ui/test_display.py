@@ -1,7 +1,8 @@
 """The UI tier draws on a display of its own, never on the developer's desktop session.
 
-The first four run `_display_probe.py` in a child pytest with the host session it
+The first six run `_display_probe.py` in a child pytest with the host session it
 describes; the last two hold the private display to agent numbers, never the session's.
+The child's session bus is forged the same way, so the tier is proven off it.
 """
 
 from __future__ import annotations
@@ -13,22 +14,32 @@ import sys
 from pathlib import Path
 
 import pytest
-from _display_probe import ABSENT_WAYLAND_DISPLAY
+from _display_probe import ABSENT_WAYLAND_DISPLAY, FORGED_SESSION_BUS, TESTS_IN_THIS_FILE
 
 ROOT = Path(__file__).resolve().parents[2]
 PROBE_RUN = [sys.executable, "-m", "pytest", "tests/ui/_display_probe.py", "-q", "-rs"]
 
 
 def run_probe(**env: str) -> subprocess.CompletedProcess[str]:
-    """Run the probe as a HiDPI desktop session whose Wayland socket does not exist."""
+    """Run the probe as a HiDPI desktop session whose Wayland and bus sockets are absent."""
     child_env = {
         key: value
         for key, value in os.environ.items()
-        if key not in ("DISPLAY", "GDK_BACKEND", "WAYLAND_DISPLAY", "GTK_A11Y")
+        if key
+        not in (
+            "DISPLAY",
+            "GDK_BACKEND",
+            "WAYLAND_DISPLAY",
+            "GTK_A11Y",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "GSETTINGS_BACKEND",
+            "ADW_DISABLE_PORTAL",
+        )
         and not key.startswith("HYPRTWEAKER_")
     }
     child_env["WAYLAND_DISPLAY"] = ABSENT_WAYLAND_DISPLAY
     child_env["GDK_SCALE"] = "2"
+    child_env["DBUS_SESSION_BUS_ADDRESS"] = FORGED_SESSION_BUS
     child_env.update(env)
     return subprocess.run(
         [*PROBE_RUN, "--color=no", "-p", "no:cacheprovider"],
@@ -44,14 +55,14 @@ def test_a_desktop_session_gets_its_own_display() -> None:
     result = run_probe()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 passed" in result.stdout
+    assert f"{TESTS_IN_THIS_FILE} passed" in result.stdout
 
 
 def test_without_xvfb_the_tier_skips_naming_it(tmp_path: Path) -> None:
     result = run_probe(PATH=str(tmp_path))
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 skipped" in result.stdout
+    assert f"{TESTS_IN_THIS_FILE} skipped" in result.stdout
     assert "Xvfb" in result.stdout
 
 
@@ -67,8 +78,33 @@ def test_the_host_display_opt_in_uses_the_host_session() -> None:
     result = run_probe(HYPRTWEAKER_UI_HOST_DISPLAY="1")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 skipped" in result.stdout
+    assert f"{TESTS_IN_THIS_FILE} skipped" in result.stdout
     assert "no usable display" in result.stdout
+
+
+def path_with_only(tmp_path: Path, *programs: str) -> str:
+    """A PATH holding links to just `programs`, so the others are not installed."""
+    for program in programs:
+        found = shutil.which(program)
+        if found is None:
+            pytest.skip(f"{program} is not installed")
+        (tmp_path / program).symlink_to(found)
+    return str(tmp_path)
+
+
+def test_without_dbus_daemon_the_tier_skips_naming_it(tmp_path: Path) -> None:
+    result = run_probe(PATH=path_with_only(tmp_path, "Xvfb"))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{TESTS_IN_THIS_FILE} skipped" in result.stdout
+    assert "dbus-daemon" in result.stdout
+
+
+def test_without_dbus_daemon_require_ui_fails_the_run(tmp_path: Path) -> None:
+    result = run_probe(PATH=path_with_only(tmp_path, "Xvfb"), HYPRTWEAKER_REQUIRE_UI="1")
+
+    assert result.returncode == 1
+    assert "dbus-daemon" in result.stdout + result.stderr
 
 
 STARTER = """

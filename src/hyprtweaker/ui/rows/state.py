@@ -72,8 +72,9 @@ NOT_IN_HYPRLAND_PILL: Final = "Not in this Hyprland"
 RETIRED_PILL: Final = "Retired in {release}"
 """Which of these a Row shows, and in what order, is `PILL_PRECEDENCE`'s alone."""
 
-_UNLABELLED_NULL: Final = "Not set"
-"""What a nullable Option with no curated `null_label` falls back to.
+NOT_SET: Final = "Not set"
+"""The app's word for "no value written": what a nullable Option with no curated
+`null_label` falls back to, and what the monitor and bind editors name their empty choice.
 
 Unreachable with a complete Overlay -- the ADR-0011 completeness test requires a
 `null_label` on every nullable Option -- and deliberately not a sentinel: if curation ever
@@ -119,7 +120,7 @@ def _spells_no_value(option: ResolvedOption, value: Any) -> bool:
 
 def no_value_label(option: ResolvedOption) -> str:
     """The curated "no value" text: "Device default", "Automatic", "Same as outer gaps"."""
-    return option.null_label or _UNLABELLED_NULL
+    return option.null_label or NOT_SET
 
 
 def value_label(option: ResolvedOption, value: OptionValue) -> str:

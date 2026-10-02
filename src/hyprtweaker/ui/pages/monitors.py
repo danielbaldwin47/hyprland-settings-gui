@@ -272,15 +272,19 @@ class ArrangementCanvas(Gtk.DrawingArea):
     def _draw(self, _area: Gtk.DrawingArea, cr: Any, _width: int, _height: int) -> None:
         color = self.get_color()
         for display in self._displays:
-            x, y, w, h = self.canvas_rect(display)
+            # On whole pixels, the outline stroked just inside the box: a 1 px line centred
+            # on a pixel edge smears into two half-strength pixels, and the dashed outline of
+            # a display with no rule fell to 2.5:1 on the light ground (#183).
+            x, y, w, h = (round(value) for value in self.canvas_rect(display))
+            line = 2 if display.has_rule else 1
             cr.set_source_rgba(color.red, color.green, color.blue, 0.12)
             cr.rectangle(x, y, w, h)
             cr.fill()
             cr.set_source_rgba(color.red, color.green, color.blue, 0.55)
-            cr.set_line_width(2 if display.has_rule else 1)
+            cr.set_line_width(line)
             if not display.has_rule:
                 cr.set_dash([4.0, 4.0])
-            cr.rectangle(x, y, w, h)
+            cr.rectangle(x + line / 2, y + line / 2, w - line, h - line)
             cr.stroke()
             cr.set_dash([])
             cr.set_source_rgba(color.red, color.green, color.blue, 0.9)

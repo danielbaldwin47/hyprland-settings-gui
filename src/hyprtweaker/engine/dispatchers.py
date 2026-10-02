@@ -319,9 +319,9 @@ CATALOG: tuple[Dispatcher, ...] = (
         label="Focus the next window",
         args=(
             WINDOW,
-            ArgSpec(name="next", type="bool", label="Forwards", placeholder="false goes back"),
-            ArgSpec(name="tiled", type="bool", label="Tiled only", placeholder="true"),
-            ArgSpec(name="floating", type="bool", label="Floating only", placeholder="true"),
+            ArgSpec(name="next", type="bool", label="Forwards"),
+            ArgSpec(name="tiled", type="bool", label="Tiled only"),
+            ArgSpec(name="floating", type="bool", label="Floating only"),
         ),
     ),
     _plain("window.drag", "Drag the window"),

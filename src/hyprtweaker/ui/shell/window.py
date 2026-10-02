@@ -64,8 +64,10 @@ from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa:
 from hyprtweaker.engine.model.entities import (  # noqa: E402
     Bind,
     LayerRule,
+    PluginLoad,
     WindowRule,
     WorkspaceRule,
+    entity_title,
 )
 from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking  # noqa: E402
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
@@ -122,7 +124,11 @@ from hyprtweaker.ui.pages.rules import (  # noqa: E402
     RulesPage,
     WindowRulesPage,
 )
-from hyprtweaker.ui.pages.scripting import ScriptingActions, ScriptingPage  # noqa: E402
+from hyprtweaker.ui.pages.scripting import (  # noqa: E402
+    PluginActions,
+    ScriptingActions,
+    ScriptingPage,
+)
 from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     ORPHAN_CATEGORY_TITLE,
     CategoryPlan,
@@ -262,6 +268,27 @@ whose Row has no home in the active View. One action means those three cannot di
 a search-driven switch is remembered exactly like a manual one, which is what the ADR asks
 for ("one mechanism, no temporary hidden state")."""
 
+THEME_ACTION = "theme"
+"""The Theme override: System, Light or Dark, three radio items in the primary menu.
+
+This app's own colour scheme, set on its `Adw.StyleManager` and nowhere else: the desktop's
+GTK settings and portal are never written, and never read to decide anything here. Hyprland
+boxes often run without the portal that makes "follow the system" reliable (ADR-0019), so
+the user can force the ground they can read. Remembered in the Prefs file."""
+
+_SCHEMES = {
+    "system": Adw.ColorScheme.DEFAULT,
+    "light": Adw.ColorScheme.FORCE_LIGHT,
+    "dark": Adw.ColorScheme.FORCE_DARK,
+}
+"""Each Theme override name, in menu order, and the colour scheme it asks for."""
+
+FORGET_REMEMBERED_ACTION = "forget-remembered"
+"""Clear every "remember my choice" answer (ADR-0014), so each such dialog asks again.
+
+Without it, a remembered answer is a one-way door (UX critique 4, #79). Insensitive while
+nothing is remembered, so the item never promises an effect it cannot have."""
+
 
 class MainWindow(Adw.ApplicationWindow):
     """The Config view over one `Session`."""
@@ -293,6 +320,10 @@ class MainWindow(Adw.ApplicationWindow):
 
         Read at construction rather than per-use so a `$XDG_STATE_HOME` that disappears
         mid-session cannot change the view out from under the user."""
+        # Before the first present: the window's first frame is already the chosen ground.
+        Adw.StyleManager.get_default().set_color_scheme(
+            _SCHEMES[_theme_from(self._prefs.theme)]
+        )
         self._view = _view_from(self._prefs.view)
         """The active sidebar arrangement, and the source of truth for it.
 
@@ -511,6 +542,16 @@ class MainWindow(Adw.ApplicationWindow):
         views.append("Config", f"win.{VIEW_ACTION}('{View.CONFIG.value}')")
         menu.append_section("View", views)
 
+        themes = Gio.Menu()
+        for name in _SCHEMES:
+            themes.append(name.capitalize(), f"win.{THEME_ACTION}('{name}')")
+        menu.append_section("Theme", themes)
+        # Its own unlabelled section right below Theme rather than inside it: forgetting a
+        # dialog answer is not a colour, and under the "Theme" heading it would read as one.
+        remembered = Gio.Menu()
+        remembered.append("Forget remembered choices", f"win.{FORGET_REMEMBERED_ACTION}")
+        menu.append_section(None, remembered)
+
         interop = Gio.Menu()
         interop.append(IMPORT_LABEL, f"win.{IMPORT_ACTION}")
         interop.append("Export...", f"win.{EXPORT_ACTION}")
@@ -571,6 +612,20 @@ class MainWindow(Adw.ApplicationWindow):
         view.connect("activate", self._on_choose_view)
         self.add_action(view)
         self._view_action = view
+
+        theme = Gio.SimpleAction.new_stateful(
+            THEME_ACTION,
+            GLib.VariantType.new("s"),
+            GLib.Variant.new_string(_theme_from(self._prefs.theme)),
+        )
+        theme.connect("activate", self._on_choose_theme)
+        self.add_action(theme)
+
+        forget = Gio.SimpleAction.new(FORGET_REMEMBERED_ACTION, None)
+        forget.connect("activate", self._on_forget_remembered)
+        forget.set_enabled(bool(self._prefs.remembered))
+        self.add_action(forget)
+        self._forget_action = forget
 
         undo = Gio.SimpleAction.new(UNDO_ACTION, None)
         undo.connect("activate", self._on_undo)
@@ -884,9 +939,23 @@ class MainWindow(Adw.ApplicationWindow):
         A failed write is deliberately silent: `$XDG_STATE_HOME` being read-only means the
         choice will not survive a restart, which is not worth a toast over the Row the user
         is looking at, and `PrefsStore.save` has already declined to raise.
+
+        The one path every preference change takes, a dialog's remembered answer included
+        (#170), so "Forget remembered choices" turns sensitive the moment there is one.
         """
         self._prefs = prefs
         self._prefs_store.save(prefs)
+        self._forget_action.set_enabled(bool(prefs.remembered))
+
+    def _on_choose_theme(self, action: Gio.SimpleAction, parameter: Any) -> None:
+        theme = _theme_from(parameter.get_string())
+        action.set_state(GLib.Variant.new_string(theme))
+        Adw.StyleManager.get_default().set_color_scheme(_SCHEMES[theme])
+        self._remember(self._prefs.with_theme(theme))
+
+    def _on_forget_remembered(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        self._remember(self._prefs.without_any_remembered())
+        self._toasts.add_toast(Adw.Toast(title="Remembered choices forgotten"))
 
     @property
     def visible_section(self) -> str | None:
@@ -1011,9 +1080,17 @@ class MainWindow(Adw.ApplicationWindow):
             self._register(page.section, page.title, len(page.entities))
             self._section_titles[page.section] = page.title
 
-        # The Scripting Page: a read-only inventory of the user's Lua (ADR-0018, #173).
+        # The Scripting Page: the plugin load list (#174) above a read-only inventory of the
+        # user's Lua (ADR-0018, #173).
         self._scripting_page = ScriptingPage(
-            self._session, actions=ScriptingActions(open_file=self._launch_file)
+            self._session,
+            actions=ScriptingActions(open_file=self._launch_file),
+            plugin_actions=PluginActions(
+                add=self._add_plugin,
+                remove=self._remove_plugin,
+                enable=self._set_plugin_enabled,
+                move=self._move_plugin,
+            ),
         )
         scripting = self._scripting_page
         self._stack.add_named(_scrolled(scripting.page), scripting.section)
@@ -1802,6 +1879,9 @@ class MainWindow(Adw.ApplicationWindow):
             self._refresh_chrome_for(name)
         self._undo_action.set_enabled(self._session.can_undo)
         self.sync_banner()
+        # The transaction's reload may have loaded or unloaded a plugin: ask again (#174).
+        if self._scripting_page is not None:
+            self._scripting_page.plugins.refresh()
 
         if not result.ok:
             self._dismiss_undo()
@@ -1943,6 +2023,62 @@ class MainWindow(Adw.ApplicationWindow):
     def _launch_file(self, path: Path) -> None:
         Gtk.FileLauncher(file=Gio.File.new_for_path(str(path))).launch(self, None, None)
 
+    # --- plugins (#174) -------------------------------------------------------------------
+
+    def _add_plugin(self) -> None:
+        """Pick a `.so` and append it. hyprpm is out of scope: the file must exist already."""
+        shared = Gtk.FileFilter(name="Plugins (.so)")
+        shared.add_suffix("so")
+        anything = Gtk.FileFilter(name="All files")
+        anything.add_pattern("*")
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(shared)
+        filters.append(anything)
+        dialog = Gtk.FileDialog(title="Add plugin", filters=filters, default_filter=shared)
+
+        def finished(source: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
+            try:
+                chosen = source.open_finish(result)
+            except GLib.Error:
+                return  # cancelled
+            if chosen is not None and chosen.get_path():
+                self.add_plugin_path(chosen.get_path())
+
+        dialog.open(self, None, finished)
+
+    def add_plugin_path(self, path: str) -> None:
+        """Append `path`, or say why not: a second entry for one `.so` is refused."""
+        plugin = PluginLoad(path)
+        if any(each.path == path for each in self._session.declarations("plugins")):
+            name = path.rsplit("/", 1)[-1] or path
+            self._toasts.add_toast(Adw.Toast(title=f"{name} is already in the list"))
+            return
+        if self._session.add_declaration("plugins", plugin):
+            self._refresh_plugins()
+
+    def _remove_plugin(self, index: int) -> None:
+        if self._session.remove_declaration("plugins", index):
+            self._refresh_plugins()
+
+    def _set_plugin_enabled(self, index: int, enabled: bool) -> None:
+        def flip(items: list[Any]) -> None:
+            if 0 <= index < len(items):
+                items[index] = replace(items[index], enabled=enabled)
+
+        verb = "enabled" if enabled else "disabled"
+        if self._session.edit_declarations(
+            "plugins", flip, title=entity_title("plugins", verb)
+        ):
+            self._refresh_plugins()
+
+    def _move_plugin(self, index: int, to: int) -> None:
+        if self._session.move_declaration("plugins", index, to):
+            self._refresh_plugins()
+
+    def _refresh_plugins(self) -> None:
+        # `sync` refreshes the Scripting Page, its plugin list included.
+        self.sync()
+
     # --- undo -------------------------------------------------------------------------------
 
     @property
@@ -2017,6 +2153,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._refresh_monitors()
         for kind in kinds & self._declaration_pages.keys():
             self._refresh_declarations(kind)
+        if "plugins" in kinds:
+            self._refresh_plugins()
 
     def _on_undo(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         self._undo()
@@ -2483,6 +2621,15 @@ def _view_from(value: str) -> View:
         return View(value)
     except ValueError:
         return View.TASKS
+
+
+def _theme_from(value: str) -> str:
+    """A stored or action-supplied Theme override name, degraded to System if unrecognised.
+
+    As `_view_from` for views: a name from a newer app or a hand edit opens the app in the
+    platform's own scheme rather than failing to start.
+    """
+    return value if value in _SCHEMES else "system"
 
 
 def _category_heading(title: str) -> Gtk.ListBoxRow:

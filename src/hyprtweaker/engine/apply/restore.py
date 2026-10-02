@@ -30,13 +30,14 @@ Two things this deliberately does **not** do:
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from ..ipc import CommandClient, IpcError
 from ..model import ConfigModel
+from ..paths import ENTRYPOINT_NAME
 from ..schema import ResolvedOption
 from ..state import Draft, Journal, LastKnownGood
-from ..writer import LuaSyntaxError, ProtectedFile, Writer
+from ..writer import BeforeReplace, LuaSyntaxError, ProtectedFile, Writer
 from .reread import read_state
 from .result import ApplyOutcome, ApplyResult
 from .transaction import Reloader
@@ -101,17 +102,20 @@ def _resolve(model: ConfigModel, names: Sequence[str]) -> tuple[ResolvedOption, 
     return tuple(resolved)
 
 
-class ReloadTransaction:
-    """Reload and re-read, writing nothing -- what an Entrypoint change needs.
+class EntrypointTransaction:
+    """Rewrite the Entrypoint, reload, and re-read -- ADR-0016's Quarantine and Entrypoint Fix.
 
-    ADR-0016's Quarantine and its Entrypoint Fix both work by rewriting `hyprland.lua` and
-    then needing the compositor to notice. An Apply transaction cannot do that job: it
-    renders the model over the App dir, and the Entrypoint is the one app-owned file the
-    model does not describe, so the apply would reload with the require list it *would* have
-    generated rather than the one the recovery just wrote.
+    Both work by rewriting `hyprland.lua` and then needing the compositor to notice. An
+    Apply transaction cannot do that job: it renders the model over the App dir, and the
+    Entrypoint is the one app-owned file the model does not describe, so the apply would
+    reload with the require list it *would* have generated rather than the one the recovery
+    just wrote.
 
-    Still a queued operation rather than a bare `reload()` call, because it ends in reading
-    `configerrors` -- which an apply or a preview running alongside would overwrite.
+    The write runs *inside* the operation, under the queue's lock, rather than before it is
+    queued. The Journal has one pending record, and the draft that guards the overwritten
+    bytes stays open until the reload answers; every other `Journal.begin` caller runs
+    through the same queue, so none can open its own draft in that window and journal this
+    one's as `interrupted` (ADR-0010 §Rollback).
     """
 
     def __init__(
@@ -120,11 +124,18 @@ class ReloadTransaction:
         model: ConfigModel,
         client: CommandClient,
         reloader: Reloader,
+        write: Callable[[BeforeReplace | None], bool],
+        journal: Journal | None = None,
         options: Sequence[str] = (),
     ) -> None:
+        """`write` replaces the Entrypoint, calling its argument before the rename, and
+        returns whether any byte moved -- `Writer.regenerate_entrypoint` or `set_quarantine`.
+        """
         self._model = model
         self._client = client
         self._reloader = reloader
+        self._write = write
+        self._journal = journal
         self._options = tuple(options)
 
     @property
@@ -139,11 +150,59 @@ class ReloadTransaction:
 
     async def run(self, keys: Sequence[str]) -> ApplyResult:
         """`keys` is ignored -- the Options to re-read were fixed at construction."""
-        return await reload_and_reread(
+        names = self._options
+        # Opened before the first byte moves: the Entrypoint Fix overwrites a hand edit by
+        # design, and that edit is kept the way Restore last good keeps one.
+        draft = self._journal.begin([ENTRYPOINT_NAME]) if self._journal is not None else None
+        try:
+            changed = self._write(draft.preserve if draft is not None else None)
+        except (LuaSyntaxError, ProtectedFile, ValueError, OSError) as error:
+            landed = draft.dirty() if draft is not None else ()
+            if not landed:
+                _log.error("Entrypoint rewrite refused before writing: %s", error)
+                if draft is not None:
+                    draft.discard()
+                outcome = (
+                    ApplyOutcome.WRITE_FAILED
+                    if isinstance(error, OSError)
+                    else ApplyOutcome.ABORTED
+                )
+                return ApplyResult(outcome, keys=names, detail=str(error))
+            _log.error("Entrypoint rewrite failed after the file moved: %s", error)
+            result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
+            self._record(draft, result)
+            return result
+
+        if not changed and draft is not None:
+            # Nothing was overwritten, so there is nothing to keep. The reload still runs:
+            # the user asked for the recovery to take effect, and the compositor may not
+            # have loaded what is on disk.
+            draft.discard()
+            draft = None
+
+        result = await reload_and_reread(
             reloader=self._reloader,
             client=self._client,
             model=self._model,
-            names=self._options,
+            names=names,
+        )
+        self._record(draft, result)
+        return result
+
+    @staticmethod
+    def _record(draft: Draft | None, result: ApplyResult) -> None:
+        """Journal the rewrite; `confirmed` only on a clean reload, as for any other write.
+
+        A still-broken Entrypoint must never become what a later Restore last good puts back.
+        The Entrypoint sets no Options, so none are recorded.
+        """
+        if draft is None:
+            return
+        draft.commit(
+            keys=result.keys,
+            outcome=str(result.outcome),
+            confirmed=result.outcome is ApplyOutcome.OK,
+            changed=[ENTRYPOINT_NAME],
         )
 
 
