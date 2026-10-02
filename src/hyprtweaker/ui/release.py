@@ -30,6 +30,10 @@ def release(widget: Gtk.Widget) -> None:
     may remove a controller it added to another widget. A window's actions hold handlers as
     well. The walk keeps only weak references, so a widget whose wrapper is gone is GTK's
     alone, goes with its parent, and is never touched here.
+
+    Everything under `widget` goes, so a control the caller keeps and shows again (a
+    button reused across refreshes, a row a later page re-adds) must be detached from the
+    tree first, or it comes back with no handlers.
     """
     if isinstance(widget, Gio.ActionMap):
         for name in widget.list_actions():

@@ -113,6 +113,22 @@ def test_an_empty_page_shows_one_sentence_and_the_add_action(tmp_path: Path) -> 
     assert page.empty_add_button.get_sensitive()
 
 
+def test_the_empty_state_add_button_still_opens_the_editor_after_refreshes(
+    tmp_path: Path,
+) -> None:
+    """A save, an undo or a Monitors edit refreshes the page; the button must survive it."""
+    _session, window = build_window(tmp_path, live=True)
+    page = window.workspace_rules_page
+    page.refresh()
+    page.refresh()
+
+    page.empty_add_button.emit("clicked")
+
+    dialog = window.get_visible_dialog()
+    assert type(dialog).__name__ == "WorkspaceRuleEditor"
+    assert dialog.get_title() == "Add workspace rule"
+
+
 def test_a_page_with_rules_shows_no_empty_state(tmp_path: Path) -> None:
     _session, window = build_window(tmp_path, live=True, rules=(rule("1"),))
 
