@@ -208,6 +208,18 @@ class TestHonestAboutGaps:
             "-- <<< dms.colors\n"
         )
 
+    def test_a_quarantined_file_is_left_out_as_the_entrypoint_leaves_it_out(
+        self, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        paths.user_lua.write_text("-- broken }\n", encoding="utf-8")
+        written(paths, model)
+        Writer(paths, app_version=SAMPLE_APP_VERSION).set_quarantine(model, ["user"])
+
+        result = render(model, paths, app_version=SAMPLE_APP_VERSION)
+
+        assert "user" not in result.inlined
+        assert "broken" not in result.text
+
     @pytest.mark.skipif(os.geteuid() == 0, reason="root reads unreadable files anyway")
     def test_a_require_that_cannot_be_read_is_reported_not_dropped_silently(
         self, paths: ConfigPaths, model: ConfigModel

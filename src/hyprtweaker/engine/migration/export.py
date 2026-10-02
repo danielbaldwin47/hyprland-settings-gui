@@ -119,7 +119,11 @@ def render(
     manifest = load_manifest(
         paths, app_version=app_version, schema_version=model.schema.hyprland_version
     )
-    module_set = ModuleSet.discover(paths, tuple(rendered), bridges=manifest.bridges)
+    # Quarantined files are left out as the Entrypoint leaves them out: the export is the
+    # config Hyprland loads, not a broken file the user chose to stop loading (ADR-0016).
+    module_set = ModuleSet.discover(
+        paths, tuple(rendered), manifest.quarantined, manifest.bridges
+    )
 
     # Each require with the file it reads and, for a Bridge whose line does more than
     # require it (`require("noctalia").apply_theme()`), that line, run after its chunk.
