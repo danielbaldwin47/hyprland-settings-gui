@@ -411,11 +411,17 @@ def _pill_label(text: str = "") -> Gtk.Label:
 
 
 def _badge_label() -> Gtk.Label:
+    # Two lines at the same width before the ellipsis: one line cut most titles short at
+    # every window width ("Requires Snap floating ...", #148 hand-test 6).
     return Gtk.Label(
         css_classes=["caption"],
         valign=Gtk.Align.CENTER,
         hexpand=False,
         ellipsize=Pango.EllipsizeMode.END,
+        wrap=True,
+        wrap_mode=Pango.WrapMode.WORD_CHAR,
+        lines=2,
+        justify=Gtk.Justification.CENTER,
         width_chars=_BADGE_CHARS,
         max_width_chars=_BADGE_CHARS,
     )
