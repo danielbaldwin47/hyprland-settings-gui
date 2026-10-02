@@ -41,8 +41,7 @@ def test_every_section_gets_a_page() -> None:
 
 
 def test_a_section_whose_options_are_all_advanced_still_gets_a_page() -> None:
-    """`debug`, `quirks`, `experimental`, `input-capture` and `opengl` are entirely
-    non-default. The sidebar is the map of the config surface; a Section that disappears
+    """`debug`, `quirks`, `experimental` and `input-capture` are entirely non-default. The sidebar is the map of the config surface; a Section that disappears
     when a switch flips is one the user cannot learn exists."""
     plan = plan_section(SCHEMA, "debug")
 
@@ -90,7 +89,7 @@ def test_a_tasks_page_never_counts_the_hidden_tier_as_withheld() -> None:
     the hidden tier at any setting (ADR-0013 §5), so those Options are not withheld."""
     for show_advanced in (False, True):
         plan = plan_section(
-            SCHEMA, "debug", Disclosure(show_advanced=show_advanced, view=View.TASKS)
+            SCHEMA, "input-capture", Disclosure(show_advanced=show_advanced, view=View.TASKS)
         )
 
         assert (plan.groups, plan.withheld) == ((), 0)

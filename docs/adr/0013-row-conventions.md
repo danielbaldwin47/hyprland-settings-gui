@@ -33,7 +33,7 @@ State pills: at most two, the two highest-ranked in the precedence table in `ui/
 
 4. **ExpanderRow collapsed summary**: a dim-label value preview as a suffix — gradient: colour-swatch strip + angle ("45°"); css-gaps: "8" when uniform, "8 · 12 · 8 · 12" (top·right·bottom·left) otherwise; vec2: "0.0, 0.5". The Row answers "what is it set to?" without expanding.
 
-5. **Advanced/hidden disclosure**: one global **"Show advanced settings"** switch in the primary (hamburger) menu — not per-page. Advanced Rows render in place inside their normal Groups. The `hidden` tier (`debug`, `quirks`, `experimental`, `input-capture`) appears only in the Config view with the switch on, never in Tasks. Search always indexes everything; navigating to a hit reveals that Row one-off even with the switch off.
+5. **Advanced/hidden disclosure**: one global **"Show advanced settings"** switch in the primary (hamburger) menu — not per-page. Advanced Rows render in place inside their normal Groups. The `hidden` tier (`debug`, `quirks`, `experimental`, `input-capture`) appears only in the Config view with the switch on, never in Tasks. The few settings of those Sections that a normal setup needs (logging, the FPS overlay, and two an HDR setup needs) are raised to `advanced` in the Overlay and homed by `tasks.json` beside the settings they go with (review of spec #154). Search always indexes everything; navigating to a hit reveals that Row one-off even with the switch off.
 
 6. **Per-row reset**: a suffix `edit-undo-symbolic` icon button, visible only when the Option is modified (per-type is-default check: float epsilon, sentinel normalisation). Tooltip "Reset to default: \<value\>". Reset means **Unset** (stop emitting; ADR-0005 tri-state), not write-the-default-value.
 

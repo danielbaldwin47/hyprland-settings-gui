@@ -2055,8 +2055,7 @@
       "title": "NVIDIA anti-flicker",
       "group": "NVIDIA workarounds",
       "order": 1,
-      "help": "Reduces flicker on NVIDIA cards, at the cost of possible dropped frames on weaker GPUs. Ignored on other cards.",
-      "visibility": "advanced"
+      "help": "Reduces flicker on NVIDIA cards, at the cost of possible dropped frames on weaker GPUs. Ignored on other cards."
     },
 
     "render:direct_scanout": {
@@ -2346,7 +2345,8 @@
       "title": "Debug overlay",
       "group": "Overlays and tracing",
       "order": 1,
-      "help": "Draws a performance panel on screen. Turn off variable frame rate for accurate numbers."
+      "help": "Draws a performance panel on screen. Turn off variable frame rate for accurate numbers.",
+      "visibility": "advanced"
     },
     "debug:damage_blink": {
       "title": "Blink on damage",
@@ -2364,7 +2364,8 @@
       "title": "Disable logging",
       "group": "Logging",
       "order": 1,
-      "help": "Stops Hyprland writing its log to a file."
+      "help": "Stops Hyprland writing its log to a file.",
+      "visibility": "advanced"
     },
     "debug:disable_time": {
       "title": "Omit timestamps from logs",
@@ -2433,7 +2434,8 @@
       "title": "Full colour-management protocol",
       "restart": "hyprland",
       "group": "Protocol workarounds",
-      "order": 4
+      "order": 4,
+      "visibility": "advanced"
     },
     "debug:ds_handle_same_buffer": {
       "title": "Direct scanout of the same buffer",
@@ -2737,7 +2739,8 @@
       "title": "Prefer HDR",
       "group": "Display workarounds",
       "order": 1,
-      "help": "Tells apps that HDR is the preferred mode, always or only for gamescope."
+      "help": "Tells apps that HDR is the preferred mode, always or only for gamescope.",
+      "visibility": "advanced"
     },
     "quirks:skip_non_kms_dmabuf_formats": {
       "title": "Skip non-KMS DMA-BUF formats",

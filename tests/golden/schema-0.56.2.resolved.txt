@@ -246,7 +246,7 @@ xwayland:enabled | bool | toggle | - | - | default | - | - | - | - | XWayland
 xwayland:use_nearest_neighbor | bool | toggle | - | - | default | - | - | - | - | Nearest-neighbour scaling
 xwayland:force_zero_scaling | bool | toggle | - | - | default | - | - | - | - | Force zero scaling
 xwayland:create_abstract_socket | bool | toggle | - | - | advanced | - | - | - | - | Create an abstract socket
-opengl:nvidia_anti_flicker | bool | toggle | - | - | advanced | - | - | - | - | NVIDIA anti-flicker
+opengl:nvidia_anti_flicker | bool | toggle | - | - | default | - | - | - | - | NVIDIA anti-flicker
 render:direct_scanout | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Direct scanout
 render:expand_undersized_textures | bool | toggle | - | - | default | - | - | - | - | Expand undersized textures
 render:xp_mode | bool | toggle | - | - | default | - | - | - | - | XP mode
@@ -289,10 +289,10 @@ cursor:warp_back_after_non_mouse_input | bool | toggle | - | - | default | - | -
 ecosystem:no_update_news | bool | toggle | - | - | default | - | - | - | - | Hide update news
 ecosystem:no_donation_nag | bool | toggle | - | - | default | - | - | - | - | Hide the donation reminder
 ecosystem:enforce_permissions | bool | toggle | - | - | default | - | - | - | - | Enforce permissions
-debug:overlay | bool | toggle | - | - | hidden | - | - | - | - | Debug overlay
+debug:overlay | bool | toggle | - | - | advanced | - | - | - | - | Debug overlay
 debug:damage_blink | bool | toggle | - | - | hidden | - | - | - | - | Blink on damage
 debug:gl_debugging | bool | toggle | - | - | hidden | - | - | - | - | OpenGL debugging
-debug:disable_logs | bool | toggle | - | - | hidden | - | - | - | - | Disable logging
+debug:disable_logs | bool | toggle | - | - | advanced | - | - | - | - | Disable logging
 debug:disable_time | bool | toggle | - | - | hidden | - | - | - | - | Omit timestamps from logs
 debug:damage_tracking | int | enum-map | - | - | hidden | - | min=0,max=2 | - | - | Damage tracking
 debug:enable_stdout_logs | bool | toggle | - | - | hidden | - | - | - | - | Log to stdout
@@ -304,7 +304,7 @@ debug:error_position | int | enum-map | - | - | hidden | - | min=0,max=1 | - | -
 debug:colored_stdout_logs | bool | toggle | - | - | hidden | - | - | - | - | Colour stdout logs
 debug:log_damage | bool | toggle | - | - | hidden | - | - | - | - | Log damage
 debug:pass | bool | toggle | - | - | hidden | - | - | - | - | Render pass debugging
-debug:full_cm_proto | bool | toggle | - | - | hidden | - | - | - | - | Full colour-management protocol
+debug:full_cm_proto | bool | toggle | - | - | advanced | - | - | - | - | Full colour-management protocol
 debug:ds_handle_same_buffer | bool | toggle | - | - | hidden | - | - | - | - | Direct scanout of the same buffer
 debug:ds_handle_same_buffer_fifo | bool | toggle | - | - | hidden | - | - | - | - | Direct scanout of the same buffer (FIFO)
 debug:fifo_pending_workaround | bool | toggle | - | - | hidden | - | - | - | - | FIFO pending workaround
@@ -350,5 +350,5 @@ scrolling:wrap_swapcol | bool | toggle | - | - | default | - | - | - | - | Wrap 
 experimental:wp_cm_1_2 | bool | toggle | - | - | hidden | - | - | - | - | Colour-management protocol v1.2
 input-capture:capture_modifiers | bool | toggle | - | - | hidden | - | - | - | - | Capture modifiers
 input-capture:enforce_barriers | bool | toggle | - | - | hidden | - | - | - | - | Enforce barriers
-quirks:prefer_hdr | int | enum-map | - | - | hidden | - | min=0,max=2 | - | - | Prefer HDR
+quirks:prefer_hdr | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Prefer HDR
 quirks:skip_non_kms_dmabuf_formats | bool | toggle | - | - | hidden | - | - | - | - | Skip non-KMS DMA-BUF formats

@@ -290,11 +290,13 @@ def test_an_uncurated_hidden_section_gets_no_fallback_page_at_all() -> None:
         assert "tasks.new.debug" not in sections
 
 
-def fallback_page(mapping: TasksMapping, section: str, *, show_advanced: bool) -> PagePlan:
+def fallback_page(
+    mapping: TasksMapping, section: str, *, show_advanced: bool, schema: Schema = SCHEMA
+) -> PagePlan:
     return next(
         page
         for category in plan_tasks_view(
-            SCHEMA, mapping, Disclosure(show_advanced=show_advanced)
+            schema, mapping, Disclosure(show_advanced=show_advanced)
         )
         for page in category.option_pages
         if page.section == f"tasks.new.{section}"
@@ -314,10 +316,21 @@ def test_an_uncurated_section_withholds_its_advanced_options_rather_than_droppin
 
 
 def test_an_uncurated_all_advanced_section_keeps_a_page_that_counts_what_it_withholds() -> None:
-    """`opengl` is one advanced option. Skipping the page whole left no trace that it exists;
-    the page stays, empty of groups, and the count tells it to explain itself."""
-    off = fallback_page(uncurated("opengl"), "opengl", show_advanced=False)
-    on = fallback_page(uncurated("opengl"), "opengl", show_advanced=True)
+    """`opengl` raised to one advanced setting (no shipped Section is all advanced since the
+    review of spec #154). Skipping the page whole left no trace that it exists; the page
+    stays, empty of groups, and the count tells it to explain itself."""
+    schema = Schema(
+        hyprland_version=SCHEMA.hyprland_version,
+        options=tuple(
+            replace(option, visibility=Visibility.ADVANCED)
+            if option.section == "opengl"
+            else option
+            for option in SCHEMA
+        ),
+        sections=SCHEMA.sections,
+    )
+    off = fallback_page(uncurated("opengl"), "opengl", show_advanced=False, schema=schema)
+    on = fallback_page(uncurated("opengl"), "opengl", show_advanced=True, schema=schema)
 
     assert (off.groups, off.withheld) == ((), 1)
     assert (on.option_count, on.withheld) == (1, 0)

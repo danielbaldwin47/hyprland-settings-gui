@@ -156,7 +156,36 @@ def test_a_curated_heading_with_an_ampersand_is_not_swallowed_by_pango(
 
     from hyprtweaker.ui.pages.config import escaped
 
+    from dataclasses import replace
+
+    from hyprtweaker.ui.pages.tasks import PageSpec
+
     _session, window = build_window(tmp_path)
+    # The shipped headings no longer carry one ("Wallpaper and splash", review of spec
+    # #154), so the curator's ampersand is planted in the window's mapping.
+    mapping = window._load_mapping()
+    window._mapping = replace(
+        mapping,
+        categories=tuple(
+            replace(
+                category,
+                pages=tuple(
+                    replace(
+                        page,
+                        groups=tuple(
+                            replace(group, title="Splash & wallpaper") if index == 0 else group
+                            for index, group in enumerate(page.groups)
+                        ),
+                    )
+                    if isinstance(page, PageSpec) and page.id == "look.general"
+                    else page
+                    for page in category.pages
+                ),
+            )
+            for category in mapping.categories
+        ),
+    )
+    window.rebuild()
 
     # Reaching for a private helper is deliberate: the claim is about the exact string
     # handed to the toolkit, and no public surface reports that consistently across
@@ -349,7 +378,24 @@ def uncurate(window: Any, section: str) -> None:
 
 
 def test_a_fallback_page_with_only_advanced_options_says_so(tmp_path: Path) -> None:
-    _session, window = build_window(tmp_path)
+    """No shipped Section is all advanced since the review of spec #154, so `opengl`'s one
+    setting is raised to the tier here."""
+    from dataclasses import replace
+
+    from hyprtweaker.engine.schema import Schema, Visibility
+
+    session, window = build_window(tmp_path)
+    shipped = session.schema
+    session._schema = Schema(
+        hyprland_version=shipped.hyprland_version,
+        options=tuple(
+            replace(option, visibility=Visibility.ADVANCED)
+            if option.section == "opengl"
+            else option
+            for option in shipped
+        ),
+        sections=shipped.sections,
+    )
     uncurate(window, "opengl")
 
     assert "tasks.new.opengl" in sidebar_ids(window)

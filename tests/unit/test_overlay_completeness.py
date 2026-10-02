@@ -242,18 +242,30 @@ def test_depends_on_is_not_self_referential(schema: Schema) -> None:
     assert not self_referential, f"options depending on themselves: {self_referential}"
 
 
+RAISED_FROM_HIDDEN = frozenset(
+    {"debug:disable_logs", "debug:overlay", "debug:full_cm_proto", "quirks:prefer_hdr"}
+)
+"""The hidden-tier settings a normal setup needs (review of spec #154, finding 11): logs a bug
+report asks for, the FPS overlay, and the two an HDR setup needs beside `render:cm_auto_hdr`.
+They are advanced, and `tasks.json` homes them on Rendering (ADR-0013 §5)."""
+
+
 def test_hidden_sections_are_hidden(schema: Schema) -> None:
     """`debug`, `quirks`, `experimental` and `input-capture` never show by default.
 
     27 options of raw compositor plumbing sat at full weight next to real settings in
     prototype #8. The tier is set per Section in the Overlay rather than repeated on each
-    option, so this checks the wiring actually reaches every one of them.
+    option, so this checks the wiring actually reaches every one of them, and that only the
+    named few are raised to advanced.
     """
     for section in ("debug", "quirks", "experimental", "input-capture"):
         options = schema.section(section)
         assert options, f"no options found in section {section}"
         for option in options:
-            assert option.visibility is Visibility.HIDDEN, (
+            tier = (
+                Visibility.ADVANCED if option.name in RAISED_FROM_HIDDEN else Visibility.HIDDEN
+            )
+            assert option.visibility is tier, (
                 f"{option.name} is in {section} but resolves to {option.visibility}"
             )
 
