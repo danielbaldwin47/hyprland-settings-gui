@@ -114,8 +114,9 @@ def _label(name: str, schema: Schema) -> str:
 def _list(rows: list[tuple[str, str]]) -> Gtk.Widget:
     box = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"])
     for title, subtitle in rows:
-        row = Adw.ActionRow(title=title, subtitle=subtitle, subtitle_selectable=True)
-        row.set_use_markup(False)
+        row = Adw.ActionRow(use_markup=False, subtitle_selectable=True)
+        row.set_title(title)
+        row.set_subtitle(subtitle)
         box.append(row)
     return Gtk.ScrolledWindow(
         child=box,

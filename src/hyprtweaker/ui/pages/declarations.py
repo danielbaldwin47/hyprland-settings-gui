@@ -76,9 +76,9 @@ class DeclarationRow:
             # that caused it is how a warning gets skimmed past.
             subtitle = findings[0].message
         # The title is user text (an autostart `a && b`): as Pango markup it renders blank.
-        self.widget = Adw.ActionRow(
-            title=row_title(kind, entity), subtitle=subtitle, use_markup=False
-        )
+        self.widget = Adw.ActionRow(use_markup=False)
+        self.widget.set_title(row_title(kind, entity))
+        self.widget.set_subtitle(subtitle)
 
         if findings:
             warning = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")

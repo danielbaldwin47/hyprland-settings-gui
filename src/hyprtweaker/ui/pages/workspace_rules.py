@@ -67,9 +67,9 @@ class WorkspaceRuleRow:
         self.rule = rule
         selector = rule.workspace
         # The selector is user text (`w[tv1]`, `name:a&b`): as Pango markup `&` renders blank.
-        self.widget = Adw.ActionRow(
-            title=selector, subtitle=fields_summary(rule.fields), use_markup=False
-        )
+        self.widget = Adw.ActionRow(use_markup=False)
+        self.widget.set_title(selector)
+        self.widget.set_subtitle(fields_summary(rule.fields))
 
         self.edit_button = Gtk.Button(
             icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER
