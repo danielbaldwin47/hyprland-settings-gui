@@ -156,7 +156,8 @@ def test_the_tier_refuses_a_display_that_is_the_sessions(
         if getattr(plugin, "__file__", None) == str(ROOT / "tests" / "ui" / "conftest.py")
     )
     monkeypatch.delenv("HYPRTWEAKER_UI_HOST_DISPLAY", raising=False)
-    monkeypatch.setenv("DISPLAY", ":4242.0")
+    # Where a test process keeps the session's DISPLAY (`hermetic.fence_desktop`).
+    monkeypatch.setenv("HYPRTWEAKER_SESSION_DISPLAY", ":4242.0")
     monkeypatch.setattr(ui_conftest.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(ui_conftest, "start_xvfb", lambda xvfb: ":4242")
 

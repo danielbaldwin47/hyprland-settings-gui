@@ -48,6 +48,7 @@ import pytest
 from private_display import (
     PINNED,
     pin_environment,
+    session_display,
     session_display_clash,
     start_bus,
     start_xvfb,
@@ -113,7 +114,7 @@ def ui_unavailable() -> str | None:
     display = start_xvfb(xvfb)
     if display is None:
         return "Xvfb did not open a display within 10 s"
-    if clash := session_display_clash(display, os.environ.get("DISPLAY")):
+    if clash := session_display_clash(display, session_display()):
         return clash
     bus = start_bus(dbus_daemon)
     if bus is None:

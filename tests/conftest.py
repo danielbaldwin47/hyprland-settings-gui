@@ -29,6 +29,7 @@ import pytest
 from hermetic import (
     FENCE_LOG_ENV,
     TOOL_PATH_ENV,
+    fence_desktop,
     install_refusals,
     make_fence,
     refusals,
@@ -48,6 +49,8 @@ def pytest_configure(config: pytest.Config) -> None:
     # Collection and wider-scoped fixtures run before `hermetic_home`: they must not see
     # the compositor the suite was started under either (finding 10 of the #153 review).
     os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+    # Nor the desktop's display or session bus: a `Gtk` import anywhere would open them.
+    fence_desktop(os.environ)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:

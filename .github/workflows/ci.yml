@@ -73,15 +73,13 @@ jobs:
       # against the masked one in the ui-smoke job below.
       - env:
           HYPRTWEAKER_REQUIRE_LUAC: '1'
-          # This job runs `tests/unit` only. Its own intentional skips are 12
+          # This job runs `tests/unit` only. Its intentional skips are 12
           # (10 corpus rices without binds in test_writer_binds_corpus, 2
-          # parametrized doc-skips in test_no_hyprctl_spawn), plus 2
-          # module-level `importorskip`s for gi (test_ui_binds_text,
-          # test_ui_declaration_text) which this runner lacks: 14, and the
-          # ceiling sits one above them. Their tests run for real in the ui-smoke job, where
-          # gi exists. test_ui_rules_text has none: it imports only gi-free
-          # names (`ui/pages/entity_text.py`, #220).
-          SKIP_CEILING: '14'
+          # parametrized doc-skips in test_no_hyprctl_spawn), and the ceiling
+          # is exactly that: the next intentional skip moves it. Nothing in
+          # tests/unit imports gi (the two text modules that did live in
+          # tests/ui since F11 of the #148 review).
+          SKIP_CEILING: '12'
         run: |
           set -o pipefail
           pytest tests/unit -n auto -v 2>&1 | tee pytest-out.log

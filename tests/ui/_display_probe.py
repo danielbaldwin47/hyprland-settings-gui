@@ -25,9 +25,9 @@ def test_the_tier_draws_on_its_own_display_and_leaves_the_host_env_alone() -> No
 
     assert display is not None
     assert display.get_name().startswith(":")
-    # The Harness tier reads the host session from the environment at test time, in the
-    # same process when both tiers run together.
-    assert os.environ.get("WAYLAND_DISPLAY") == ABSENT_WAYLAND_DISPLAY
+    # No test process keeps the session's Wayland socket (`hermetic.fence_desktop`, F11 of
+    # the #148 review): the Harness nests into it only on the owner's switch.
+    assert os.environ.get("WAYLAND_DISPLAY") is None
     # DISPLAY stays on the tier's display: the NVIDIA EGL driver reopens `$DISPLAY`.
     assert os.environ.get("DISPLAY") == display.get_name()
 

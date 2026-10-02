@@ -67,6 +67,15 @@ def display_number(name: str | None) -> int | None:
     return int(digits) if colon and digits.isdigit() else None
 
 
+SESSION_DISPLAY_ENV = "HYPRTWEAKER_SESSION_DISPLAY"
+"""`tests/hermetic.py` moves the session's `DISPLAY` here in a test process."""
+
+
+def session_display() -> str | None:
+    """The desktop session's `DISPLAY`, wherever the process keeps it now."""
+    return os.environ.get(SESSION_DISPLAY_ENV) or os.environ.get("DISPLAY")
+
+
 def session_display_clash(display: str, session: str | None) -> str | None:
     """Why `display` must not be used, or None: it is the desktop session's own display."""
     number = display_number(display)
@@ -96,7 +105,7 @@ def start_xvfb(xvfb: str) -> str | None:
     purpose: GTK keeps the connection until exit, and GDK exits the process when its X
     server goes away under it.
     """
-    session = display_number(os.environ.get("DISPLAY"))
+    session = display_number(session_display())
     # CI jobs have no timeout of their own, so a wedged Xvfb must not hang the run.
     deadline = time.monotonic() + 10
     for number in PRIVATE_DISPLAYS:
