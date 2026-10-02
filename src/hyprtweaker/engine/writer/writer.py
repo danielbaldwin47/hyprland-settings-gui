@@ -38,6 +38,7 @@ from ..paths import (
     LAYER_RULES_MODULE,
     MONITORS_MODULE,
     PERMISSIONS_MODULE,
+    PLUGINS_MODULE,
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
@@ -57,6 +58,7 @@ from .modules import (
     render_module,
 )
 from .monitors import render_monitors_module, render_workspace_rules_module
+from .plugins import render_plugins_module
 from .rules import render_layer_rules_module, render_window_rules_module
 from .session_scope import (
     render_autostart_module,
@@ -274,6 +276,7 @@ class Writer:
                 render_permissions_module(entities.permissions, app_version=version),
             ),
             (AUTOSTART_MODULE, render_autostart_module(entities.startup, app_version=version)),
+            (PLUGINS_MODULE, render_plugins_module(entities.plugins, app_version=version)),
         )
         for relpath, text in entity_modules:
             if text is not None:

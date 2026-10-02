@@ -282,6 +282,24 @@ class CommandClient:
             if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
         )
 
+    async def loaded_plugins(self) -> tuple[str, ...]:
+        """The names of the plugins loaded right now, in `plugin list` order (#174).
+
+        A loaded plugin is reported by the name it gives itself, with its author, version,
+        description and a handle -- never its path -- so the name is all a caller can match
+        on. A plain read: unlike `eval`, it does not clear `configerrors`. An entry with no
+        string `name` is dropped.
+        """
+        reply = await self._request("plugin list", json_output=True)
+        payload = _parse_json(reply, "plugin list")
+        if not isinstance(payload, list):
+            raise MalformedReply(f"plugin list answered {payload!r}")
+        return tuple(
+            entry["name"]
+            for entry in payload
+            if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
+        )
+
     async def eval(self, code: str) -> EvalReply:
         """Run Lua in the live config state -- the Eval preview tier (ADR-0010).
 

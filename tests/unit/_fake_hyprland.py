@@ -284,7 +284,16 @@ DESCRIPTIONS = """[
 """Captured off a live Hyprland 0.56.2 (trimmed to its first two of 353 records, blank line
 after the bracket included)."""
 
+PLUGIN_LIST = (
+    '[{"name": "probeplug", "author": "hyprtweaker", "handle": "56404960b5a0", '
+    '"version": "1.0", "description": "A no-op plugin for #174\'s probe"}]'
+)
+"""`j/plugin list`, captured off a nested Hyprland 0.56.2 with one plugin loaded (#174).
+The plugin is a no-op built against the installed headers; with none loaded the reply is
+`[]`. No path: a loaded plugin is known by the name it gives itself."""
+
 CONVERSATION: Mapping[str, str] = {
+    "j/plugin list": PLUGIN_LIST,
     "j/version": VERSION,
     "j/descriptions": DESCRIPTIONS,
     "j/binds": BINDS,
