@@ -556,3 +556,311 @@ def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None
     dialog._on_response(dialog, "revert")
     assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@48"]
     assert session.active_monitor_profile() is None
+
+
+# -- the ADR-0008 rows #193 added: Refresh, modeline, free scale, reserved area, colour --
+
+DOCK: dict[str, Any] = dict(
+    MONITORS[1],
+    availableModes=[
+        "2560x1440@144.00Hz",
+        "2560x1440@60.00Hz",
+        "1920x1080@120.00Hz",
+        "1920x1080@60.00Hz",
+        "1920x1080@50.00Hz",
+    ],
+)
+
+
+def row_titled(root: Any, title: str) -> Any:
+    """The first preferences row under `root` titled `title`, however deeply nested."""
+    from gi.repository import Adw
+
+    pending = [root.get_first_child()]
+    while pending:
+        widget = pending.pop()
+        if widget is None:
+            continue
+        if isinstance(widget, Adw.PreferencesRow) and widget.get_title() == title:
+            return widget
+        pending.extend([widget.get_next_sibling(), widget.get_first_child()])
+    raise AssertionError(f"no row titled {title!r}")
+
+
+def items(combo: Any) -> list[str]:
+    model = combo.get_model()
+    return [model.get_string(i) for i in range(model.get_n_items())]
+
+
+def chosen(combo: Any) -> str:
+    return str(items(combo)[combo.get_selected()])
+
+
+def choose(combo: Any, label: str) -> None:
+    combo.set_selected(items(combo).index(label))
+
+
+def suffix_of(row: Any, kind: type) -> Any:
+    """The `kind` widget among a row's suffixes."""
+    pending = [row.get_first_child()]
+    while pending:
+        widget = pending.pop()
+        if widget is None:
+            continue
+        if isinstance(widget, kind):
+            return widget
+        pending.extend([widget.get_next_sibling(), widget.get_first_child()])
+    raise AssertionError(f"no {kind.__name__} in {row.get_title()!r}")
+
+
+def shown_text(root: Any) -> list[str]:
+    """Every visible label's text under `root`."""
+    from gi.repository import Gtk
+
+    found: list[str] = []
+    pending = [root.get_first_child()]
+    while pending:
+        widget = pending.pop()
+        if widget is None:
+            continue
+        if widget.get_visible() and isinstance(widget, Gtk.Label):
+            found.append(widget.get_label())
+        pending.append(widget.get_next_sibling())
+        if widget.get_visible():
+            pending.append(widget.get_first_child())
+    return found
+
+
+def dock_row(rules: list[Any]) -> tuple[Any, Recorder]:
+    page, recorder = build_page(rules)
+    page.set_connected((MONITORS[0], DOCK))
+    return page.connected_rows[1], recorder
+
+
+def test_resolution_lists_sizes_and_refresh_lists_that_sizes_rates() -> None:
+    row, _recorder = dock_row([])
+
+    resolution = row_titled(row, "Resolution")
+    refresh = row_titled(row, "Refresh rate")
+
+    assert items(resolution) == [
+        "preferred",
+        "highres",
+        "highrr",
+        "maxwidth",
+        "2560x1440",
+        "1920x1080",
+        "Custom modeline",
+    ]
+    assert chosen(resolution) == "2560x1440"  # no rule: the live mode
+    assert items(refresh) == ["144 Hz", "60 Hz"]
+    assert chosen(refresh) == "144 Hz"
+
+
+def test_choosing_a_size_repopulates_refresh_and_writes_one_breaking_mode() -> None:
+    row, recorder = dock_row([])
+    refresh = row_titled(row, "Refresh rate")
+
+    choose(row_titled(row, "Resolution"), "1920x1080")
+
+    assert items(refresh) == ["120 Hz", "60 Hz", "50 Hz"]
+    assert chosen(refresh) == "120 Hz"
+    assert recorder.breaking == [("desc:Dell U2720Q", {"mode": "1920x1080@120"})]
+    assert recorder.benign == []
+
+
+def test_choosing_a_rate_writes_the_size_at_that_rate() -> None:
+    row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", mode="1920x1080@60")])
+    refresh = row_titled(row, "Refresh rate")
+    assert chosen(row_titled(row, "Resolution")) == "1920x1080"
+    assert chosen(refresh) == "60 Hz"
+
+    choose(refresh, "50 Hz")
+
+    assert recorder.breaking == [("desc:Dell U2720Q", {"mode": "1920x1080@50"})]
+
+
+def test_a_special_mode_leaves_refresh_to_the_compositor() -> None:
+    row, recorder = dock_row([])
+    refresh = row_titled(row, "Refresh rate")
+
+    choose(row_titled(row, "Resolution"), "highrr")
+
+    assert recorder.breaking == [("desc:Dell U2720Q", {"mode": "highrr"})]
+    assert items(refresh) == ["Chosen by the mode"]
+    assert not refresh.get_sensitive()
+
+
+def test_a_modeline_rule_shows_custom_modeline_and_edits_ride_the_breaking_lane() -> None:
+    line = "148.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync"
+    row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", mode=f"modeline {line}")])
+
+    assert chosen(row_titled(row, "Resolution")) == "Custom modeline"
+    assert not row_titled(row, "Refresh rate").get_sensitive()
+    entry = row_titled(row, "Modeline")
+    assert entry.get_visible()
+    assert entry.get_text() == line
+
+    entry.set_text("174.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync")
+    entry.emit("apply")
+
+    assert recorder.breaking == [
+        (
+            "desc:Dell U2720Q",
+            {"mode": "modeline 174.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync"},
+        )
+    ]
+
+
+def test_the_modeline_entry_hides_until_custom_modeline_is_chosen() -> None:
+    row, recorder = dock_row([])
+    entry = row_titled(row, "Modeline")
+    assert not entry.get_visible()
+
+    choose(row_titled(row, "Resolution"), "Custom modeline")
+
+    assert entry.get_visible()
+    assert recorder.breaking == []  # nothing to write until a modeline is entered
+    entry.emit("apply")  # an empty modeline is no mode at all
+    assert recorder.breaking == []
+
+
+def test_a_free_scale_commits_on_enter_and_refuses_below_a_quarter() -> None:
+    from gi.repository import Gtk
+
+    row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", scale=1.6)])
+    scale = row_titled(row, "Scale")
+    custom = row_titled(row, "Custom scale")
+    spin = suffix_of(custom, Gtk.SpinButton)
+
+    assert chosen(scale) == "Custom"
+    assert custom.get_visible()
+    assert spin.get_value() == 1.6
+
+    spin.set_value(0.1)  # below Hyprland's floor: the spin will not hold it
+    spin.emit("activate")
+
+    assert spin.get_value() == 0.25
+    assert recorder.breaking == [("desc:Dell U2720Q", {"scale": 0.25})]
+
+
+def test_a_fractional_scale_shows_the_blur_warning() -> None:
+    warning = "Fractional scales can look blurry in apps that don't support them."
+    fractional, _ = dock_row([monitor_rule("desc:Dell U2720Q", scale=1.25)])
+    whole, recorder = dock_row([monitor_rule("desc:Dell U2720Q", scale=2)])
+
+    assert row_titled(fractional, "Scale").get_subtitle() == warning
+    assert row_titled(whole, "Scale").get_subtitle() == ""
+
+    choose(row_titled(whole, "Scale"), "1.5")
+
+    assert row_titled(whole, "Scale").get_subtitle() == warning
+    assert recorder.breaking == [("desc:Dell U2720Q", {"scale": 1.5})]
+
+
+def test_reserved_area_commits_on_the_instant_lane() -> None:
+    row, recorder = dock_row([])
+    field = suffix_of(row_titled(row, "Reserved area"), _gap_field_type())
+
+    field.all_sides.set_value(32)
+    field.all_sides.emit("activate")
+    field.uniform_toggle.set_active(False)
+
+    assert recorder.benign == [
+        ("desc:Dell U2720Q", {"reserved": 32}),
+        ("desc:Dell U2720Q", {"reserved": {"top": 32, "right": 32, "bottom": 32, "left": 32}}),
+    ]
+    assert recorder.breaking == []
+
+
+def _gap_field_type() -> type:
+    from hyprtweaker.ui.gap_field import GapField
+
+    return GapField
+
+
+def test_advanced_colour_fields_route_by_the_breaking_set() -> None:
+    from gi.repository import Gtk
+
+    from hyprtweaker.engine.model import UNSET
+
+    row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", supports_hdr=1, cm="srgb")])
+    colour = row_titled(row, "Advanced colour")
+    assert not colour.get_expanded()
+
+    choose(row_titled(colour, "Colour preset"), "HDR")
+    choose(row_titled(colour, "HDR support"), "Not set")
+    choose(row_titled(colour, "SDR transfer function"), "Gamma 2.2")
+    brightness = suffix_of(row_titled(colour, "SDR brightness"), Gtk.SpinButton)
+    brightness.set_value(1.4)
+    brightness.emit("activate")
+
+    assert recorder.breaking == [("desc:Dell U2720Q", {"cm": "hdr"})]
+    assert recorder.benign == [
+        ("desc:Dell U2720Q", {"supports_hdr": UNSET}),
+        ("desc:Dell U2720Q", {"sdr_eotf": "gamma22"}),
+        ("desc:Dell U2720Q", {"sdrbrightness": 1.4}),
+    ]
+
+
+def test_sdr_eotf_offers_names_and_shows_a_legacy_code_as_its_name() -> None:
+    row, _recorder = dock_row([monitor_rule("desc:Dell U2720Q", sdr_eotf=1)])
+    eotf = row_titled(row, "SDR transfer function")
+
+    assert items(eotf) == [
+        "Not set",
+        "Follow the global setting",
+        "Automatic",
+        "sRGB",
+        "Gamma 2.2",
+        "Gamma 2.2, forced",
+    ]
+    assert chosen(eotf) == "sRGB"
+
+
+def test_every_hdr_luminance_field_can_be_set_and_cleared() -> None:
+    from gi.repository import Gtk
+
+    from hyprtweaker.engine.model import UNSET
+
+    row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", max_avg_luminance=400)])
+    titles = [
+        "SDR minimum luminance",
+        "SDR maximum luminance",
+        "Minimum luminance",
+        "Maximum luminance",
+        "Maximum average luminance",
+    ]
+    rows = [row_titled(row, title) for title in titles]
+
+    average = suffix_of(rows[4], Gtk.Stack)
+    assert average.get_visible_child_name() == "set"
+    average.get_child_by_name("set").get_last_child().emit("clicked")  # "Clear"
+    assert average.get_visible_child_name() == "unset"
+    unset = suffix_of(rows[3], Gtk.Stack)
+    assert unset.get_visible_child_name() == "unset"
+    unset.get_child_by_name("unset").emit("clicked")  # reveals the spin, writes nothing
+    spin = suffix_of(rows[3], Gtk.SpinButton)
+    spin.set_value(1000)
+    spin.emit("activate")
+
+    assert recorder.benign == [
+        ("desc:Dell U2720Q", {"max_avg_luminance": UNSET}),
+        ("desc:Dell U2720Q", {"max_luminance": 1000}),
+    ]
+
+
+def test_the_raw_editor_refuses_a_scale_below_a_quarter() -> None:
+    page, recorder = build_page([monitor_rule("DP-9", mode="1920x1080@60")])
+    page.set_connected(MONITORS)
+    entry = row_titled(page.disconnected_rows[0], "Scale")
+
+    entry.set_text("0.2")
+    entry.emit("apply")
+
+    assert recorder.benign == []
+    assert "Scale must be at least 0.25" in shown_text(entry)
+
+    entry.set_text("auto")
+    entry.emit("apply")
+    assert recorder.benign == [("DP-9", {"scale": "auto"})]

@@ -132,6 +132,7 @@ package_sources = {
     'config.py',
     'declaration_kinds.py',
     'declarations.py',
+    'monitor_rows.py',
     'monitors.py',
     'plan.py',
     'rules.py',
