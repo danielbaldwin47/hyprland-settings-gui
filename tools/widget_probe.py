@@ -156,11 +156,18 @@ def shoot(widget: Any, path: str | os.PathLike[str], *, margin: int = 0) -> tupl
     found, bounds = widget.compute_bounds(native)
     if not found:
         raise RuntimeError("shoot: the widget has no bounds on its surface")
+    # At the paintable's own size: a window's includes its shadow, and squeezing it into the
+    # window's size scaled and blurred every shot (#183). The shadow is the surface offset.
     snapshot = Gtk.Snapshot()
-    Gtk.WidgetPaintable.new(native).snapshot(snapshot, native.get_width(), native.get_height())
-    left, top = max(0, bounds.get_x() - margin), max(0, bounds.get_y() - margin)
-    right = min(native.get_width(), bounds.get_x() + bounds.get_width() + margin)
-    bottom = min(native.get_height(), bounds.get_y() + bounds.get_height() + margin)
+    paintable = Gtk.WidgetPaintable.new(native)
+    paintable.snapshot(
+        snapshot, paintable.get_intrinsic_width(), paintable.get_intrinsic_height()
+    )
+    shadow_x, shadow_y = native.get_surface_transform()
+    x, y = bounds.get_x() + shadow_x, bounds.get_y() + shadow_y
+    left, top = max(shadow_x, x - margin), max(shadow_y, y - margin)
+    right = min(shadow_x + native.get_width(), x + bounds.get_width() + margin)
+    bottom = min(shadow_y + native.get_height(), y + bounds.get_height() + margin)
     viewport = Graphene.Rect().init(left, top, round(right - left), round(bottom - top))
     texture = native.get_renderer().render_texture(snapshot.to_node(), viewport)
     texture.save_to_png(os.fspath(path))
