@@ -9,7 +9,7 @@ a state indistinguishable from the one they are in.
 
 from __future__ import annotations
 
-from hyprtweaker.engine.apply import Edit, UndoStack, UndoStep
+from hyprtweaker.engine.apply import Edit, EntityEdit, EntityStep, UndoStack, UndoStep
 from hyprtweaker.engine.model import UNSET
 
 
@@ -96,3 +96,67 @@ def test_clearing_empties_the_stack() -> None:
 
     assert not stack.can_undo
     assert stack.top is None
+
+
+# --- entity steps -----------------------------------------------------------------------------
+
+
+def test_an_entity_step_keeps_only_the_lists_that_moved() -> None:
+    """A whole-list snapshot of every kind is taken around an edit; the step is the kinds
+    whose list actually changed, so undoing it never rewrites a list the user left alone."""
+    step = EntityStep.of(
+        [
+            EntityEdit("binds", ("a", "b"), ("a",)),
+            EntityEdit("submaps", ("resize",), ("resize",)),
+        ],
+        "Bind removed",
+    )
+
+    assert step == EntityStep((EntityEdit("binds", ("a", "b"), ("a",)),), "Bind removed")
+    assert step.kinds == frozenset({"binds"})
+
+
+def test_an_entity_edit_that_moved_nothing_is_no_step() -> None:
+    """An out-of-range delete commits and changes nothing; it must not spend a Ctrl+Z."""
+    assert EntityStep.of([EntityEdit("binds", ("a",), ("a",))], "Bind removed") is None
+
+
+def test_merging_entity_steps_spans_first_before_to_last_after_per_kind() -> None:
+    """A kept Confirm-or-revert batch is one step, from what the user saw before the
+    countdown to what they kept -- and a reverted one cancels to nothing."""
+    first = EntityStep((EntityEdit("monitors", ("60Hz",), ("144Hz",)),), "Monitor rule changed")
+    second = EntityStep(
+        (
+            EntityEdit("monitors", ("144Hz",), ("144Hz", "HDMI")),
+            EntityEdit("workspace_rules", (), ("1",)),
+        ),
+        "Monitor rule changed",
+    )
+    revert = EntityStep((EntityEdit("monitors", ("144Hz", "HDMI"), ("60Hz",)),), "x")
+
+    assert EntityStep.merge([first, second], "Display settings changed") == EntityStep(
+        (
+            EntityEdit("monitors", ("60Hz",), ("144Hz", "HDMI")),
+            EntityEdit("workspace_rules", (), ("1",)),
+        ),
+        "Display settings changed",
+    )
+    assert EntityStep.merge([first, revert], "Monitor rule changed") is None
+
+
+def test_forget_drops_every_entity_step_touching_a_kind_and_keeps_the_rest() -> None:
+    """A list that changed off the stack (a foreign reload, a profile) makes every step over
+    it unreplayable; Option steps and steps over other lists are untouched."""
+    stack = UndoStack()
+    option = UndoStep.of([Edit("general:gaps_in", 5, 8)])
+    monitors = EntityStep.of([EntityEdit("monitors", (), ("m",))], "Monitor rule added")
+    binds = EntityStep.of([EntityEdit("binds", (), ("b",))], "Bind added")
+    both = EntityStep.of(
+        [EntityEdit("binds", ("b",), ()), EntityEdit("workspace_rules", (), ("w",))], "x"
+    )
+    for step in (option, monitors, binds, both):
+        stack.record(step)
+
+    stack.forget({"monitors", "workspace_rules"})
+
+    assert [stack.pop(), stack.pop(), stack.pop()] == [binds, option, None]

@@ -18,6 +18,13 @@ because coalescing has *already* decided which edits were one burst (see `Sessio
 undo." A cross-session stack would have to survive a compositor the user reconfigured by hand
 in between, and the value it would restore might no longer mean anything.
 
+**An Entity step holds whole lists** (#189, deciding #104 coarse). Binds and rules have no key
+to address them by -- position *is* identity (ADR-0007, ADR-0008) -- so the delta of an entity
+edit is the edited kind's whole list before and after, as tuples of frozen entities. Those are
+pointer arrays over objects every snapshot shares, so a step costs a few hundred pointers, not
+copies of the rules. A list that changed off the stack (a foreign reload adopted a hand edit, a
+profile was activated) makes every step over it unreplayable, and `UndoStack.forget` drops them.
+
 There is no redo tier in v1, which is what makes ADR-0016's "the failed gesture never becomes
 a redo" true by construction rather than by a rule somebody has to remember. The stack is
 bounded for the same reason every in-memory history is: a session left open for a week is a
@@ -26,8 +33,9 @@ session whose undo depth nobody is ever going to walk.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from ..model import UNSET, OptionValue
 
@@ -85,11 +93,71 @@ class UndoStep:
         return tuple(edit.name for edit in self.edits)
 
 
+@dataclass(frozen=True, slots=True)
+class EntityEdit:
+    """One Entity list before and after a gesture, whole.
+
+    `kind` is the `EntitySet` list name (`binds`, `monitors`, `window_rules`, ...). Whole
+    lists rather than an index-level diff, because a replay of "insert at 3" is only right
+    while nothing else has moved -- a whole list is right or visibly stale.
+    """
+
+    kind: str
+    before: tuple[Any, ...]
+    after: tuple[Any, ...]
+
+    @property
+    def changed(self) -> bool:
+        return self.before != self.after
+
+
+@dataclass(frozen=True, slots=True)
+class EntityStep:
+    """One entity gesture: every list it moved, and the words the undo toast uses for it.
+
+    The title travels with the step because an entity has no Schema title to look up: the
+    session knows whether the gesture was an add, a remove or a reorder, and the window,
+    which only sees the lists, could not tell a removal from a reorder without diffing them.
+    """
+
+    edits: tuple[EntityEdit, ...]
+    title: str
+
+    @classmethod
+    def of(cls, edits: Iterable[EntityEdit], title: str) -> EntityStep | None:
+        """A step from `edits`, or `None` when none of them moved a list."""
+        moved = tuple(edit for edit in edits if edit.changed)
+        return cls(moved, title) if moved else None
+
+    @classmethod
+    def merge(cls, steps: Iterable[EntityStep], title: str) -> EntityStep | None:
+        """Several steps as one: per kind, the first `before` to the last `after`.
+
+        What an undo group closes into. A batch that was kept is one gesture; a batch that
+        was reverted ends where it began, and `of` turns that into no step at all.
+        """
+        before: dict[str, tuple[Any, ...]] = {}
+        after: dict[str, tuple[Any, ...]] = {}
+        for step in steps:
+            for edit in step.edits:
+                before.setdefault(edit.kind, edit.before)
+                after[edit.kind] = edit.after
+        return cls.of((EntityEdit(kind, before[kind], after[kind]) for kind in before), title)
+
+    @property
+    def kinds(self) -> frozenset[str]:
+        return frozenset(edit.kind for edit in self.edits)
+
+
+Step = UndoStep | EntityStep
+"""Anything on the one stack. Option and entity gestures interleave in the order they landed."""
+
+
 class UndoStack:
-    """A linear in-memory stack of `UndoStep`s. One per session, global across Pages."""
+    """A linear in-memory stack of `Step`s. One per session, global across Pages."""
 
     def __init__(self, *, max_depth: int = UNDO_MAX_DEPTH) -> None:
-        self._steps: list[UndoStep] = []
+        self._steps: list[Step] = []
         self._max_depth = max(1, max_depth)
 
     def __len__(self) -> int:
@@ -100,7 +168,7 @@ class UndoStack:
         return bool(self._steps)
 
     @property
-    def top(self) -> UndoStep | None:
+    def top(self) -> Step | None:
         """The step a `pop` would return, without taking it.
 
         What the undo toast names, so the toast and the keystroke cannot come to disagree
@@ -108,7 +176,7 @@ class UndoStack:
         """
         return self._steps[-1] if self._steps else None
 
-    def record(self, step: UndoStep | None) -> None:
+    def record(self, step: Step | None) -> None:
         """Push a gesture. `None` is accepted and ignored -- see `UndoStep.of`."""
         if step is None:
             return
@@ -116,9 +184,22 @@ class UndoStack:
         if len(self._steps) > self._max_depth:
             del self._steps[0 : len(self._steps) - self._max_depth]
 
-    def pop(self) -> UndoStep | None:
+    def pop(self) -> Step | None:
         """Take the newest gesture off the stack, or `None` when there is nothing to undo."""
         return self._steps.pop() if self._steps else None
+
+    def forget(self, kinds: Collection[str]) -> None:
+        """Drop every entity step touching any of `kinds`; Option steps stay.
+
+        For a list that changed off the stack: replaying a step over it would overwrite
+        the change with a list from before it, which is a hand edit lost to Ctrl+Z.
+        """
+        gone = frozenset(kinds)
+        self._steps = [
+            step
+            for step in self._steps
+            if not (isinstance(step, EntityStep) and step.kinds & gone)
+        ]
 
     def clear(self) -> None:
         self._steps.clear()
