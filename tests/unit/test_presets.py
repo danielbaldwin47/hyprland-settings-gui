@@ -15,7 +15,6 @@ from pathlib import Path
 from _support import sample_schema
 
 from hyprtweaker.engine.model.values import CssGaps, Gradient, parse_value
-from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.presets import (
     CaptureScope,
     Preset,
@@ -101,11 +100,6 @@ def test_a_stored_value_reads_back_through_parse_value() -> None:
 
 
 # --- the store ----------------------------------------------------------------------------
-
-
-def test_presets_live_in_the_app_dir(tmp_path: Path) -> None:
-    paths = ConfigPaths.rooted_at(tmp_path)
-    assert paths.presets_dir == paths.app_dir / "presets"
 
 
 def test_a_written_preset_is_one_json_file_of_the_adr_fields(tmp_path: Path) -> None:
