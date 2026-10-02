@@ -82,7 +82,13 @@ def effect_text(value: Any) -> str:
 
 
 class GrammarRow(Generic[T]):
-    """An `EffectHelper` for one string grammar, in controls or in text."""
+    """An `EffectHelper` for one string grammar, in controls or in text.
+
+    The value summary is the row's subtitle, not ADR-0013's dim suffix: that ADR is for
+    generated option rows, whose subtitle is a description. An effect row has none, its
+    suffix strip already holds "Edit as text" and the remove button, and a summary such
+    as a long event list or a text-mode reason must wrap rather than squeeze the title.
+    """
 
     def __init__(
         self,
