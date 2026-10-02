@@ -359,3 +359,33 @@ def test_a_compositor_that_never_answers_times_out() -> None:
         assert fake.requests == ["j/configerrors"], "the request did reach the compositor"
 
     run_with_fake(scenario, FakeHyprland(never_answer=True))
+
+
+# --- loaded plugins (#174) ----------------------------------------------------------------
+
+
+def test_loaded_plugins_asks_plugin_list_and_answers_each_name() -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        names = await client.loaded_plugins()
+        assert fake.requests == ["j/plugin list"]
+        assert names == ("probeplug",)
+
+    run(scenario)
+
+
+def test_no_plugin_loaded_is_an_empty_answer() -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        fake.conversation["j/plugin list"] = "[]"
+        assert await client.loaded_plugins() == ()
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("reply", ['{"name": "x"}', "no plugins loaded"])
+def test_a_plugin_list_reply_of_the_wrong_shape_is_malformed(reply: str) -> None:
+    async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
+        fake.conversation["j/plugin list"] = reply
+        with pytest.raises(MalformedReply):
+            await client.loaded_plugins()
+
+    run(scenario)

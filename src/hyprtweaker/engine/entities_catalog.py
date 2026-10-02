@@ -663,12 +663,14 @@ IDENTITY_FIELD: dict[str, str] = {
     "animations": "leaf",
     "devices": "name",
     "env": "name",
+    "plugins": "path",
 }
 """Which declarative kinds have an identity, and the attribute that holds it.
 
-The four Hyprland itself keys: a second `hl.curve("easy", ...)` overwrites the first, a
+The five Hyprland itself keys: a second `hl.curve("easy", ...)` overwrites the first, a
 second `hl.animation{leaf="fade"}` wins, `hl.device` merges per name, and the last
-`hl.env` for a name is the value the session gets. Two rows sharing one of these describes
+`hl.env` for a name is the value the session gets; a `.so` loads once however often its
+path is listed (#174). Two rows sharing one of these describes
 a config the compositor will not produce, which is the reason ADR-0008 keys workspace
 rules by selector.
 
