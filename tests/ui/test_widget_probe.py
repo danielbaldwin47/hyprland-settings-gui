@@ -27,6 +27,9 @@ DESKTOP_SESSION = {
     "GDK_BACKEND": "wayland,x11,*",
     "DISPLAY": ":0",
     "HYPRLAND_INSTANCE_SIGNATURE": "desktop-session-signature",
+    "GDK_SCALE": "2",
+    "XDG_CONFIG_HOME": "/home/owner/.config",
+    "XDG_STATE_HOME": "/home/owner/.local/state",
 }
 DEAD_DISPLAY = ":4095"
 
@@ -74,8 +77,11 @@ for stat in Path("/proc").glob("[0-9]*/stat"):
 display = os.environ.get("DISPLAY") or ""
 print(json.dumps({
     "environ": {name: os.environ.get(name) for name in (
-        "DISPLAY", "GDK_BACKEND", "WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE"
+        "DISPLAY", "GDK_BACKEND", "WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE",
+        "GDK_SCALE", "GTK_A11Y", "HYPRTWEAKER_NON_UNIQUE",
     )},
+    "config": os.environ["XDG_CONFIG_HOME"],
+    "state": os.environ["XDG_STATE_HOME"],
     "served": Path(f"/tmp/.X11-unix/X{display[1:]}").is_socket(),
     "children": children,
 }))
@@ -89,17 +95,29 @@ def test_the_route_gives_the_probe_a_private_xvfb_and_no_desktop_session(
     probe = tmp_path / "probe.py"
     probe.write_text(ENVIRONMENT_PROBE)
 
-    result = run([*ROUTE, str(probe)], tmp_path, **DESKTOP_SESSION)
+    result = run([*ROUTE, str(probe)], tmp_path, **DESKTOP_SESSION, GTK_A11Y=None)
 
     assert result.returncode == 0, result.stderr
     seen = json.loads(result.stdout)
     display = seen["environ"]["DISPLAY"]
+    # GDK_SCALE halved the screen on the owner's HiDPI desktop; GTK_A11Y keeps the widgets
+    # off the desktop's screen reader; non-unique keeps an app the probe runs from handing
+    # its launch to the owner's open window over the session bus.
     assert seen["environ"] == {
         "DISPLAY": display,
         "GDK_BACKEND": "x11",
         "WAYLAND_DISPLAY": None,
         "HYPRLAND_INSTANCE_SIGNATURE": None,
+        "GDK_SCALE": None,
+        "GTK_A11Y": "none",
+        "HYPRTWEAKER_NON_UNIQUE": "1",
     }
+    # The config and state dirs are a throwaway pair, not the owner's.
+    config, state = Path(seen["config"]), Path(seen["state"])
+    assert (config.name, state.name) == ("config", "state")
+    assert config.parent == state.parent
+    assert config.parent.name.startswith("widget-probe-")
+    assert not config.parent.exists()  # removed when the probe ended
     assert display != ":0"
     assert display.startswith(":")
     # An X server answers on it, and the only process the route started is that Xvfb.
@@ -192,7 +210,8 @@ window.set_child(page.page)
 row = page.rows[0].widget
 size = widget_probe.shoot(row, sys.argv[1])
 box = row.get_allocation()  # the border box: what the user sees of the row
-print(box.width, box.height, *size, window.get_width(), window.get_height())
+margined = widget_probe.shoot(row, sys.argv[1] + ".margin.png", margin=8)
+print(box.width, box.height, *size, window.get_width(), window.get_height(), *margined)
 """
 
 
@@ -210,9 +229,97 @@ def test_the_route_writes_a_png_cropped_to_one_widget_of_a_real_page(tmp_path: P
     result = run([*ROUTE, str(probe), str(shot)], tmp_path, **dead_session(tmp_path))
 
     assert result.returncode == 0, result.stderr
-    row_width, row_height, *returned, window_width, window_height = map(
-        int, result.stdout.split()
-    )
+    numbers = [int(number) for number in result.stdout.split()]
+    row_width, row_height, *returned, window_width, window_height = numbers[:6]
+    margined = tuple(numbers[6:])
     assert png_size(shot) == (row_width, row_height) == tuple(returned)
     assert 0 < row_height < window_height
     assert 0 < row_width <= window_width
+    # A margin takes that much of the surface around the widget, where a group title's
+    # glyphs reach past its box; the row spans the page, so the sides stop at the window.
+    assert png_size(Path(f"{shot}.margin.png")) == margined
+    assert margined[1] == row_height + 16
+
+
+POPOVER_PROBE = """\
+import widget_probe
+
+import sys
+
+from gi.repository import Gdk, GdkPixbuf, Gtk
+
+css = Gtk.CssProvider()
+css.load_from_string(".probe-red { background: #ff0000; }")
+Gtk.StyleContext.add_provider_for_display(
+    Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_USER
+)
+red = Gtk.Box(width_request=120, height_request=60, css_classes=["probe-red"])
+popover = Gtk.Popover(child=red, autohide=False)
+button = Gtk.MenuButton(label="Open", popover=popover, halign=Gtk.Align.START,
+                        valign=Gtk.Align.START)
+window = Gtk.Window(default_width=600, default_height=400)
+window.set_child(button)
+window.present()
+popover.popup()
+size = widget_probe.shoot(red, sys.argv[1])
+pixbuf = GdkPixbuf.Pixbuf.new_from_file(sys.argv[1])
+row = pixbuf.get_rowstride() * (pixbuf.get_height() // 2)
+center = pixbuf.get_pixels()[row + pixbuf.get_n_channels() * (pixbuf.get_width() // 2):][:3]
+print(*size, *center)
+"""
+
+
+def test_a_widget_in_a_popover_is_shot_from_the_popover_not_the_window(
+    tmp_path: Path,
+) -> None:
+    # A popover is a surface of its own: cropping the window at the widget's bounds shows
+    # whatever of the window lies under it, the #101 probe's wrong picture.
+    probe = tmp_path / "probe.py"
+    probe.write_text(POPOVER_PROBE)
+    shot = tmp_path / "red.png"
+
+    result = run([*ROUTE, str(probe), str(shot)], tmp_path, **dead_session(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["120", "60", "255", "0", "0"]
+    assert png_size(shot) == (120, 60)
+
+
+SCROLLED_PROBE = """\
+import widget_probe
+
+import sys
+
+from gi.repository import Gtk
+
+target = Gtk.Box(height_request=200)
+column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+column.append(Gtk.Box(height_request=400))
+column.append(target)
+column.append(Gtk.Box(height_request=400))
+scrolled = Gtk.ScrolledWindow(child=column)
+window = Gtk.Window(default_width=400, default_height=300)
+window.set_child(scrolled)
+window.present()
+widget_probe.settle()
+scrolled.get_vadjustment().set_value(500)  # the target's top 100 px above the view
+widget_probe.settle()
+widget_probe.shoot(target, sys.argv[1])
+"""
+
+
+def test_a_widget_partly_scrolled_out_of_view_is_refused_not_shot(tmp_path: Path) -> None:
+    # The #177 shot cut the group's title off: the window has other pixels where the
+    # scrolled-away part would be, and nothing said so.
+    probe = tmp_path / "probe.py"
+    probe.write_text(SCROLLED_PROBE)
+    shot = tmp_path / "target.png"
+
+    result = run([*ROUTE, str(probe), str(shot)], tmp_path, **dead_session(tmp_path))
+
+    assert result.returncode == 1
+    assert not shot.exists()
+    assert result.stderr.strip().splitlines()[-1] == (
+        "RuntimeError: shoot: 100 of the widget's 200 px rows are scrolled out of view; "
+        "scroll it into view or make the window larger first"
+    )

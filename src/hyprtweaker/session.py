@@ -125,7 +125,12 @@ from hyprtweaker.engine.schema import (
     supplement,
 )
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash, retirement
-from hyprtweaker.engine.state.retirement import RenamedNotice, Restoration, RetiredNotice
+from hyprtweaker.engine.state.retirement import (
+    RenamedNotice,
+    Restoration,
+    RetiredNotice,
+    UnkeptNotice,
+)
 from hyprtweaker.engine.triggers import trigger_load_problem
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
 from hyprtweaker.engine.writer.binds import parse_binds_module
@@ -303,8 +308,9 @@ Spawn = Callable[[Coroutine[Any, Any, None]], None]
 """How this session gets a coroutine running. The GTK app passes the main loop's own
 scheduler, so engine callbacks land on the thread that owns the widgets."""
 
-Notice = RetiredNotice | RenamedNotice
-"""A one-time Info notice of ADR-0012's: a release removed settings, or renamed them."""
+Notice = RetiredNotice | UnkeptNotice | RenamedNotice
+"""A one-time Info notice of ADR-0012's: a release removed settings (kept, or not), or
+renamed them."""
 
 _NOT_CONNECTED_YET = "Connecting to Hyprland…"
 
@@ -546,6 +552,12 @@ class Session:
         convert a hyprlang config *to* on a compositor that only reads hyprlang.
         """
         return self._unsupported_reason is not None
+
+    @property
+    def unsupported_reason(self) -> str | None:
+        """Why the running Hyprland is too old for this app, as one sentence without a full
+        stop, or `None` when it is not."""
+        return self._unsupported_reason
 
     @property
     def offline_reason(self) -> str | None:
@@ -1758,7 +1770,8 @@ class Session:
         live = self._live_hyprland
         before = self._manifest()
         found = retirement.detect(before, self._schema, live)
-        kept = retirement.retire(before, found, retirement.capture(self._paths.app_dir, found))
+        values = retirement.capture(self._paths.app_dir, found)
+        kept = retirement.retire(before, found, values)
         remaining, restored = retirement.restore(kept, self._schema, live)
         if kept.retired != before.retired:
             self._writer.set_retired(self._model, kept.retired)
@@ -1769,9 +1782,9 @@ class Session:
             self._spawn(self._write_retirement(applier, restored))
 
         notices: list[Notice] = list(retirement.unannounced(remaining))
-        renamed = RenamedNotice.of(restored)
-        if renamed is not None:
-            notices.append(renamed)
+        for extra in (UnkeptNotice.of(found, values), RenamedNotice.of(restored)):
+            if extra is not None:
+                notices.append(extra)
         for notice in notices:
             if self.on_notice is not None:
                 self.on_notice(notice)
@@ -1781,9 +1794,8 @@ class Session:
     ) -> None:
         """Write the model without the retired keys and with the restored values, then
         stop keeping each restored value the write recorded."""
-        # Entities-dirty, so the write happens even with no key to read back: dropping a
-        # retired key is a change to the Module, not to any Option the model holds.
-        applier.commit_entities()
+        # Dropping a retired key changes the Module, not any Option the model holds.
+        applier.force_write()
         await applier.apply(*(each.option.name for each in restored))
         if restored:
             self._writer.set_retired(

@@ -20,14 +20,15 @@ PROBE_RUN = [sys.executable, "-m", "pytest", "tests/ui/_display_probe.py", "-q",
 
 
 def run_probe(**env: str) -> subprocess.CompletedProcess[str]:
-    """Run the probe as a desktop session whose Wayland socket does not exist."""
+    """Run the probe as a HiDPI desktop session whose Wayland socket does not exist."""
     child_env = {
         key: value
         for key, value in os.environ.items()
-        if key not in ("DISPLAY", "GDK_BACKEND", "WAYLAND_DISPLAY")
+        if key not in ("DISPLAY", "GDK_BACKEND", "WAYLAND_DISPLAY", "GTK_A11Y")
         and not key.startswith("HYPRTWEAKER_")
     }
     child_env["WAYLAND_DISPLAY"] = ABSENT_WAYLAND_DISPLAY
+    child_env["GDK_SCALE"] = "2"
     child_env.update(env)
     return subprocess.run(
         [*PROBE_RUN, "--color=no", "-p", "no:cacheprovider"],
@@ -43,14 +44,14 @@ def test_a_desktop_session_gets_its_own_display() -> None:
     result = run_probe()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 passed" in result.stdout
+    assert "2 passed" in result.stdout
 
 
 def test_without_xvfb_the_tier_skips_naming_it(tmp_path: Path) -> None:
     result = run_probe(PATH=str(tmp_path))
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 skipped" in result.stdout
+    assert "2 skipped" in result.stdout
     assert "Xvfb" in result.stdout
 
 
@@ -66,7 +67,7 @@ def test_the_host_display_opt_in_uses_the_host_session() -> None:
     result = run_probe(HYPRTWEAKER_UI_HOST_DISPLAY="1")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 skipped" in result.stdout
+    assert "2 skipped" in result.stdout
     assert "no usable display" in result.stdout
 
 

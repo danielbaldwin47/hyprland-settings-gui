@@ -22,7 +22,7 @@ When a release removes an option the user has set, the app **stops emitting it a
 
 ### Trigger: watcher → agent → PR
 
-A scheduled watcher (weekly cron, e.g. a GitHub Action polling `hyprwm/Hyprland` releases) opens a `Release check: Hyprland <ver>` issue labelled `ready-for-agent` per release. An agent runs the protocol in `docs/agents/hyprland-release-check.md` — regenerate, three-layer diff (schema / stub API / wiki), curate, verify — and opens one PR. A human reviews and merges.
+A scheduled watcher (weekly cron, e.g. a GitHub Action polling `hyprwm/Hyprland` releases) opens a `Release check: Hyprland <ver>` issue labelled `ready-for-agent` per release. An agent runs the protocol in `docs/agents/hyprland-release-check.md` — regenerate, five-layer diff (schema / stub API / wiki / Entity catalogue / dispatcher catalogue), curate, verify — and opens one PR. A human reviews and merges.
 
 ### Done bar: CI completeness + reviewed diff
 

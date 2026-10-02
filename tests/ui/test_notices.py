@@ -93,6 +93,10 @@ def test_a_retired_notice_says_which_release_and_offers_details(tmp_path: Path) 
     assert toast.get_title() == "Hyprland 0.57.0 removed 2 settings you had set"
     assert toast.get_button_label() == "Details"
     assert dialog.get_heading() == "Settings removed in Hyprland 0.57.0"
+    assert dialog.get_body() == (
+        "The app no longer writes these, so they cause no config errors. Your values are "
+        "kept and come back if the settings return."
+    )
     assert rows(dialog) == [(GONE, ""), ("Resize windows by dragging their border", RESIZE)]
 
 
@@ -124,5 +128,32 @@ def test_a_rename_notice_lists_old_and_new_names(tmp_path: Path) -> None:
     assert toast.get_title() == (
         "Hyprland renamed a setting you had set; your value moved with it"
     )
+    assert dialog.get_body() == (
+        "Hyprland gave these settings new names. The app moved your values to them."
+    )
     assert rows(dialog) == [("Resize windows by dragging their border", f"{GONE} → {RESIZE}")]
     assert seen(tmp_path) == (), "a rename notice records nothing"
+
+
+def test_a_value_the_app_could_not_keep_is_named_and_says_what_to_do(tmp_path: Path) -> None:
+    """#150 review finding 4: without Lua the app cannot read a removed setting's value
+    back, so the toast says it is gone and Details tells the user how to get it back."""
+    from hyprtweaker.engine.state.retirement import UnkeptNotice
+
+    _, window = build_window(tmp_path)
+    notice = UnkeptNotice("0.57.0", (RESIZE,))
+
+    toast = window.show_notice(notice)
+    dialog = window.notice_details(notice)
+    toast.dismiss()
+
+    assert toast.get_title() == (
+        "Hyprland 0.57.0 removed a setting you had set; its value could not be kept"
+    )
+    assert dialog.get_heading() == "Settings removed in Hyprland 0.57.0"
+    assert dialog.get_body() == (
+        "The app no longer writes these, so they cause no config errors. It could not "
+        "read their values back, so if Hyprland brings these settings back, set them again."
+    )
+    assert rows(dialog) == [("Resize windows by dragging their border", RESIZE)]
+    assert seen(tmp_path) == (), "nothing to record: the next start finds nothing to drop"

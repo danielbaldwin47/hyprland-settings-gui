@@ -30,6 +30,8 @@ from ...engine.migration.flow import (  # noqa: E402
     ROLLBACK_SECONDS,
     Decision,
     MigrationFlow,
+    Offered,
+    Preview,
     SwitchResult,
     asks_consent,
 )
@@ -37,11 +39,13 @@ from ...engine.migration.flow import (  # noqa: E402
 Spawn = Callable[[Any], None]
 
 CONSENT_TEXT = (
-    "Reading your hyprland.lua means running it once in a sandbox: no commands run, no "
+    "Reading your hyprland.lua means running it once: none of its commands run and no "
     "files change."
 )
-"""The consent page's promise (#190, decided on inbox #79). `Consent(evaluate=True)` is
-`Policy.BLOCK`, which is what makes it true: the config's commands and writes are faked."""
+"""The consent page's promise (#190; wording decided in the #150 review, owner call 3).
+`Consent(evaluate=True)` is `Policy.BLOCK`, which is what makes it true: the config's
+commands and writes are faked, and the importer's own directory listing quotes the path it
+is given (`runner.lua`), so a quote in a folder name cannot start one either."""
 
 DETECTED_TITLES = {
     ConfigKind.LEGACY_CONF: "You have a hyprland.conf",
@@ -82,6 +86,8 @@ class MigrationDialog(Adw.Dialog):
         self._countdown_label: Gtk.Label | None = None
         self._defaults: dict[Adw.NavigationPage, Gtk.Widget] = {}
         """Each page's safe button, made the dialog's default while that page shows."""
+        self._pressed: set[Gtk.Button] = set()
+        """Buttons whose read is running or just ran: spent until the main loop settles."""
 
         self._view = Adw.NavigationView()
         self._view.connect("notify::visible-page", self._on_visible_page)
@@ -139,9 +145,12 @@ class MigrationDialog(Adw.Dialog):
             # to show the user, and the config is untouched at this point either way.
             self._view.push(self._failed_page("Could not read the configuration", str(error)))
             return
-        if preview.offered_commands:
-            self._view.push(self._commands_page(preview.offered_commands))
+        if preview.offered:
+            self._view.push(self._commands_page(preview))
             return
+        self._show_preview()
+
+    def _show_preview(self) -> None:
         self._flow.save_report()
         if self._flow.preview is not None and self._flow.preview.detection.streamlined:
             # Hyprland's own example config: "no loss report, straight to convert"
@@ -161,30 +170,35 @@ class MigrationDialog(Adw.Dialog):
         which needs the very read the user has not agreed to.
         """
         page = _page("Read your config")
-        group = Adw.PreferencesGroup(title=f"Read {source.name}?", description=CONSENT_TEXT)
+        # A file name is the user's own text and may hold `&` or `<`: escaped, not markup.
+        title = GLib.markup_escape_text(f"Read {source.name}?")
+        group = Adw.PreferencesGroup(title=title, description=CONSENT_TEXT)
         group.add(_row("File", str(source)))
         page.get_child().set_content(_column(group))
 
         read = Gtk.Button(label="Read it")
-        read.connect("clicked", lambda _button: self._go_preview(Consent(evaluate=True)))
+        read.connect("clicked", lambda button: self._once(button, Consent(evaluate=True)))
         not_now = self._close_button("Not now")
         page.get_child().add_bottom_bar(_actions(read, not_now))
         self._defaults[page] = not_now
         return page
 
-    def _commands_page(self, commands: tuple[str, ...]) -> Adw.NavigationPage:
-        """The second offer: run the config's own commands for real, after it read empty.
+    def _commands_page(self, preview: Preview) -> Adw.NavigationPage:
+        """The second offer: run the config's own commands for real (#190).
 
-        Never the default and never suggested: these are the user's commands running with
-        the user's rights, and the only page in the app that runs anything it did not write.
+        Run is never the default and never suggested: these are the user's commands running
+        with the user's rights, and the only page in the app that runs anything it did not
+        write. When the read without them already got settings, the page says how many and
+        offers to continue with those -- the safe way forward, so it is the default
+        (#150 review, owner call 2).
         """
         page = _page("Commands")
         group = Adw.PreferencesGroup(
             title="This config runs commands to build itself",
-            description="Reading it fully means running these for real:",
+            description=_commands_description(preview.imported),
         )
-        for command in commands:
-            row = _row(command, "")
+        for offered in preview.offered:
+            row = _row(offered.text, _offered_subtitle(offered))
             row.set_title_selectable(True)
             row.add_css_class("monospace")
             group.add(row)
@@ -193,12 +207,43 @@ class MigrationDialog(Adw.Dialog):
         run = Gtk.Button(label="Run them and read", css_classes=["destructive-action"])
         run.connect(
             "clicked",
-            lambda _button: self._go_preview(Consent(evaluate=True, passthrough=True)),
+            lambda button: self._once(button, Consent(evaluate=True, passthrough=True)),
         )
+        # The read behind this page blocked the window, so a click aimed at "Read it" may
+        # still be queued: Run arrives unclickable and is armed once that queue has drained.
+        run.set_sensitive(False)
+        GLib.idle_add(_arm, run)
         not_now = self._close_button("Not now")
-        page.get_child().add_bottom_bar(_actions(run, not_now))
-        self._defaults[page] = not_now
+        buttons = [run]
+        safe: Gtk.Button = not_now
+        if preview.imported:
+            safe = _suggested("Continue without running them")
+            safe.connect("clicked", lambda _button: self._show_preview())
+            buttons.append(safe)
+        page.get_child().add_bottom_bar(_actions(*buttons, not_now))
+        self._defaults[page] = safe
         return page
+
+    def _once(self, button: Gtk.Button, consent: Consent) -> None:
+        """Read with `consent`, once per press, however many clicks queued behind it.
+
+        The read is synchronous and may block the window for up to a minute (follow-up:
+        read off the main loop). Clicks queued meanwhile are delivered after it returns,
+        before the idle that releases the button, so they find it spent.
+        """
+        if button in self._pressed:
+            return
+        self._pressed.add(button)
+        button.set_sensitive(False)
+        try:
+            self._go_preview(consent)
+        finally:
+            GLib.idle_add(self._release, button)
+
+    def _release(self, button: Gtk.Button) -> bool:
+        self._pressed.discard(button)
+        button.set_sensitive(True)
+        return GLib.SOURCE_REMOVE
 
     # --- step 2: preview ------------------------------------------------------------------
 
@@ -470,6 +515,39 @@ def _actions(*buttons: Gtk.Button) -> Gtk.Widget:
 
 def _suggested(label: str) -> Gtk.Button:
     return Gtk.Button(label=label, css_classes=["suggested-action"])
+
+
+def _arm(button: Gtk.Button) -> bool:
+    button.set_sensitive(True)
+    return GLib.SOURCE_REMOVE
+
+
+def _commands_description(imported: int) -> str:
+    run = (
+        "Reading it fully means running these for real, and any others the config goes on "
+        "to run:"
+    )
+    if not imported:
+        return run
+    settings = "1 setting" if imported == 1 else f"{imported} settings"
+    return (
+        f"Without running them, the app read {settings} from this file. Anything these "
+        f"commands build is missing.\n\n{run}"
+    )
+
+
+def _offered_subtitle(offered: Offered) -> str:
+    """What a row on the Commands page does, in words, and how often it runs."""
+    does = {
+        "command": "",
+        "delete": "Deletes this file",
+        "move": "Moves or renames this file",
+    }[offered.kind]
+    if offered.times == 1:
+        return does
+    if not does:
+        return f"Runs {offered.times} times"
+    return f"{does}, {offered.times} times"
 
 
 def _countdown_text(remaining: float) -> str:

@@ -450,8 +450,8 @@ def _mismatches_with(rule: MonitorRule, name: str, monitor: Mapping[str, Any]) -
         live_at = (monitor.get("x"), monitor.get("y"))
         if live_at != position:
             found.append(
-                f"{name} is at {live_at[0]}x{live_at[1]}, "
-                f"the configuration asks for {position[0]}x{position[1]}"
+                f"{name} is at position {live_at[0]}, {live_at[1]}, "
+                f"the configuration asks for {position[0]}, {position[1]}"
             )
 
     wanted_transform = _number(fields.get("transform"))
@@ -462,10 +462,18 @@ def _mismatches_with(rule: MonitorRule, name: str, monitor: Mapping[str, Any]) -
         and wanted_transform != live_transform
     ):
         found.append(
-            f"{name} is rotated as transform {_trim(live_transform)}, "
-            f"the configuration asks for transform {_trim(wanted_transform)}"
+            f"{name}'s rotation is {_transform_name(live_transform)}, "
+            f"the configuration asks for {_transform_name(wanted_transform)}"
         )
     return found
+
+
+def _transform_name(transform: float) -> str:
+    """A transform as the word the Monitors page shows for it, never the bare code."""
+    index = int(transform)
+    if index == transform and 0 <= index < len(TRANSFORM_NAMES):
+        return TRANSFORM_NAMES[index].lower()
+    return f"transform {_trim(transform)}"
 
 
 _SCALE_TOLERANCE = 0.01

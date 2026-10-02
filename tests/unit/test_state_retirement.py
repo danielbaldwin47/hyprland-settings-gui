@@ -235,6 +235,11 @@ class TestRestore:
                 id="newer-hyprland-still-lacks-it",
             ),
             pytest.param(sample_schema(), None, id="offline-schema-older-than-retirement"),
+            pytest.param(
+                sample_schema(),
+                live("0.56.0", without=("decoration:rounding",)),
+                id="older-hyprland-than-the-schema-lacks-it",
+            ),
         ],
     )
     def test_a_value_stays_kept_while_its_option_cannot_be_emitted(

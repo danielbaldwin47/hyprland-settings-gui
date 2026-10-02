@@ -92,8 +92,12 @@ def ui_unavailable() -> str | None:
     # session from them at test time when both tiers share a process, so restore them.
     # DISPLAY stays on the Xvfb: the NVIDIA EGL driver opens `$DISPLAY` again when a
     # window first realizes, so a restored one sends it to the session's X server, and
-    # it crashes when nothing serves that display.
-    saved = {name: os.environ.get(name) for name in PINNED if name != "DISPLAY"}
+    # it crashes when nothing serves that display. Not GTK_A11Y: GTK reads it at the
+    # first widget, after this returns, and restored it put every test widget on the
+    # desktop's accessibility bus.
+    saved = {
+        name: os.environ.get(name) for name in PINNED if name not in ("DISPLAY", "GTK_A11Y")
+    }
     pin_environment(os.environ, display)
     try:
         return open_display()

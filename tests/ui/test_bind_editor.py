@@ -14,51 +14,82 @@ from typing import Any
 
 import pytest
 
-from hyprtweaker.engine.dispatchers import CATALOG, Dispatcher
+from hyprtweaker.engine.dispatchers import CATALOG, Dispatcher, lookup
 from hyprtweaker.engine.importer.keysyms import validator_available
 from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall
+from hyprtweaker.engine.writer.binds import render_dispatcher
 
 needs_xkb = pytest.mark.skipif(
     not validator_available(), reason="libxkbcommon is not loadable here"
 )
 
 
-FREE_FORM_NOTE = "This action's arguments are not documented in a form this app can generate"
+FREE_FORM_NOTE = "Type each setting as key = value, one per line."
 
-CURATED = [entry for entry in CATALOG if not entry.free_form and entry.args]
-PLAIN = [entry for entry in CATALOG if not entry.free_form and not entry.args]
-FREE_FORM = [entry for entry in CATALOG if entry.free_form]
+CURATED = [entry for entry in CATALOG if entry.free_form_reason is None and entry.args]
+PLAIN = [entry for entry in CATALOG if entry.free_form_reason is None and not entry.args]
+FREE_FORM = [entry for entry in CATALOG if entry.free_form_reason is not None]
 
 
-def add_flow(entry: Dispatcher) -> Any:
+def add_flow(entry: Dispatcher | None) -> Any:
     """The add dialog after the user picked `entry` in the Hyprland-action picker."""
+    return add_flow_saving(entry)[0]
+
+
+def add_flow_saving(entry: Dispatcher | None) -> tuple[Any, list[Bind]]:
     from gi.repository import Adw
 
     from hyprtweaker.ui.dialogs.bind_editor import BindEditor
 
     Adw.init()
-    editor = BindEditor(on_done=lambda _bind: None)
+    saved: list[Bind] = []
+    editor = BindEditor(on_done=saved.append)
     editor._choose(entry)
-    return editor
+    return editor, saved
 
 
 def action_group_description(editor: Any) -> str:
     """The "Action" group's description, found by walking the form page the way a reader
     sees it, not through a handle the editor keeps for itself."""
-    from gi.repository import Adw, Gtk
+    from gi.repository import Gtk
 
-    def walk(widget: Any) -> Any:
-        yield widget
-        child = widget.get_first_child()
-        while child is not None:
-            yield from walk(child)
-            child = child.get_next_sibling()
-
-    page = editor._view.get_visible_page()
-    groups = [w for w in walk(page) if isinstance(w, Adw.PreferencesGroup)]
-    (action,) = [g for g in groups if g.get_title() == "Action"]
+    (action,) = groups_titled(editor, "Action")
     assert isinstance(action, Gtk.Widget)
     return str(action.get_description() or "")
+
+
+def walk(widget: Any) -> Any:
+    yield widget
+    child = widget.get_first_child()
+    while child is not None:
+        yield from walk(child)
+        child = child.get_next_sibling()
+
+
+def groups_titled(editor: Any, title: str) -> list[Any]:
+    """The form page's preferences groups with this title, as a reader finds them."""
+    from gi.repository import Adw
+
+    page = editor._view.get_visible_page()
+    return [
+        w for w in walk(page) if isinstance(w, Adw.PreferencesGroup) and w.get_title() == title
+    ]
+
+
+def kept_lines(editor: Any) -> list[str]:
+    """The rows of the "Also kept from your config" group, top to bottom; [] without it."""
+    from gi.repository import Adw
+
+    groups = groups_titled(editor, "Also kept from your config")
+    if not groups:
+        return []
+    (group,) = groups
+    return [str(w.get_title()) for w in walk(group) if isinstance(w, Adw.ActionRow)]
+
+
+def saved_lua(saved: list[Bind]) -> list[str]:
+    """What the Writer emits for each saved bind's action: the text Hyprland is told."""
+    return [render_dispatcher(b.dispatcher) for b in saved if b.dispatcher]
 
 
 def dead_bind(*, enabled: bool = False) -> Bind:
@@ -210,14 +241,145 @@ def test_a_free_form_call_keeps_its_booleans_and_quoted_numbers_through_an_edit(
 
     The raw table showed Python's `False` and an unquoted `3`, which `_coerce` read back as
     the string "False" and the integer 3: Save changed what Hyprland was told to do (#126).
+    Compared as the emitted Lua, because `False == 0` and `1 == 1.0` in Python.
     """
-    call = DispatcherCall(path="window.move", args={"workspace": "3", "follow": False})
+    call = DispatcherCall(
+        path="window.move",
+        args={"workspace": "3", "follow": False, "on": True, "x": 3, "y": 1.5},
+    )
     editor, saved = open_editor(Bind(keys="SUPER + w", dispatcher=call))
     editor._save()
 
-    assert [(b.dispatcher.args, b.dispatcher.positional) for b in saved if b.dispatcher] == [
-        ({"workspace": "3", "follow": False}, ())
+    assert saved_lua(saved) == [
+        'hl.dsp.window.move{ workspace = "3", follow = false, on = true, x = 3, y = 1.5 }'
     ]
+
+
+def test_a_number_with_a_decimal_point_typed_in_the_raw_table_saves_as_a_number() -> None:
+    call = DispatcherCall(path="window.resize", args={"x": 10, "y": 20})
+    editor, saved = open_editor(Bind(keys="SUPER + w", dispatcher=call))
+    editor._arg_entries["__free__"].get_buffer().set_text('x = 10.5\ny = -2.25\nz = "1.5"')
+    editor._save()
+
+    assert saved_lua(saved) == ['hl.dsp.window.resize{ x = 10.5, y = -2.25, z = "1.5" }']
+
+
+def test_a_table_value_in_a_free_form_call_is_kept_and_shown_read_only() -> None:
+    """The raw table cannot spell a nested table back, so it is listed under the form as
+    Lua and saved unchanged, never as Python's repr."""
+    call = DispatcherCall(path="window.move", args={"x": 1, "extra": {"a": 1, "b": "c"}})
+    editor, saved = open_editor(Bind(keys="SUPER + w", dispatcher=call))
+    buffer = editor._arg_entries["__free__"].get_buffer()
+
+    assert buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False) == "x = 1"
+    assert kept_lines(editor) == ['extra = { a = 1, b = "c" }']
+    editor._save()
+    assert saved_lua(saved) == ['hl.dsp.window.move{ x = 1, extra = { a = 1, b = "c" } }']
+
+
+def test_the_raw_table_says_what_the_action_takes_in_the_users_words() -> None:
+    editor = add_flow(lookup("focus"))
+
+    assert action_group_description(editor) == (
+        "Give exactly one of: direction, monitor, workspace, window, urgent_or_last or "
+        "last. Type each setting as key = value, one per line."
+    )
+
+
+def test_an_unconfirmed_action_says_why_it_has_no_form() -> None:
+    editor = add_flow(lookup("group.lock"))
+
+    assert action_group_description(editor) == (
+        "Hyprland does not say which settings this action reads, so the app has no form "
+        "for it. Type each setting as key = value, one per line."
+    )
+
+
+def test_an_action_this_version_does_not_know_keeps_its_raw_table() -> None:
+    call = DispatcherCall(path="plugin.thing", args={"speed": 2})
+    editor, saved = open_editor(Bind(keys="SUPER + w", dispatcher=call))
+
+    assert action_group_description(editor) == (
+        "This version of the app does not know this action. "
+        "Type each setting as key = value, one per line."
+    )
+    editor._save()
+    assert saved_lua(saved) == ["hl.dsp.plugin.thing{ speed = 2 }"]
+
+
+def cycle_next(**args: object) -> tuple[Any, list[Bind]]:
+    return open_editor(
+        Bind(keys="SUPER + w", dispatcher=DispatcherCall(path="window.cycle_next", args=args))
+    )
+
+
+def test_a_yes_or_no_field_refuses_a_word_it_cannot_read() -> None:
+    """`forward` once saved as `next = false`: the opposite of what was typed."""
+    editor, saved = cycle_next()
+    editor._arg_entries["next"].set_text("forward")
+    editor._save()
+
+    assert saved == []
+    assert editor._error.get_text() == "Forwards must be true or false."
+
+
+def test_a_whole_number_field_refuses_a_fraction() -> None:
+    editor, saved = add_flow_saving(lookup("force_idle"))
+    editor._trigger.set_text("SUPER + i")
+    editor._arg_entries["seconds"].set_text("2.5")
+    editor._save()
+
+    assert saved == []
+    assert editor._error.get_text() == "Seconds must be a whole number."
+
+
+def test_a_saved_yes_or_no_reads_as_true_or_false_and_saves_back() -> None:
+    editor, saved = cycle_next(next=False, tiled=True)
+
+    assert editor._arg_entries["next"].get_text() == "false"
+    assert editor._arg_entries["tiled"].get_text() == "true"
+    editor._arg_entries["floating"].set_text("True")
+    editor._save()
+    assert saved_lua(saved) == [
+        "hl.dsp.window.cycle_next{ next = false, tiled = true, floating = true }"
+    ]
+
+
+def fullscreen_state_bind() -> Bind:
+    """`layout_aware` is hand-written: the curated form has no row for it (#126 owner call
+    4, decided 2026-10-02)."""
+    return Bind(
+        keys="SUPER + f",
+        dispatcher=DispatcherCall(
+            path="window.fullscreen_state",
+            args={"internal": 2, "client": 0, "layout_aware": True},
+        ),
+    )
+
+
+def test_a_key_the_form_does_not_show_is_kept_and_listed() -> None:
+    editor, saved = open_editor(fullscreen_state_bind())
+
+    assert kept_lines(editor) == ["layout_aware = true"]
+    editor._save()
+    assert saved_lua(saved) == [
+        "hl.dsp.window.fullscreen_state{ internal = 2, client = 0, layout_aware = true }"
+    ]
+
+
+def test_picking_another_action_drops_the_keys_of_the_old_one() -> None:
+    editor, saved = open_editor(fullscreen_state_bind())
+    editor._choose(lookup("window.close"))
+
+    assert kept_lines(editor) == []
+    editor._save()
+    assert saved_lua(saved) == ["hl.dsp.window.close()"]
+
+
+def test_a_form_with_nothing_extra_shows_no_kept_group() -> None:
+    editor, _saved = cycle_next(next=True)
+
+    assert kept_lines(editor) == []
 
 
 SAMPLE = {"string": "abc", "int": 3, "bool": True, "window": "class:foo", "workspace": "2"}
@@ -256,7 +418,7 @@ def test_a_free_form_dispatcher_keeps_the_raw_table(entry: Dispatcher) -> None:
 
     assert list(editor._arg_entries) == ["__free__"]
     assert isinstance(editor._arg_entries["__free__"], Gtk.TextView)
-    assert action_group_description(editor).startswith(FREE_FORM_NOTE)
+    assert action_group_description(editor) == f"{entry.free_form_reason} {FREE_FORM_NOTE}"
 
 
 @pytest.mark.parametrize("entry", CURATED, ids=lambda e: e.path)

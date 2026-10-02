@@ -75,6 +75,12 @@ def regenerate(
 
 
 def committed_schema(hyprland: GuardedInstance) -> tuple[str, Path]:
+    """The committed schema for the version the nested Hyprland runs, or a skip.
+
+    One version per run: the installed Hyprland's. The previous shipped schema (0.56.1 next
+    to 0.56.2) is checked only on a machine running that release; until then its provenance
+    block (`source_ref`, the generating commit) is the record of how it was made (#186).
+    """
     version = running_hyprland_version(hyprland)
     assert version is not None, "the nested Hyprland did not answer `hyprctl version`"
 

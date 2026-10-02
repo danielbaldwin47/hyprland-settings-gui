@@ -20,33 +20,49 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine.schema import Schema  # noqa: E402
-from hyprtweaker.engine.state.retirement import RenamedNotice, RetiredNotice  # noqa: E402
+from hyprtweaker.engine.state.retirement import (  # noqa: E402
+    RenamedNotice,
+    RetiredNotice,
+    UnkeptNotice,
+)
+
+Notice = RetiredNotice | UnkeptNotice | RenamedNotice
 
 _MAX_HEIGHT = 320
 """How tall the list grows before it scrolls, as in the config-error dialog."""
 
 
-def notice_title(notice: RetiredNotice | RenamedNotice) -> str:
+def notice_title(notice: Notice) -> str:
     """The toast's one line."""
-    if isinstance(notice, RetiredNotice):
+    if isinstance(notice, RetiredNotice | UnkeptNotice):
         count = len(notice.names)
         what = "a setting" if count == 1 else f"{count} settings"
-        return f"Hyprland {notice.release} removed {what} you had set"
+        title = f"Hyprland {notice.release} removed {what} you had set"
+        if isinstance(notice, RetiredNotice):
+            return title
+        return title + (
+            "; its value could not be kept"
+            if count == 1
+            else "; their values could not be kept"
+        )
     if len(notice.renames) == 1:
         return "Hyprland renamed a setting you had set; your value moved with it"
     return f"Hyprland renamed {len(notice.renames)} settings you had set; your values moved"
 
 
-def notice_dialog(
-    parent: Gtk.Widget, notice: RetiredNotice | RenamedNotice, schema: Schema
-) -> Adw.AlertDialog:
+def notice_dialog(parent: Gtk.Widget, notice: Notice, schema: Schema) -> Adw.AlertDialog:
     """Show the settings `notice` is about over `parent`, and return the dialog."""
-    if isinstance(notice, RetiredNotice):
+    if isinstance(notice, RetiredNotice | UnkeptNotice):
         dialog = Adw.AlertDialog(
             heading=f"Settings removed in Hyprland {notice.release}",
             body=(
-                "The app no longer writes these, so they cause no config errors. Your "
-                "values are kept and come back if the options return."
+                "The app no longer writes these, so they cause no config errors. "
+                + (
+                    "Your values are kept and come back if the settings return."
+                    if isinstance(notice, RetiredNotice)
+                    else "It could not read their values back, so if Hyprland brings "
+                    "these settings back, set them again."
+                )
             ),
         )
         # A name with no label left is its own title; repeating it underneath says nothing.
@@ -55,7 +71,7 @@ def notice_dialog(
     else:
         dialog = Adw.AlertDialog(
             heading="Renamed settings",
-            body="Hyprland gave these options new names. The app moved your values to them.",
+            body="Hyprland gave these settings new names. The app moved your values to them.",
         )
         rows = [(_label(new, schema), f"{old} → {new}") for old, new in notice.renames]
 

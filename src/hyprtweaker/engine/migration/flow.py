@@ -24,13 +24,14 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from ..importer.loss import BACKUP_NAME, LossCode, LossReport, rescue_command, rescue_line
 from ..importer.lua.mapping import import_lua
@@ -146,31 +147,59 @@ class Preview:
         return self.result.model
 
     @property
-    def offered_commands(self) -> tuple[str, ...]:
-        """The commands the wizard's second offer would run for real, verbatim (#190).
+    def imported(self) -> int:
+        """How many settings this read got: its Options plus its Entities."""
+        return len(self.model) + len(self.result.entities)
+
+    @property
+    def offered(self) -> tuple[Offered, ...]:
+        """What the wizard's second offer would do for real, verbatim (#190).
 
         Non-empty only after a *blocked* read that came back empty (no Option, no Entity)
         or erroring, and that tried to run a command on the way: a config that builds itself
         from `io.popen` output reads as nothing, or as a Lua error, while its commands are
         faked. Anything else it read is a Preview worth showing as it is, and a read that
-        already ran them for real has nothing left to offer. A command run twice is listed
-        once, in the order it first ran.
+        already ran them for real has nothing left to offer.
+
+        Running for real runs everything the blocked read faked, so the file operations are
+        listed beside the commands, and a repeat is listed once with how many times it ran,
+        in the order each first ran (#150 review, findings 6 and 19).
         """
-        commands = tuple(
-            dict.fromkeys(
-                use.cmd
-                for use in self.result.shell
-                if use.kind in _OFFERED_SHELL_KINDS and use.policy == Policy.BLOCK
-            )
-        )
-        empty = len(self.model) == 0 and len(self.result.entities) == 0
+        faked = [
+            use
+            for use in self.result.shell
+            if use.kind in _OFFERED_KINDS and use.policy == Policy.BLOCK
+        ]
+        if not any(_OFFERED_KINDS[use.kind] == "command" for use in faked):
+            return ()
         erroring = LossCode.EVAL_ERROR in self.loss.code_counts()
-        return commands if empty or erroring else ()
+        if self.imported and not erroring:
+            return ()
+        times = Counter((_OFFERED_KINDS[use.kind], use.cmd) for use in faked)
+        return tuple(Offered(text, kind, n) for (kind, text), n in times.items())
 
 
-_OFFERED_SHELL_KINDS = frozenset({"os.execute", "io.popen"})
-"""The `ShellUse` kinds that are a config's own commands. `os.remove` and `os.rename` are
-file operations, and `importer.listdir` is the importer's own listing (`runner.lua`)."""
+OfferedKind = Literal["command", "delete", "move"]
+
+
+@dataclass(frozen=True, slots=True)
+class Offered:
+    """One thing the second offer would do for real, as the config wrote it."""
+
+    text: str
+    """The command line, the path deleted, or `old -> new` for a move."""
+    kind: OfferedKind
+    times: int = 1
+
+
+_OFFERED_KINDS: dict[str, OfferedKind] = {
+    "os.execute": "command",
+    "io.popen": "command",
+    "os.remove": "delete",
+    "os.rename": "move",
+}
+"""The `ShellUse` kinds a config does itself. `importer.listdir` is the importer's own
+listing (`runner.lua`), which runs under every policy and so is never offered."""
 
 
 def asks_consent(source: Path) -> bool:

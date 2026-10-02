@@ -145,6 +145,13 @@ def test_a_missing_bind_is_caught_live(harness_home: Path, artifacts: Path) -> N
     assert binds.detail == "Only 1 of the 2 keybinds in the new configuration are active."
 
 
+KNOWN_CONFIG_ERRORS: dict[str, int] = {"hyde": 1, "jakoolit": 2}
+"""Config errors the app's own import still generates for these rices, so a real migration
+of them rolls back: hyde's block-form `ignore_alpha = "true"`, jakoolit's speed over the
+maximum and string-typed device fields (#205). Pinned rather than excluded, so a third
+error turns this red, and so does the fix: #205 empties and deletes this table."""
+
+
 @pytest.mark.parametrize("rice", [candidate.name for candidate in rices()])
 def test_no_corpus_rice_is_rolled_back_by_a_bind_count_that_is_not_the_switchs_fault(
     rice: str, tmp_path: Path, artifacts: Path
@@ -185,3 +192,6 @@ def test_no_corpus_rice_is_rolled_back_by_a_bind_count_that_is_not_the_switchs_f
         if check.hard and not check.ok and check.name != "configerrors"
     ]
     assert not entity_failures, f"{rice}: {entity_failures}"
+    errors = next(check for check in checks if check.name == "configerrors")
+    found = 0 if errors.ok else len(errors.detail.splitlines())
+    assert found == KNOWN_CONFIG_ERRORS.get(rice, 0), f"{rice}: {errors.detail}"

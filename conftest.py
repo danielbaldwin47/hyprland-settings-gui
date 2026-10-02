@@ -93,3 +93,16 @@ def pytest_unconfigure(config: pytest.Config) -> None:
         os.ftruncate(fd, 0)  # a run that waits after this names no stale holder
         os.close(fd)
         del config.stash[_HELD]
+
+
+MAX_WORKERS = 8
+"""What `-n auto` resolves to at most. Measured on the owner's 20-thread, 31 GB machine: one
+uncapped run is 20 workers at about 0.73 GB each plus 21 Xvfb, and available memory fell to
+7.4 GB; systemd-oomd had already killed the owner's terminal once. Here rather than in a doc,
+so it holds for every caller."""
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
+    """`-n auto`, capped at `MAX_WORKERS`. Optional: meson's system pytest may lack xdist."""
+    return min(MAX_WORKERS, os.cpu_count() or 1)

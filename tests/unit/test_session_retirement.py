@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
 from _fake_hyprland import NO_SUCH_OPTION, FakeHyprland, option_reply, run_with_fake
 from _golden import assert_matches_golden
 from _support import (
@@ -23,12 +24,13 @@ from _support import (
     session_for,
 )
 
+from hyprtweaker.engine.importer.lua import sandbox
 from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import UNSET, CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
 from hyprtweaker.engine.state import Manifest, RetiredValue
-from hyprtweaker.engine.state.retirement import RenamedNotice, RetiredNotice
+from hyprtweaker.engine.state.retirement import RenamedNotice, RetiredNotice, UnkeptNotice
 from hyprtweaker.session import Notice, Session
 
 SCHEMA = sample_schema()
@@ -191,6 +193,25 @@ class TestNotice:
             assert second == []
             assert third == [RetiredNotice("0.58.0", (GAPS_IN,))]
             assert manifest(tmp_path).retired_notices == ("0.57.0", "0.58.0")
+
+        run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+    def test_a_value_the_app_cannot_read_back_is_announced_not_dropped_silently(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#150 review finding 4: with no Lua to read its Module, the value cannot be kept,
+        and the user hears that this start rather than finding it gone later."""
+
+        async def scenario(fake: FakeHyprland) -> None:
+            await first_start(fake, tmp_path)
+            monkeypatch.setattr(sandbox, "lua_binary", lambda: None)
+            fake.conversation[f"j/getoption {RESIZE}"] = NO_SUCH_OPTION
+
+            _, notices = await start(fake, tmp_path, live("0.57.0", without=(RESIZE,)))
+
+            assert notices == [UnkeptNotice("0.57.0", (RESIZE,))]
+            assert manifest(tmp_path).retired == {}
+            assert "resize_on_border" not in module(tmp_path)
 
         run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
 

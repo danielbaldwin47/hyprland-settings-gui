@@ -492,8 +492,8 @@ def _retired_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
         return None
     return Pill(
         RETIRED_PILL.format(release=release),
-        f"Hyprland {release} removed this option; your value is kept and comes back if the "
-        "option returns.",
+        f"Hyprland {release} removed this setting; your value is kept and comes back if the "
+        "setting returns.",
     )
 
 
@@ -508,8 +508,8 @@ def _not_in_hyprland_pill(option: ResolvedOption, context: RowContext) -> Pill |
         return None
     return Pill(
         NOT_IN_HYPRLAND_PILL,
-        f"Hyprland {live.version} does not have this option; the app is using its "
-        f"{context.schema.hyprland_version} schema.",
+        f"Hyprland {live.version} does not have this setting, so a change made here will "
+        "not take effect.",
     )
 
 
@@ -540,7 +540,8 @@ def _new_in_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
         return None
     return Pill(
         f"New in {flag.version}",
-        "Not in the shipped schema; shown with a generic control until the next release check.",
+        f"Hyprland {flag.version} added this setting after this version of the app was made, "
+        "so it gets a basic control until you update the app.",
     )
 
 
