@@ -241,7 +241,7 @@ jobs:
           HARNESS_DRM_CARD: /dev/dri/${{ steps.card.outputs.card }}
         run: |
           docker run --rm --privileged -v /dev:/dev -v /sys:/sys -v "$PWD:/repo" -w /repo \
-            -e HARNESS_DRM_CARD archlinux:latest bash -euo pipefail -c '
+            -e HARNESS_DRM_CARD -e CI archlinux:latest bash -euo pipefail -c '
               pacman -Syu --noconfirm --needed hyprland grim bubblewrap mesa ttf-dejavu \
                 python python-pytest python-gobject gtk4 python-numpy python-pillow \
                 >/tmp/pacman.log || { tail -40 /tmp/pacman.log; exit 1; }
@@ -250,6 +250,6 @@ jobs:
               install -d -m 700 -o harness /tmp/xdg-harness
               # HYPRTWEAKER_REQUIRE_HARNESS: a skipped tier fails the job, never goes green.
               runuser -u harness -- env XDG_RUNTIME_DIR=/tmp/xdg-harness \
-                HARNESS_DRM_CARD="$HARNESS_DRM_CARD" HYPRTWEAKER_REQUIRE_HARNESS=1 \
+                HARNESS_DRM_CARD="$HARNESS_DRM_CARD" CI="$CI" HYPRTWEAKER_REQUIRE_HARNESS=1 \
                 PYTHONDONTWRITEBYTECODE=1 \
                 python -m pytest tests/integration -p no:cacheprovider -v -rs'
