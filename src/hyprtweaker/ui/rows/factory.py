@@ -61,6 +61,7 @@ from hyprtweaker.engine.schema import (  # noqa: E402
     Widget,
     humanise,
 )
+from hyprtweaker.engine.scripting import discovered_layouts  # noqa: E402
 from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.rows.chrome import Navigate, RowChrome  # noqa: E402
 from hyprtweaker.ui.rows.gesture import Gesture  # noqa: E402
@@ -439,17 +440,40 @@ class RowFactory:
         return stack
 
     def _combo(self, option: ResolvedOption) -> OptionRow:
-        choices = _choices(option)
-        dropdown = Gtk.DropDown(
-            model=Gtk.StringList.new([label for _, label in choices]),
-            valign=Gtk.Align.CENTER,
-        )
+        choices = list(_choices(option))
+        is_open = option.known_values is not None and option.known_values.open
+        if is_open:
+            # ADR-0018 §Custom layouts: the Lua layouts the user's files register are
+            # choices here, and only choices -- writing one stays in `user.lua`.
+            offered = {value for value, _ in choices}
+            choices.extend(
+                (value, _lua_layout_label(value, found=True))
+                for value in discovered_layouts(self._session.paths)
+                if value not in offered
+            )
+        labels = Gtk.StringList.new([label for _, label in choices])
+        dropdown = Gtk.DropDown(model=labels, valign=Gtk.Align.CENTER)
         row, chrome = self._row(option, dropdown)
 
         def refresh() -> None:
             value = shown_value(option, self._session.value_of(option))
+            held = None if value is NO_VALUE else value
+            index = _index_of(choices, held)
             with self._quiet():
-                dropdown.set_selected(_index_of(choices, None if value is NO_VALUE else value))
+                if index == Gtk.INVALID_LIST_POSITION and is_open and isinstance(held, str):
+                    # An open list holds what its choices do not name: shown as itself and
+                    # selected, never blank and never rewritten to the first choice.
+                    choices.append((held, _lua_layout_label(held, found=False)))
+                    labels.append(choices[-1][1])
+                    index = len(choices) - 1
+                dropdown.set_selected(index)
+            explain()
+
+        def explain() -> None:
+            # The short "(not found)" keeps the Row's title readable; the why is one hover away.
+            index = dropdown.get_selected()
+            held = choices[index][0] if index < len(choices) else None
+            dropdown.set_tooltip_text(_unfound_layout_tooltip(held, choices))
 
         def changed(*_: Any) -> None:
             if self._echo_guard:
@@ -458,6 +482,7 @@ class RowFactory:
             if index >= len(choices):
                 return
             self._set(option, choices[index][0])
+            explain()
 
         dropdown.connect("notify::selected", changed)
         return OptionRow(option, row, dropdown, refresh, chrome)
@@ -1088,6 +1113,35 @@ def _choices(option: ResolvedOption) -> tuple[tuple[Any, str], ...]:
     return tuple(entries)
 
 
+_LUA_LAYOUT = "lua:"
+
+
+def _lua_layout_label(value: str, *, found: bool) -> str:
+    """A layout an open combo offers beyond its curated ones, in words (#175).
+
+    `lua:foo` reads "foo (Lua layout)" when the user's files register it, and "foo (not
+    found)" when they do not: the value is kept, but no file registers it (the tooltip
+    says so in full). Any other value (a plugin's layout) reads as itself.
+    """
+    if not value.startswith(_LUA_LAYOUT):
+        return value
+    name = value.removeprefix(_LUA_LAYOUT)
+    return f"{name} (Lua layout)" if found else f"{name} (not found)"
+
+
+def _unfound_layout_tooltip(value: Any, choices: list[tuple[Any, str]]) -> str | None:
+    """Why a held `lua:<name>` reads "(not found)", or `None` for any other choice."""
+    if not isinstance(value, str) or not value.startswith(_LUA_LAYOUT):
+        return None
+    if (value, _lua_layout_label(value, found=False)) not in choices:
+        return None
+    name = value.removeprefix(_LUA_LAYOUT)
+    return (
+        f"No Lua file of yours registers a layout named “{name}”. "
+        "The setting is kept as it is until you choose another layout."
+    )
+
+
 def _typed(option: ResolvedOption, key: str) -> Any:
     """A `labels` key as the value it stands for.
 
@@ -1106,10 +1160,8 @@ def _typed(option: ResolvedOption, key: str) -> Any:
 def _index_of(choices: tuple[tuple[Any, str], ...], value: Any) -> int:
     """Which choice a model value selects. Unknown values select nothing rather than lying.
 
-    An open `known_values` list (`general:layout` accepts `lua:<name>` for any registered
-    layout) can hold a value no choice offers. Selecting the first entry would quietly
-    report the wrong layout; `Gtk.INVALID_LIST_POSITION` shows the combo as unset, which is
-    the truth until #76 puts discovered layouts in the list.
+    Selecting the first entry would quietly report the wrong value. An open `known_values`
+    list never gets here empty-handed: `_combo` adds the held value to its choices first.
     """
     for index, (candidate, _) in enumerate(choices):
         if candidate == value and isinstance(candidate, bool) == isinstance(value, bool):

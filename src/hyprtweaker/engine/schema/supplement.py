@@ -37,6 +37,11 @@ not a colour control because a string whose default merely looks like a colour w
 written as a number by one; the read-back half is `values.ColorText`."""
 
 
+def is_plugin_option(name: str) -> bool:
+    """Whether `name` is a plugin's setting: Hyprland keeps every one under `plugin:`."""
+    return name.startswith(_PLUGIN_PREFIX)
+
+
 def newer_than_shipped(version: str, directory: Path | None = None) -> bool:
     """Whether `version` is newer than every shipped schema: the supplement's gate.
 

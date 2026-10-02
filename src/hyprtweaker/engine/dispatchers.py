@@ -36,10 +36,11 @@ not the `workspace` its name suggests.
 compositor accepts, the keys it requires, and the keys it *reads*: an unknown key is silently
 ignored, so a key is only listed here when a wrong-typed value for it raises or a fired call
 visibly changes state. The record is `tests/golden/dispatcher-probe-0.56.2.json`. An entry
-lists every key the compositor read, because the bind editor rebuilds a call from the listed
-keys alone and a missing one would be dropped from a saved bind on its next edit. A shape
-`ArgSpec` cannot say (exactly-one-of keys, alternative call shapes) or a key no probe could
-confirm stays free-form, with its reason on the entry: the sentence the bind editor shows
+lists every key a probe saw act (#211 refined "read"): a key fired and seen to do nothing
+(`window` on the group dispatchers, `layout_aware` on the fullscreen ones) is no row, its
+verdict is in the comment above the entry, and a saved call that carries it keeps it in the
+editor's kept group. A shape `ArgSpec` cannot say (exactly-one-of keys, alternative call
+shapes) stays free-form, with its reason on the entry: the sentence the bind editor shows
 the user above the raw table, and a comment beside the entry for the probe evidence.
 
 Engine-side and GTK-free on purpose: the picker is UI, but "what dispatchers exist" is a
@@ -108,12 +109,6 @@ def _free_form(path: str, label: str, why: str) -> Dispatcher:
     return Dispatcher(path=path, label=label, free_form_reason=why)
 
 
-UNCONFIRMED_KEYS = (
-    "Hyprland does not say which settings this action reads, so the app has no form for it."
-)
-"""The free-form reason for a dispatcher whose keys no probe could confirm."""
-
-
 WINDOW = ArgSpec(
     name="window",
     type="window",
@@ -126,7 +121,8 @@ ACTION = ArgSpec(
     label="Action",
     placeholder="toggle, enable or disable",
 )
-"""`float` and `pin` read it (probed: `enable` twice holds still, a toggle would not)."""
+"""`float`, `pin`, `pseudo` and the group lock and deny dispatchers read it (probed:
+`enable` twice holds still, a toggle would not)."""
 
 CATALOG: tuple[Dispatcher, ...] = (
     # --- root -------------------------------------------------------------------------
@@ -261,9 +257,12 @@ CATALOG: tuple[Dispatcher, ...] = (
     ),
     # --- group ------------------------------------------------------------------------
     Dispatcher(path="group.toggle", label="Toggle group", args=(WINDOW,)),
-    # Their `action` only shows when fired at a grouped window, so no probe confirmed the key.
-    _free_form("group.lock", "Lock the group", UNCONFIRMED_KEYS),
-    _free_form("group.lock_active", "Lock the active group", UNCONFIRMED_KEYS),
+    # `action` probed on 0.56.2 (#211): fired at a group of two with a third window trying to
+    # join, `enable, enable, disable, disable` read back refused, refused, joined, joined (a
+    # toggle would alternate). `window` fired too, and `lock_active` locked the active window's
+    # group whichever window it named, `group.lock` locks every group: no effect, no row.
+    Dispatcher(path="group.lock", label="Lock the groups", args=(ACTION,)),
+    Dispatcher(path="group.lock_active", label="Lock the active group", args=(ACTION,)),
     Dispatcher(path="group.next", label="Focus the next window in the group", args=(WINDOW,)),
     Dispatcher(
         path="group.prev", label="Focus the previous window in the group", args=(WINDOW,)
@@ -273,8 +272,15 @@ CATALOG: tuple[Dispatcher, ...] = (
         label="Focus a group member",
         args=(ArgSpec(name="index", type="int", required=True, label="Index"), WINDOW),
     ),
-    # The compositor reads no key when it is built, and `forward` was never seen to act.
-    _free_form("group.move_window", "Move a window out of the group", UNCONFIRMED_KEYS),
+    # `forward` probed on 0.56.2 (#211): from a fresh group `pa pb pc` with `pb` focused, no key
+    # and `forward = true` gave `pa pc pb` and `forward = false` gave `pb pa pc`. `window` fired
+    # too (`class:pc` while `pb` was focused) and the same window moved as without it: no
+    # effect, no row.
+    Dispatcher(
+        path="group.move_window",
+        label="Move the window along its group",
+        args=(ArgSpec(name="forward", type="bool", label="Forwards"),),
+    ),
     # --- window -----------------------------------------------------------------------
     Dispatcher(path="window.close", label="Close the window", args=(WINDOW,)),
     Dispatcher(path="window.kill", label="Force-kill the window", args=(WINDOW,)),
@@ -284,8 +290,15 @@ CATALOG: tuple[Dispatcher, ...] = (
     Dispatcher(path="window.pseudo", label="Toggle pseudo-tiling", args=(WINDOW, ACTION)),
     _plain("window.bring_to_top", "Bring the window to the top"),
     _plain("window.toggle_swallow", "Toggle swallowing"),
-    # The compositor reads no key when it is built, and an `action` was never seen to act.
-    _free_form("window.deny_from_group", "Deny the window from a group", UNCONFIRMED_KEYS),
+    # `action` probed on 0.56.2 (#211) like the locks: fired at a group member, a window trying
+    # to join read back refused, refused, joined, joined. `window` fired too (`class:pc` from a
+    # member): the member was still the one denied, so no effect, no row.
+    Dispatcher(
+        path="window.deny_from_group", label="Deny the window from groups", args=(ACTION,)
+    ),
+    # `layout_aware` fired on 0.56.2 (#211) at a grouped and a free window, in both modes, with
+    # `true`, `false` and left out: every client's fullscreen state, position and size came out
+    # the same, so it has no row. The same goes for `window.fullscreen_state` below.
     Dispatcher(
         path="window.fullscreen",
         label="Toggle fullscreen",
@@ -325,6 +338,7 @@ CATALOG: tuple[Dispatcher, ...] = (
         ),
     ),
     _plain("window.drag", "Drag the window"),
+    # No `layout_aware` row, for the reason given at `window.fullscreen`.
     Dispatcher(
         path="window.fullscreen_state",
         label="Set the fullscreen state",
@@ -467,7 +481,6 @@ __all__ = [
     "CATALOG",
     "EXEC_PATH",
     "NAMESPACE_LABELS",
-    "UNCONFIRMED_KEYS",
     "ArgSpec",
     "ArgType",
     "Coverage",

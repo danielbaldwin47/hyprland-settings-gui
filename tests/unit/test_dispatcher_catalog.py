@@ -141,11 +141,17 @@ class TestProbedShapes:
         """`{ window = {} }` raises wherever `window` is read, and does not for these."""
         assert shape(path) == (False, [])
 
-    def test_group_lock_keeps_the_raw_table_for_the_action_the_importer_writes(self) -> None:
-        """Its `action` shows only when fired at a group, so no form can claim it; a plain
-        entry dropped the key on edit."""
-        assert entry_for("group.lock").free_form_reason is not None
-        assert entry_for("group.lock_active").free_form_reason is not None
+    @pytest.mark.parametrize(
+        "path", ["group.lock", "group.lock_active", "window.deny_from_group"]
+    )
+    def test_the_group_gates_take_an_action_and_no_window(self, path: str) -> None:
+        """Fired at a group, `action` locks it or denies a window (probed, #211); `window` was
+        fired too and the compositor ignored it, so it is no row: a saved one is carried by
+        the editor's kept group."""
+        assert shape(path) == (False, [("action", "string", False)])
+
+    def test_move_window_takes_a_forward_flag_and_no_window(self) -> None:
+        assert shape("group.move_window") == (False, [("forward", "bool", False)])
 
     def test_fullscreen_reads_an_action_as_well_as_a_mode(self) -> None:
         """The Importer writes `action`; the curated entry listed only `window` and `mode`."""
@@ -166,16 +172,12 @@ class TestProbedShapes:
 class TestCoverage:
     def test_the_split_after_probing(self) -> None:
         report = coverage()
-        assert (len(report.curated), len(report.plain), len(report.free_form)) == (36, 7, 8)
+        assert (len(report.curated), len(report.plain), len(report.free_form)) == (40, 7, 4)
 
     def test_what_stays_free_form_is_what_no_form_can_say_truthfully(self) -> None:
         """One-of or alternative shapes `ArgSpec` cannot express, and keys nothing confirmed."""
         assert coverage().free_form == (
             "focus",
-            "group.lock",
-            "group.lock_active",
-            "group.move_window",
-            "window.deny_from_group",
             "window.move",
             "window.resize",
             "window.swap",

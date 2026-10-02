@@ -122,6 +122,7 @@ from hyprtweaker.engine.schema import (
     MINIMUM_HYPRLAND,
     ResolvedOption,
     Schema,
+    SupplementKind,
     below_lua_floor,
     load_schema,
     newer_than_shipped,
@@ -391,6 +392,12 @@ class Session:
             # ADR-0012 §Pinning: what a newer compositor added beyond every shipped schema
             # still gets a Row, inferred from its own description and flagged as such.
             schema = supplement(schema, live.descriptions, version=live.version)
+        if live is not None:
+            # ADR-0018 §Plugins: a loaded plugin's settings, whatever the version, flagged as
+            # a plugin's. Only a plugin loaded at this read adds any (no rebuild mid-session).
+            schema = supplement(
+                schema, live.descriptions, version=live.version, kind=SupplementKind.PLUGIN
+            )
         self._schema = schema
         self._paths = paths if paths is not None else ConfigPaths.default()
         self._app_version = app_version
