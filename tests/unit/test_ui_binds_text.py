@@ -14,13 +14,16 @@ from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall
 pytest.importorskip("gi", reason="the Binds Page imports gi at module scope")
 
 from hyprtweaker.ui.pages.binds import (
-    BadgeKind,
     RowConflict,
-    action_text,
-    bind_badge,
     flag_text,
     ordinal,
     rival_label,
+    row_verb,
+)
+from hyprtweaker.ui.pages.entity_text import (
+    BadgeKind,
+    action_text,
+    bind_badge,
     trigger_text,
 )
 
@@ -156,7 +159,7 @@ class TestBindBadge:
     def test_the_empty_submap_badge_leaves_the_bind_editable_and_removable(self) -> None:
         """The bind is fine; the submap is what is missing a bind, so nothing is taken away."""
         kind = BadgeKind.EMPTY_SUBMAP
-        assert (kind.editable, kind.removable, kind.verb) == (True, True, None)
+        assert (kind.editable, kind.removable, row_verb(kind)) == (True, True, None)
 
     def test_a_bind_entering_another_submap_has_no_badge(self) -> None:
         badge = bind_badge(

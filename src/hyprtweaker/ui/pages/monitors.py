@@ -44,12 +44,14 @@ from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     snap_position,
 )
 from hyprtweaker.engine.profiles import MonitorProfile  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import rule_summary  # noqa: E402
 from hyprtweaker.ui.pages.monitor_rows import (  # noqa: E402
     ModeRows,
     ScaleRows,
     colour_rows,
     reserved_row,
 )
+from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -141,20 +143,6 @@ class DisplayRect:
     width: int
     height: int
     has_rule: bool
-
-
-def rule_summary(rule: MonitorRule) -> str:
-    """A rule's fields as one dim line: `mode 1920x1080@60 · position 0x0`."""
-    parts = []
-    for key, value in rule.fields.items():
-        if value is True:
-            parts.append(key)
-        elif isinstance(value, Mapping):
-            inner = " ".join(f"{k}={v}" for k, v in value.items())
-            parts.append(f"{key} {inner}")
-        else:
-            parts.append(f"{key} {value}")
-    return " · ".join(parts) or "no fields yet"
 
 
 class ArrangementCanvas(Gtk.DrawingArea):
@@ -304,7 +292,7 @@ class ArrangementCanvas(Gtk.DrawingArea):
 class MonitorsPage:
     """The Displays destination: canvas, connected rows, Not connected, catch-all."""
 
-    section = "entity:monitors"
+    section = entity_page_id("monitors")
     title = "Displays"
 
     def __init__(

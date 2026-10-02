@@ -6,13 +6,9 @@ with no display, and the smoke tier only checks that widgets assemble.
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip("gi", reason="the Rules Page imports gi at module scope")
-
 from hyprtweaker.engine.model.entities import LayerRule, WindowRule
 from hyprtweaker.engine.rules_catalog import is_negated, prop_title, strip_negation
-from hyprtweaker.ui.pages.rules import (
+from hyprtweaker.ui.pages.entity_text import (
     effects_text,
     match_text,
     rule_subtitle,
