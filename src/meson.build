@@ -113,7 +113,7 @@ package_sources = {
     'syntax.py',
     'writer.py',
   ],
-  'hyprtweaker/ui': ['__init__.py', 'flash.py', 'search.py'],
+  'hyprtweaker/ui': ['__init__.py', 'flash.py', 'gap_field.py', 'search.py'],
   'hyprtweaker/ui/dialogs': [
     '__init__.py',
     'bind_editor.py',
@@ -132,6 +132,7 @@ package_sources = {
     'config.py',
     'declaration_kinds.py',
     'declarations.py',
+    'monitor_rows.py',
     'monitors.py',
     'plan.py',
     'rules.py',
