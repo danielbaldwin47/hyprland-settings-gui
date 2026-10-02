@@ -26,6 +26,12 @@ local entry, basedir, outpath, policy = arg[1], arg[2], arg[3], arg[4] or "block
 -- where the handler is a block this app generated, holds nothing but `hl.exec_cmd` calls,
 -- and is the only place those calls can be seen from.
 local run_handlers = (arg[5] == "run")
+-- Whether a plugin's setting answers `hl.get_config` as if its plugin were loaded. Off for
+-- any foreign config, whose guards must take the branch the engine would. On for exactly
+-- one caller -- retirement reading a plugin setting back out of the Module this app wrote
+-- (#175): each one is guarded on `hl.get_config`, and what the app wrote is the question,
+-- not whether the plugin happens to be loaded.
+local assume_plugins_loaded = (arg[6] == "plugins-loaded")
 local passthrough = policy == "passthrough"
 
 ----------------------------------------------------------------------
@@ -334,6 +340,14 @@ local function query_fn(name, ret)
 end
 for name, ret in pairs(QUERIES) do hl[name] = query_fn(name, ret) end
 for _, name in ipairs(NIL_QUERIES) do hl[name] = query_fn(name, nil) end
+if assume_plugins_loaded then
+  local ask = hl.get_config
+  hl.get_config = function(key, ...)
+    local answer = ask(key, ...)
+    if type(key) == "string" and key:find("^plugin[:.]") then return true end
+    return answer
+  end
+end
 
 ----------------------------------------------------------------------
 -- sandboxed stdlib

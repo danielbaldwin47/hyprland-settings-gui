@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from ..model.values import lua_literal_for
+from ..model.values import lua_literal_for, lua_string
 from ..paths import (
     ANIMATIONS_MODULE,
     AUTOSTART_MODULE,
@@ -34,8 +34,8 @@ from ..paths import (
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
 )
-from ..schema import ResolvedOption
-from .lua import GENERATED_BANNER, LuaTree, insert, render_table
+from ..schema import ResolvedOption, is_plugin_option
+from .lua import GENERATED_BANNER, INDENT, LuaTree, insert, render_table
 
 
 def module_stem(option: ResolvedOption) -> str:
@@ -123,16 +123,39 @@ def render_module(
     if len(sections) != 1:
         raise ValueError(f"a Module holds exactly one Section, got {sorted(sections)}")
 
+    header = (
+        f"{GENERATED_BANNER.format(version=app_version)}\n-- Section: {items[0][0].section}\n"
+    )
+    if is_plugin_option(items[0][0].name):
+        return (
+            header + _PLUGIN_NOTE + "".join(_guarded(option, value) for option, value in items)
+        )
+
     tree: LuaTree = {}
     for option, value in items:
         insert(tree, option.path, lua_literal_for(option, value))
 
     body = render_table(tree)
+    return f"{header}\nhl.config({body})\n"
+
+
+_PLUGIN_NOTE = "-- Each setting applies only while the plugin that adds it is loaded.\n"
+
+
+def _guarded(option: ResolvedOption, value: Any) -> str:
+    """One plugin setting, set only while Hyprland knows it (ADR-0018 §Plugins, #175).
+
+    Hyprland reports a config error for a key of a plugin that is not loaded, `pcall`
+    included; `hl.get_config` answers `nil` for it instead, and a loaded plugin's key is
+    known even on the first pass of a fresh start (nested 0.56.2 probe, #175). One guard
+    per setting, so a plugin that drops one setting costs only that one.
+    """
+    tree: LuaTree = {}
+    insert(tree, option.path, lua_literal_for(option, value))
     return (
-        f"{GENERATED_BANNER.format(version=app_version)}\n"
-        f"-- Section: {items[0][0].section}\n"
-        f"\n"
-        f"hl.config({body})\n"
+        f"\nif hl.get_config({lua_string(option.name)}) ~= nil then\n"
+        f"{INDENT}hl.config({render_table(tree, 1)})\n"
+        f"end\n"
     )
 
 
