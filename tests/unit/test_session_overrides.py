@@ -435,3 +435,24 @@ def test_quarantining_user_lua_clears_the_overrides_it_made(tmp_path: Path) -> N
         assert session.overridden == frozenset()
 
     run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_a_write_that_starts_loading_user_lua_marks_what_it_overrides(tmp_path: Path) -> None:
+    """Found with #148's j7 journey: the edit that rewrote the Entrypoint to require a new
+    user.lua read back only its own key, so the key user.lua overrides went unmarked."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        (tmp_path / "hypr" / "user.lua").write_text("-- mine\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        live_says(fake, ROUNDING, 12)
+        await edit(session, runner, ROUNDING, 12)
+        await session.drain()
+        await runner.settle()
+
+        assert session.overridden == {GAPS_IN}
+
+    run_with_fake(scenario, compositor())

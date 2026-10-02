@@ -3656,8 +3656,11 @@ class Session:
                 files = tuple(m for m in sorted(self._held_back) if m in result.skipped)
                 self.on_held_back(tuple(held_titles), files)
 
-        if self._client is not None and any(p.source is not None for p in presets):
-            # A Preset that gated a Bridge off changed which file sets the colours (F4).
+        rewired = result.write is not None and result.write.entrypoint_written
+        if self._client is not None and (rewired or any(p.source is not None for p in presets)):
+            # Which files load changed -- a Preset gated a Bridge off (F4), or the write's
+            # new Entrypoint loads a file it did not, such as a new user.lua -- so what
+            # overrides what may have changed too.
             self._spawn(self._scan_drift(self._client))
         steps = self._preset_steps(presets, delta)
         for recorded in steps:
