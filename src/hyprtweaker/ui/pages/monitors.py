@@ -758,10 +758,10 @@ class MonitorsPage:
             # The description leads the subtitle rather than the choice, where it was cut
             # short (ruling A11 of the #148 review).
             match_by = Adw.ComboRow(
-                title="Match by",
                 use_markup=False,
                 model=Gtk.StringList.new(["This display", f"Port {connector}"]),
             )
+            match_by.set_title("Match by")
             match_by.set_subtitle(
                 f"{description or 'This display has no description'}. "
                 "A description survives replug; a port survives identical twins."
