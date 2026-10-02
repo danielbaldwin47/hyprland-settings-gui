@@ -179,12 +179,29 @@ def test_a_hook_left_running_in_the_background_does_not_hold_the_run(
 
 
 def test_a_timeout_stops_everything_the_tool_started(
-    stub_tool: Callable[[str, str], Path], tmp_path: Path
+    stub_tool: Callable[[str, str], Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The timeout fires once the stub has started its background `sleep`: on a loaded
+    machine a 0.5 s timer could kill the stub before it wrote the pid (section 4 of the
+    #148 fix review), and the test then read an empty or missing pid file."""
+    import subprocess
     import time
 
     pid_file = tmp_path / "background.pid"
     stub = stub_tool("wallust", f"sleep 20 &\necho $! > '{pid_file}'\nsleep 30")
+    real_wait = subprocess.Popen.wait
+
+    def wait_until_started(self: subprocess.Popen[str], timeout: float | None = None) -> int:
+        if timeout is None:
+            return real_wait(self)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if pid_file.is_file() and pid_file.read_text().strip():
+                break
+            time.sleep(0.01)
+        raise subprocess.TimeoutExpired(self.args, timeout)
+
+    monkeypatch.setattr(subprocess.Popen, "wait", wait_until_started)
 
     with pytest.raises(ToolTimedOut):
         run_tool([str(stub)], timeout=0.5)
