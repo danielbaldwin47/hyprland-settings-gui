@@ -524,8 +524,8 @@ class ThemingPage:
         if not visible:
             return
         self._options.set_description(
-            f"Used when this app runs {REGISTRY[tab.tool].title} for you, until you close "
-            "it. Your own wallpaper script keeps its own settings."
+            "Used when you press Regenerate here, until you close the app. Your own "
+            "wallpaper script keeps its own settings."
         )
         values = self._values[tab.tool]
         for parameter in parameters:

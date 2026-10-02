@@ -679,10 +679,8 @@ def test_a_read_only_folder_is_refused_before_anything_is_shown(paths: ConfigPat
 
     assert result == NotDone(
         "matugen",
-        "~/.config/matugen/config.toml (a link to ~/store/matugen/config.toml) cannot be "
-        "changed: its folder is read-only, as it is when a dotfiles manager such as "
-        "home-manager owns it. It was left alone. Make it writable, then set matugen up "
-        "again.",
+        "~/.config/matugen/config.toml is read-only, so matugen was not set up. If a program "
+        "such as home-manager manages this file, this app cannot set matugen up there yet.",
     )
 
 

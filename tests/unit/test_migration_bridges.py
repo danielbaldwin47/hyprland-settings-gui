@@ -205,6 +205,29 @@ class TestTheOffer:
         )
 
 
+class TestAReadOnlyConfig:
+    def test_is_listed_with_why_it_cannot_be_set_up(self, two_tools: ConfigPaths) -> None:
+        """Owner call 6 of the #153 review: refused, never offered."""
+        config = two_tools.config_home / "matugen/config.toml"
+        store = put(two_tools.config_home.parent / "store/matugen.toml", MATUGEN_CONFIG)
+        config.unlink()
+        config.symlink_to(store)
+        store.parent.chmod(0o555)
+        try:
+            flow = flow_for(two_tools, FakeClient())
+            (found,) = [each for each in flow.bridge_offers() if each.tool == "matugen"]
+        finally:
+            store.parent.chmod(0o755)
+
+        assert found == CannotSetUp(
+            "matugen",
+            "matugen",
+            "~/.config/matugen/config.toml is read-only, so matugen was not set up. If a "
+            "program such as home-manager manages this file, this app cannot set matugen up "
+            "there yet.",
+        )
+
+
 class TestConsentIsTheOnlyWayIn:
     def test_confirming_one_of_two_wires_only_that_one_at_switch(
         self, two_tools: ConfigPaths

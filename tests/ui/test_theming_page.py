@@ -315,6 +315,32 @@ def test_a_refused_switch_leaves_the_old_source_on_screen(
     assert page.color_source_text == "Wallpaper (matugen)"
 
 
+def test_a_read_only_config_is_refused_with_its_reason_before_any_confirm(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """Finding 2 of the #153 review, owner call 6: refuse, saying why, naming the file the
+    user knows rather than the store it links to."""
+    stub_tool("wallust")
+    store = put(tmp_path / "store/wallust.toml", "[templates]\n")
+    (tmp_path / "wallust").mkdir()
+    (tmp_path / "wallust/wallust.toml").symlink_to(store)
+    session, _ = make_session(tmp_path)
+    page = build_page(session)
+    store.parent.chmod(0o555)
+    try:
+        ask(page, "Switch to wallust")
+    finally:
+        store.parent.chmod(0o755)
+
+    assert page.dialog.get_heading() == "wallust cannot be set up"
+    assert page.dialog.get_body() == (
+        f"{tmp_path}/wallust/wallust.toml is read-only, so wallust was not set up. If a "
+        "program such as home-manager manages this file, this app cannot set wallust up "
+        "there yet."
+    )
+    assert session.manifest().bridges == ()
+
+
 def test_a_hand_edited_entrypoint_offers_its_regenerate_beside_the_reason(
     tmp_path: Path, stub_tool: Any
 ) -> None:
@@ -430,7 +456,7 @@ def test_options_change_the_command_and_write_nothing(tmp_path: Path, stub_tool:
     files = tree(tmp_path)
 
     assert page._options.get_description() == (
-        "Used when this app runs matugen for you, until you close it. Your own wallpaper "
+        "Used when you press Regenerate here, until you close the app. Your own wallpaper "
         "script keeps its own settings."
     )
     regenerate = [row for row in page.rows if row[1] == "Regenerate colors"]

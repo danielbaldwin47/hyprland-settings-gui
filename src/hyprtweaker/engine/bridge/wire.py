@@ -328,9 +328,9 @@ def plan_wire(tool: str, *, paths: ConfigPaths, find: Find = find_tool) -> WireP
         if not _writable(edit.path):
             return NotDone(
                 tool,
-                f"{edit.shown} cannot be changed: its folder is read-only, as it is when a "
-                "dotfiles manager such as home-manager owns it. It was left alone. Make it "
-                f"writable, then set {spec.title} up again.",
+                f"{shown(edit.path, paths)} is read-only, so {spec.title} was not set up. If a "
+                "program such as home-manager manages this file, this app cannot set "
+                f"{spec.title} up there yet.",
             )
     return WirePlan(
         tool=tool,
