@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from .registry import REGISTRY, Mechanism, ToolSpec, spec_for_module
@@ -189,6 +190,22 @@ class BridgeEntry:
         if state is None or mechanism not in {member.value for member in Mechanism}:
             return None
         return cls(tool, module, line, file, Mechanism(mechanism), state)
+
+
+def files_present(hypr_dir: Path, files: Iterable[str]) -> frozenset[str]:
+    """Which of `files` (Bridge module files, relative to `hypr_dir`) a tool has written.
+
+    The one answer to "has this tool run": what entry states, the Theming page and the
+    wizard read (finding 28 of the #153 review). A tool writes every module of its own in
+    one run, but a Bridge counts as run only when all of them are here.
+    """
+    return frozenset(name for name in files if (hypr_dir / name).is_file())
+
+
+def has_run(spec: ToolSpec, hypr_dir: Path) -> bool:
+    """Whether `spec`'s tool has written every Bridge module of its own."""
+    files = [module.file for module in spec.modules]
+    return files_present(hypr_dir, files) == frozenset(files)
 
 
 def entries_for(spec: ToolSpec, *, present: Collection[str]) -> tuple[BridgeEntry, ...]:

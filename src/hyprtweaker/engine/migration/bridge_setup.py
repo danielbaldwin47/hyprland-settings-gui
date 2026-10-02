@@ -20,7 +20,15 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..bridge import REGISTRY, BridgeEntry, ToolSpec, Wallpaper, bridge_states_for
+from ..bridge import (
+    REGISTRY,
+    BridgeEntry,
+    ToolSpec,
+    Wallpaper,
+    bridge_states_for,
+    files_present,
+    has_run,
+)
 from ..bridge.wire import (
     IfChanged,
     NeedsChoice,
@@ -111,14 +119,16 @@ def with_consented(
     backend: str | None = None
     for consent in consents:
         spec = REGISTRY[consent.plan.tool]
-        manifest = manifest.add_bridge(spec, present=_present(spec, hypr_dir))
+        manifest = manifest.add_bridge(
+            spec, present=files_present(hypr_dir, (m.file for m in spec.modules))
+        )
         if spec.color_source:
             backend = spec.tool
     if backend is None:
         return manifest.bridges
     # The confirmed wallpaper color tool is the Color source: one already set up is gated
     # off for it rather than loading beside it.
-    present = {entry.file for entry in manifest.bridges if (hypr_dir / entry.file).is_file()}
+    present = files_present(hypr_dir, (entry.file for entry in manifest.bridges))
     return bridge_states_for(Wallpaper(backend), manifest.bridges, present=present)
 
 
@@ -139,7 +149,7 @@ def wire_consented(
             notes.append(f"{plan.title} was not set up: {outcome.reason} {LATER}")
         else:
             spec = REGISTRY[plan.tool]
-            loads = _present(spec, hypr_dir) == {module.file for module in spec.modules}
+            loads = has_run(spec, hypr_dir)
             notes.append(f"{plan.title} is set up." if loads else _waiting(spec))
     return tuple(notes)
 
@@ -186,10 +196,6 @@ def unwire_all(
                 f"before setup is in {backups}."
             )
     return tuple(notes)
-
-
-def _present(spec: ToolSpec, hypr_dir: Path) -> set[str]:
-    return {module.file for module in spec.modules if (hypr_dir / module.file).is_file()}
 
 
 def _waiting(spec: ToolSpec) -> str:

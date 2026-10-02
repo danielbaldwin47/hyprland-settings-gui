@@ -80,6 +80,7 @@ from hyprtweaker.engine.bridge import (
     bridge_states_for,
     color_source_of,
     entries_for,
+    files_present,
     owners,
     with_presence,
 )
@@ -962,9 +963,7 @@ class Session:
         )
 
     def _module_files_present(self, spec: ToolSpec) -> frozenset[str]:
-        return frozenset(
-            each.file for each in spec.modules if (self._paths.hypr_dir / each.file).is_file()
-        )
+        return files_present(self._paths.hypr_dir, (each.file for each in spec.modules))
 
     def _set_bridges(
         self,
@@ -984,9 +983,7 @@ class Session:
         )
 
     def _bridge_files_present(self, entries: Sequence[BridgeEntry]) -> frozenset[str]:
-        return frozenset(
-            entry.file for entry in entries if (self._paths.hypr_dir / entry.file).is_file()
-        )
+        return files_present(self._paths.hypr_dir, (entry.file for entry in entries))
 
     @property
     def paths(self) -> ConfigPaths:

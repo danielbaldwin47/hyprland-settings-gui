@@ -51,6 +51,8 @@ from hyprtweaker.engine.bridge import (  # noqa: E402
     PresetColors,
     Several,
     Wallpaper,
+    files_present,
+    has_run,
 )
 from hyprtweaker.engine.bridge.wire import (  # noqa: E402
     ChangedFile,
@@ -347,7 +349,7 @@ class ThemingPage:
         return _Read(
             source=self._session.color_source(),
             entries=entries,
-            present=frozenset(e.file for e in entries if (hypr / e.file).is_file()),
+            present=files_present(hypr, (e.file for e in entries)),
             detections={
                 tool: detect(
                     tool, paths=self._session.paths, manifest=manifest, find=self._actions.find
@@ -656,8 +658,8 @@ class ThemingPage:
                 return
             plan = planned
         binary = self._actions.find(spec.detection.binaries[0])
-        has_run = (self._session.paths.hypr_dir / spec.modules[0].file).is_file()
-        if has_run or binary is None or not spec.rerun:
+        ran = has_run(spec, self._session.paths.hypr_dir)
+        if ran or binary is None or not spec.rerun:
             self._confirm_switch(tool, plan, None)
             return
         current = self._actions.current_wallpaper
@@ -681,8 +683,8 @@ class ThemingPage:
             body += " Nothing outside this app's own files changes."
         elif not plan.files:
             body += f" No file of {title}'s needs to change."
-        has_run = (self._session.paths.hypr_dir / REGISTRY[tool].modules[0].file).is_file()
-        if not has_run and command is None:
+        ran = has_run(REGISTRY[tool], self._session.paths.hypr_dir)
+        if not ran and command is None:
             body += (
                 f" Its colors load after its first run: once switched, press Regenerate on "
                 f"{title}'s tab."
