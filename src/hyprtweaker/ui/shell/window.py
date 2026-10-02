@@ -101,6 +101,7 @@ from hyprtweaker.ui.pages.monitors import (  # noqa: E402
     ProfileActions,
 )
 from hyprtweaker.ui.pages.plan import (  # noqa: E402
+    Disclosure,
     PagePlan,
     View,
     is_visible,
@@ -812,6 +813,7 @@ class MainWindow(Adw.ApplicationWindow):
                 remove=self._remove_bind,
                 enable=self._set_bind_enabled,
                 rebind=self._rebind_bind,
+                recapture=lambda index: self._rebind_bind(index, enable=True),
                 swap=self._swap_binds,
                 edit_submap=self._edit_submap,
             ),
@@ -884,20 +886,14 @@ class MainWindow(Adw.ApplicationWindow):
         curated mapping, which *can* drift and is allowed to (ADR-0012) -- so a mapping that
         will not load falls back to the Config arrangement rather than to an empty window.
         """
+        disclosure = Disclosure(
+            show_advanced=self.show_advanced, view=self.view, revealed=self._revealed
+        )
         mapping = None if self.view is View.CONFIG else self._load_mapping()
         if mapping is None:
-            return (), plan_config_view(
-                self._session.schema,
-                show_advanced=self.show_advanced,
-                revealed=self._revealed,
-            )
+            return (), plan_config_view(self._session.schema, disclosure)
 
-        categories = plan_tasks_view(
-            self._session.schema,
-            mapping,
-            show_advanced=self.show_advanced,
-            revealed=self._revealed,
-        )
+        categories = plan_tasks_view(self._session.schema, mapping, disclosure)
         pages = tuple(page for category in categories for page in category.option_pages)
         return categories, pages
 
@@ -998,12 +994,16 @@ class MainWindow(Adw.ApplicationWindow):
         if self._session.swap_binds(first, second):
             self._refresh_binds()
 
-    def _rebind_bind(self, index: int) -> None:
+    def _rebind_bind(self, index: int, *, enable: bool = False) -> None:
         """The conflict popover's "rebind it": Capture on the other bind, directly.
 
         Straight to Capture rather than through the full editor (ADR-0007): the problem
         being solved is *only* that two binds share a trigger, and the fix is a new
         trigger for one of them.
+
+        `enable` is the error row's "Fix trigger…" (#139): a bind imported disabled for a
+        dead keysym. Capture refuses a key xkb does not know, so whatever comes back is
+        loadable, and the user asked for the bind back, so it comes back enabled.
         """
         if self._binds_page is None:
             return
@@ -1014,7 +1014,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         def done(text: str) -> None:
             keys = str(parse_trigger(text.strip()))
-            if keys and self._session.replace_bind(index, replace(bind, keys=keys)):
+            fixed = replace(bind, keys=keys, enabled=bind.enabled or enable)
+            if keys and self._session.replace_bind(index, fixed):
                 self._refresh_binds()
 
         CaptureDialog(
@@ -1760,7 +1761,7 @@ class MainWindow(Adw.ApplicationWindow):
         here: the rule about which tiers a View admits is ADR-0013's and lives there, and a
         second copy of it in the shell is one that would not be updated together with it.
         """
-        return is_visible(option, show_advanced=True, view=self.view)
+        return is_visible(option, Disclosure(show_advanced=True, view=self.view))
 
     def reveal_option(self, name: str, *, flash_row: bool = False) -> None:
         """Show the Row for one Option and put the keyboard on it.

@@ -96,6 +96,9 @@ class DeclarationEditor(Adw.Dialog):
         # caller has no Schema to hand -- in which case the spec's own bounds still apply.
         self._bounds: Mapping[str, tuple[float | None, float | None]] = bounds or {}
         self._rows: dict[str, Gtk.Widget] = {}
+        # What `_rebuild_optional` last added to `_optional_group`: the keyed rows and the
+        # one "Add a setting" row, which is not in `_rows`.
+        self._optional_rows: list[Gtk.Widget] = []
 
         # A label rather than an `Adw.Banner`: ADR-0016 reserves the Banner for the
         # window's one unhealthy-state surface, and "you left a field empty" is neither
@@ -143,24 +146,26 @@ class DeclarationEditor(Adw.Dialog):
             self._rebuild_optional()
 
     def _rebuild_optional(self) -> None:
-        for widget in list(self._rows.values()):
-            if widget.get_parent() is self._optional_group:
-                self._optional_group.remove(widget)
-        self._rows = {
-            name: widget
-            for name, widget in self._rows.items()
-            if widget.get_parent() is not None
-        }
+        # Adw parents a group's rows to an internal list box, never to the group, so
+        # `get_parent()` cannot say which rows are ours; remove the ones we added by
+        # reference. The add row is among them, or every rebuild stacks another picker.
+        for row in self._optional_rows:
+            self._optional_group.remove(row)
+        self._optional_rows = []
+        for spec in self._descriptor.optional:
+            self._rows.pop(spec.name, None)
 
-        present = [spec for spec in self._descriptor.optional if spec.name in self._values]
-        for spec in present:
-            self._optional_group.add(self._row_for(spec, removable=True))
+        for spec in self._descriptor.optional:
+            if spec.name in self._values:
+                self._optional_rows.append(self._row_for(spec, removable=True))
 
         remaining = [
             spec for spec in self._descriptor.optional if spec.name not in self._values
         ]
         if remaining:
-            self._optional_group.add(self._add_row(remaining))
+            self._optional_rows.append(self._add_row(remaining))
+        for row in self._optional_rows:
+            self._optional_group.add(row)
 
     def _add_row(self, remaining: Sequence[FieldSpec]) -> Gtk.Widget:
         model = Gtk.StringList()

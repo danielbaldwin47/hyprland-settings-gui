@@ -20,7 +20,7 @@ Nothing here imports `gi`.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, humanise
 
@@ -36,6 +36,32 @@ class View(enum.StrEnum):
 
     CONFIG = "config"
     TASKS = "tasks"
+
+
+@dataclass(frozen=True, slots=True)
+class Disclosure:
+    """What the user can currently see: the inputs every visibility question is asked with.
+
+    Not `Visibility` -- that is the Schema's *tier* enum, a fact about an Option. This is a
+    fact about the window: where the Advanced switch stands, which View is active, and which
+    Options a search hit has revealed One-off (ADR-0013 §5, ADR-0017). One value rather than
+    three parameters so that a planner takes it whole and passes it on whole; the bare
+    constructor is a fresh window's state.
+    """
+
+    show_advanced: bool = False
+    view: View = View.CONFIG
+    revealed: frozenset[str] = frozenset()
+    """The One-off: Options a search hit has earned a place for on this visit.
+
+    Carried here rather than as a flag on the Option because the exemption belongs to *this*
+    rebuild -- an Option that carried its own "revealed" bit would stay revealed until
+    something thought to clear it, which is the state ADR-0017 rejected temporary visibility
+    modes to avoid."""
+
+
+DEFAULT_DISCLOSURE = Disclosure()
+"""A fresh window's: the Config view, the Advanced switch off, nothing revealed."""
 
 
 _SEGMENT_TITLES = {
@@ -65,25 +91,14 @@ def _segment_title(segment: str) -> str:
     return _SEGMENT_TITLES.get(segment) or humanise(segment)
 
 
-def is_visible(
-    option: ResolvedOption,
-    *,
-    show_advanced: bool,
-    view: View = View.CONFIG,
-    revealed: frozenset[str] = frozenset(),
-) -> bool:
+def is_visible(option: ResolvedOption, disclosure: Disclosure) -> bool:
     """Whether the Advanced switch lets this Option render right now.
 
     Both non-default tiers gate on the one global switch (ADR-0013 §5), and they differ in
     exactly one way: `hidden` -- `debug`, `quirks`, `experimental`, `input-capture` -- is
     Config-view-only, so no amount of switch-flipping puts "Crash Hyprland" on a curated
-    Tasks Page. Search reaches every tier regardless and reveals its hit one-off (ADR-0017).
-
-    `revealed` is that One-off: the Options a search hit has earned a place for on this
-    visit. It is a parameter rather than a flag on the Option because the exemption belongs
-    to *this* rebuild -- an Option that carried its own "revealed" bit would stay revealed
-    until something thought to clear it, which is the state ADR-0017 rejected temporary
-    visibility modes to avoid.
+    Tasks Page. Search reaches every tier regardless and reveals its hit one-off (ADR-0017),
+    through `disclosure.revealed`.
 
     A One-off exempts an Option from the **switch**, never from the **View's tier rule**,
     and the order of the tests below is that distinction. ADR-0013 §5 is unconditional --
@@ -95,11 +110,11 @@ def is_visible(
     """
     if option.visibility is Visibility.DEFAULT:
         return True
-    if option.visibility is Visibility.HIDDEN and view is not View.CONFIG:
+    if option.visibility is Visibility.HIDDEN and disclosure.view is not View.CONFIG:
         return False
-    if option.name in revealed:
+    if option.name in disclosure.revealed:
         return True
-    return show_advanced
+    return disclosure.show_advanced
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,10 +154,7 @@ class PagePlan:
 def plan_section(
     schema: Schema,
     section: str,
-    *,
-    show_advanced: bool = False,
-    view: View = View.CONFIG,
-    revealed: frozenset[str] = frozenset(),
+    disclosure: Disclosure = DEFAULT_DISCLOSURE,
 ) -> PagePlan:
     """Plan one Section's Page.
 
@@ -152,11 +164,7 @@ def plan_section(
     `order` is a position *within* a Group, which is why it only ever breaks the tie.
     """
     options = schema.section(section)
-    visible = [
-        option
-        for option in options
-        if is_visible(option, show_advanced=show_advanced, view=view, revealed=revealed)
-    ]
+    visible = [option for option in options if is_visible(option, disclosure)]
 
     grouped: dict[str, list[ResolvedOption]] = {}
     for option in visible:
@@ -183,24 +191,17 @@ def _within_group(option: ResolvedOption) -> tuple[int, int]:
 
 
 def plan_config_view(
-    schema: Schema,
-    *,
-    show_advanced: bool = False,
-    revealed: frozenset[str] = frozenset(),
+    schema: Schema, disclosure: Disclosure = DEFAULT_DISCLOSURE
 ) -> tuple[PagePlan, ...]:
     """Every Section's Page, in the order Hyprland declares the Sections.
 
     One Page per Section unconditionally, including the ones the Advanced switch empties:
     the sidebar is the map of the config surface, and a Section that vanishes when a switch
     flips is a Section the user cannot learn exists.
+
+    Planned under the Config view's tier rule whatever `disclosure.view` says: the window
+    falls back to this arrangement from the Tasks view when the curated mapping will not
+    load, and the arrangement it falls back to admits the `hidden` tier.
     """
-    return tuple(
-        plan_section(
-            schema,
-            section,
-            show_advanced=show_advanced,
-            view=View.CONFIG,
-            revealed=revealed,
-        )
-        for section in schema.section_names
-    )
+    config = replace(disclosure, view=View.CONFIG)
+    return tuple(plan_section(schema, section, config) for section in schema.section_names)

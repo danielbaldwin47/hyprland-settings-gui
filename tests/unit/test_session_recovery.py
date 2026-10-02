@@ -19,7 +19,9 @@ from _fake_hyprland import NO_BINDS, FakeHyprland, run_with_fake
 from _support import Runner, drain_events, section_conversation, session_for
 
 from hyprtweaker.engine.apply import Action, Ownership
+from hyprtweaker.engine.ipc import IpcError
 from hyprtweaker.engine.model import UNSET
+from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.state import Manifest
 from hyprtweaker.session import Session
 
@@ -371,6 +373,72 @@ def test_the_rescue_notice_clears_on_the_next_reload(tmp_path: Path) -> None:
 
         assert session.health.rescued == ()
         assert not session.health.unhealthy, "a healthy config shows no Banner at all"
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_a_rescue_that_raised_is_not_announced_by_the_next_restore(tmp_path: Path) -> None:
+    """A restore the user chose is not a rescue. If the failed rescue's notice were left
+    pending, the user's own Restore last good would land under "restored without asking"."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+
+        applier = session._applier
+        assert applier is not None
+        restore_now = applier.restore_now
+
+        async def lost_the_socket(*_: object) -> object:
+            raise IpcError("the compositor went away mid-restore")
+
+        applier.restore_now = lost_the_socket  # type: ignore[method-assign]
+        (app_dir(tmp_path) / GENERAL_MODULE).write_bytes(b"-- hand edited, and broken\n")
+        break_once(fake, APP_ERROR, NO_BINDS)
+        await foreign_reload(fake, session, runner)
+        assert session.recovery_halted, "the precondition: the rescue raised"
+        applier.restore_now = restore_now  # type: ignore[method-assign]
+
+        assert session.restore_last_good(GENERAL_MODULE)
+        await settle(session, runner)
+
+        assert (app_dir(tmp_path) / GENERAL_MODULE).read_bytes() != (
+            b"-- hand edited, and broken\n"
+        ), "the precondition: the user's restore landed"
+        assert session.health.rescued == ()
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_a_rescue_with_nothing_to_restore_is_not_announced_later(tmp_path: Path) -> None:
+    """`restore_last_good` can decline before it starts -- no confirmed write in the Journal.
+    The rescue that never ran must not surface on the next restore the user chooses."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+
+        journal_file = ConfigPaths.rooted_at(tmp_path).journal
+        history = journal_file.read_bytes()
+        journal_file.unlink()
+        (app_dir(tmp_path) / GENERAL_MODULE).write_bytes(b"-- hand edited, and broken\n")
+        break_once(fake, APP_ERROR, NO_BINDS)
+        await foreign_reload(fake, session, runner)
+        assert session.health.rescued == (), "the precondition: nothing was restored"
+
+        journal_file.write_bytes(history)
+        assert session.restore_last_good(GENERAL_MODULE)
+        await settle(session, runner)
+
+        assert session.health.rescued == ()
 
     run_with_fake(
         scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)

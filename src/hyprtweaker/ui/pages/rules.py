@@ -216,7 +216,7 @@ class RulesPage:
     """
 
     kind = "window"
-    section = "window_rules"
+    section = "entity:window_rules"
     title = "Window rules"
     empty_hint = "Add one with the button above, or import an existing config."
 
@@ -333,7 +333,7 @@ class WindowRulesPage(RulesPage):
     and `title` off the class, so a parameterised constructor would not do."""
 
     kind = "window"
-    section = "window_rules"
+    section = "entity:window_rules"
     title = "Window rules"
 
 
@@ -341,5 +341,5 @@ class LayerRulesPage(RulesPage):
     """The layer-rule instantiation -- ADR-0008's "same list model and editor shell"."""
 
     kind = "layer"
-    section = "layer_rules"
+    section = "entity:layer_rules"
     title = "Layer rules"

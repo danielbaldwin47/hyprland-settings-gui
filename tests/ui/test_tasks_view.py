@@ -118,7 +118,12 @@ def test_every_entity_page_is_reachable_from_the_curated_sidebar(tmp_path: Path)
     entities = {page.section for page in window.declaration_pages}
 
     assert entities <= listed
-    assert {"binds", "monitors", "window_rules", "layer_rules"} <= listed
+    assert {
+        "entity:binds",
+        "entity:monitors",
+        "entity:window_rules",
+        "entity:layer_rules",
+    } <= listed
 
 
 def test_no_sidebar_row_points_at_a_page_that_was_not_built(tmp_path: Path) -> None:
@@ -218,20 +223,24 @@ def test_switching_views_leaves_the_sidebar_agreeing_with_the_content(
 def test_a_page_that_exists_in_both_views_survives_the_switch(tmp_path: Path) -> None:
     """An Entity Page is named the same in both arrangements, so it should be kept.
 
-    Deliberately *not* `binds`: that id is ambiguous, because the `binds` Schema Section and
-    the Keybinds Entity Page share it, and a test standing on an ambiguous id would go green
-    on the very sidebar-versus-content disagreement this pins. The stack child is asserted
-    for the same reason -- a selected row naming the right id is only half the claim.
+    Keybinds is the case that once failed: its id was the `binds` Schema Section's too, so
+    the Config view resolved it to "Keybind behaviour" (#120). The content title is
+    asserted for that reason -- a selected row naming the right id is only half the claim.
     """
     from hyprtweaker.ui.pages.plan import View
 
-    _session, window = build_window(tmp_path)
-    window._select_section("entity:animations")
+    for section, title in (
+        ("entity:animations", "Animation tree"),
+        ("entity:binds", "Keybinds"),
+    ):
+        _session, window = build_window(tmp_path)
+        window._select_section(section)
 
-    window.set_view(View.CONFIG)
+        window.set_view(View.CONFIG)
 
-    assert window._selected_section() == "entity:animations"
-    assert window.visible_section == "entity:animations"
+        assert window._selected_section() == section
+        assert window.visible_section == section
+        assert window._content_page.get_title() == title
 
 
 def test_the_view_choice_survives_a_restart(tmp_path: Path) -> None:
@@ -289,3 +298,88 @@ def test_an_unreadable_prefs_file_still_opens_a_window(tmp_path: Path) -> None:
     _session, window = build_window(tmp_path)
 
     assert window.view is View.TASKS
+
+
+# --- the hint for what the advanced switch withholds (#136) -----------------------------------
+
+
+def hint_rows(window: Any, section: str) -> list[tuple[str, str, bool]]:
+    """(title, subtitle, sensitive) of every withheld-hint row on one Page, as drawn."""
+    from gi.repository import Adw
+
+    page = next(page for page in window.pages if page.plan.section == section)
+    found: list[tuple[str, str, bool]] = []
+
+    def walk(widget: Any) -> None:
+        child = widget.get_first_child()
+        while child is not None:
+            if isinstance(child, Adw.ActionRow) and "advanced setting" in child.get_title():
+                found.append((child.get_title(), child.get_subtitle(), child.get_sensitive()))
+            walk(child)
+            child = child.get_next_sibling()
+
+    walk(page.page)
+    return found
+
+
+def uncurate(window: Any, section: str) -> None:
+    """Drop one Section's home from the window's mapping and rebuild: an uncurated release."""
+    from dataclasses import replace
+
+    from hyprtweaker.ui.pages.tasks import PageSpec
+
+    mapping = window._load_mapping()
+    window._mapping = replace(
+        mapping,
+        categories=tuple(
+            replace(
+                category,
+                pages=tuple(
+                    replace(page, sections=tuple(n for n in page.sections if n != section))
+                    if isinstance(page, PageSpec)
+                    else page
+                    for page in category.pages
+                ),
+            )
+            for category in mapping.categories
+        ),
+    )
+    window.rebuild()
+
+
+def test_a_fallback_page_with_only_advanced_options_says_so(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path)
+    uncurate(window, "opengl")
+
+    assert "tasks.new.opengl" in sidebar_ids(window)
+    assert hint_rows(window, "tasks.new.opengl") == [
+        (
+            "1 advanced setting",
+            "Turn on “Show advanced settings” in the main menu to see them.",
+            False,
+        )
+    ]
+
+
+def test_a_fallback_page_with_some_advanced_options_still_says_so(tmp_path: Path) -> None:
+    """The user who can see 20 cursor options must learn the other 2 exist."""
+    _session, window = build_window(tmp_path)
+    uncurate(window, "cursor")
+
+    page = next(page for page in window.pages if page.plan.section == "tasks.new.cursor")
+    assert len(page.rows) == 20
+    assert [title for title, _sub, _sens in hint_rows(window, "tasks.new.cursor")] == [
+        "2 advanced settings"
+    ]
+
+
+def test_turning_the_switch_on_shows_the_options_and_drops_the_hint(tmp_path: Path) -> None:
+    from hyprtweaker.ui.shell.window import SHOW_ADVANCED_ACTION
+
+    _session, window = build_window(tmp_path)
+    uncurate(window, "opengl")
+    window.lookup_action(SHOW_ADVANCED_ACTION).activate(None)
+
+    page = next(page for page in window.pages if page.plan.section == "tasks.new.opengl")
+    assert len(page.rows) == 1
+    assert hint_rows(window, "tasks.new.opengl") == []
