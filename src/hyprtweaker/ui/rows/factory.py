@@ -858,6 +858,9 @@ class RowFactory:
         the list lacks (an imported `"extrabold"`) joins the list as written, before
         "Custom", as the bind editor keeps an unlisted value (#86).
 
+        A typed number a name matches reads as that name once Enter or focus leaving commits
+        it, and stays a number in the model.
+
         **A typed number outside 100 to 1000 is refused, with the reason beside it.** The
         spinner's own bounds are wide on purpose: a spin button clamps out-of-range text to
         its bound, which would write `1000` for a typed `1200` without a word.
@@ -973,8 +976,20 @@ class RowFactory:
             # (ADR-0010), as for every spinner.
             self._touch(option, number)
 
+        def committed(*_: Any) -> None:
+            """Enter, or focus leaving: a typed weight a name matches now reads as that name,
+            as the same number held in the file does. Nothing more is written."""
+            spin.update()
+            held = self._typed(option, FontWeight(_NORMAL_WEIGHT))
+            if spin.get_visible() and held.number in FONT_WEIGHT_NAMES.values():
+                refresh()
+
+        focus = Gtk.EventControllerFocus()
+        focus.connect("leave", committed)
+        spin.add_controller(focus)
         dropdown.connect("notify::selected", chosen)
         spin.connect("notify::value", typed)
+        spin.connect("activate", committed)
         return OptionRow(option, row, control, refresh, chrome)
 
     # --- echo suppression -------------------------------------------------------------------

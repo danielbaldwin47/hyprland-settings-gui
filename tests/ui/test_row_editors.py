@@ -518,6 +518,45 @@ def test_typing_550_writes_the_number() -> None:
     assert "font_weight_active = 550," in group_lua(session)
 
 
+def leave(spin: Any) -> None:
+    """What focus leaving the spinner does, without a toplevel to move focus in."""
+    from gi.repository import Gtk
+
+    controllers = spin.observe_controllers()
+    for index in range(controllers.get_n_items()):
+        if isinstance(controller := controllers.get_item(index), Gtk.EventControllerFocus):
+            controller.emit("leave")
+
+
+def test_a_typed_weight_a_name_matches_shows_the_name_once_committed() -> None:
+    """Typed 700 reads "Bold" once Enter or focus leaving commits it, as a held 700 does;
+    the model keeps the number (display never rewrites a held value)."""
+    for commit in (leave, lambda spin: spin.emit("activate")):
+        session = PreviewSession()
+        dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+        choose(dropdown, "Custom")
+        type_into(spin, "700")
+        assert chosen(dropdown) == "Custom", "not while the number is still being typed"
+
+        commit(spin)
+
+        assert chosen(dropdown) == "Bold"
+        assert not spin.get_visible()
+        assert session.model.get(WEIGHT_ACTIVE) == FontWeight(700)
+
+
+def test_a_committed_weight_no_name_matches_stays_custom() -> None:
+    session = PreviewSession()
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+    choose(dropdown, "Custom")
+    type_into(spin, "550")
+
+    leave(spin)
+
+    assert chosen(dropdown) == "Custom"
+    assert spin.get_visible()
+
+
 def test_a_held_number_no_name_matches_shows_as_typed() -> None:
     session = PreviewSession()
     session.model.set(WEIGHT_ACTIVE, 550)
