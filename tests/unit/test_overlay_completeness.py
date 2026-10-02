@@ -13,10 +13,10 @@ the missing facts live in wiki prose and human judgement. So the Generated schem
 unanswered. The same prototype hand-curated 126 options and still missed two titles until
 a script counted them -- which is exactly why this is a test and not a review checklist.
 
-**Groups** (#157, #158). Every Option of a Section outside `UNGROUPED_SECTIONS` sits in a
-Group its Section declares, so no Page renders as one flat list of unrelated Rows. The
-Groups are written in `tools/overlay_groups.toml` and applied by `tools/curate_overlay.py`,
-never by hand. A table row follows these conventions; the mechanical ones are tests below:
+**Groups** (#157, #158). Every Option of every Section sits in a Group its Section
+declares, so no Page renders as one flat list of unrelated Rows. The Groups are written in
+`tools/overlay_groups.toml` and applied by `tools/curate_overlay.py`, never by hand. A table
+row follows these conventions; the mechanical ones are tests below:
 
 - A Section of one to four Options gets a single titled Group.
 - A Group usually holds 3 to 12 Options. Split above about 12 where there is a natural seam.
@@ -304,28 +304,6 @@ def test_labelled_string_values_are_known_values(schema: Schema) -> None:
 
 # --- Groups (#157) --------------------------------------------------------------------------
 
-UNGROUPED_SECTIONS = frozenset(
-    {
-        "animations",
-        "binds",
-        "cursor",
-        "debug",
-        "dwindle",
-        "ecosystem",
-        "experimental",
-        "gestures",
-        "input-capture",
-        "layout",
-        "master",
-        "opengl",
-        "quirks",
-        "render",
-        "scrolling",
-        "xwayland",
-    }
-)
-"""Sections not curated into Groups yet: #158 curates them and deletes this."""
-
 HYPRLAND_SECTION_ORDER = (
     "general",
     "decoration",
@@ -371,17 +349,16 @@ def ungrouped(schema: Schema) -> list[str]:
     return [
         option.name
         for option in schema
-        if option.section not in UNGROUPED_SECTIONS
-        and option.group not in {group.title for group in schema.section_groups(option.section)}
+        if option.group not in {group.title for group in schema.section_groups(option.section)}
         and not (option.group is None and option.added_in == schema.hyprland_version)
     ]
 
 
-def test_every_option_of_a_curated_section_sits_in_a_group_it_declares(schema: Schema) -> None:
+def test_every_option_sits_in_a_group_its_section_declares(schema: Schema) -> None:
     missing = ungrouped(schema)
 
     assert not missing, (
-        f"{len(missing)} option(s) of curated Sections have no Group: {missing[:10]}. Place "
+        f"{len(missing)} option(s) have no Group: {missing[:10]}. Place "
         "them in tools/overlay_groups.toml, then run tools/curate_overlay.py"
     )
 
@@ -434,9 +411,16 @@ def test_every_declared_group_has_an_option(schema: Schema) -> None:
     assert not empty, f"declared Groups no Option names: {empty}"
 
 
-def test_an_ungrouped_section_declares_no_groups(schema: Schema) -> None:
-    """Keeps `UNGROUPED_SECTIONS` honest: a Section #158 curates leaves the set with it."""
-    assert [s for s in sorted(UNGROUPED_SECTIONS) if schema.section_groups(s)] == []
+def test_a_small_section_has_one_titled_group_and_a_large_one_splits(schema: Schema) -> None:
+    """Five or more settings split into at least two Groups; one to four stay in one."""
+    wrong = []
+    for section in schema.section_names:
+        size = len(schema.section(section))
+        count = len(schema.section_groups(section))
+        if (size <= 4 and count != 1) or (size > 4 and count < 2):
+            wrong.append((section, size, count))
+
+    assert not wrong, f"Sections whose Group count breaks the size convention: {wrong}"
 
 
 def curated_groups(schema: Schema) -> list[tuple[str, str, str | None]]:

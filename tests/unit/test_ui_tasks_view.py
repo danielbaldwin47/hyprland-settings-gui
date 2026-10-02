@@ -394,15 +394,18 @@ def test_a_named_group_outranks_the_section_that_homes_the_option() -> None:
     assert "misc:enable_swallow" in windows
 
 
-def test_a_page_spanning_sections_leads_each_group_with_the_sections_name() -> None:
-    """Four Sections' untitled lead Groups would otherwise merge into one unlabelled heap."""
+def test_a_page_spanning_sections_names_each_group_after_its_section() -> None:
+    """Four Sections' Groups on one Page read "<Section> · <Group>", Section by Section in
+    the mapping's order, each in its own curated order: "Split direction" alone would not
+    say whether it is Dwindle's or Master's."""
     titles = [group.title for group in page_named("look.layouts").groups]
 
     assert titles == [
-        SCHEMA.section_title(section)
+        f"{SCHEMA.section_title(section)} · {group.title}"
         for section in ("layout", "dwindle", "master", "scrolling")
+        for group in SCHEMA.section_groups(section)
     ]
-    assert "" not in titles
+    assert len(titles) == len(set(titles))
 
 
 CURATED_DECORATION = curated(
@@ -561,6 +564,10 @@ def cursor_page(
     )
 
 
+CURSOR_GROUPS = [group.title for group in SCHEMA.section_groups("cursor")]
+"""The cursor Page's curated Groups, in order: a `New in <version>` Group closes after them."""
+
+
 def group_names(page: PagePlan) -> dict[str, list[str]]:
     return {group.title: [option.name for option in group.options] for group in page.groups}
 
@@ -573,7 +580,7 @@ def with_group_on_cursor_page(*keys: str) -> TasksMapping:
                 id=category.id,
                 title=category.title,
                 pages=tuple(
-                    replace(page, groups=(*page.groups, GroupSpec("Warping", keys)))
+                    replace(page, groups=(*page.groups, GroupSpec("Pointer jumps", keys)))
                     if isinstance(page, PageSpec) and page.id == "system.cursor"
                     else page
                     for page in category.pages
@@ -589,7 +596,7 @@ def test_a_new_option_in_a_homed_section_joins_a_new_in_group_on_its_home_page()
 
     groups = group_names(page)
     assert groups["New in 0.99.0"] == ["cursor:no_warps"]
-    assert "cursor:no_warps" not in groups[""]
+    assert "cursor:no_warps" not in groups["Warping"]
     assert [group.description for group in page.groups if group.title == "New in 0.99.0"] == [
         NEW_IN_GROUP_DESCRIPTION
     ]
@@ -617,20 +624,25 @@ def test_a_new_option_its_section_has_curated_into_a_group_sits_in_that_group() 
 
 def test_options_with_no_stamp_plan_exactly_as_before() -> None:
     assert cursor_page(stamped()) == cursor_page(SCHEMA)
-    assert [g.title for g in cursor_page(SCHEMA).groups] == [""]
+    assert [g.title for g in cursor_page(SCHEMA).groups] == CURSOR_GROUPS
+    assert CURSOR_GROUPS
+    assert "" not in CURSOR_GROUPS
 
 
 def test_each_version_gets_its_own_group_oldest_first() -> None:
     page = cursor_page(stamped(cursor__no_warps="0.99.0", cursor__zoom_rigid="0.58.0"))
 
-    assert [g.title for g in page.groups] == ["", "New in 0.58.0", "New in 0.99.0"]
+    assert [g.title for g in page.groups] == [*CURSOR_GROUPS, "New in 0.58.0", "New in 0.99.0"]
     assert group_names(page)["New in 0.58.0"] == ["cursor:zoom_rigid"]
 
 
 def test_a_version_is_ordered_numerically_not_as_text() -> None:
     page = cursor_page(stamped(cursor__no_warps="0.100.0", cursor__zoom_rigid="0.58.0"))
 
-    assert [g.title for g in page.groups][1:] == ["New in 0.58.0", "New in 0.100.0"]
+    assert [g.title for g in page.groups][len(CURSOR_GROUPS) :] == [
+        "New in 0.58.0",
+        "New in 0.100.0",
+    ]
 
 
 def test_curating_a_new_option_onto_its_home_page_removes_it_from_the_fallback() -> None:
@@ -640,7 +652,7 @@ def test_curating_a_new_option_onto_its_home_page_removes_it_from_the_fallback()
 
     groups = group_names(page)
     assert "New in 0.99.0" not in groups
-    assert groups["Warping"] == ["cursor:no_warps"]
+    assert groups["Pointer jumps"] == ["cursor:no_warps"]
     assert sum(names.count("cursor:no_warps") for names in groups.values()) == 1
 
 

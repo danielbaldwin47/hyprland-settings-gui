@@ -437,3 +437,378 @@ options = [
   "misc:disable_xdg_env_checks",
   "misc:disable_hyprland_guiutils_check",
 ]
+
+# --- the rest (#158) -------------------------------------------------------------------------
+# Sections of one to four settings get one titled Group. Hidden-tier Sections (debug, quirks,
+# experimental, input-capture) appear on the Config view with the Advanced switch on.
+
+# --- animations ------------------------------------------------------------------------------
+
+[[animations]]
+title = "Behaviour"
+options = [
+  "animations:enabled",
+  "animations:workspace_wraparound",
+]
+
+# --- gestures --------------------------------------------------------------------------------
+
+[[gestures]]
+title = "Workspace swipe"
+options = [
+  "gestures:workspace_swipe_distance",
+  "gestures:workspace_swipe_touch",
+  "gestures:workspace_swipe_invert",
+  "gestures:workspace_swipe_touch_invert",
+  "gestures:workspace_swipe_create_new",
+  "gestures:workspace_swipe_forever",
+  "gestures:workspace_swipe_use_r",
+]
+
+[[gestures]]
+title = "Swipe sensitivity"
+description = "How far and how fast a swipe has to go before Hyprland acts on it."
+options = [
+  "gestures:workspace_swipe_cancel_ratio",
+  "gestures:workspace_swipe_min_speed_to_force",
+  "gestures:workspace_swipe_direction_lock",
+  "gestures:workspace_swipe_direction_lock_threshold",
+]
+
+[[gestures]]
+title = "Window gestures"
+options = [
+  "gestures:close_max_timeout",
+  "gestures:scrolling:move_snap_to_grid",
+  "gestures:scrolling:move_snap_cursor",
+]
+
+# --- binds -----------------------------------------------------------------------------------
+
+[[binds]]
+title = "Workspaces"
+options = [
+  "binds:workspace_back_and_forth",
+  "binds:allow_workspace_cycles",
+  "binds:workspace_center_on",
+  "binds:hide_special_on_workspace_change",
+]
+
+[[binds]]
+title = "Moving focus"
+options = [
+  "binds:focus_preferred_method",
+  "binds:movefocus_cycles_fullscreen",
+  "binds:movefocus_cycles_groupfirst",
+  "binds:window_direction_monitor_fallback",
+]
+
+[[binds]]
+title = "Mouse and scroll"
+options = [
+  "binds:pass_mouse_when_bound",
+  "binds:scroll_event_delay",
+  "binds:drag_threshold",
+]
+
+[[binds]]
+title = "Overrides"
+description = "Exceptions to how keybinds normally treat groups, pinned windows and apps."
+options = [
+  "binds:ignore_group_lock",
+  "binds:allow_pin_fullscreen",
+  "binds:disable_keybind_grabbing",
+]
+
+# --- xwayland --------------------------------------------------------------------------------
+
+[[xwayland]]
+title = "X11 apps"
+description = "Older applications that run through XWayland instead of natively on Wayland."
+options = [
+  "xwayland:enabled",
+  "xwayland:use_nearest_neighbor",
+  "xwayland:force_zero_scaling",
+  "xwayland:create_abstract_socket",
+]
+
+# --- opengl ----------------------------------------------------------------------------------
+
+[[opengl]]
+title = "NVIDIA workarounds"
+options = [
+  "opengl:nvidia_anti_flicker",
+]
+
+# --- render ----------------------------------------------------------------------------------
+
+[[render]]
+title = "Performance"
+options = [
+  "render:direct_scanout",
+  "render:new_render_scheduling",
+  "render:commit_timing_enabled",
+  "render:xp_mode",
+]
+
+[[render]]
+title = "Colour management"
+options = [
+  "render:cm_enabled",
+  "render:cm_auto_hdr",
+  "render:cm_sdr_eotf",
+  "render:send_content_type",
+  "render:ctm_animation",
+  "render:icc_vcgt_enabled",
+]
+
+[[render]]
+title = "Blur and textures"
+options = [
+  "render:use_shader_blur_blend",
+  "render:expand_undersized_textures",
+]
+
+[[render]]
+title = "Colour pipeline"
+description = "Experimental internals: leave them alone unless a colour problem needs them."
+options = [
+  "render:non_shader_cm",
+  "render:non_shader_cm_interop",
+  "render:use_fp16",
+  "render:fp16_sdr_tf",
+  "render:keep_unmodified_copy",
+]
+
+# --- cursor ----------------------------------------------------------------------------------
+
+[[cursor]]
+title = "Hiding"
+options = [
+  "cursor:inactive_timeout",
+  "cursor:hide_on_key_press",
+  "cursor:hide_on_touch",
+  "cursor:hide_on_tablet",
+  "cursor:invisible",
+]
+
+[[cursor]]
+title = "Warping"
+description = "Jumping the cursor to a window or monitor when focus moves."
+options = [
+  "cursor:no_warps",
+  "cursor:warp_on_change_workspace",
+  "cursor:warp_on_toggle_special",
+  "cursor:persistent_warps",
+  "cursor:warp_back_after_non_mouse_input",
+  "cursor:default_monitor",
+]
+
+[[cursor]]
+title = "Zoom"
+options = [
+  "cursor:zoom_factor",
+  "cursor:zoom_rigid",
+  "cursor:zoom_detached_camera",
+  "cursor:zoom_disable_aa",
+]
+
+[[cursor]]
+title = "Theme and drawing"
+options = [
+  "cursor:enable_hyprcursor",
+  "cursor:sync_gsettings_theme",
+  "cursor:no_hardware_cursors",
+  "cursor:hotspot_padding",
+  "cursor:use_cpu_buffer",
+]
+
+[[cursor]]
+title = "Fullscreen VRR"
+description = "How cursor movement behaves in fullscreen apps that use variable refresh rate."
+options = [
+  "cursor:no_break_fs_vrr",
+  "cursor:min_refresh_rate",
+]
+
+# --- ecosystem -------------------------------------------------------------------------------
+
+[[ecosystem]]
+title = "Notices and permissions"
+options = [
+  "ecosystem:no_update_news",
+  "ecosystem:no_donation_nag",
+  "ecosystem:enforce_permissions",
+]
+
+# --- layout ----------------------------------------------------------------------------------
+
+[[layout]]
+title = "Single window"
+description = "How a window that is alone on its workspace is shaped."
+options = [
+  "layout:single_window_aspect_ratio",
+  "layout:single_window_aspect_ratio_tolerance",
+]
+
+# --- dwindle ---------------------------------------------------------------------------------
+
+[[dwindle]]
+title = "Split direction"
+options = [
+  "dwindle:force_split",
+  "dwindle:preserve_split",
+  "dwindle:smart_split",
+  "dwindle:use_active_for_splits",
+  "dwindle:permanent_direction_override",
+]
+
+[[dwindle]]
+title = "Split sizes"
+options = [
+  "dwindle:default_split_ratio",
+  "dwindle:split_bias",
+  "dwindle:split_width_multiplier",
+  "dwindle:special_scale_factor",
+]
+
+[[dwindle]]
+title = "Mouse"
+options = [
+  "dwindle:smart_resizing",
+  "dwindle:precise_mouse_move",
+]
+
+# --- master ----------------------------------------------------------------------------------
+
+[[master]]
+title = "Size and position"
+options = [
+  "master:mfact",
+  "master:orientation",
+  "master:allow_small_split",
+  "master:always_keep_position",
+  "master:special_scale_factor",
+]
+
+[[master]]
+title = "New windows"
+options = [
+  "master:new_status",
+  "master:new_on_top",
+  "master:new_on_active",
+]
+
+[[master]]
+title = "Centred master"
+description = "Used when the master area position is set to centre."
+options = [
+  "master:slave_count_for_center_master",
+  "master:center_master_fallback",
+  "master:center_ignores_reserved",
+]
+
+[[master]]
+title = "Mouse and focus"
+options = [
+  "master:smart_resizing",
+  "master:drop_at_cursor",
+  "master:focus_master_on_close",
+]
+
+# --- scrolling -------------------------------------------------------------------------------
+
+[[scrolling]]
+title = "Columns"
+options = [
+  "scrolling:column_width",
+  "scrolling:explicit_column_widths",
+  "scrolling:direction",
+  "scrolling:fullscreen_on_one_column",
+]
+
+[[scrolling]]
+title = "Focus and wrapping"
+options = [
+  "scrolling:follow_focus",
+  "scrolling:follow_min_visible",
+  "scrolling:focus_fit_method",
+  "scrolling:wrap_focus",
+  "scrolling:wrap_swapcol",
+]
+
+# --- debug (hidden tier) ---------------------------------------------------------------------
+
+[[debug]]
+title = "Logging"
+options = [
+  "debug:disable_logs",
+  "debug:enable_stdout_logs",
+  "debug:colored_stdout_logs",
+  "debug:disable_time",
+]
+
+[[debug]]
+title = "Errors and crashes"
+options = [
+  "debug:suppress_errors",
+  "debug:error_limit",
+  "debug:error_position",
+  "debug:manual_crash",
+]
+
+[[debug]]
+title = "Overlays and tracing"
+options = [
+  "debug:overlay",
+  "debug:damage_blink",
+  "debug:log_damage",
+  "debug:pass",
+  "debug:gl_debugging",
+]
+
+[[debug]]
+title = "Frame rendering"
+options = [
+  "debug:damage_tracking",
+  "debug:vfr",
+  "debug:render_solitary_wo_damage",
+  "debug:invalidate_fp16",
+  "debug:disable_scale_checks",
+]
+
+[[debug]]
+title = "Protocol workarounds"
+options = [
+  "debug:ds_handle_same_buffer",
+  "debug:ds_handle_same_buffer_fifo",
+  "debug:fifo_pending_workaround",
+  "debug:full_cm_proto",
+]
+
+# --- quirks (hidden tier) --------------------------------------------------------------------
+
+[[quirks]]
+title = "Display workarounds"
+options = [
+  "quirks:prefer_hdr",
+  "quirks:skip_non_kms_dmabuf_formats",
+]
+
+# --- experimental (hidden tier) --------------------------------------------------------------
+
+[[experimental]]
+title = "Colour management"
+description = "A preview of newer colour-management protocol support."
+options = [
+  "experimental:wp_cm_1_2",
+]
+
+# --- input-capture (hidden tier) -------------------------------------------------------------
+
+[[input-capture]]
+title = "Barriers and modifiers"
+options = [
+  "input-capture:enforce_barriers",
+  "input-capture:capture_modifiers",
+]

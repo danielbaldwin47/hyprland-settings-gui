@@ -50,6 +50,7 @@ Done when every change in all five layers is classified — an unclassified chan
 Update `data/schema/overlay.json`:
 
 - **Added option** → the mandatory tier: `widget`, `nullable`/`null_label`, `title`; plus `labels` / `known_values` / `range` / `depends_on` / `visibility` wherever the coverage heuristics flag the option (map-less small-int, `[a/b/c]` description, sentinel default, vec2/css_gaps/font_weight, font/monitor/regex/file strings).
+- **Added option** → also its `group`, in the same release check: add it to a Group in `tools/overlay_groups.toml`, then run `tools/curate_overlay.py` (never edit `group` or `order` in `overlay.json`). The completeness test exempts an ungrouped option for the release that added it only, so an option left in *New in \<version\>* fails the next release's check.
 - **Renamed** → `renamed_from` on the new name (the app migrates the user's value silently, Info notice).
 - **Removed** → `deprecated_in: <ver>` on the old entry (kept — the Overlay is version-independent; the entry still serves older schemas in the support window).
 - **Restart-list change** → update `restart` fields, hand-verified against the wiki prose.

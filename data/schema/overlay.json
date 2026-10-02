@@ -36,7 +36,8 @@
     },
     "animations": {
       "title": "Animations",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#animations"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#animations",
+      "groups": [{ "title": "Behaviour" }]
     },
     "input": {
       "title": "Input",
@@ -65,7 +66,15 @@
     },
     "gestures": {
       "title": "Gestures",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#gestures"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#gestures",
+      "groups": [
+        { "title": "Workspace swipe" },
+        {
+          "title": "Swipe sensitivity",
+          "description": "How far and how fast a swipe has to go before Hyprland acts on it."
+        },
+        { "title": "Window gestures" }
+      ]
     },
     "group": {
       "title": "Groups",
@@ -109,60 +118,131 @@
     },
     "binds": {
       "title": "Keybind behaviour",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#binds"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#binds",
+      "groups": [
+        { "title": "Workspaces" },
+        { "title": "Moving focus" },
+        { "title": "Mouse and scroll" },
+        {
+          "title": "Overrides",
+          "description": "Exceptions to how keybinds normally treat groups, pinned windows and apps."
+        }
+      ]
     },
     "xwayland": {
       "title": "XWayland",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#xwayland"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#xwayland",
+      "groups": [
+        {
+          "title": "X11 apps",
+          "description": "Older applications that run through XWayland instead of natively on Wayland."
+        }
+      ]
     },
     "opengl": {
       "title": "OpenGL",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#opengl"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#opengl",
+      "groups": [{ "title": "NVIDIA workarounds" }]
     },
     "render": {
       "title": "Rendering",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#render"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#render",
+      "groups": [
+        { "title": "Performance" },
+        { "title": "Colour management" },
+        { "title": "Blur and textures" },
+        {
+          "title": "Colour pipeline",
+          "description": "Experimental internals: leave them alone unless a colour problem needs them."
+        }
+      ]
     },
     "cursor": {
       "title": "Cursor",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#cursor"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#cursor",
+      "groups": [
+        { "title": "Hiding" },
+        {
+          "title": "Warping",
+          "description": "Jumping the cursor to a window or monitor when focus moves."
+        },
+        { "title": "Zoom" },
+        { "title": "Theme and drawing" },
+        {
+          "title": "Fullscreen VRR",
+          "description": "How cursor movement behaves in fullscreen apps that use variable refresh rate."
+        }
+      ]
     },
     "ecosystem": {
       "title": "Ecosystem",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#ecosystem"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#ecosystem",
+      "groups": [{ "title": "Notices and permissions" }]
     },
     "debug": {
       "title": "Debug",
       "visibility": "hidden",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#debug"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#debug",
+      "groups": [
+        { "title": "Logging" },
+        { "title": "Errors and crashes" },
+        { "title": "Overlays and tracing" },
+        { "title": "Frame rendering" },
+        { "title": "Protocol workarounds" }
+      ]
     },
     "layout": {
       "title": "Layout",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#layout"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#layout",
+      "groups": [
+        {
+          "title": "Single window",
+          "description": "How a window that is alone on its workspace is shaped."
+        }
+      ]
     },
     "dwindle": {
       "title": "Dwindle layout",
-      "help_url": "https://wiki.hypr.land/Configuring/Dwindle-Layout/"
+      "help_url": "https://wiki.hypr.land/Configuring/Dwindle-Layout/",
+      "groups": [{ "title": "Split direction" }, { "title": "Split sizes" }, { "title": "Mouse" }]
     },
     "master": {
       "title": "Master layout",
-      "help_url": "https://wiki.hypr.land/Configuring/Master-Layout/"
+      "help_url": "https://wiki.hypr.land/Configuring/Master-Layout/",
+      "groups": [
+        { "title": "Size and position" },
+        { "title": "New windows" },
+        {
+          "title": "Centred master",
+          "description": "Used when the master area position is set to centre."
+        },
+        { "title": "Mouse and focus" }
+      ]
     },
     "scrolling": {
       "title": "Scrolling layout",
-      "help_url": "https://wiki.hypr.land/Configuring/Scrolling-Layout/"
+      "help_url": "https://wiki.hypr.land/Configuring/Scrolling-Layout/",
+      "groups": [{ "title": "Columns" }, { "title": "Focus and wrapping" }]
     },
     "experimental": {
       "title": "Experimental",
-      "visibility": "hidden"
+      "visibility": "hidden",
+      "groups": [
+        {
+          "title": "Colour management",
+          "description": "A preview of newer colour-management protocol support."
+        }
+      ]
     },
     "input-capture": {
       "title": "Input capture",
-      "visibility": "hidden"
+      "visibility": "hidden",
+      "groups": [{ "title": "Barriers and modifiers" }]
     },
     "quirks": {
       "title": "Quirks",
-      "visibility": "hidden"
+      "visibility": "hidden",
+      "groups": [{ "title": "Display workarounds" }]
     }
   },
   "options": {
@@ -529,8 +609,12 @@
       "order": 3
     },
 
-    "animations:enabled": { "title": "Animations" },
-    "animations:workspace_wraparound": { "title": "Wrap workspace animations" },
+    "animations:enabled": { "title": "Animations", "group": "Behaviour", "order": 1 },
+    "animations:workspace_wraparound": {
+      "title": "Wrap workspace animations",
+      "group": "Behaviour",
+      "order": 2
+    },
 
     "input:kb_model": {
       "title": "Keyboard model",
@@ -872,24 +956,80 @@
       "order": 6
     },
 
-    "gestures:workspace_swipe_distance": { "title": "Swipe distance", "unit": "px" },
-    "gestures:workspace_swipe_touch": { "title": "Swipe on touchscreens" },
-    "gestures:workspace_swipe_invert": { "title": "Invert swipe direction" },
-    "gestures:workspace_swipe_touch_invert": { "title": "Invert touchscreen swipe direction" },
-    "gestures:workspace_swipe_min_speed_to_force": { "title": "Minimum speed to force a switch" },
-    "gestures:workspace_swipe_cancel_ratio": { "title": "Cancel ratio" },
-    "gestures:workspace_swipe_create_new": { "title": "Create a workspace by swiping past the end" },
-    "gestures:workspace_swipe_direction_lock": { "title": "Direction lock" },
+    "gestures:workspace_swipe_distance": {
+      "title": "Swipe distance",
+      "unit": "px",
+      "group": "Workspace swipe",
+      "order": 1
+    },
+    "gestures:workspace_swipe_touch": {
+      "title": "Swipe on touchscreens",
+      "group": "Workspace swipe",
+      "order": 2
+    },
+    "gestures:workspace_swipe_invert": {
+      "title": "Invert swipe direction",
+      "group": "Workspace swipe",
+      "order": 3
+    },
+    "gestures:workspace_swipe_touch_invert": {
+      "title": "Invert touchscreen swipe direction",
+      "group": "Workspace swipe",
+      "order": 4
+    },
+    "gestures:workspace_swipe_min_speed_to_force": {
+      "title": "Minimum speed to force a switch",
+      "group": "Swipe sensitivity",
+      "order": 2
+    },
+    "gestures:workspace_swipe_cancel_ratio": {
+      "title": "Cancel ratio",
+      "group": "Swipe sensitivity",
+      "order": 1
+    },
+    "gestures:workspace_swipe_create_new": {
+      "title": "Create a workspace by swiping past the end",
+      "group": "Workspace swipe",
+      "order": 5
+    },
+    "gestures:workspace_swipe_direction_lock": {
+      "title": "Direction lock",
+      "group": "Swipe sensitivity",
+      "order": 3
+    },
     "gestures:workspace_swipe_direction_lock_threshold": {
       "title": "Direction lock threshold",
       "unit": "px",
-      "depends_on": { "option": "gestures:workspace_swipe_direction_lock", "value": true }
+      "depends_on": { "option": "gestures:workspace_swipe_direction_lock", "value": true },
+      "group": "Swipe sensitivity",
+      "order": 4
     },
-    "gestures:workspace_swipe_forever": { "title": "Keep swiping past the last workspace" },
-    "gestures:workspace_swipe_use_r": { "title": "Use the r workspace prefix" },
-    "gestures:close_max_timeout": { "title": "Close gesture timeout", "unit": "ms" },
-    "gestures:scrolling:move_snap_to_grid": { "title": "Snap to the grid when moving" },
-    "gestures:scrolling:move_snap_cursor": { "title": "Snap to the cursor when moving" },
+    "gestures:workspace_swipe_forever": {
+      "title": "Keep swiping past the last workspace",
+      "group": "Workspace swipe",
+      "order": 6
+    },
+    "gestures:workspace_swipe_use_r": {
+      "title": "Use the r workspace prefix",
+      "group": "Workspace swipe",
+      "order": 7
+    },
+    "gestures:close_max_timeout": {
+      "title": "Close gesture timeout",
+      "unit": "ms",
+      "group": "Window gestures",
+      "order": 1
+    },
+    "gestures:scrolling:move_snap_to_grid": {
+      "title": "Snap to the grid when moving",
+      "group": "Window gestures",
+      "order": 2
+    },
+    "gestures:scrolling:move_snap_cursor": {
+      "title": "Snap to the cursor when moving",
+      "group": "Window gestures",
+      "order": 3
+    },
 
     "group:insert_after_current": {
       "title": "Insert after the current window",
@@ -1400,62 +1540,150 @@
       "order": 3
     },
 
-    "binds:pass_mouse_when_bound": { "title": "Pass mouse events when bound" },
-    "binds:scroll_event_delay": { "title": "Scroll bind delay", "unit": "ms" },
-    "binds:workspace_back_and_forth": { "title": "Workspace back and forth" },
-    "binds:hide_special_on_workspace_change": {
-      "title": "Hide the special workspace on switch"
+    "binds:pass_mouse_when_bound": {
+      "title": "Pass mouse events when bound",
+      "group": "Mouse and scroll",
+      "order": 1
     },
-    "binds:allow_workspace_cycles": { "title": "Allow workspace cycles" },
+    "binds:scroll_event_delay": {
+      "title": "Scroll bind delay",
+      "unit": "ms",
+      "group": "Mouse and scroll",
+      "order": 2
+    },
+    "binds:workspace_back_and_forth": {
+      "title": "Workspace back and forth",
+      "group": "Workspaces",
+      "order": 1
+    },
+    "binds:hide_special_on_workspace_change": {
+      "title": "Hide the special workspace on switch",
+      "group": "Workspaces",
+      "order": 4
+    },
+    "binds:allow_workspace_cycles": {
+      "title": "Allow workspace cycles",
+      "group": "Workspaces",
+      "order": 2
+    },
     "binds:workspace_center_on": {
       "title": "Centre the cursor on workspace switch",
       "widget": "segmented",
-      "labels": { "0": "The workspace", "1": "The last active window" }
+      "labels": { "0": "The workspace", "1": "The last active window" },
+      "group": "Workspaces",
+      "order": 3
     },
     "binds:focus_preferred_method": {
       "title": "Directional focus method",
       "widget": "segmented",
-      "labels": { "0": "History", "1": "Length" }
+      "labels": { "0": "History", "1": "Length" },
+      "group": "Moving focus",
+      "order": 1
     },
-    "binds:ignore_group_lock": { "title": "Ignore group lock" },
-    "binds:movefocus_cycles_fullscreen": { "title": "Move focus cycles fullscreen windows" },
-    "binds:movefocus_cycles_groupfirst": { "title": "Move focus cycles the group first" },
-    "binds:disable_keybind_grabbing": { "title": "Disable keybind grabbing" },
+    "binds:ignore_group_lock": { "title": "Ignore group lock", "group": "Overrides", "order": 1 },
+    "binds:movefocus_cycles_fullscreen": {
+      "title": "Move focus cycles fullscreen windows",
+      "group": "Moving focus",
+      "order": 2
+    },
+    "binds:movefocus_cycles_groupfirst": {
+      "title": "Move focus cycles the group first",
+      "group": "Moving focus",
+      "order": 3
+    },
+    "binds:disable_keybind_grabbing": {
+      "title": "Disable keybind grabbing",
+      "group": "Overrides",
+      "order": 3
+    },
     "binds:window_direction_monitor_fallback": {
-      "title": "Fall back to the monitor for directional moves"
+      "title": "Fall back to the monitor for directional moves",
+      "group": "Moving focus",
+      "order": 4
     },
-    "binds:allow_pin_fullscreen": { "title": "Allow pinning fullscreen windows" },
+    "binds:allow_pin_fullscreen": {
+      "title": "Allow pinning fullscreen windows",
+      "group": "Overrides",
+      "order": 2
+    },
     "binds:drag_threshold": {
       "title": "Drag threshold",
       "unit": "px",
-      "range": { "min": 0, "soft_max": 100 }
+      "range": { "min": 0, "soft_max": 100 },
+      "group": "Mouse and scroll",
+      "order": 3
     },
 
-    "xwayland:enabled": { "title": "XWayland", "restart": "hyprland" },
-    "xwayland:use_nearest_neighbor": { "title": "Nearest-neighbour scaling" },
-    "xwayland:force_zero_scaling": { "title": "Force zero scaling" },
+    "xwayland:enabled": {
+      "title": "XWayland",
+      "restart": "hyprland",
+      "group": "X11 apps",
+      "order": 1
+    },
+    "xwayland:use_nearest_neighbor": {
+      "title": "Nearest-neighbour scaling",
+      "group": "X11 apps",
+      "order": 2
+    },
+    "xwayland:force_zero_scaling": {
+      "title": "Force zero scaling",
+      "group": "X11 apps",
+      "order": 3
+    },
     "xwayland:create_abstract_socket": {
       "title": "Create an abstract socket",
       "restart": "xwayland",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "X11 apps",
+      "order": 4
     },
 
     "opengl:nvidia_anti_flicker": {
       "title": "NVIDIA anti-flicker",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "NVIDIA workarounds",
+      "order": 1
     },
 
-    "render:direct_scanout": { "title": "Direct scanout" },
-    "render:expand_undersized_textures": { "title": "Expand undersized textures" },
-    "render:xp_mode": { "title": "XP mode" },
-    "render:ctm_animation": { "title": "Colour transform animation" },
-    "render:cm_enabled": { "title": "Colour management", "restart": "hyprland" },
-    "render:send_content_type": { "title": "Send the content type" },
-    "render:cm_auto_hdr": { "title": "Automatic HDR", "visibility": "advanced" },
-    "render:new_render_scheduling": { "title": "New render scheduling" },
+    "render:direct_scanout": { "title": "Direct scanout", "group": "Performance", "order": 1 },
+    "render:expand_undersized_textures": {
+      "title": "Expand undersized textures",
+      "group": "Blur and textures",
+      "order": 2
+    },
+    "render:xp_mode": { "title": "XP mode", "group": "Performance", "order": 4 },
+    "render:ctm_animation": {
+      "title": "Colour transform animation",
+      "group": "Colour management",
+      "order": 5
+    },
+    "render:cm_enabled": {
+      "title": "Colour management",
+      "restart": "hyprland",
+      "group": "Colour management",
+      "order": 1
+    },
+    "render:send_content_type": {
+      "title": "Send the content type",
+      "group": "Colour management",
+      "order": 4
+    },
+    "render:cm_auto_hdr": {
+      "title": "Automatic HDR",
+      "visibility": "advanced",
+      "group": "Colour management",
+      "order": 2
+    },
+    "render:new_render_scheduling": {
+      "title": "New render scheduling",
+      "group": "Performance",
+      "order": 2
+    },
     "render:non_shader_cm": {
       "title": "Non-shader colour management",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 1
     },
     "render:cm_sdr_eotf": {
       "title": "SDR transfer function",
@@ -1467,111 +1695,290 @@
         "gamma22force": "Gamma 2.2 (forced)",
         "srgb": "sRGB"
       },
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Colour management",
+      "order": 3
     },
-    "render:commit_timing_enabled": { "title": "Commit timing", "restart": "hyprland" },
-    "render:icc_vcgt_enabled": { "title": "Apply ICC VCGT tables", "visibility": "advanced" },
-    "render:use_shader_blur_blend": { "title": "Shader blur blending" },
-    "render:use_fp16": { "title": "Use FP16 buffers", "visibility": "advanced" },
+    "render:commit_timing_enabled": {
+      "title": "Commit timing",
+      "restart": "hyprland",
+      "group": "Performance",
+      "order": 3
+    },
+    "render:icc_vcgt_enabled": {
+      "title": "Apply ICC VCGT tables",
+      "visibility": "advanced",
+      "group": "Colour management",
+      "order": 6
+    },
+    "render:use_shader_blur_blend": {
+      "title": "Shader blur blending",
+      "group": "Blur and textures",
+      "order": 1
+    },
+    "render:use_fp16": {
+      "title": "Use FP16 buffers",
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 3
+    },
     "render:keep_unmodified_copy": {
       "title": "Keep an unmodified copy",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 5
     },
     "render:non_shader_cm_interop": {
       "title": "Non-shader colour management interop",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 2
     },
     "render:fp16_sdr_tf": {
       "title": "FP16 SDR transfer function",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 4
     },
 
-    "cursor:invisible": { "title": "Hide the cursor" },
-    "cursor:no_hardware_cursors": { "title": "Hardware cursors" },
-    "cursor:no_break_fs_vrr": { "title": "Keep VRR in fullscreen" },
-    "cursor:min_refresh_rate": { "title": "Minimum refresh rate", "unit": "Hz" },
-    "cursor:hotspot_padding": { "title": "Hotspot padding", "unit": "px" },
-    "cursor:inactive_timeout": { "title": "Hide after inactivity", "unit": "s" },
-    "cursor:no_warps": { "title": "Disable cursor warps" },
-    "cursor:persistent_warps": { "title": "Persistent warps" },
-    "cursor:warp_on_change_workspace": { "title": "Warp on workspace change" },
-    "cursor:warp_on_toggle_special": { "title": "Warp on special workspace toggle" },
+    "cursor:invisible": { "title": "Hide the cursor", "group": "Hiding", "order": 5 },
+    "cursor:no_hardware_cursors": {
+      "title": "Hardware cursors",
+      "group": "Theme and drawing",
+      "order": 3
+    },
+    "cursor:no_break_fs_vrr": {
+      "title": "Keep VRR in fullscreen",
+      "group": "Fullscreen VRR",
+      "order": 1
+    },
+    "cursor:min_refresh_rate": {
+      "title": "Minimum refresh rate",
+      "unit": "Hz",
+      "group": "Fullscreen VRR",
+      "order": 2
+    },
+    "cursor:hotspot_padding": {
+      "title": "Hotspot padding",
+      "unit": "px",
+      "group": "Theme and drawing",
+      "order": 4
+    },
+    "cursor:inactive_timeout": {
+      "title": "Hide after inactivity",
+      "unit": "s",
+      "group": "Hiding",
+      "order": 1
+    },
+    "cursor:no_warps": { "title": "Disable cursor warps", "group": "Warping", "order": 1 },
+    "cursor:persistent_warps": { "title": "Persistent warps", "group": "Warping", "order": 4 },
+    "cursor:warp_on_change_workspace": {
+      "title": "Warp on workspace change",
+      "group": "Warping",
+      "order": 2
+    },
+    "cursor:warp_on_toggle_special": {
+      "title": "Warp on special workspace toggle",
+      "group": "Warping",
+      "order": 3
+    },
     "cursor:default_monitor": {
       "title": "Startup monitor",
       "widget": "monitor-picker",
       "nullable": true,
       "null_label": "Auto",
-      "null_value": ""
+      "null_value": "",
+      "group": "Warping",
+      "order": 6
     },
-    "cursor:zoom_factor": { "title": "Zoom factor", "visibility": "advanced" },
-    "cursor:zoom_rigid": { "title": "Rigid zoom" },
-    "cursor:zoom_disable_aa": { "title": "Disable zoom antialiasing" },
-    "cursor:zoom_detached_camera": { "title": "Detached zoom camera" },
-    "cursor:enable_hyprcursor": { "title": "Use hyprcursor" },
-    "cursor:hide_on_key_press": { "title": "Hide on key press" },
-    "cursor:hide_on_touch": { "title": "Hide on touch" },
-    "cursor:hide_on_tablet": { "title": "Hide on tablet input" },
-    "cursor:use_cpu_buffer": { "title": "Use a CPU buffer", "visibility": "advanced" },
-    "cursor:sync_gsettings_theme": { "title": "Sync the cursor theme to GSettings" },
-    "cursor:warp_back_after_non_mouse_input": { "title": "Warp back after non-mouse input" },
+    "cursor:zoom_factor": {
+      "title": "Zoom factor",
+      "visibility": "advanced",
+      "group": "Zoom",
+      "order": 1
+    },
+    "cursor:zoom_rigid": { "title": "Rigid zoom", "group": "Zoom", "order": 2 },
+    "cursor:zoom_disable_aa": { "title": "Disable zoom antialiasing", "group": "Zoom", "order": 4 },
+    "cursor:zoom_detached_camera": { "title": "Detached zoom camera", "group": "Zoom", "order": 3 },
+    "cursor:enable_hyprcursor": {
+      "title": "Use hyprcursor",
+      "group": "Theme and drawing",
+      "order": 1
+    },
+    "cursor:hide_on_key_press": { "title": "Hide on key press", "group": "Hiding", "order": 2 },
+    "cursor:hide_on_touch": { "title": "Hide on touch", "group": "Hiding", "order": 3 },
+    "cursor:hide_on_tablet": { "title": "Hide on tablet input", "group": "Hiding", "order": 4 },
+    "cursor:use_cpu_buffer": {
+      "title": "Use a CPU buffer",
+      "visibility": "advanced",
+      "group": "Theme and drawing",
+      "order": 5
+    },
+    "cursor:sync_gsettings_theme": {
+      "title": "Sync the cursor theme to GSettings",
+      "group": "Theme and drawing",
+      "order": 2
+    },
+    "cursor:warp_back_after_non_mouse_input": {
+      "title": "Warp back after non-mouse input",
+      "group": "Warping",
+      "order": 5
+    },
 
-    "ecosystem:no_update_news": { "title": "Hide update news" },
-    "ecosystem:no_donation_nag": { "title": "Hide the donation reminder" },
+    "ecosystem:no_update_news": {
+      "title": "Hide update news",
+      "group": "Notices and permissions",
+      "order": 1
+    },
+    "ecosystem:no_donation_nag": {
+      "title": "Hide the donation reminder",
+      "group": "Notices and permissions",
+      "order": 2
+    },
     "ecosystem:enforce_permissions": {
       "title": "Enforce permissions",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Notices and permissions",
+      "order": 3
     },
 
-    "debug:overlay": { "title": "Debug overlay" },
-    "debug:damage_blink": { "title": "Blink on damage" },
-    "debug:gl_debugging": { "title": "OpenGL debugging", "restart": "hyprland" },
-    "debug:disable_logs": { "title": "Disable logging" },
-    "debug:disable_time": { "title": "Omit timestamps from logs" },
-    "debug:damage_tracking": { "title": "Damage tracking" },
-    "debug:enable_stdout_logs": { "title": "Log to stdout" },
+    "debug:overlay": { "title": "Debug overlay", "group": "Overlays and tracing", "order": 1 },
+    "debug:damage_blink": {
+      "title": "Blink on damage",
+      "group": "Overlays and tracing",
+      "order": 2
+    },
+    "debug:gl_debugging": {
+      "title": "OpenGL debugging",
+      "restart": "hyprland",
+      "group": "Overlays and tracing",
+      "order": 5
+    },
+    "debug:disable_logs": { "title": "Disable logging", "group": "Logging", "order": 1 },
+    "debug:disable_time": { "title": "Omit timestamps from logs", "group": "Logging", "order": 4 },
+    "debug:damage_tracking": { "title": "Damage tracking", "group": "Frame rendering", "order": 1 },
+    "debug:enable_stdout_logs": { "title": "Log to stdout", "group": "Logging", "order": 2 },
     "debug:manual_crash": {
       "title": "Manual crash",
       "widget": "segmented",
-      "labels": { "0": "Armed", "1": "Crash Hyprland" }
+      "labels": { "0": "Armed", "1": "Crash Hyprland" },
+      "group": "Errors and crashes",
+      "order": 4
     },
-    "debug:suppress_errors": { "title": "Suppress errors" },
-    "debug:disable_scale_checks": { "title": "Disable scale checks" },
-    "debug:error_limit": { "title": "Displayed error limit" },
-    "debug:error_position": { "title": "Error position" },
-    "debug:colored_stdout_logs": { "title": "Colour stdout logs" },
-    "debug:log_damage": { "title": "Log damage" },
-    "debug:pass": { "title": "Log render passes" },
+    "debug:suppress_errors": {
+      "title": "Suppress errors",
+      "group": "Errors and crashes",
+      "order": 1
+    },
+    "debug:disable_scale_checks": {
+      "title": "Disable scale checks",
+      "group": "Frame rendering",
+      "order": 5
+    },
+    "debug:error_limit": {
+      "title": "Displayed error limit",
+      "group": "Errors and crashes",
+      "order": 2
+    },
+    "debug:error_position": { "title": "Error position", "group": "Errors and crashes", "order": 3 },
+    "debug:colored_stdout_logs": { "title": "Colour stdout logs", "group": "Logging", "order": 3 },
+    "debug:log_damage": { "title": "Log damage", "group": "Overlays and tracing", "order": 3 },
+    "debug:pass": { "title": "Log render passes", "group": "Overlays and tracing", "order": 4 },
     "debug:full_cm_proto": {
       "title": "Full colour-management protocol",
-      "restart": "hyprland"
+      "restart": "hyprland",
+      "group": "Protocol workarounds",
+      "order": 4
     },
-    "debug:ds_handle_same_buffer": { "title": "Direct scanout of the same buffer" },
+    "debug:ds_handle_same_buffer": {
+      "title": "Direct scanout of the same buffer",
+      "group": "Protocol workarounds",
+      "order": 1
+    },
     "debug:ds_handle_same_buffer_fifo": {
-      "title": "Direct scanout of the same buffer (FIFO)"
+      "title": "Direct scanout of the same buffer (FIFO)",
+      "group": "Protocol workarounds",
+      "order": 2
     },
-    "debug:fifo_pending_workaround": { "title": "FIFO pending workaround" },
-    "debug:render_solitary_wo_damage": { "title": "Render solitary windows without damage" },
-    "debug:vfr": { "title": "Variable frame rate" },
-    "debug:invalidate_fp16": { "title": "Invalidate FP16 buffers" },
+    "debug:fifo_pending_workaround": {
+      "title": "FIFO pending workaround",
+      "group": "Protocol workarounds",
+      "order": 3
+    },
+    "debug:render_solitary_wo_damage": {
+      "title": "Render solitary windows without damage",
+      "group": "Frame rendering",
+      "order": 3
+    },
+    "debug:vfr": { "title": "Variable frame rate", "group": "Frame rendering", "order": 2 },
+    "debug:invalidate_fp16": {
+      "title": "Invalidate FP16 buffers",
+      "group": "Frame rendering",
+      "order": 4
+    },
 
-    "layout:single_window_aspect_ratio": { "title": "Single window aspect ratio" },
-    "layout:single_window_aspect_ratio_tolerance": { "title": "Aspect ratio tolerance" },
+    "layout:single_window_aspect_ratio": {
+      "title": "Single window aspect ratio",
+      "group": "Single window",
+      "order": 1
+    },
+    "layout:single_window_aspect_ratio_tolerance": {
+      "title": "Aspect ratio tolerance",
+      "group": "Single window",
+      "order": 2
+    },
 
-    "dwindle:force_split": { "title": "Force split direction" },
-    "dwindle:preserve_split": { "title": "Preserve the split direction" },
-    "dwindle:smart_split": { "title": "Smart split" },
-    "dwindle:smart_resizing": { "title": "Smart resizing" },
-    "dwindle:permanent_direction_override": { "title": "Permanent direction override" },
-    "dwindle:special_scale_factor": { "title": "Special workspace scale" },
-    "dwindle:split_width_multiplier": { "title": "Split width multiplier" },
-    "dwindle:use_active_for_splits": { "title": "Split from the active window" },
-    "dwindle:default_split_ratio": { "title": "Default split ratio" },
-    "dwindle:split_bias": { "title": "Split bias" },
-    "dwindle:precise_mouse_move": { "title": "Precise mouse move" },
+    "dwindle:force_split": {
+      "title": "Force split direction",
+      "group": "Split direction",
+      "order": 1
+    },
+    "dwindle:preserve_split": {
+      "title": "Preserve the split direction",
+      "group": "Split direction",
+      "order": 2
+    },
+    "dwindle:smart_split": { "title": "Smart split", "group": "Split direction", "order": 3 },
+    "dwindle:smart_resizing": { "title": "Smart resizing", "group": "Mouse", "order": 1 },
+    "dwindle:permanent_direction_override": {
+      "title": "Permanent direction override",
+      "group": "Split direction",
+      "order": 5
+    },
+    "dwindle:special_scale_factor": {
+      "title": "Special workspace scale",
+      "group": "Split sizes",
+      "order": 4
+    },
+    "dwindle:split_width_multiplier": {
+      "title": "Split width multiplier",
+      "group": "Split sizes",
+      "order": 3
+    },
+    "dwindle:use_active_for_splits": {
+      "title": "Split from the active window",
+      "group": "Split direction",
+      "order": 4
+    },
+    "dwindle:default_split_ratio": {
+      "title": "Default split ratio",
+      "group": "Split sizes",
+      "order": 1
+    },
+    "dwindle:split_bias": { "title": "Split bias", "group": "Split sizes", "order": 2 },
+    "dwindle:precise_mouse_move": { "title": "Precise mouse move", "group": "Mouse", "order": 2 },
 
-    "master:allow_small_split": { "title": "Allow small splits" },
-    "master:special_scale_factor": { "title": "Special workspace scale" },
-    "master:mfact": { "title": "Master area size" },
+    "master:allow_small_split": {
+      "title": "Allow small splits",
+      "group": "Size and position",
+      "order": 3
+    },
+    "master:special_scale_factor": {
+      "title": "Special workspace scale",
+      "group": "Size and position",
+      "order": 5
+    },
+    "master:mfact": { "title": "Master area size", "group": "Size and position", "order": 1 },
     "master:new_status": {
       "title": "New window placement",
       "widget": "enum-string",
@@ -1580,14 +1987,18 @@
         "master": "Becomes master",
         "slave": "Joins the stack",
         "inherit": "Inherit from focus"
-      }
+      },
+      "group": "New windows",
+      "order": 1
     },
-    "master:new_on_top": { "title": "New windows on top" },
+    "master:new_on_top": { "title": "New windows on top", "group": "New windows", "order": 2 },
     "master:new_on_active": {
       "title": "Place new windows relative to focus",
       "widget": "enum-string",
       "known_values": { "values": ["before", "after", "none"] },
-      "labels": { "before": "Before", "after": "After", "none": "Use “new on top”" }
+      "labels": { "before": "Before", "after": "After", "none": "Use “new on top”" },
+      "group": "New windows",
+      "order": 3
     },
     "master:orientation": {
       "title": "Master area position",
@@ -1599,46 +2010,106 @@
         "top": "Top",
         "bottom": "Bottom",
         "center": "Centre"
-      }
+      },
+      "group": "Size and position",
+      "order": 2
     },
-    "master:slave_count_for_center_master": { "title": "Stack windows before centring master" },
+    "master:slave_count_for_center_master": {
+      "title": "Stack windows before centring master",
+      "group": "Centred master",
+      "order": 1
+    },
     "master:center_master_fallback": {
       "title": "Centre master fallback",
       "widget": "enum-string",
       "known_values": { "values": ["left", "right", "top", "bottom"] },
       "labels": { "left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom" },
-      "depends_on": { "option": "master:orientation", "value": "center" }
+      "depends_on": { "option": "master:orientation", "value": "center" },
+      "group": "Centred master",
+      "order": 2
     },
-    "master:center_ignores_reserved": { "title": "Centre ignores the reserved area" },
-    "master:smart_resizing": { "title": "Smart resizing" },
-    "master:drop_at_cursor": { "title": "Drop at the cursor" },
-    "master:always_keep_position": { "title": "Always keep position" },
-    "master:focus_master_on_close": { "title": "Focus master when a window closes" },
+    "master:center_ignores_reserved": {
+      "title": "Centre ignores the reserved area",
+      "group": "Centred master",
+      "order": 3
+    },
+    "master:smart_resizing": { "title": "Smart resizing", "group": "Mouse and focus", "order": 1 },
+    "master:drop_at_cursor": {
+      "title": "Drop at the cursor",
+      "group": "Mouse and focus",
+      "order": 2
+    },
+    "master:always_keep_position": {
+      "title": "Always keep position",
+      "group": "Size and position",
+      "order": 4
+    },
+    "master:focus_master_on_close": {
+      "title": "Focus master when a window closes",
+      "group": "Mouse and focus",
+      "order": 3
+    },
 
-    "scrolling:fullscreen_on_one_column": { "title": "Fullscreen with a single column" },
-    "scrolling:column_width": { "title": "Column width" },
-    "scrolling:focus_fit_method": { "title": "Focus fit method" },
-    "scrolling:follow_focus": { "title": "Follow focus" },
-    "scrolling:follow_min_visible": { "title": "Minimum visible fraction" },
+    "scrolling:fullscreen_on_one_column": {
+      "title": "Fullscreen with a single column",
+      "group": "Columns",
+      "order": 4
+    },
+    "scrolling:column_width": { "title": "Column width", "group": "Columns", "order": 1 },
+    "scrolling:focus_fit_method": {
+      "title": "Focus fit method",
+      "group": "Focus and wrapping",
+      "order": 3
+    },
+    "scrolling:follow_focus": { "title": "Follow focus", "group": "Focus and wrapping", "order": 1 },
+    "scrolling:follow_min_visible": {
+      "title": "Minimum visible fraction",
+      "group": "Focus and wrapping",
+      "order": 2
+    },
     "scrolling:explicit_column_widths": {
       "title": "Preset column widths",
-      "widget": "float-list"
+      "widget": "float-list",
+      "group": "Columns",
+      "order": 2
     },
     "scrolling:direction": {
       "title": "Scroll direction",
       "widget": "enum-string",
       "known_values": { "values": ["left", "right", "up", "down"] },
-      "labels": { "left": "Left", "right": "Right", "up": "Up", "down": "Down" }
+      "labels": { "left": "Left", "right": "Right", "up": "Up", "down": "Down" },
+      "group": "Columns",
+      "order": 3
     },
-    "scrolling:wrap_focus": { "title": "Wrap focus" },
-    "scrolling:wrap_swapcol": { "title": "Wrap column swapping" },
+    "scrolling:wrap_focus": { "title": "Wrap focus", "group": "Focus and wrapping", "order": 4 },
+    "scrolling:wrap_swapcol": {
+      "title": "Wrap column swapping",
+      "group": "Focus and wrapping",
+      "order": 5
+    },
 
-    "experimental:wp_cm_1_2": { "title": "Colour-management protocol v1.2" },
+    "experimental:wp_cm_1_2": {
+      "title": "Colour-management protocol v1.2",
+      "group": "Colour management",
+      "order": 1
+    },
 
-    "input-capture:capture_modifiers": { "title": "Capture modifiers" },
-    "input-capture:enforce_barriers": { "title": "Enforce barriers" },
+    "input-capture:capture_modifiers": {
+      "title": "Capture modifiers",
+      "group": "Barriers and modifiers",
+      "order": 2
+    },
+    "input-capture:enforce_barriers": {
+      "title": "Enforce barriers",
+      "group": "Barriers and modifiers",
+      "order": 1
+    },
 
-    "quirks:prefer_hdr": { "title": "Prefer HDR" },
-    "quirks:skip_non_kms_dmabuf_formats": { "title": "Skip non-KMS DMA-BUF formats" }
+    "quirks:prefer_hdr": { "title": "Prefer HDR", "group": "Display workarounds", "order": 1 },
+    "quirks:skip_non_kms_dmabuf_formats": {
+      "title": "Skip non-KMS DMA-BUF formats",
+      "group": "Display workarounds",
+      "order": 2
+    }
   }
 }

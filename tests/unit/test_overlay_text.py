@@ -20,22 +20,6 @@ import overlay_text
 
 OVERLAY = (SCHEMA_DIR / "overlay.json").read_text(encoding="utf-8")
 
-HAND_WRAPPED = frozenset(
-    {
-        "binds:hide_special_on_workspace_change",
-        "opengl:nvidia_anti_flicker",
-        "render:non_shader_cm",
-        "render:keep_unmodified_copy",
-        "render:fp16_sdr_tf",
-        "ecosystem:enforce_permissions",
-        "debug:full_cm_proto",
-        "debug:ds_handle_same_buffer_fifo",
-        "scrolling:explicit_column_widths",
-    }
-)
-"""Entries wrapped by hand before the writer existed, though they fit on one line. The
-writer leaves them as they are until something changes them."""
-
 SMALL = """{
   "format_version": 1,
   "sections": {
@@ -56,13 +40,13 @@ SMALL = """{
 def test_every_entry_reads_as_the_writer_would_write_it(block: overlay_text.Block) -> None:
     """The layout rule is the file's own: re-emitting an entry reproduces it byte for byte."""
     payload = json.loads(OVERLAY)[block]
-    differ = sorted(
+    differ = [
         name
         for name, (start, end) in overlay_text.entry_spans(OVERLAY, block).items()
         if OVERLAY[start:end] != overlay_text.format_entry(block, name, payload[name])
-    )
+    ]
 
-    assert differ == sorted(HAND_WRAPPED & payload.keys())
+    assert differ == []
 
 
 def test_the_spans_cover_every_entry_of_the_block() -> None:
