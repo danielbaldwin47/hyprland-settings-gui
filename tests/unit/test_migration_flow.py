@@ -24,7 +24,13 @@ from hyprtweaker.engine.importer.loss import LossCode, LossReport
 from hyprtweaker.engine.importer.lua.sandbox import Consent, lua_binary
 from hyprtweaker.engine.migration import sentinel as sentinels
 from hyprtweaker.engine.migration.detect import ConfigKind
-from hyprtweaker.engine.migration.flow import Decision, MigrationFlow, Step, fresh_start
+from hyprtweaker.engine.migration.flow import (
+    Decision,
+    MigrationFlow,
+    Offered,
+    Step,
+    fresh_start,
+)
 from hyprtweaker.engine.model.values import CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
@@ -882,7 +888,8 @@ class TestTheSecondOffer:
 
         preview = flow.build_preview(consent=Consent(evaluate=True))
 
-        assert preview.offered_commands == ("echo 5",)
+        assert preview.offered == (Offered("echo 5", "command"),)
+        assert preview.imported == 0
 
     def test_a_blocked_run_that_errors_offers_what_it_ran_before_the_error(
         self, paths: ConfigPaths
@@ -897,16 +904,54 @@ class TestTheSecondOffer:
 
         preview = flow.build_preview(consent=Consent(evaluate=True))
 
-        assert preview.offered_commands == ("hyprctl version", "echo 5")
+        assert preview.offered == (
+            Offered("hyprctl version", "command"),
+            Offered("echo 5", "command"),
+        )
 
-    def test_file_operations_and_repeats_are_not_listed(self, paths: ConfigPaths) -> None:
+    def test_file_operations_are_listed_and_repeats_counted(self, paths: ConfigPaths) -> None:
+        """Running for real runs everything the blocked read faked, file operations and
+        every repeat included, so the offer lists all of it: once each, with a count."""
         flow = _foreign_lua(
-            paths, 'os.remove("stale")\nio.popen("echo 5")\nos.execute("echo 5")\n'
+            paths,
+            'os.remove("stale")\nio.popen("echo 5")\nos.execute("echo 5")\n'
+            'os.rename("a.lua", "b.lua")\n',
         )
 
         preview = flow.build_preview(consent=Consent(evaluate=True))
 
-        assert preview.offered_commands == ("echo 5",)
+        assert preview.offered == (
+            Offered("stale", "delete"),
+            Offered("echo 5", "command", times=2),
+            Offered("a.lua -> b.lua", "move"),
+        )
+
+    def test_file_operations_alone_offer_nothing(self, paths: ConfigPaths) -> None:
+        """Deleting a file never builds a setting: a config that only does that has
+        nothing to gain from running for real."""
+        flow = _foreign_lua(paths, 'os.remove("stale")\n')
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == ()
+
+    def test_an_erroring_read_counts_what_it_imported_before_the_error(
+        self, paths: ConfigPaths
+    ) -> None:
+        """The Commands page tells the user what they already have without running
+        anything (#150 review, owner call 2): Options plus Entities of the blocked read."""
+        flow = _foreign_lua(
+            paths,
+            "hl.config({ general = { gaps_in = 7, gaps_out = 9 } })\n"
+            'hl.bind("SUPER + Q", hl.dsp.exec_cmd("kitty"))\n'
+            'local n = tonumber(io.popen("echo 5"):read("*a"))\n'
+            "hl.config({ general = { border_size = n + 1 } })\n",
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == (Offered("echo 5", "command"),)
+        assert preview.imported == 3
 
     def test_a_config_that_read_something_offers_nothing(self, paths: ConfigPaths) -> None:
         flow = _foreign_lua(
@@ -917,7 +962,7 @@ class TestTheSecondOffer:
         preview = flow.build_preview(consent=Consent(evaluate=True))
 
         assert len(preview.model) == 1
-        assert preview.offered_commands == ()
+        assert preview.offered == ()
 
     def test_an_error_with_no_command_offers_nothing(self, paths: ConfigPaths) -> None:
         flow = _foreign_lua(paths, 'error("broken")\n')
@@ -925,7 +970,7 @@ class TestTheSecondOffer:
         preview = flow.build_preview(consent=Consent(evaluate=True))
 
         assert LossCode.EVAL_ERROR in preview.loss.code_counts()
-        assert preview.offered_commands == ()
+        assert preview.offered == ()
 
     def test_running_them_for_real_reads_the_config_and_offers_nothing_more(
         self, paths: ConfigPaths, tmp_path: Path
@@ -943,4 +988,4 @@ class TestTheSecondOffer:
 
         assert marker.exists()
         assert preview.model.get("general:gaps_in") == CssGaps(5, 5, 5, 5)
-        assert preview.offered_commands == ()
+        assert preview.offered == ()

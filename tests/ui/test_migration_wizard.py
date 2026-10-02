@@ -293,7 +293,7 @@ class TestReadingAForeignLua:
 
         assert _page_title(dialog) == "Read your config"
         assert _descriptions(dialog) == [
-            "Reading your hyprland.lua means running it once in a sandbox: no commands run, "
+            "Reading your hyprland.lua means running it once: none of its commands run and "
             "no files change."
         ]
         assert "Could not read the configuration" not in _text_under(dialog)
@@ -348,8 +348,10 @@ class TestReadingAForeignLua:
         assert dialog.get_default_widget() is None
 
     def test_every_wizard_run_asks_again(self, tmp_path: Path) -> None:
+        from hyprtweaker.engine.prefs import PrefsStore
+
         _foreign_root(tmp_path)
-        window, _ = build_window(tmp_path)
+        window, session = build_window(tmp_path)
         first = window.show_migration()
         _click(first, "Convert...")
         _click(first, "Read it")
@@ -360,7 +362,7 @@ class TestReadingAForeignLua:
         _click(second, "Convert...")
 
         assert _page_title(second) == "Read your config"
-        assert not (tmp_path / "state" / "hyprtweaker" / "prefs.json").exists()
+        assert not PrefsStore(session.paths.state_dir).path.exists()
 
     def test_an_app_written_config_opens_no_wizard(self, tmp_path: Path) -> None:
         from hyprtweaker.engine.migration.detect import ConfigKind
@@ -417,6 +419,164 @@ class TestImportAChosenFile:
 
         assert dialog._flow.preview.detection.source == chosen
         assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(9)
+
+
+class TestTheCommandsPage:
+    """The second offer, after a blocked read that tried to run commands (#190, and the
+    #150 review: findings 6, 7, 19 and 20, owner call 2)."""
+
+    PARTLY_READ = (
+        "hl.config({ general = { gaps_in = 7, gaps_out = 9 } })\n"
+        'hl.bind("SUPER + Q", hl.dsp.exec_cmd("kitty"))\n'
+        'local n = tonumber(io.popen("{command}"):read("*a"))\n'
+        "hl.config({ general = { border_size = n + 1 } })\n"
+    )
+
+    def _commands_dialog(self, tmp_path: Path, source: str):  # type: ignore[no-untyped-def]
+        _foreign_root(tmp_path, source)
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+        _click(dialog, "Read it")
+        assert _page_title(dialog) == "Commands"
+        return dialog
+
+    def test_a_read_that_got_settings_says_so_and_can_continue_without_running(
+        self, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "ran"
+        dialog = self._commands_dialog(
+            tmp_path, self.PARTLY_READ.replace("{command}", f"touch {marker}; echo 5")
+        )
+
+        assert _descriptions(dialog) == [
+            "Without running them, the app read 3 settings from this file. Anything these "
+            "commands build is missing.\n\n"
+            "Reading it fully means running these for real, and any others the config goes "
+            "on to run:"
+        ]
+        assert [b.get_label() for b in _action_buttons(dialog)] == [
+            "Run them and read",
+            "Continue without running them",
+            "Not now",
+        ]
+        assert dialog.get_default_widget().get_label() == "Continue without running them"
+
+        _click(dialog, "Continue without running them")
+
+        assert _page_title(dialog) == "Preview"
+        assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(7)
+        assert not marker.exists()
+
+    def test_a_read_that_got_nothing_has_no_continue(self, tmp_path: Path) -> None:
+        dialog = self._commands_dialog(
+            tmp_path,
+            'local f = io.popen("echo 5")\n'
+            'hl.config({ general = { gaps_in = tonumber(f:read("*a")) } })\n',
+        )
+
+        assert _descriptions(dialog) == [
+            "Reading it fully means running these for real, and any others the config goes "
+            "on to run:"
+        ]
+        assert [b.get_label() for b in _action_buttons(dialog)] == [
+            "Run them and read",
+            "Not now",
+        ]
+
+    def test_not_now_closes_the_wizard_having_run_nothing(self, tmp_path: Path) -> None:
+        marker = tmp_path / "ran"
+        dialog = self._commands_dialog(
+            tmp_path, self.PARTLY_READ.replace("{command}", f"touch {marker}; echo 5")
+        )
+        closed: list[bool] = []
+        dialog.connect("closed", lambda _dialog: closed.append(True))
+
+        _click(dialog, "Not now")
+
+        assert closed == [True]
+        assert not marker.exists()
+
+    def test_file_operations_and_repeats_are_listed_with_what_they_do(
+        self, tmp_path: Path
+    ) -> None:
+        dialog = self._commands_dialog(
+            tmp_path,
+            'os.remove("stale.lua")\n'
+            'local a = io.popen("echo 5")\n'
+            'local b = io.popen("echo 5")\n'
+            'os.rename("a.lua", "b.lua")\n'
+            "hl.config({ general = { gaps_in = tonumber(a:read('*a')) } })\n",
+        )
+
+        assert _rows(dialog) == [
+            ("stale.lua", "Deletes this file"),
+            ("echo 5", "Runs 2 times"),
+            ("a.lua -> b.lua", "Moves or renames this file"),
+        ]
+
+    def test_a_click_queued_behind_a_read_runs_nothing_twice(self, tmp_path: Path) -> None:
+        """A read blocks the window for up to a minute, so a second click can queue behind
+        it. The pressed button is spent until the page settles, and the Run button arrives
+        unclickable, so a click aimed at "Read it" cannot land on it."""
+        marker = tmp_path / "ran"
+        _foreign_root(
+            tmp_path,
+            f'local f = io.popen("echo x >> {marker}; echo 5")\n'
+            'hl.config({ general = { gaps_in = tonumber(f:read("*a")) } })\n',
+        )
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+        read = _button(dialog, "Read it")
+
+        read.emit("clicked")
+        read.emit("clicked")
+
+        assert dialog._view.get_navigation_stack().get_n_items() == 3
+        run = _button(dialog, "Run them and read")
+        assert run.get_sensitive() is False
+
+        run.emit("clicked")
+        run.emit("clicked")
+
+        assert marker.read_text(encoding="utf-8") == "x\n"
+        assert _page_title(dialog) == "Preview"
+
+    def test_a_file_name_with_markup_characters_shows_as_written(self, tmp_path: Path) -> None:
+        import gi
+
+        gi.require_version("Gtk", "4.0")
+        from gi.repository import Gtk
+
+        chosen = tmp_path / "<mine> & co.lua"
+        chosen.write_text(FOREIGN_LUA, encoding="utf-8")
+        window, _ = build_window(tmp_path)
+
+        dialog = window.show_migration(chosen)
+
+        shown = [w.get_text() for w in _of_type(dialog, Gtk.Label)]
+        assert "Read <mine> & co.lua?" in shown
+
+
+def test_reading_without_lua_stops_on_a_page_that_says_what_to_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hyprtweaker.engine.importer.lua import sandbox
+
+    monkeypatch.setattr(sandbox, "lua_binary", lambda: None)
+    _foreign_root(tmp_path)
+    window, _ = build_window(tmp_path)
+    dialog = window.show_migration()
+    _click(dialog, "Convert...")
+
+    _click(dialog, "Read it")
+
+    assert _page_title(dialog) == "Stopped"
+    assert _descriptions(dialog) == [
+        "Reading a Lua config needs Lua, which is not installed. Install Lua (lua5.5, "
+        "lua5.4, lua5.3, lua or luajit) and try again."
+    ]
 
 
 class TestExport:
@@ -563,6 +723,28 @@ def _row_titles(dialog) -> list[str]:  # type: ignore[no-untyped-def]
     from gi.repository import Adw
 
     return [row.get_title() for row in _of_type(dialog, Adw.ActionRow)]
+
+
+def _rows(dialog) -> list[tuple[str, str]]:  # type: ignore[no-untyped-def]
+    from gi.repository import Adw
+
+    return [(row.get_title(), row.get_subtitle()) for row in _of_type(dialog, Adw.ActionRow)]
+
+
+def _action_buttons(dialog) -> list:  # type: ignore[type-arg]
+    """The visible page's bottom-bar buttons, left to right."""
+    from gi.repository import Adw, Gtk
+
+    toolbar = _visible(dialog).get_child()
+    assert isinstance(toolbar, Adw.ToolbarView)
+    return [
+        widget
+        for widget in _walk(toolbar)
+        if isinstance(widget, Gtk.Button)
+        and widget.get_label()
+        and widget.get_ancestor(Adw.HeaderBar) is None
+        and widget.get_ancestor(Gtk.ScrolledWindow) is None
+    ]
 
 
 def _button(dialog, label: str):  # type: ignore[no-untyped-def]

@@ -463,6 +463,12 @@ end
 -- conservative character set first: the string comes from the config being imported, and
 -- interpolating it into a shell command unchecked is a command injection.
 local SAFE_WILDCARD = "^[%w%._/%-]*$"
+-- The config's directory is the user's own and may hold any character, a quote included,
+-- so it is quoted for the shell rather than checked: one single-quoted word, each `'`
+-- closed, escaped and reopened.
+local function shell_quote(s)
+  return "'" .. (s:gsub("'", "'\\''")) .. "'"
+end
 local function list_lua_modules(dir)
   if not dir:match(SAFE_WILDCARD) or dir:find("%.%.") then
     record.errors[#record.errors + 1] = "wildcard require refused for path: " .. dir
@@ -472,7 +478,7 @@ local function list_lua_modules(dir)
   -- Recorded like any other shell-out: this one is the importer's own, not the config's,
   -- but an unrecorded process start is exactly the thing this file promises not to do.
   note_shell("importer.listdir", dir)
-  local p = real_io.popen("ls -1 '" .. basedir .. "/" .. dir .. "' 2>/dev/null")
+  local p = real_io.popen("ls -1 " .. shell_quote(basedir .. "/" .. dir) .. " 2>/dev/null")
   if not p then return names end
   for f in p:lines() do
     if f:sub(-4) == ".lua" then names[#names + 1] = f:sub(1, -5) end
