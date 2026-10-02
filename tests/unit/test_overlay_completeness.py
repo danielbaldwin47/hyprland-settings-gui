@@ -145,22 +145,28 @@ def test_every_option_resolves_to_widget_title_and_nullability(schema: Schema) -
         assert isinstance(option.visibility, Visibility), option.name
 
 
-def test_overlay_has_no_entries_for_options_that_do_not_exist(
-    generated: generated_module.GeneratedSchema, overlay: overlay_module.Overlay
+def test_overlay_has_no_entries_for_options_that_exist_in_no_shipped_schema(
+    overlay: overlay_module.Overlay,
 ) -> None:
     """A stale Overlay key is a rename nobody noticed, or a typo silently doing nothing.
 
-    The Overlay is version-independent and keeps entries for retired options on purpose
-    (`deprecated_in`), so only entries that were *never* valid are an error.
+    The Overlay is version-independent (ADR-0012): an entry for an Option the previous
+    release lacks, or the latest one dropped, is harmless. So "exists" is the union over
+    every shipped schema, and `deprecated_in` (removed in) stays unset for an Option a
+    later release *added*, where it would record a false fact.
     """
-    known = {option.name for option in generated.options}
+    known = {
+        option.name
+        for version in schema_versions()
+        for option in generated_module.load(SCHEMA_DIR / f"hyprland-{version}.json").options
+    }
     stale = [
         name
         for name, entry in overlay.options.items()
         if name not in known and entry.deprecated_in is None
     ]
     assert not stale, (
-        f"overlay entries matching no option in this schema: {stale} "
+        f"overlay entries matching no option in any shipped schema: {stale} "
         "(set deprecated_in if the option was removed by a release)"
     )
 
