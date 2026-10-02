@@ -22,7 +22,7 @@ from typing import Any
 
 from test_row_chrome import SCHEMA, FakeSession, build_row, children
 
-from hyprtweaker.engine.model import Color, CssGaps, Gradient, Vec2
+from hyprtweaker.engine.model import Color, CssGaps, FontWeight, Gradient, Vec2
 
 ACTIVE_BORDER = "general:col.active_border"
 GAPS_IN = "general:gaps_in"
@@ -31,6 +31,8 @@ SHADOW_OFFSET = "decoration:shadow:offset"
 BACKGROUND = "misc:background_color"
 INACTIVE_TEXT = "group:groupbar:text_color_inactive"
 SHADOW_INACTIVE = "decoration:shadow:color_inactive"
+WEIGHT_ACTIVE = "group:groupbar:font_weight_active"
+WEIGHT_INACTIVE = "group:groupbar:font_weight_inactive"
 
 
 class PreviewSession(FakeSession):
@@ -416,12 +418,209 @@ def test_a_vec2_row_edits_two_axes_within_their_curated_bounds() -> None:
     assert row.chrome.summary_text == "3.0, -2.0"
 
 
+# --- font weight ------------------------------------------------------------------------------
+
+
+def weight_parts(row: Any) -> tuple[Any, Any]:
+    """The font-weight Row's two controls: the names combo and the number spinner."""
+    from gi.repository import Gtk
+
+    (dropdown,) = controls(row, Gtk.DropDown)
+    (spin,) = controls(row, Gtk.SpinButton)
+    return dropdown, spin
+
+
+def choices(dropdown: Any) -> list[str]:
+    strings = dropdown.get_model()
+    return [strings.get_string(index) for index in range(strings.get_n_items())]
+
+
+def chosen(dropdown: Any) -> str:
+    return dropdown.get_selected_item().get_string()
+
+
+def choose(dropdown: Any, label: str) -> None:
+    dropdown.set_selected(choices(dropdown).index(label))
+
+
+def type_into(spin: Any, text: str) -> None:
+    """What typing and pressing Enter does: the spinner parses its text."""
+    spin.set_text(text)
+    spin.update()
+
+
+def refusal(row: Any) -> Any:
+    from gi.repository import Gtk
+
+    (label,) = [w for w in controls(row, Gtk.Label) if w.has_css_class("error")]
+    return label
+
+
+def group_lua(session: Any) -> str:
+    from hyprtweaker.engine.writer import render_module
+
+    return render_module(session.model.section("group"), app_version="0.0.0-test")
+
+
+def test_a_font_weight_row_offers_hyprlands_names_then_custom() -> None:
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, PreviewSession()))
+
+    assert choices(dropdown) == [
+        "Thin",
+        "Ultralight",
+        "Light",
+        "Semilight",
+        "Book",
+        "Normal",
+        "Medium",
+        "Semibold",
+        "Bold",
+        "Ultrabold",
+        "Heavy",
+        "Ultraheavy",
+        "Custom",
+    ]
+    assert chosen(dropdown) == "Normal", "the default is 400"
+    assert not spin.get_visible()
+
+
+def test_choosing_bold_writes_the_name() -> None:
+    session = PreviewSession()
+    dropdown, _spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+
+    choose(dropdown, "Bold")
+
+    assert session.applied == [WEIGHT_ACTIVE]
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight("bold")
+    assert 'font_weight_active = "bold"' in group_lua(session)
+
+
+def test_choosing_custom_shows_the_current_weight_and_writes_nothing() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, "semibold")
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+
+    choose(dropdown, "Custom")
+
+    assert spin.get_visible()
+    assert spin.get_value() == 600
+    assert session.applied == []
+
+
+def test_typing_550_writes_the_number() -> None:
+    session = PreviewSession()
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+    choose(dropdown, "Custom")
+
+    type_into(spin, "550")
+
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight(550)
+    assert "font_weight_active = 550," in group_lua(session)
+
+
+def test_a_held_number_no_name_matches_shows_as_typed() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 550)
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+
+    assert chosen(dropdown) == "Custom"
+    assert spin.get_visible()
+    assert spin.get_text() == "550"
+
+
+def test_a_held_number_a_name_matches_shows_the_name_and_stays_a_number() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 700)
+    dropdown, _spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+
+    assert chosen(dropdown) == "Bold"
+    assert session.applied == []
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight(700)
+
+
+def test_a_held_name_outside_the_list_is_offered_as_written_and_kept() -> None:
+    """An imported name the app does not list survives the Row untouched (decision #86)."""
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, "ExtraBold")
+    row = build_row(WEIGHT_ACTIVE, session)
+    dropdown, _spin = weight_parts(row)
+
+    assert chosen(dropdown) == "ExtraBold"
+    assert choices(dropdown)[-2:] == ["ExtraBold", "Custom"]
+    row.refresh()
+    assert session.applied == []
+    assert 'font_weight_active = "ExtraBold"' in group_lua(session)
+
+
+def test_a_held_number_out_of_range_shows_as_typed_and_is_not_rewritten() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 1200)
+    row = build_row(WEIGHT_ACTIVE, session)
+    dropdown, spin = weight_parts(row)
+
+    spin.update()  # what focus leaving the spinner does
+    row.refresh()
+
+    assert chosen(dropdown) == "Custom"
+    assert spin.get_text() == "1200"
+    assert session.applied == []
+    assert not refusal(row).get_visible()
+
+
+def test_typing_a_weight_out_of_range_is_refused_and_says_why() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 550)
+    row = build_row(WEIGHT_ACTIVE, session)
+    _dropdown, spin = weight_parts(row)
+
+    type_into(spin, "1200")
+
+    assert session.applied == []
+    assert spin.get_value() == 550
+    assert refusal(row).get_visible()
+    assert refusal(row).get_text() == "1200 is not a weight.\nUse 100 to 1000."
+
+    type_into(spin, "650")
+
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight(650)
+    assert not refusal(row).get_visible()
+
+
+def test_a_font_weight_row_hyprland_lacks_wears_its_pill_and_still_writes() -> None:
+    from hyprtweaker.engine.ipc import LiveHyprland
+
+    present = tuple({"name": o.name} for o in SCHEMA if o.name != WEIGHT_INACTIVE)
+    session = PreviewSession()
+    session.live_hyprland = LiveHyprland("0.56.0", present)
+    session.unknown = frozenset({WEIGHT_INACTIVE})
+    row = build_row(WEIGHT_INACTIVE, session)
+    dropdown, _spin = weight_parts(row)
+
+    assert row.chrome.pill_labels == ("Not in this Hyprland",)
+    choose(dropdown, "Light")
+
+    assert session.model.get(WEIGHT_INACTIVE) == FontWeight("light")
+
+
 # --- the Row contract still holds for all of them ---------------------------------------------
+
+
+def test_every_widget_type_builds_an_editable_row() -> None:
+    """No type is read-only (#194): a widget the factory has no branch for fails here."""
+    from gi.repository import Gtk
+
+    from hyprtweaker.engine.schema import Widget
+
+    for widget in Widget:
+        option = next(o for o in SCHEMA if o.widget is widget)
+        row = build_row(option.name, PreviewSession())
+
+        assert not isinstance(row.control, Gtk.Label), widget
 
 
 def test_every_complex_editor_dims_only_its_control_on_a_read_only_session() -> None:
     """ADR-0013 §3, over the Rows that grew a whole editor rather than one widget."""
-    for name in (BACKGROUND, ACTIVE_BORDER, GAPS_IN, SHADOW_OFFSET):
+    for name in (BACKGROUND, ACTIVE_BORDER, GAPS_IN, SHADOW_OFFSET, WEIGHT_ACTIVE):
         row = build_row(name, PreviewSession(live=False))
 
         assert not row.control.get_sensitive(), name
