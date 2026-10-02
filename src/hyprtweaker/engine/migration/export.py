@@ -30,6 +30,7 @@ from pathlib import Path
 
 from ..model import ConfigModel
 from ..paths import ConfigPaths
+from ..schema import MINIMUM_HYPRLAND
 from ..writer import ModuleSet, Writer
 
 HEADER = """\
@@ -41,8 +42,6 @@ HEADER = """\
 --
 -- Importing it back into hyprtweaker restores the usual per-section module layout.
 """
-
-MINIMUM_HYPRLAND = "0.56"
 
 SHIM = """\
 -- Lets the inlined chunks below require each other, exactly as they did as files.

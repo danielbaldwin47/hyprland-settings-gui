@@ -104,6 +104,41 @@ def sample_schema() -> Schema:
     return load_schema(SAMPLE_VERSION, SCHEMA_DIR)
 
 
+def synthetic_schema_dir(directory: Path, *versions: str) -> Path:
+    """A schema directory shipping exactly `versions`, one Option each, and an empty Overlay.
+
+    For version selection: what ships in `data/schema` changes with every release check,
+    and a test of "between two shipped schemas" must not change with it.
+    """
+    from hyprtweaker.engine.schema import GeneratedOption, GetOptionKey, OptionType, Widget
+    from hyprtweaker.engine.schema import generated as generated_module
+
+    option = GeneratedOption(
+        name="general:border_size",
+        lua_key="general.border_size",
+        section="general",
+        path=("general", "border_size"),
+        order=0,
+        type=OptionType.INT,
+        widget=Widget.INT_RANGE,
+        description="size of the border",
+        default=1,
+        default_raw=1,
+        sentinel_default=False,
+        getoption_key=GetOptionKey.INT,
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    for version in versions:
+        schema = generated_module.GeneratedSchema(
+            hyprland_version=version, options=(option,), provenance={}
+        )
+        (directory / f"hyprland-{version}.json").write_text(
+            generated_module.dumps(schema), encoding="utf-8"
+        )
+    (directory / "overlay.json").write_text('{"format_version": 1}', encoding="utf-8")
+    return directory
+
+
 class Runner:
     """A `Session.spawn` for tests: real tasks on the running loop, awaitable to quiescence.
 

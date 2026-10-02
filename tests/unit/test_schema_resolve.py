@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from _support import synthetic_schema_dir
 
 from hyprtweaker.engine.schema import (
     GeneratedOption,
@@ -19,6 +20,7 @@ from hyprtweaker.engine.schema import (
     SectionOverlay,
     Visibility,
     Widget,
+    below_lua_floor,
     derive_title,
     load_schema,
     resolve_option,
@@ -198,10 +200,26 @@ def test_an_unseen_newer_version_degrades_to_the_nearest_lower_schema() -> None:
     assert select_version("0.57.1", ("0.55.0", "0.56.2")) == "0.56.2"
 
 
-def test_never_degrade_onto_a_higher_schema() -> None:
-    """Offering options the running compositor lacks is a config error on next reload."""
-    with pytest.raises(ValueError, match="older than every shipped schema"):
-        select_version("0.54.0", ("0.55.0", "0.56.2"))
+def test_a_lua_hyprland_older_than_every_schema_gets_the_oldest() -> None:
+    """ADR-0012 §Support window: every version down to 0.56 degrades, none crashes."""
+    assert select_version("0.56.1", ("0.56.2", "0.58.0")) == "0.56.2"
+    assert select_version("0.56.0", ("0.56.2",)) == "0.56.2"
+
+
+def test_a_hyprland_without_a_lua_config_has_no_schema() -> None:
+    """Below 0.56 there is no `hl.*` API to write for: no Schema describes it."""
+    with pytest.raises(ValueError, match=r"older than 0\.56,"):
+        select_version("0.55.9", ("0.56.2", "0.58.0"))
+    assert below_lua_floor("0.55.9")
+    assert not below_lua_floor("0.56.0")
+
+
+def test_load_schema_degrades_between_two_shipped_schemas(tmp_path: Path) -> None:
+    directory = synthetic_schema_dir(tmp_path, "0.56.2", "0.58.0")
+
+    assert load_schema("0.57.1", directory).hyprland_version == "0.56.2"
+    assert load_schema("0.56.0", directory).hyprland_version == "0.56.2"
+    assert load_schema(None, directory).hyprland_version == "0.58.0"
 
 
 def test_no_shipped_schemas_is_an_error() -> None:
