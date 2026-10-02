@@ -219,8 +219,10 @@ def plan_groups(
     The order, in both Views: the Section's curated Groups in the order the Overlay declares
     them, each with its curated description; then the Groups no curation names, derived from
     the Options' paths, in the order their first Option is declared. Within a Group, curated
-    `group_order` leads and declaration order follows. Options in, Groups out, one Group per
-    Option: nothing is dropped and nothing is repeated, whatever the curation says.
+    `group_order` leads and declaration order follows, so an uncurated Option whose path
+    names a curated heading (a release's new `decoration:blur:*` under a curated "Blur")
+    joins that Group after its curated Rows. Options in, Groups out, one Group per Option:
+    nothing is dropped and nothing is repeated, whatever the curation says.
 
     `options` are the ones the caller shows here; a caller that closes the Page with
     `New in <version>` Groups leaves those Options out and appends the Groups after these.

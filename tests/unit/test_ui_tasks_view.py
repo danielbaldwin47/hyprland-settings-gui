@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from _support import SAMPLE_VERSION, SCHEMA_DIR
+import pytest
+from _support import SAMPLE_VERSION, SCHEMA_DIR, curated
 
 from hyprtweaker.engine.schema import Schema, Visibility, load_schema, supplement
 from hyprtweaker.ui.pages.plan import (
@@ -23,6 +24,7 @@ from hyprtweaker.ui.pages.plan import (
     is_visible,
     new_in_group_title,
     plan_config_view,
+    plan_section,
 )
 from hyprtweaker.ui.pages.tasks import (
     CategorySpec,
@@ -394,18 +396,77 @@ def test_a_page_spanning_sections_leads_each_group_with_the_sections_name() -> N
     assert "" not in titles
 
 
-def test_a_single_section_page_groups_exactly_as_the_config_view_does() -> None:
-    """A Page that happens to be one Section should read the same in both Views."""
-    decoration = page_named("look.decoration")
-    config = next(
-        plan
-        for plan in plan_config_view(SCHEMA, Disclosure(show_advanced=True))
-        if plan.section == "decoration"
+CURATED_DECORATION = curated(
+    "decoration",
+    {"Shadow": "Drawn under each window.", "Blur": None},
+    {
+        "Shadow": ["decoration:shadow:range", "decoration:shadow:enabled"],
+        "Blur": ["decoration:blur:enabled"],
+    },
+)
+
+
+def page_in(schema: Schema, section: str, mapping: TasksMapping = MAPPING) -> PagePlan:
+    return next(
+        page
+        for category in plan_tasks_view(schema, mapping, Disclosure(show_advanced=True))
+        for page in category.option_pages
+        if page.section == section
     )
 
-    assert [group.title for group in decoration.groups] == [
-        group.title for group in config.groups
+
+@pytest.mark.parametrize("schema", [SCHEMA, CURATED_DECORATION], ids=["shipped", "curated"])
+def test_a_single_section_page_groups_exactly_as_the_config_view_does(schema: Schema) -> None:
+    """A Page that happens to be one Section reads the same in both Views: the same
+    Groups, in the same order, with the same descriptions and Rows (#157, one sorter)."""
+    config = plan_section(schema, "decoration", Disclosure(show_advanced=True))
+
+    assert page_in(schema, "look.decoration").groups == config.groups
+
+
+def test_curated_groups_lead_a_tasks_page_in_their_sections_order() -> None:
+    groups = page_in(CURATED_DECORATION, "look.decoration").groups
+
+    assert [(group.title, group.description) for group in groups[:3]] == [
+        ("Shadow", "Drawn under each window."),
+        ("Blur", ""),
+        ("Other settings", ""),
     ]
+    # Curated order first; the uncurated `shadow:*` Options join the heading their path
+    # already names, after the curated ones.
+    assert [option.name for option in groups[0].options][:3] == [
+        "decoration:shadow:range",
+        "decoration:shadow:enabled",
+        "decoration:shadow:render_power",
+    ]
+
+
+def test_a_page_spanning_sections_lists_them_in_the_mappings_order() -> None:
+    """Section by Section as the mapping names them, each in its own curated order."""
+    mapping = TasksMapping(
+        categories=(
+            CategorySpec(
+                id="windows",
+                title="Windows",
+                pages=(PageSpec(id="both", title="Both", sections=("misc", "group")),),
+            ),
+        )
+    )
+    schema = curated(
+        "misc",
+        {"Swallowing": "A terminal hides while the app it opened is open."},
+        {"Swallowing": ["misc:swallow_regex", "misc:enable_swallow"]},
+    )
+
+    groups = page_in(schema, "both", mapping).groups
+    sections = [group.title.split(" · ")[0] for group in groups]
+
+    assert [(group.title, group.description) for group in groups[:2]] == [
+        ("Miscellaneous · Swallowing", "A terminal hides while the app it opened is open."),
+        ("Miscellaneous · Other settings", ""),
+    ]
+    assert sections == sorted(sections, key=["Miscellaneous", "Groups"].index)
+    assert sections[-1] == "Groups"
 
 
 def test_entity_destinations_are_passed_through_for_the_shell_to_place() -> None:
@@ -468,7 +529,10 @@ def stamped(**versions: str) -> Schema:
     return Schema(
         hyprland_version=SCHEMA.hyprland_version,
         options=tuple(
-            replace(option, added_in=by_name[option.name]) if option.name in by_name else option
+            # A release's added Option has no curation yet: no Overlay Group places it.
+            replace(option, added_in=by_name[option.name], group=None, group_order=None)
+            if option.name in by_name
+            else option
             for option in SCHEMA
         ),
         sections=SCHEMA.sections,
@@ -521,6 +585,25 @@ def test_a_new_option_in_a_homed_section_joins_a_new_in_group_on_its_home_page()
         NEW_IN_GROUP_DESCRIPTION
     ]
     assert page.groups[-1].title == "New in 0.99.0"
+
+
+def test_a_new_option_its_section_has_curated_into_a_group_sits_in_that_group() -> None:
+    """ADR-0012:31: added Options live in `New in` Groups *until curated*. Once the
+    Overlay names its Group, the stamp no longer moves it (#157)."""
+    base = curated("cursor", {"Warping": None}, {"Warping": ["cursor:no_warps"]})
+    schema = Schema(
+        hyprland_version=base.hyprland_version,
+        options=tuple(
+            replace(option, added_in="0.99.0") if option.name == "cursor:no_warps" else option
+            for option in base
+        ),
+        sections=base.sections,
+    )
+
+    groups = group_names(cursor_page(schema))
+
+    assert groups["Warping"] == ["cursor:no_warps"]
+    assert "New in 0.99.0" not in groups
 
 
 def test_options_with_no_stamp_plan_exactly_as_before() -> None:
