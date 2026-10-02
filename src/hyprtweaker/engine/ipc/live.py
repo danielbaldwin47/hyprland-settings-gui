@@ -10,10 +10,14 @@ answers costs startup at most `LIVE_READ_TIMEOUT_SECONDS`, not that per request.
 Every failure answers `None` -- no compositor, a socket that hangs, a reply the app cannot
 read, a version string that is not a release number. The caller's answer to `None` is the
 newest shipped Schema, which is what the app did before it asked at all.
+
+When that read missed, `fetch_live_hyprland` asks again once the session has connected,
+over its `CommandClient`; it shares this file's parsing, so both read a reply the same way.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -23,7 +27,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .errors import NoInstance
+from .commands import CommandClient
+from .errors import IpcError, NoInstance
 from .instance import Instance
 
 LIVE_READ_TIMEOUT_SECONDS = 1.0
@@ -93,6 +98,30 @@ def read_live_hyprland(
         _log.info("could not read the running Hyprland's version: %s", error)
         return None
 
+    return _snapshot(version_reply, descriptions_reply)
+
+
+async def fetch_live_hyprland(
+    client: CommandClient, *, timeout: float = LIVE_READ_TIMEOUT_SECONDS
+) -> LiveHyprland | None:
+    """The same snapshot as `read_live_hyprland`, asked over a connected `client`.
+
+    For a session whose startup read missed (#214): by the time it connects, a loop is
+    running, and the blocking read would stall it -- and the compositor's replies with it,
+    when they are served on that loop. One deadline covers both requests, as at startup,
+    and every failure answers `None` the same way.
+    """
+    try:
+        async with asyncio.timeout(timeout):
+            version_reply = await client.version()
+            descriptions_reply = await client.descriptions()
+    except (TimeoutError, IpcError) as error:
+        _log.info("could not read the running Hyprland's version on connect: %s", error)
+        return None
+    return _snapshot(version_reply, descriptions_reply)
+
+
+def _snapshot(version_reply: Any, descriptions_reply: Any) -> LiveHyprland | None:
     version = _version_of(version_reply)
     descriptions = _descriptions_of(descriptions_reply)
     if version is None or descriptions is None:
