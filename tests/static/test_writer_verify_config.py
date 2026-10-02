@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from hyprtweaker.engine.importer import import_config  # noqa: E402
 from hyprtweaker.engine.importer.mapping import ImportResult  # noqa: E402
 from hyprtweaker.engine.model import ConfigModel  # noqa: E402
+from hyprtweaker.engine.model.entities import Bind, DispatcherCall, EntitySet  # noqa: E402
 from hyprtweaker.engine.paths import ConfigPaths  # noqa: E402
 from hyprtweaker.engine.schema import load_schema  # noqa: E402
 from hyprtweaker.engine.writer import Writer  # noqa: E402
@@ -302,3 +303,37 @@ def test_the_dead_keysym_binds_reached_the_file_as_comments(tmp_path: Path) -> N
     for line in written.splitlines():
         if "notakey" in line:
             assert line.strip().startswith("--"), line
+
+
+@pytest.mark.parametrize(
+    ("keys", "loads"),
+    [
+        ("SUPER + A + B", True),
+        ("SUPER + code:36 + code:37", True),
+        ("SUPER + mouse:272 + Q", False),
+    ],
+)
+def test_which_multi_key_triggers_hyprland_loads(
+    tmp_path: Path, keys: str, loads: bool
+) -> None:
+    """The probe behind `validate_trigger`'s multi-key verdict (#198, Hyprland 0.56.2).
+
+    Two keys after the modifiers load (the compositor binds only the last one), so they
+    warn; a mouse, wheel or switch trigger beside another key fails the whole config, so
+    that blocks. Written enabled on purpose: a disabled bind never reaches Lua.
+    """
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    call = DispatcherCall(path="exec_cmd", positional=("true",))
+    model.adopt_entities(EntitySet(binds=[Bind(keys=keys, dispatcher=call)]))
+    Writer(paths, app_version="0.0.0-test").write(model)
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    verified = verify(paths.entrypoint, runtime_dir)
+
+    assert (verified.returncode == 0) is loads, (
+        f"{keys!r}:\n{verified.stdout}\n{verified.stderr}"
+    )
+    assert ("config ok" in verified.stdout) is loads

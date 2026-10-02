@@ -31,11 +31,18 @@ The owner's desktop is Omarchy, whose `~/.config/hypr` is already Lua: the app r
 .venv/bin/python tools/sandbox.py --home <scratch>/home                              # run until SIGTERM, reuse state
 ```
 
-It starts a nested Hyprland with a fresh sandbox `$HOME`, launches the app inside it, and prints the nested `HYPRLAND_INSTANCE_SIGNATURE` and `WAYLAND_DISPLAY`: `hyprctl` with that signature reads the nested session. Crop a screenshot to the app window before reading it (`hyprctl -j clients` with that signature gives its `at` and `size`).
+It starts a nested Hyprland with a fresh sandbox `$HOME`, launches the app inside it, and prints the nested `HYPRLAND_INSTANCE_SIGNATURE` and `WAYLAND_DISPLAY`: `hyprctl --instance <that signature> …` reads the nested session. Crop a screenshot to the app window before reading it (`hyprctl --instance <that signature> -j clients` gives its `at` and `size`).
 
 - **Windowless.** By default the nested Hyprland runs on a spare card (§ Harness tier) with no host display, so nothing maps on the owner's desktop, on any workspace. Agents never pass `--window`; it is the owner's interactive mode, a host window on the focused workspace.
 - **Fenced.** The app runs non-unique, so concurrent sandboxes never hand their launch to each other, and a copied `--config` has its top-level `hl.exec_cmd(` and `hl.env(` lines commented out, so a rice's autostart never runs against the owner's session.
-- **Live probes** of compositor behaviour (`hyprctl keyword`, `hyprctl dispatch`, temporary binds, `hyprctl reload`) go to a nested instance, never the desktop session: the sandbox or the Harness tier's `NestedHyprland`.
+- **Live probes** of compositor behaviour (`hyprctl keyword`, `hyprctl dispatch`, temporary binds, `hyprctl reload`) go to a nested instance: the sandbox or the Harness tier's `NestedHyprland`.
+- **The shell fence** holds that line: `.claude/hooks/desktop-fence.sh`, a `PreToolUse` hook on Bash. It judges the command word of each simple command, behind `VAR=…`, `env`, `timeout` and other wrappers, and refuses:
+  - `hyprctl`, any subcommand but `instances`, unless it names a nested instance by its signature written out: `hyprctl --instance <signature> …`, `-i <signature>`, or a `HYPRLAND_INSTANCE_SIGNATURE=<signature>` prefix. An unexpanded `$VAR`, an index (`-i 0` can be the desktop), the session's own signature, and an instance whose `hyprland.lock` pid runs with the account's `$HOME` are all refused.
+  - `wtype`, unless a `WAYLAND_DISPLAY=<display>` prefix names a nested instance's display, as the sandbox prints it.
+  - `Hyprland`, `hyprland` and `start-hyprland`: start one with the sandbox or the Harness; for the version, `pacman -Q hyprland`.
+  - `ydotool`, always: it writes to the kernel's uinput and has no nested form.
+
+  `hyprctl instances -j | jq length`, `systemctl --user show-environment`, `pytest`, and the four words as data (`grep hyprctl docs/`, a quoted string, a heredoc) pass. Without `jq` it refuses any call that names one of the four words. It binds every Claude Code session opened in this repo, the owner's included; the owner's own terminal is unaffected. A script, `bash -c '…'`, `eval`, an alias or a write to the compositor's socket passes it: there the Live probes rule is the only fence.
 - Real monitors and input devices exist only on the desktop session; a nested instance shows one virtual output and the host's forwarded keyboard and pointer. A ticket whose proof needs real hardware says so, and the effort PR lists it for the owner (`implement-spec.md` step 8).
 
 ### Widget probes
