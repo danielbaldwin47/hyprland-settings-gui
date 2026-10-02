@@ -51,6 +51,7 @@ from hyprtweaker.engine.apply import (
     Problem,
     Recovery,
     ReRead,
+    RestoreTransaction,
     Step,
     UndoGroup,
     UndoStack,
@@ -481,9 +482,9 @@ class Session:
         """The open undo group, if any -- one at a time (`begin_undo_group`)."""
 
         self._reverting = False
-        self._entrypoint_recoveries: list[EntrypointTransaction] = []
-        """Entrypoint rewrites in flight. Each one's result is `_recover_entrypoint`'s to
-        handle, not `_applied`'s: it carries no gesture, and it may have run no reload."""
+        self._recoveries: list[EntrypointTransaction | RestoreTransaction] = []
+        """Restore last good and Entrypoint rewrites in flight. Each one's result is its own
+        caller's to observe and report, once, not `_applied`'s: it carries no gesture."""
         self._recovery_halted = False
         self._recovery = Recovery()
         """What the last reload said was wrong, attributed. The Banner is a view of this.
@@ -2363,7 +2364,7 @@ class Session:
         should be able to take it back). A gesture can never be both, which is why the failed
         one is never pushed rather than pushed and popped.
         """
-        if any(result is recovery.result for recovery in self._entrypoint_recoveries):
+        if any(result is recovery.result for recovery in self._recoveries):
             return
         if self._reverting:
             # The restore transaction's own result. It carries no gesture of the user's, and
@@ -2509,8 +2510,11 @@ class Session:
 
         Every finished reload lands here, clean ones included -- a clean reload is how a
         Banner *clears*, and a recovery that only ever raised one would leave the user
-        looking at a problem they had already fixed.
+        looking at a problem they had already fixed. A result that ran no reload learnt
+        nothing about the config, so the Banner stays as it is.
         """
+        if not result.reloaded:
+            return
         self._note(
             result.errors,
             written=result.written,
@@ -2643,8 +2647,10 @@ class Session:
             return
 
         self._restoring = True
+        restore = applier.restore(restores)
+        self._recoveries.append(restore)
         try:
-            result = await applier.restore_now(applier.restore(restores))
+            result = await applier.restore_now(restore)
         except (IpcError, RuntimeError) as error:
             _log.error("the restore transaction failed: %s", error)
             self._recovery_halted = True
@@ -2655,6 +2661,7 @@ class Session:
             return
         finally:
             self._restoring = False
+            self._recoveries.remove(restore)
 
         if not result.ok:
             # A restore that did not land is exactly the escalation ADR-0016 names: stop
@@ -2791,7 +2798,7 @@ class Session:
         # without asking about all of them.
         wanted = tuple(option.name for option in self._owned())
         recovery = applier.recover_entrypoint(write, wanted)
-        self._entrypoint_recoveries.append(recovery)
+        self._recoveries.append(recovery)
         try:
             result = await applier.restore_now(recovery)
         except (IpcError, RuntimeError) as error:
@@ -2799,13 +2806,10 @@ class Session:
             self._changed()
             return
         finally:
-            self._entrypoint_recoveries.remove(recovery)
+            self._recoveries.remove(recovery)
         if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
-            # No reload ran, so nothing was learnt about the config: observing this result
-            # would read as a clean reload and clear a Banner whose cause is still on disk.
             _log.error("could not %s: %s", what, result.detail)
-        else:
-            self._observe(result)
+        self._observe(result)
         self._report(result)
         self._changed()
 

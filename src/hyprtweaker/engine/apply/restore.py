@@ -238,6 +238,9 @@ class RestoreTransaction:
         self._reloader = reloader
         self._restores = tuple(restores)
         self._journal = journal
+        self.result: ApplyResult | None = None
+        """What `run` answered, so the session can tell this result from an Apply's: the
+        queue hands every result to the same subscriber."""
 
     @property
     def modules(self) -> tuple[str, ...]:
@@ -266,6 +269,10 @@ class RestoreTransaction:
         queue's `Transaction` protocol -- the same lock has to cover a restore and an apply,
         because both end in a reload and `configerrors` is one global slot.
         """
+        self.result = await self._run()
+        return self.result
+
+    async def _run(self) -> ApplyResult:
         names = self.options
         if not self._restores:
             return ApplyResult(ApplyOutcome.NOTHING_TO_DO, keys=names)
