@@ -1,8 +1,9 @@
 """What an Entity row says, in words, with no display (ADR-0011, #220).
 
-The Binds, Rules, Workspaces and Monitors Pages and the Presets group each describe their Entity in one place; the search
-entries (#75) describe the same Entity in the same words, so those functions live here, in
-a module that imports no `gi`, and the Pages and the finder both read them. A bind or a
+The Binds, Rules, Workspaces and Monitors Pages and the Presets group each describe their
+Entity in one place; the search entries (#75, #172) describe the same Entity in the same
+words, so those functions live here, in a module that imports no `gi`, and the Pages and
+the finder both read them. A bind or a
 rule is therefore worded alike wherever it turns up, and strict mypy covers the words.
 
 Only text and the vocabulary of a badge live here. What a row does about a badge -- the
@@ -298,7 +299,10 @@ def fields_summary(fields: Mapping[str, Any]) -> str:
 
 
 def preset_summary(preset: Preset) -> str:
-    """A Preset row's first subtitle line: what it keeps and when, `Colors · saved 14 Sep 2026`."""
+    """A Preset row's first subtitle line, what it keeps and when: `Colors · saved 14 Sep 2026`.
+
+    The Presets group adds a line about the wallpaper under it; that line depends on the
+    running session, so search leaves it out."""
     kept = [scope.label for scope in CaptureScope if scope in preset.scopes]
     made = preset.created
     return f"{', '.join(kept) or 'Settings'} · saved {made.day} {made:%b %Y}"
