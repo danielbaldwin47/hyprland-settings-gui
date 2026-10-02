@@ -503,7 +503,7 @@ NOCTALIA = ToolSpec(
         binaries=("noctalia",),
         config_files=("noctalia/hyprtweaker.toml",),
         outdated_by=("hypr/noctalia/noctalia-colors.lua", "hypr/noctalia/noctalia-colors.conf"),
-        needs_update="noctalia 4 found. Its colors can be set up here from noctalia 5 on.",
+        needs_update="noctalia 4 found. Update noctalia to 5 to set its colors up here.",
     ),
     template_pack=TemplatePack(
         templates=(),

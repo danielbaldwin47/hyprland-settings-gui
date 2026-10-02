@@ -234,7 +234,7 @@ def test_the_version_comes_from_files_and_binary_names(
 
 def test_the_needs_update_sentences_are_the_settled_copy() -> None:
     assert NOCTALIA.detection.needs_update == (
-        "noctalia 4 found. Its colors can be set up here from noctalia 5 on."
+        "noctalia 4 found. Update noctalia to 5 to set its colors up here."
     )
     assert DMS.detection.needs_update == (
         "DMS 1.4 writes colors this app cannot load. Update DMS to 1.5 or newer."

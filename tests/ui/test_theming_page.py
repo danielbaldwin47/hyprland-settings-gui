@@ -598,6 +598,20 @@ def test_other_tools_offer_set_up_or_say_why_they_cannot(
     assert ("Other tools", "noctalia", "Waiting for noctalia's first run") in page.rows
 
 
+def test_noctalia_4_is_named_with_what_to_do(tmp_path: Path) -> None:
+    """Finding 20 of the #153 review: noctalia 4 has no binary, so it was never shown."""
+    put(tmp_path / "hypr/noctalia/noctalia-colors.conf", "")
+    session, _ = make_session(tmp_path)
+    page = build_page(session)
+
+    assert (
+        "Other tools",
+        "noctalia",
+        "noctalia 4 found. Update noctalia to 5 to set its colors up here.",
+    ) in page.rows
+    assert page.button("Set up…") is None
+
+
 def test_remove_puts_back_what_setup_changed_and_asks_about_a_file_changed_since(
     tmp_path: Path, stub_tool: Any
 ) -> None:

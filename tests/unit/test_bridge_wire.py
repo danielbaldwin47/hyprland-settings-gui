@@ -420,7 +420,7 @@ def test_a_version_that_cannot_be_bridged_is_refused_with_s5s_sentence(
         return Path("/nonexistent/bin") / name if name in v4_only else None
 
     assert plan_wire("noctalia", paths=paths, find=older) == NotDone(
-        "noctalia", "noctalia 4 found. Its colors can be set up here from noctalia 5 on."
+        "noctalia", "noctalia 4 found. Update noctalia to 5 to set its colors up here."
     )
     assert plan_wire("dms", paths=paths, find=older) == NotDone(
         "dms", "DMS 1.4 writes colors this app cannot load. Update DMS to 1.5 or newer."

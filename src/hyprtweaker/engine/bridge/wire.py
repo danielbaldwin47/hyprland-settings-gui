@@ -93,8 +93,14 @@ class ToolDetection:
 
     @property
     def found(self) -> bool:
-        """Whether to show the tool at all: installed, or its config is here."""
-        return self.installed or self.configured or self.wired
+        """Whether to show the tool at all: installed, its config is here, or a version this
+        app cannot bridge left its files (noctalia 4 has no binary to find, finding 20)."""
+        return (
+            self.installed
+            or self.configured
+            or self.wired
+            or self.version_state is VersionState.NEEDS_UPDATE
+        )
 
     @property
     def needs_update(self) -> str | None:
