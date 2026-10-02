@@ -59,16 +59,18 @@ def written_values(
     *,
     timeout: float = 5.0,
     only: Collection[str] | None = None,
+    verified: bool = True,
 ) -> dict[str, Any]:
     """What the app's own options Modules set, as model values, by Option name.
 
     Only Modules whose bytes hash to the Manifest's record, and only the Options that record
     names -- restart-flagged ones included; `only` narrows it to those Modules. What the
     model takes for those Options instead of the live values: at launch, and after Restore
-    last good. Raises `LuaUnavailable` without an interpreter.
+    last good. `verified=False` reads hand-edited Modules too, for a session with no
+    compositor to ask. Raises `LuaUnavailable` without an interpreter.
     """
     raw: dict[str, Any] = {}
-    for path, record in _verified(app_dir, manifest):
+    for path, record in _verified(app_dir, manifest, check=verified):
         if only is not None and path.relative_to(app_dir).as_posix() not in only:
             continue
         keys = {lua_key_for(name): name for name in record.options}
@@ -103,14 +105,16 @@ def reference(
     )
 
 
-def _verified(app_dir: Path, manifest: Manifest) -> list[tuple[Path, ModuleRecord]]:
+def _verified(
+    app_dir: Path, manifest: Manifest, *, check: bool = True
+) -> list[tuple[Path, ModuleRecord]]:
     found = []
     for relpath, record in manifest.modules.items():
         if not is_option_module(relpath):
             continue
         path = app_dir / relpath
         try:
-            if content_hash(path.read_bytes()) != record.sha256:
+            if content_hash(path.read_bytes()) != record.sha256 and check:
                 continue
         except OSError:
             continue

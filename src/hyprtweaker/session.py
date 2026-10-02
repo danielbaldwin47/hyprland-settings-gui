@@ -588,6 +588,7 @@ class Session:
         model is already back to what the file holds, and no undo step was recorded."""
 
         self._held_back: dict[str, _HeldBack] = {}
+        self._model_read = False
         """Per hand-edited Module, the edits it kept off disk (`replace_edited_file`)."""
 
         self.on_recorded: Callable[[Step], None] | None = None
@@ -2070,6 +2071,14 @@ class Session:
         )
         client = self._client
         if not self.live or client is None:
+            if not self._model_read:
+                done(
+                    PresetNotSaved(
+                        f"Your settings have not been read, so there is nothing to save. "
+                        f"{self.offline_sentence or ''}".rstrip()
+                    )
+                )
+                return
             if CaptureScope.COLORS in chosen and isinstance(
                 self.color_source(), Wallpaper | Several
             ):
@@ -2811,6 +2820,7 @@ class Session:
         try:
             instance = self._connect()
         except NoInstance as error:
+            await self._read_files()
             self.set_read_only(str(error))
             return
 
@@ -2821,6 +2831,7 @@ class Session:
             await self._recover(client)
         except IpcError as error:
             await events.aclose()
+            await self._read_files()
             self.set_read_only(f"{instance.command_socket} is not answering: {error}")
             return
 
@@ -2930,11 +2941,52 @@ class Session:
             len(result.unreadable),
             len(result.unknown),
         )
+        self._model_read = True
         # "On launch ... the full re-read + drift scan attributes any errors and raises the
         # same Banner" (ADR-0016 §Surfacing). Breakage that happened while the app was closed
         # is not a lesser kind of breakage, and the app has to open saying so.
         await self._scan(client)
         return result
+
+    async def _read_files(self) -> None:
+        """With no compositor to ask, read the App dir's own Modules, read-only.
+
+        So the window shows the user's settings rather than Hyprland's defaults, and lists
+        their binds and rules rather than "none yet" (#148 hand-test 12). Every options
+        Module the Manifest records is read, hand-edited or not: nothing is written from
+        this, and a hand edit is what the file says. Without Lua there is nothing to read
+        the Options with, and `model_read` stays false so nothing claims otherwise.
+        """
+        if not self._paths.manifest.is_file():
+            return
+        self._load_entities()
+        try:
+            values = await asyncio.to_thread(
+                overrides.written_values,
+                self._paths.app_dir,
+                self._schema,
+                self._manifest(),
+                verified=False,
+            )
+        except LuaUnavailable as error:
+            _log.warning("no Lua and no Hyprland, so the settings cannot be read: %s", error)
+            return
+        for name, value in values.items():
+            if value is None:
+                self._model.set_null(name)
+            else:
+                self._model.set(name, value)
+        self._model_read = True
+
+    @property
+    def model_read(self) -> bool:
+        """Whether the model holds the user's config: read at launch, live or off the files.
+
+        False before that, for a config not converted yet, and offline without Lua. What
+        Export and an offline Save-as-preset ask before acting on the model (F6 of the
+        #148 review): an empty model is not "everything at Hyprland's default".
+        """
+        return self._model_read
 
     async def _read_model(
         self, client: CommandClient, options: Sequence[ResolvedOption], *, launch: bool

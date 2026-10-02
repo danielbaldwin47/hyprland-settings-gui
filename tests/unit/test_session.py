@@ -382,3 +382,66 @@ def test_closing_a_session_that_never_connected_still_reports_done(tmp_path: Pat
     session.close(lambda: done.append(None))
 
     assert done == [None]
+
+
+def test_without_hyprland_the_window_shows_the_users_own_files(tmp_path: Path) -> None:
+    """#148 hand-test 12: with no compositor the model stayed empty, so every Row showed
+    Hyprland's default, the Keybinds page said "No keybinds yet" over 186 binds, and Save as
+    preset said everything was at Hyprland's default."""
+    from hyprtweaker.engine.model import Bind, ConfigModel, DispatcherCall
+    from hyprtweaker.engine.presets import CaptureScope, PresetSaved
+    from hyprtweaker.engine.writer import Writer
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    written = ConfigModel(SCHEMA)
+    written.set("general:gaps_workspaces", 17)
+    written.set("decoration:rounding", 18)
+    written.entities.binds.append(
+        Bind(keys="SUPER + Q", dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
+    )
+    written.mark_entities_loaded()
+    Writer(paths, app_version=APP_VERSION).write(written)
+
+    async def scenario() -> None:
+        runner = Runner()
+        session = Session(
+            spawn=runner.spawn,
+            schema=SCHEMA,
+            paths=paths,
+            app_version=APP_VERSION,
+            connect=_no_instance,
+        )
+        session.start()
+        await runner.settle()
+
+        assert not session.live
+        assert session.model_read
+        assert session.model.get("general:gaps_workspaces") == 17
+        assert session.model.get("decoration:rounding") == 18
+        assert [b.keys for b in session.model.entities.binds] == ["SUPER + Q"]
+        saved: list[object] = []
+        session.save_preset("Mine", {CaptureScope.GAPS_LAYOUT}, done=saved.append)
+        assert isinstance(saved[0], PresetSaved)
+        assert saved[0].preset.options["general:gaps_workspaces"] == 17
+
+    asyncio.run(scenario())
+
+
+def test_without_hyprland_or_files_preset_save_says_the_settings_were_not_read(
+    tmp_path: Path,
+) -> None:
+    from hyprtweaker.engine.presets import CaptureScope, PresetNotSaved
+
+    session = Session(
+        spawn=lambda coro: coro.close(),
+        schema=SCHEMA,
+        paths=ConfigPaths.rooted_at(tmp_path),
+        app_version=APP_VERSION,
+        connect=_no_instance,
+    )
+    saved: list[object] = []
+    session.save_preset("Mine", {CaptureScope.GAPS_LAYOUT}, done=saved.append)
+
+    assert not session.model_read
+    assert isinstance(saved[0], PresetNotSaved)
+    assert saved[0].reason.startswith("Your settings have not been read")
