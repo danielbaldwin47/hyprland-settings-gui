@@ -14,7 +14,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import main_loop
@@ -1001,3 +1001,202 @@ def _status(dialog):  # type: ignore[no-untyped-def]
 
     (status,) = _of_type(dialog, Adw.StatusPage)
     return status
+
+
+MATUGEN_TOML = """\
+[templates.hyprland]
+input_path = '~/.config/matugen/templates/hyprland-colors.lua'
+output_path = '~/.config/hypr/colors.lua'
+"""
+
+WALLUST_TOML = """\
+[templates]
+kitty = { template = 'kitty.conf', target = '~/.config/kitty/colors.conf' }
+"""
+
+
+class LiveClient:
+    """A compositor that loaded the switched config cleanly. Nothing reaches a real one."""
+
+    async def configerrors(self) -> tuple[str, ...]:
+        return ()
+
+    async def bind_count(self) -> int:
+        return 0
+
+    async def workspace_rule_count(self) -> int:
+        return 0
+
+    async def monitors(self) -> tuple[dict[str, object], ...]:
+        return ()
+
+    async def reload_full_reset(self) -> None:
+        return None
+
+
+def _run_the_switch_only(coro) -> None:  # type: ignore[no-untyped-def]
+    """The wizard's `spawn`: runs Switch to its end; the 60-s countdown after it is not run."""
+    import asyncio
+
+    if coro.__name__ == "_switch":
+        asyncio.run(coro)
+    else:
+        coro.close()
+
+
+def _wizard(  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+    stub_tool: Callable[..., Path],
+    tools: tuple[str, ...],
+    *,
+    live: bool = True,
+):
+    """The wizard over a `hyprland.conf` in the fenced home, with `tools` installed (stubs
+    on the fenced tool path, never run) and matugen's and wallust's configs present. The
+    static gate is stood in for: `test_bridge_verify_config.py` runs the real one."""
+    import subprocess
+
+    from hyprtweaker.engine.migration import flow as flow_module
+    from hyprtweaker.engine.migration.flow import MigrationFlow
+    from hyprtweaker.engine.paths import ConfigPaths
+    from hyprtweaker.engine.schema import load_schema
+    from hyprtweaker.ui.dialogs.migration import MigrationDialog
+
+    paths = ConfigPaths.default()
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+    for relpath, text in (
+        ("matugen/config.toml", MATUGEN_TOML),
+        ("wallust/wallust.toml", WALLUST_TOML),
+    ):
+        (paths.config_home / relpath).parent.mkdir(parents=True, exist_ok=True)
+        (paths.config_home / relpath).write_text(text, encoding="utf-8")
+    for tool in tools:
+        stub_tool(tool, "exit 99")
+
+    monkeypatch.setattr(
+        flow_module,
+        "_verify_config",
+        lambda entrypoint, runtime: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(flow_module, "_hyprland_installed", lambda: True)
+    flow = MigrationFlow(
+        paths=paths,
+        schema=load_schema("0.56.2", ROOT / "data" / "schema"),
+        app_version=APP_VERSION,
+        client=LiveClient() if live else None,
+    )
+    started_application()
+    from started_app import presented
+
+    dialog = presented(MigrationDialog(flow, spawn=_run_the_switch_only))
+    _click(dialog, "Convert...")
+    _click(dialog, "Back up and convert")
+    return dialog, flow, paths
+
+
+def _tool_configs(paths) -> dict[str, bytes]:  # type: ignore[no-untyped-def]
+    root = paths.config_home
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and not path.is_relative_to(paths.hypr_dir)
+    }
+
+
+def _row_button(dialog, title: str):  # type: ignore[no-untyped-def]
+    from gi.repository import Adw, Gtk
+
+    (row,) = [row for row in _of_type(dialog, Adw.ActionRow) if row.get_title() == title]
+    (button,) = [widget for widget in _walk(row) if isinstance(widget, Gtk.Button)]
+    return button
+
+
+class TestBridgeSetup:
+    """#187: the back-up step offers each installed theming tool, each behind its own
+    confirm; skipping all is the default and nothing of a tool's is written before Switch."""
+
+    def test_two_installed_tools_are_listed_and_confirming_one_wires_only_that_one(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, flow, paths = _wizard(monkeypatch, stub_tool, ("matugen", "wallust"))
+        wallust = (paths.config_home / "wallust/wallust.toml").read_bytes()
+
+        assert _page_title(dialog) == "Theming tools"
+        assert _rows(dialog) == [("matugen", "Not set up"), ("wallust", "Not set up")]
+        assert dialog.get_default_widget().get_label() == "Continue"
+
+        _row_button(dialog, "matugen").emit("clicked")
+        confirm = dialog._confirm
+        assert confirm.get_heading() == "Set up matugen?"
+        assert confirm.get_default_response() == "cancel"
+        assert confirm.get_response_label("agree") == "Set up matugen"
+        assert "~/.config/matugen/config.toml (changed)" in confirm.lines
+        confirm.emit("response", "agree")
+
+        assert _rows(dialog) == [
+            ("matugen", "Set up when you switch"),
+            ("wallust", "Not set up"),
+        ]
+        assert _row_button(dialog, "matugen").get_label() == "Don't set up"
+        assert (paths.config_home / "matugen/config.toml").read_text() == MATUGEN_TOML
+
+        _click(dialog, "Continue")
+        assert _page_title(dialog) == "Back up"
+        assert ("Set up when you switch", "matugen") in _rows(dialog)
+        _click(dialog, "Switch and verify")
+
+        assert _page_title(dialog) == "Keep or roll back"
+        assert "bridge/matugen.lua" in (paths.config_home / "matugen/config.toml").read_text()
+        assert (paths.config_home / "wallust/wallust.toml").read_bytes() == wallust
+        assert "matugen is set up. Its colors load from matugen's next run." in _row_titles(
+            dialog
+        )
+        flow.keep()
+
+    def test_declining_the_confirm_leaves_every_tool_config_as_it_was(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, flow, paths = _wizard(monkeypatch, stub_tool, ("matugen", "wallust"))
+        before = _tool_configs(paths)
+
+        _row_button(dialog, "matugen").emit("clicked")
+        dialog._confirm.emit("response", "cancel")
+        assert _rows(dialog)[0] == ("matugen", "Not set up")
+        _click(dialog, "Continue")
+        _click(dialog, "Switch and verify")
+
+        assert _page_title(dialog) == "Keep or roll back"
+        assert flow.consents == ()
+        assert _tool_configs(paths) == before
+        assert "matugen" not in _text_under(dialog._view.get_visible_page())
+        flow.keep()
+
+    def test_a_confirmed_tool_can_be_unchecked_before_the_switch(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, flow, _paths = _wizard(monkeypatch, stub_tool, ("matugen",))
+        _row_button(dialog, "matugen").emit("clicked")
+        dialog._confirm.emit("response", "agree")
+
+        _row_button(dialog, "matugen").emit("clicked")
+
+        assert _rows(dialog) == [("matugen", "Not set up")]
+        assert flow.consents == ()
+
+    def test_with_no_tool_installed_the_wizard_goes_straight_to_the_back_up_page(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, _flow, _paths = _wizard(monkeypatch, stub_tool, ())
+
+        assert _page_title(dialog) == "Back up"
+        assert "Theming tools" not in [_title(page) for page in _stack(dialog)]
+
+    def test_without_a_compositor_no_tool_is_offered(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        dialog, _flow, _paths = _wizard(
+            monkeypatch, stub_tool, ("matugen", "wallust"), live=False
+        )
+
+        assert _page_title(dialog) == "Back up"
