@@ -1,4 +1,4 @@
-"""Colours and gradients round-trip without a false "Overridden" (addendum 37 of the #153 review).
+"""Colours and gradients round-trip with no false "Overridden" (#153 review, addendum 37).
 
 The drift scan (`overrides.scan`) and a transaction's Read-back compare what the app's own
 Module sets against `getoption`. Every unit-tier run of that comparison answers with the
@@ -6,7 +6,8 @@ fake compositor's replies; the real reply for a gradient was unverified, and mos
 a gradient border, so a mismatch there would badge the Theming page's main keys
 "Overridden" for nearly every user. Here a real nested Hyprland answers.
 
-    HARNESS_DRM_CARD=/dev/dri/card0 pytest tests/integration/test_drift_gradients_live.py -m hyprland
+    HARNESS_DRM_CARD=/dev/dri/card0 \\
+        pytest tests/integration/test_drift_gradients_live.py -m hyprland
 """
 
 from __future__ import annotations
