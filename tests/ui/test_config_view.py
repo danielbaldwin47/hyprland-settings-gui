@@ -343,6 +343,10 @@ def test_a_held_layout_the_scan_does_not_find_is_shown_as_itself_and_kept(
     window.sync()
     dropdown = layout_dropdown(window)
 
-    assert offered(dropdown)[-1] == "gone (Lua layout, not found in your files)"
+    assert offered(dropdown)[-1] == "gone (not found)"
     assert dropdown.get_selected() == 6
+    assert dropdown.get_tooltip_text() == (
+        "No Lua file of yours registers a layout named “gone”. "
+        "The setting is kept as it is until you choose another layout."
+    )
     assert session.value_of(session.schema["general:layout"]) == "lua:gone"

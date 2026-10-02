@@ -467,6 +467,13 @@ class RowFactory:
                     labels.append(choices[-1][1])
                     index = len(choices) - 1
                 dropdown.set_selected(index)
+            explain()
+
+        def explain() -> None:
+            # The short "(not found)" keeps the Row's title readable; the why is one hover away.
+            index = dropdown.get_selected()
+            held = choices[index][0] if index < len(choices) else None
+            dropdown.set_tooltip_text(_unfound_layout_tooltip(held, choices))
 
         def changed(*_: Any) -> None:
             if self._echo_guard:
@@ -475,6 +482,7 @@ class RowFactory:
             if index >= len(choices):
                 return
             self._set(option, choices[index][0])
+            explain()
 
         dropdown.connect("notify::selected", changed)
         return OptionRow(option, row, dropdown, refresh, chrome)
@@ -1111,14 +1119,27 @@ _LUA_LAYOUT = "lua:"
 def _lua_layout_label(value: str, *, found: bool) -> str:
     """A layout an open combo offers beyond its curated ones, in words (#175).
 
-    `lua:foo` reads "foo (Lua layout)" when the user's files register it, and says so when
-    they do not: the value is kept, but Hyprland has no such layout to switch to. Any other
-    value (a plugin's layout) reads as itself.
+    `lua:foo` reads "foo (Lua layout)" when the user's files register it, and "foo (not
+    found)" when they do not: the value is kept, but no file registers it (the tooltip
+    says so in full). Any other value (a plugin's layout) reads as itself.
     """
     if not value.startswith(_LUA_LAYOUT):
         return value
     name = value.removeprefix(_LUA_LAYOUT)
-    return f"{name} (Lua layout)" if found else f"{name} (Lua layout, not found in your files)"
+    return f"{name} (Lua layout)" if found else f"{name} (not found)"
+
+
+def _unfound_layout_tooltip(value: Any, choices: list[tuple[Any, str]]) -> str | None:
+    """Why a held `lua:<name>` reads "(not found)", or `None` for any other choice."""
+    if not isinstance(value, str) or not value.startswith(_LUA_LAYOUT):
+        return None
+    if (value, _lua_layout_label(value, found=False)) not in choices:
+        return None
+    name = value.removeprefix(_LUA_LAYOUT)
+    return (
+        f"No Lua file of yours registers a layout named “{name}”. "
+        "The setting is kept as it is until you choose another layout."
+    )
 
 
 def _typed(option: ResolvedOption, key: str) -> Any:
