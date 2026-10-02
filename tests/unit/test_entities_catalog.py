@@ -11,16 +11,17 @@ from __future__ import annotations
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
 from hyprtweaker.engine.entities_catalog import (
-    ANIMATION_LEAVES,
     BUILTIN_CURVES,
     DEVICE_FIELD_SPECS,
     DEVICE_ONLY_FIELDS,
     GESTURE_ACTIONS,
+    SHIPPED_ANIMATION_LEAVES,
     UNSET_ACTION,
     FieldSpec,
     FieldType,
     Finding,
     animation_findings,
+    animation_leaves,
     coerce,
     curve_findings,
     curve_usage,
@@ -45,7 +46,7 @@ from hyprtweaker.engine.model.entities import (
     EnvVar,
     Gesture,
 )
-from hyprtweaker.engine.schema import load_schema
+from hyprtweaker.engine.schema import Schema, load_schema
 
 SCHEMA = load_schema(SAMPLE_VERSION, SCHEMA_DIR)
 OPTION_NAMES = tuple(option.name for option in SCHEMA)
@@ -210,8 +211,28 @@ class TestFindings:
         assert animation_findings(Animation("brandNewLeaf", {}))
 
     def test_every_shipped_leaf_passes_its_own_check(self) -> None:
-        for leaf in ANIMATION_LEAVES:
+        for leaf in SHIPPED_ANIMATION_LEAVES:
             assert animation_findings(Animation(leaf, {"enabled": False})) == (), leaf
+
+    def test_a_schema_with_the_block_serves_its_own_leaves(self) -> None:
+        """A newer release's leaf is offered and not flagged once its schema records it."""
+        schema = Schema("0.57.0", (), animation_leaves=("fade", "brandNewLeaf"))
+        leaves = animation_leaves(schema)
+        entities = _entities(animations=[Animation("brandNewLeaf", {"enabled": False})])
+
+        assert leaves == ("fade", "brandNewLeaf")
+        assert unknown_leaves(entities, leaves) == ()
+        assert animation_findings(Animation("brandNewLeaf", {"enabled": False}), leaves) == ()
+        # The shipped list is not mixed in: a leaf the schema omits is this tree's absence.
+        assert unknown_leaves(_entities(animations=[Animation("windowsIn", {})]), leaves) == (
+            "windowsIn",
+        )
+
+    def test_a_schema_without_the_block_falls_back_to_the_shipped_leaves(self) -> None:
+        schema = Schema("0.56.0", (), animation_leaves=None)
+
+        assert animation_leaves(schema) == SHIPPED_ANIMATION_LEAVES
+        assert len(animation_leaves(schema)) == 34
 
     def test_a_device_key_hyprland_has_no_field_for_is_surfaced(self) -> None:
         """`hl.device` raises "unknown field" and takes the Module down with it."""

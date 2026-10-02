@@ -26,6 +26,7 @@ Typical use::
 
 from __future__ import annotations
 
+from .diff import SchemaDiff, diff_schemas
 from .generated import GeneratedSchema
 from .overlay import Overlay
 from .resolve import (
@@ -77,6 +78,7 @@ __all__ = [
     "ResolvedOption",
     "Restart",
     "Schema",
+    "SchemaDiff",
     "SectionOverlay",
     "Supplement",
     "SupplementKind",
@@ -87,6 +89,7 @@ __all__ = [
     "below_lua_floor",
     "derive_section_title",
     "derive_title",
+    "diff_schemas",
     "humanise",
     "load_schema",
     "newer_than_shipped",

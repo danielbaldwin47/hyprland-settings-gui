@@ -266,7 +266,9 @@ class DeclarationsPage:
         the culprit and its victim.
         """
         grouped: dict[int, list[Finding]] = {}
-        for index, finding in self._descriptor.findings_for(self._session.model.entities):
+        for index, finding in self._descriptor.findings_for(
+            self._session.model.entities, self._session.schema
+        ):
             grouped.setdefault(index, []).append(finding)
         return {index: tuple(items) for index, items in grouped.items()}
 

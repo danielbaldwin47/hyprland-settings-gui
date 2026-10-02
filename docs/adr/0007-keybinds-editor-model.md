@@ -17,7 +17,7 @@ Binds are the largest Entity class in every corpus rice (89–197 per config) an
 
 ### Model owns bind state; `binds.lua` is round-trippable
 
-The app's model is the source of truth for binds, **write-only over IPC**: never reconstruct binds from `hyprctl binds` (blind to `code:N`); post-reload verification for binds is `configerrors` only.
+The app's model is the source of truth for binds, **write-only over IPC**: never reconstruct binds from `hyprctl binds` (blind to `code:N`); post-reload verification for binds is `configerrors` only (the Migration switch's one-time count checks, ADR-0009, compare counts only).
 
 Hand-editability is preserved by the *file*, not IPC: `binds.lua` is emitted in a **canonical, machine-parseable form** the app can also read back. On external change (manifest hash mismatch / file watch), the app re-parses `binds.lua`; constructs the parser can't represent are surfaced as read-only rows (offered adopt-into-`legacy.lua`), never silently dropped or overwritten.
 

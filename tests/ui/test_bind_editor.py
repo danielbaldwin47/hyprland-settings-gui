@@ -14,12 +14,51 @@ from typing import Any
 
 import pytest
 
+from hyprtweaker.engine.dispatchers import CATALOG, Dispatcher
 from hyprtweaker.engine.importer.keysyms import validator_available
 from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall
 
 needs_xkb = pytest.mark.skipif(
     not validator_available(), reason="libxkbcommon is not loadable here"
 )
+
+
+FREE_FORM_NOTE = "This action's arguments are not documented in a form this app can generate"
+
+CURATED = [entry for entry in CATALOG if not entry.free_form and entry.args]
+PLAIN = [entry for entry in CATALOG if not entry.free_form and not entry.args]
+FREE_FORM = [entry for entry in CATALOG if entry.free_form]
+
+
+def add_flow(entry: Dispatcher) -> Any:
+    """The add dialog after the user picked `entry` in the Hyprland-action picker."""
+    from gi.repository import Adw
+
+    from hyprtweaker.ui.dialogs.bind_editor import BindEditor
+
+    Adw.init()
+    editor = BindEditor(on_done=lambda _bind: None)
+    editor._choose(entry)
+    return editor
+
+
+def action_group_description(editor: Any) -> str:
+    """The "Action" group's description, found by walking the form page the way a reader
+    sees it, not through a handle the editor keeps for itself."""
+    from gi.repository import Adw, Gtk
+
+    def walk(widget: Any) -> Any:
+        yield widget
+        child = widget.get_first_child()
+        while child is not None:
+            yield from walk(child)
+            child = child.get_next_sibling()
+
+    page = editor._view.get_visible_page()
+    groups = [w for w in walk(page) if isinstance(w, Adw.PreferencesGroup)]
+    (action,) = [g for g in groups if g.get_title() == "Action"]
+    assert isinstance(action, Gtk.Widget)
+    return str(action.get_description() or "")
 
 
 def dead_bind(*, enabled: bool = False) -> Bind:
@@ -147,3 +186,60 @@ def test_a_free_form_call_keeps_its_booleans_and_quoted_numbers_through_an_edit(
     assert [(b.dispatcher.args, b.dispatcher.positional) for b in saved if b.dispatcher] == [
         ({"workspace": "3", "follow": False}, ())
     ]
+
+
+SAMPLE = {"string": "abc", "int": 3, "bool": True, "window": "class:foo", "workspace": "2"}
+
+
+@pytest.mark.parametrize("entry", CURATED, ids=lambda e: e.path)
+def test_a_curated_dispatcher_gets_one_labelled_field_per_argument(entry: Dispatcher) -> None:
+    """The add flow shows a generated form, not the raw table (#127): a field per
+    `ArgSpec`, titled as the catalog says, and no free-form view among them."""
+    from gi.repository import Adw
+
+    editor = add_flow(entry)
+
+    assert editor._chosen is entry
+    assert set(editor._arg_entries) == {spec.name for spec in entry.args}
+    assert all(isinstance(row, Adw.EntryRow) for row in editor._arg_entries.values())
+    assert {name: row.get_title() for name, row in editor._arg_entries.items()} == {
+        spec.name: spec.title() for spec in entry.args
+    }
+    assert FREE_FORM_NOTE not in action_group_description(editor)
+
+
+@pytest.mark.parametrize("entry", PLAIN, ids=lambda e: e.path)
+def test_a_plain_dispatcher_says_it_takes_no_arguments(entry: Dispatcher) -> None:
+    editor = add_flow(entry)
+
+    assert editor._arg_entries == {}
+    assert action_group_description(editor) == "This action takes no arguments."
+
+
+@pytest.mark.parametrize("entry", FREE_FORM, ids=lambda e: e.path)
+def test_a_free_form_dispatcher_keeps_the_raw_table(entry: Dispatcher) -> None:
+    from gi.repository import Gtk
+
+    editor = add_flow(entry)
+
+    assert list(editor._arg_entries) == ["__free__"]
+    assert isinstance(editor._arg_entries["__free__"], Gtk.TextView)
+    assert action_group_description(editor).startswith(FREE_FORM_NOTE)
+
+
+@pytest.mark.parametrize("entry", CURATED, ids=lambda e: e.path)
+def test_every_key_of_a_saved_curated_call_survives_an_edit(entry: Dispatcher) -> None:
+    """A curated form rebuilds the call from its `ArgSpec` names alone, so a saved key the
+    entry omits is lost on Save. Open a saved call that carries every key of the entry and
+    save it untouched: the call must come back equal (#126's key rule, #127)."""
+    if entry.positional:
+        call = DispatcherCall(path=entry.path, positional=(SAMPLE[entry.args[0].type],))
+    else:
+        call = DispatcherCall(
+            path=entry.path, args={spec.name: SAMPLE[spec.type] for spec in entry.args}
+        )
+    editor, saved = open_editor(Bind(keys="SUPER + w", dispatcher=call))
+    editor._save()
+
+    assert not editor._error.get_visible(), editor._error.get_text()
+    assert [b.dispatcher for b in saved] == [call]

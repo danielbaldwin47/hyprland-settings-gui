@@ -1,0 +1,51 @@
+name: Release watch
+
+# The scheduled watcher of ADR-0012 (§ Trigger). Once a week it asks GitHub for the newest
+# stable hyprwm/Hyprland release and, when no schema for it ships in data/schema/ and no
+# `Release check: Hyprland <ver>` issue exists (open or closed), opens one labelled
+# `ready-for-agent`: the start of docs/agents/hyprland-release-check.md. The logic is
+# tools/release_watch.py. A schedule runs from the default branch only, so this does nothing
+# until it is merged; `workflow_dispatch` lets the owner fire it by hand.
+on:
+  schedule:
+    - cron: '43 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Read GitHub and say what would be opened, but open nothing'
+        type: boolean
+        default: false
+
+# Not on ci.yml's concurrency key: that one is per ref and cancels in progress. Two runs of
+# this at once could each find no issue and open two, so the second waits for the first.
+concurrency:
+  group: release-watch
+  cancel-in-progress: false
+
+# The workflow token defaults to read. `contents: read` is for checkout, which an explicit
+# permissions block would otherwise drop; `issues: write` opens the issue.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    name: Open a release-check issue for a new Hyprland release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run the watcher
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python tools/release_watch.py --dry-run
+          else
+            python tools/release_watch.py
+          fi

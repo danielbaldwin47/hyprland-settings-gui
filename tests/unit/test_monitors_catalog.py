@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from hyprtweaker.engine.model.entities import MonitorRule
 from hyprtweaker.engine.monitors_catalog import (
+    arrangement_mismatches,
     connected_rules,
     disconnected_rules,
     format_mode,
@@ -143,3 +144,110 @@ class TestRuleAssignment:
         ]
         leftover = disconnected_rules(rules, MONITORS)
         assert [rule.output for rule in leftover] == ["DP-9"]
+
+
+def live(
+    name: str = "DP-1",
+    *,
+    description: str = "Dell U2720Q",
+    size: tuple[int, int] = (2560, 1440),
+    at: tuple[int, int] = (0, 0),
+    scale: float = 1.0,
+    transform: int = 0,
+) -> dict[str, object]:
+    """One `hyprctl -j monitors` record, trimmed to the keys the comparison reads."""
+    return {
+        "name": name,
+        "description": description,
+        "width": size[0],
+        "height": size[1],
+        "x": at[0],
+        "y": at[1],
+        "scale": scale,
+        "transform": transform,
+    }
+
+
+class TestArrangementMismatches:
+    """The Migration switch's monitor check: what the rules ask for against what is live."""
+
+    def test_a_display_set_up_as_asked_has_nothing_to_report(self) -> None:
+        rules = [
+            MonitorRule(
+                output="DP-1",
+                fields={"mode": "2560x1440@144", "position": "1920x0", "scale": 1.0},
+            )
+        ]
+        assert arrangement_mismatches(rules, [live(at=(1920, 0))]) == ()
+
+    def test_no_rules_asks_for_nothing(self) -> None:
+        assert arrangement_mismatches([], [live()]) == ()
+
+    def test_a_different_scale_is_named_with_both_values(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"scale": 1.5})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1 is at scale 1, the configuration asks for 1.5",
+        )
+
+    def test_a_different_position_is_named_with_both_values(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"position": "1920x0"})]
+        assert arrangement_mismatches(rules, [live(at=(0, 0))]) == (
+            "DP-1 is at 0x0, the configuration asks for 1920x0",
+        )
+
+    def test_a_different_resolution_is_named_and_the_refresh_rate_is_not_compared(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"mode": "1920x1080@60"})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1 runs 2560x1440, the configuration asks for 1920x1080",
+        )
+        same_size = [MonitorRule(output="DP-1", fields={"mode": "2560x1440@59.94"})]
+        assert arrangement_mismatches(same_size, [live()]) == ()
+
+    def test_a_different_rotation_is_named(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"transform": 1})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1 is rotated as transform 0, the configuration asks for transform 1",
+        )
+
+    def test_words_that_are_not_numbers_ask_for_nothing_in_particular(self) -> None:
+        rules = [
+            MonitorRule(
+                output="DP-1",
+                fields={"mode": "preferred", "position": "auto", "scale": "auto"},
+            )
+        ]
+        assert arrangement_mismatches(rules, [live(at=(640, 0), scale=1.25)]) == ()
+
+    def test_the_catch_all_speaks_for_a_display_with_no_rule_of_its_own(self) -> None:
+        rules = [
+            MonitorRule(output="eDP-1", fields={"scale": 2}),
+            MonitorRule(output="", fields={"scale": 1.5}),
+        ]
+        displays = [live("eDP-1", description="BOE", scale=2.0), live("DP-3")]
+        assert arrangement_mismatches(rules, displays) == (
+            "DP-3 is at scale 1, the configuration asks for 1.5",
+        )
+
+    def test_a_desc_rule_speaks_for_the_display_it_describes(self) -> None:
+        rules = [MonitorRule(output="desc:Dell U2720Q", fields={"scale": 2})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1 is at scale 1, the configuration asks for 2",
+        )
+
+    def test_a_rule_for_a_display_that_is_not_connected_is_not_a_mismatch(self) -> None:
+        rules = [MonitorRule(output="DP-9", fields={"scale": 2, "position": "0x0"})]
+        assert arrangement_mismatches(rules, [live()]) == ()
+
+    def test_a_display_the_configuration_disables_but_is_still_listed(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"disabled": True})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1 is still active, the configuration disables it",
+        )
+
+    def test_a_mirrored_display_is_not_held_to_a_position(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"mirror": "eDP-1", "position": "1920x0"})]
+        assert arrangement_mismatches(rules, [live(at=(0, 0))]) == ()
+
+    def test_every_difference_on_a_display_is_reported(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"scale": 2, "position": "100x0"})]
+        assert len(arrangement_mismatches(rules, [live()])) == 2

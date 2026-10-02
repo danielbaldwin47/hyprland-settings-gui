@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -308,11 +309,58 @@ def test_stamping_records_the_predecessor_in_provenance() -> None:
     assert "predecessor" not in stamp_added_in(new, None).provenance
 
 
+def test_stamping_keeps_the_animation_leaves_block() -> None:
+    old = _schema("0.56.2", option("general:gaps_in"))
+    new = replace(
+        _schema("0.58.0", option("general:gaps_in")), animation_leaves=("fade", "global")
+    )
+
+    assert stamp_added_in(new, old).animation_leaves == ("fade", "global")
+
+
 def test_a_predecessor_that_is_not_older_is_rejected() -> None:
     same = _schema("0.58.0", option("general:gaps_in"))
 
     with pytest.raises(ValueError, match="not older"):
         stamp_added_in(same, same)
+
+
+def test_the_animation_leaves_block_round_trips_and_sits_beside_provenance() -> None:
+    schema = generated_module.GeneratedSchema(
+        hyprland_version="0.56.2",
+        options=(option(),),
+        provenance={},
+        animation_leaves=("fade", "global"),
+    )
+    text = generated_module.dumps(schema)
+
+    assert json.loads(text)["animation_leaves"] == ["fade", "global"]
+    assert generated_module.loads(text) == schema
+
+
+def test_a_schema_without_the_block_serialises_without_one() -> None:
+    """The shipped 0.56.1-style file has no block and must stay byte-for-byte as it is."""
+    schema = generated_module.GeneratedSchema(
+        hyprland_version="0.56.2", options=(option(),), provenance={}
+    )
+    text = generated_module.dumps(schema)
+
+    assert "animation_leaves" not in json.loads(text)
+    assert generated_module.loads(text).animation_leaves is None
+
+
+@pytest.mark.parametrize("block", [[], "fade", ["fade", "fade"], ["fade", 3], [""]])
+def test_a_malformed_animation_leaves_block_is_refused_at_load(block: object) -> None:
+    text = generated_module.dumps(
+        generated_module.GeneratedSchema(
+            hyprland_version="0.56.2", options=(option(),), provenance={}
+        )
+    )
+    payload = json.loads(text)
+    payload["animation_leaves"] = block
+
+    with pytest.raises(ValueError, match="animation_leaves"):
+        generated_module.loads(json.dumps(payload))
 
 
 def test_duplicate_options_are_rejected() -> None:
@@ -352,6 +400,24 @@ def test_an_unknown_widget_is_rejected() -> None:
 
 
 # --- the Schema container --------------------------------------------------------------
+
+
+def test_the_resolved_schema_carries_the_animation_leaves() -> None:
+    generated = generated_module.GeneratedSchema(
+        hyprland_version="0.56.2",
+        options=(option(),),
+        provenance={},
+        animation_leaves=("fade", "global"),
+    )
+
+    assert Schema.merge(generated, Overlay(sections={}, options={})).animation_leaves == (
+        "fade",
+        "global",
+    )
+    bare = generated_module.GeneratedSchema(
+        hyprland_version="0.56.2", options=(option(),), provenance={}
+    )
+    assert Schema.merge(bare, Overlay(sections={}, options={})).animation_leaves is None
 
 
 def test_schema_lookup_and_sections() -> None:

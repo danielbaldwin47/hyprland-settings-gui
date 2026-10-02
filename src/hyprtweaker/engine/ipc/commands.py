@@ -177,6 +177,20 @@ class CommandClient:
             raise MalformedReply(f"binds answered {payload!r}")
         return len(payload)
 
+    async def workspace_rule_count(self) -> int:
+        """How many workspace rules the live config declares. The Migration switch's check.
+
+        The only rule listing Hyprland offers over IPC: there is no window-rule or layer-rule
+        command, and no `hl.get_*` getter for either (probed on 0.56.2), so those two kinds
+        are verified by `configerrors` alone (ADR-0009). A count, like `bind_count`, because
+        the switch compares sizes and never reconstructs rule state from the reply (ADR-0008).
+        """
+        reply = await self._request("workspacerules", json_output=True)
+        payload = _parse_json(reply, "workspacerules")
+        if not isinstance(payload, list):
+            raise MalformedReply(f"workspacerules answered {payload!r}")
+        return len(payload)
+
     async def clients(self) -> tuple[Mapping[str, Any], ...]:
         """Every open window, as Hyprland describes it. The Pick-a-window helper (#67).
 

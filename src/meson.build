@@ -84,6 +84,7 @@ package_sources = {
   ],
   'hyprtweaker/engine/schema': [
     '__init__.py',
+    'diff.py',
     'generated.py',
     'infer.py',
     'overlay.py',

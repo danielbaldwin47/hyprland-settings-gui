@@ -106,9 +106,11 @@ def test_the_generator_reproduces_the_committed_schema(
 
     # Provenance records the build commit, which differs between machines running the
     # same release. Everything describing the Options themselves must match exactly.
-    assert (
-        generated_module.load(regenerated).options == generated_module.load(committed).options
-    )
+    again, shipped = generated_module.load(regenerated), generated_module.load(committed)
+    assert again.options == shipped.options
+    # The animation tree is what the same release's compositor reports (#121), so it
+    # reproduces exactly too: a leaf added or dropped by hand fails here.
+    assert again.animation_leaves == shipped.animation_leaves
 
 
 def test_the_generator_stamps_exactly_the_options_its_predecessor_lacks(
@@ -135,6 +137,7 @@ def test_the_generator_stamps_exactly_the_options_its_predecessor_lacks(
     assert {o.name for o in result.options if o.added_in == version} == dropped
     assert all(o.added_in is None for o in result.options if o.name not in dropped)
     assert result.provenance["predecessor"] == "0.0.1"
+    assert result.animation_leaves == current.animation_leaves
 
 
 def test_a_missing_predecessor_means_no_stamps_and_no_crash(
