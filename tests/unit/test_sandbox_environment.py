@@ -46,3 +46,41 @@ def test_the_sandbox_home_has_an_empty_tool_path_and_finds_no_tool(tmp_path: Pat
 
     assert os.listdir(home / "bin") == []
     assert find_tool("sh", environment) is None
+
+
+def test_a_reused_home_gets_the_refusing_stand_ins_first_on_path(tmp_path: Path) -> None:
+    """Finding 9 of the #153 review: a copied rice's autostart, or a key binding, that names
+    a wallpaper daemon ran the owner's real one from the host's `PATH`."""
+    import subprocess
+
+    home = tmp_path / "sandbox-home"
+    sandbox.prepare_home(home, None)
+    first = sandbox.fence_environment(home, "/usr/bin:/bin")
+    again = sandbox.fence_environment(home, "/usr/bin:/bin")
+
+    assert first == again
+    assert first["PATH"] == f"{home / 'refused-bin'}:/usr/bin:/bin"
+    ran = subprocess.run(
+        ["swww-daemon", "--format", "xrgb"],
+        env={**os.environ, **first},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ran.returncode == 126
+    assert (home / "refused.log").read_text() == "swww-daemon --format xrgb\n"
+    for name in ("dbus-update-activation-environment", "systemctl", "waybar"):
+        assert (home / "refused-bin" / name).is_file()
+
+
+def test_window_with_a_reused_home_is_refused(tmp_path: Path) -> None:
+    home = tmp_path / "sandbox-home"
+    assert sandbox.argument_problem(window=True, home=home) is None
+    sandbox.prepare_home(home, None)
+
+    assert sandbox.argument_problem(window=True, home=home) == (
+        "--window with a reused --home is refused: the home's own autostart would run with "
+        "the host's session bus in reach. Use a fresh --home, or drop --window."
+    )
+    assert sandbox.argument_problem(window=False, home=home) is None
+    assert sandbox.argument_problem(window=True, home=None) is None

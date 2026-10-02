@@ -7,8 +7,12 @@ nested compositor share a sandbox `$HOME` (every `XDG_*` repointed inside it), a
 `HYPRLAND_INSTANCE_SIGNATURE` and `WAYLAND_DISPLAY` name the nested instance. The app's tool
 search path (`HYPRTWEAKER_TOOL_PATH`) is `<home>/bin`, created empty, so it finds no theming
 tool or wallpaper daemon of the owner's; a stub script written there shows a detected one.
-This reuses the
-Harness tier's `NestedHyprland`, so its isolation is the one `test_harness_nested.py` asserts.
+Both the nested compositor and the app run with refusing stand-ins first on `PATH`
+(`<home>/refused-bin`, rewritten on every start, reused `--home` included): a theming tool,
+a wallpaper daemon, a bar or `systemctl` that a copied rice's autostart or a key binding
+names logs itself to `<home>/refused.log` and exits instead of running the owner's real one.
+This reuses the Harness tier's `NestedHyprland`, so its isolation is the one
+`test_harness_nested.py` asserts.
 
     .venv/bin/python tools/sandbox.py --shot out.png        # screenshot after --wait, then exit
     .venv/bin/python tools/sandbox.py --config tests/corpus/end-4 --shot out.png
@@ -51,12 +55,21 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tests" / "integration"))
+sys.path.insert(0, str(REPO_ROOT / "tests"))
 
 from harness import NestedHyprland, make_home, unavailable_reason  # noqa: E402
 from harness.nested import DRM_CARD_VARIABLE, drm_card_problem  # noqa: E402
 
+from hermetic import FENCE_LOG_ENV, REFUSED_TOOLS, install_refusals  # noqa: E402
+
 TOOL_PATH_ENV = "HYPRTWEAKER_TOOL_PATH"  # hyprtweaker.engine.tools.TOOL_PATH_ENV
 TOOL_DIR = "bin"
+REFUSED_DIR = "refused-bin"
+REFUSED_LOG = "refused.log"
+
+#: What a copied rice's autostart starts that must not run from the owner's `PATH`: the
+#: tests' refused names, plus the session programs a migrated `exec-once` brings along.
+SANDBOX_REFUSED = (*REFUSED_TOOLS, "systemctl", "waybar", "hypridle", "hyprlock")
 
 #: Enough for Hyprland to start and for the app to find a config it did not write, which is
 #: the first-run path every fresh user takes.
@@ -118,6 +131,31 @@ def prepare_home(home: Path, config: Path | None) -> Path:
     return entrypoint
 
 
+def fence_environment(home: Path, path: str) -> dict[str, str]:
+    """`PATH` with the refusing stand-ins first, and the log they write to. Installed anew
+    on every start, so a reused `--home` gets them as a fresh one does."""
+    install_refusals(home / REFUSED_DIR, SANDBOX_REFUSED)
+    return {
+        "PATH": os.pathsep.join([str(home / REFUSED_DIR), path]),
+        FENCE_LOG_ENV: str(home / REFUSED_LOG),
+    }
+
+
+def argument_problem(*, window: bool, home: Path | None) -> str | None:
+    """Why these arguments are refused, or `None`.
+
+    `--window` has no `bwrap` between the nested compositor and the session bus or user
+    manager, and a reused home holds the `autostart.lua` the app wrote when it migrated a
+    `.conf` rice, whose exec lines are not commented out: restarting on it would run them.
+    """
+    if window and home is not None and (home / ".config" / "hypr").exists():
+        return (
+            "--window with a reused --home is refused: the home's own autostart would run "
+            "with the host's session bus in reach. Use a fresh --home, or drop --window."
+        )
+    return None
+
+
 def app_environment(nested: Mapping[str, str], home: Path) -> dict[str, str]:
     """What the app runs with: the nested compositor's environment, plus this checkout.
 
@@ -144,6 +182,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    problem = argument_problem(window=args.window, home=args.home)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return 2
     if args.window:
         os.environ.pop(DRM_CARD_VARIABLE, None)
     else:
@@ -172,6 +214,9 @@ def main() -> int:
 
     home = (args.home or Path(tempfile.mkdtemp(prefix="hyprtweaker-sandbox-"))).resolve()
     entrypoint = prepare_home(home, args.config)
+    # Read by `home_environment`, so the compositor and the app both start with it.
+    os.environ.update(fence_environment(home, os.environ.get("PATH", "")))
+    print(f"refusals log to {home / REFUSED_LOG}")
 
     with NestedHyprland(entrypoint, home=home, log=home / "nested.log") as nested:
         env = app_environment(nested.env, home)
@@ -199,6 +244,9 @@ def main() -> int:
                     app.kill()
                     app.wait()
             log.close()
+            ran = home / REFUSED_LOG
+            if ran.exists():
+                print(f"refused: {ran.read_text().strip()}", file=sys.stderr)
 
 
 if __name__ == "__main__":

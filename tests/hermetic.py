@@ -21,6 +21,7 @@ which is an empty directory a test may put stubs in (the `stub_tool` fixture).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 TOOL_PATH_ENV = "HYPRTWEAKER_TOOL_PATH"
@@ -41,8 +42,10 @@ REFUSED_TOOLS = (
     "awww",
     "awww-daemon",
     "hyprpaper",
+    "dbus-update-activation-environment",
 )
-"""Theming tools and wallpaper daemons, by the program names their docs launch them with."""
+"""Theming tools and wallpaper daemons, by the program names their docs launch them with, and
+the one program a rice's autostart uses to rewrite the session's activation environment."""
 
 FIX = (
     "Find and run a tool through hyprtweaker.engine.tools (find_tool, run_tool), and in a "
@@ -74,10 +77,10 @@ def make_fence(root: Path) -> dict[str, str]:
     return environment
 
 
-def install_refusals(directory: Path) -> None:
-    """Write a refusing stand-in for every name in `REFUSED_TOOLS` into `directory`."""
+def install_refusals(directory: Path, names: Iterable[str] = REFUSED_TOOLS) -> None:
+    """Write a refusing stand-in for every one of `names` into `directory`."""
     directory.mkdir(parents=True, exist_ok=True)
-    for name in REFUSED_TOOLS:
+    for name in names:
         stand_in = directory / name
         stand_in.write_text(
             "#!/bin/sh\n"
