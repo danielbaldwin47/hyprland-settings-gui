@@ -29,7 +29,14 @@ from .journal import (
     LastKnownGood,
     ModuleChange,
 )
-from .manifest import FORMAT_VERSION, Manifest, ModuleRecord, content_hash, is_damaged
+from .manifest import (
+    FORMAT_VERSION,
+    Manifest,
+    ModuleRecord,
+    RetiredValue,
+    content_hash,
+    is_damaged,
+)
 
 __all__ = [
     "FORMAT_VERSION",
@@ -42,6 +49,7 @@ __all__ = [
     "Manifest",
     "ModuleChange",
     "ModuleRecord",
+    "RetiredValue",
     "content_hash",
     "is_damaged",
 ]
