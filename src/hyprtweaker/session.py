@@ -461,6 +461,15 @@ class Session:
         self._undo_group: UndoGroup | None = None
         """The open undo group, if any -- one at a time (`begin_undo_group`)."""
 
+        self._undo_waits_for: EntityStep | None = None
+        """The in-flight step a Ctrl+Z is waiting to undo once it lands (`undo`)."""
+
+        self.on_undo_due: Callable[[], object] | None = None
+        """Called when the edit a waiting Ctrl+Z was pressed over has landed, to undo it.
+
+        The window's own undo, so an undo the window puts behind a countdown still goes
+        there; without one the session undoes it itself."""
+
         self._reverting = False
         self._recovery_halted = False
         self._recovery = Recovery()
@@ -1601,8 +1610,23 @@ class Session:
         Undoing does not push a step of its own. There is no redo tier in v1, and a stack
         that recorded its own reversals would turn Ctrl+Z pressed twice into a value
         oscillating between two states rather than walking back through history.
+
+        `False` without touching the stack while an Entity edit is in flight -- the undo
+        then waits for it (`undo_queued`) and takes it back once it lands -- or while an
+        undo group holds edits over the top step's lists.
         """
         if not self.live or self._applier is None:
+            return False
+        in_flight = [p.step for p in self._pending_entities if p.group is None]
+        if in_flight:
+            # The newest gesture is still being written, so the stack top is not "the last
+            # one" yet -- and an Entity step beneath it would read as stale and be dropped
+            # (review of #151, finding 12). Undo that gesture once it lands instead.
+            self._undo_waits_for = in_flight[-1]
+            return False
+        if self._held_over(self._undo.top):
+            # A group (a display countdown) holds edits over the top step's lists: undoing
+            # under it would find the step stale and drop it. The window reverts instead.
             return False
         step = self._undo.pop()
         if step is None:
@@ -1613,6 +1637,36 @@ class Session:
         self._restore({edit.name: edit.before for edit in step.edits})
         self._applier.commit(*step.names)
         self._changed()
+        return True
+
+    @property
+    def undo_queued(self) -> bool:
+        """Whether a Ctrl+Z is waiting for an edit in flight, to undo it once it lands."""
+        return self._undo_waits_for is not None
+
+    def _held_over(self, step: Step | None) -> bool:
+        """Whether an undo group holds edits, landed or in flight, over `step`'s lists."""
+        if not isinstance(step, EntityStep):
+            return False
+        held = [p.step for p in self._pending_entities if p.group is not None]
+        if self._undo_group is not None:
+            held += self._undo_group.held
+        return any(each.kinds & step.kinds for each in held)
+
+    def _undo_when_landed(self) -> bool:
+        """Run the undo a Ctrl+Z left waiting, if this result landed its edit. `True` if so.
+
+        Only while that edit is the stack top and nothing newer is in flight: a newer edit,
+        or a failed one, means the gesture the user pressed Ctrl+Z over is gone or no longer
+        the last, and the wait is dropped rather than undoing something else.
+        """
+        waited = self._undo_waits_for
+        if waited is None or any(p.step is waited for p in self._pending_entities):
+            return False
+        self._undo_waits_for = None
+        if self._undo.top is not waited or any(p.group is None for p in self._pending_entities):
+            return False
+        (self.on_undo_due or self.undo)()
         return True
 
     def _undo_entities(self, step: EntityStep) -> bool:
@@ -2325,6 +2379,9 @@ class Session:
         self._observe(result)
         self._repoll_if_timed_out(result)
         self._report(result)
+        if self._undo_when_landed():
+            # The user already asked for this gesture back: no offer to undo it.
+            return
         newest: Step | None = entity_steps[-1] if entity_steps else step
         if newest is not None and result.ok and self.on_recorded is not None:
             # After `on_applied`, and only for a transaction that stands: the window shows one

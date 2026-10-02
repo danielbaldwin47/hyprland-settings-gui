@@ -270,6 +270,66 @@ def test_undo_refuses_a_step_whose_list_changed_off_the_stack(tmp_path: Path) ->
     assert entity_top(session).title == "Bind added", "the stale step is still on top"
 
 
+def test_undo_during_an_edit_in_flight_waits_for_it_and_drops_nothing(tmp_path: Path) -> None:
+    """Review of #151, finding 12: Ctrl+Z pressed while a removal is still being written
+    used to pop the step beneath it, find it stale and drop it. The removal is the gesture
+    the user means; it is undone once it lands, and the step beneath survives."""
+    session, applier = entity_session(tmp_path)
+    for each in ("SUPER + A", "SUPER + B"):
+        session.add_bind(bind(each))
+        applier.settle()
+    session.remove_bind(0)
+
+    assert not session.undo()
+    assert session.undo_queued
+    assert entity_top(session).title == "Bind added", "the step under the edit was dropped"
+    assert applier.serial == 3, "the waiting undo wrote something"
+
+    applier.settle()
+    assert keys(session) == ["SUPER + A", "SUPER + B"], "the removal was not undone"
+    assert not session.undo_queued
+    applier.settle()
+    assert entity_top(session).title == "Bind added"
+    assert session.undo()
+    assert keys(session) == ["SUPER + A"]
+
+
+def test_a_waiting_undo_is_dropped_when_its_edit_fails(tmp_path: Path) -> None:
+    session, applier = entity_session(tmp_path)
+    for each in ("SUPER + A", "SUPER + B"):
+        session.add_bind(bind(each))
+        applier.settle()
+    session.remove_bind(0)
+    assert not session.undo()
+
+    applier.settle("config-errors")
+
+    assert not session.undo_queued
+    assert keys(session) == ["SUPER + B"], "an undo ran for a gesture that never stood"
+    assert entity_top(session).title == "Bind added"
+
+
+def test_undo_never_drops_a_step_an_open_group_holds_edits_over(tmp_path: Path) -> None:
+    """Finding 12's second reproduction: scale 1 to 2 kept, then a countdown holding 2 to 3.
+    Undoing the kept step would find its list moved and drop it; the window turns Ctrl+Z
+    into Revert there, and the session refuses without touching the stack."""
+    session, applier = entity_session(tmp_path)
+    kept = session.begin_undo_group(DISPLAYS)
+    session.patch_monitor_rule("eDP-1", {"scale": 2})
+    applier.settle()
+    session.end_undo_group(kept, title="Display changed")
+    top = session.last_gesture
+    session.begin_undo_group(DISPLAYS)
+    session.patch_monitor_rule("eDP-1", {"scale": 3})
+    applier.settle()
+
+    assert not session.undo()
+
+    assert session.last_gesture is top
+    assert not session.undo_queued, "a countdown is not waited out"
+    assert [rule.fields for rule in session.monitor_rules] == [{"scale": 3}]
+
+
 # --- lists changed off the stack --------------------------------------------------------------
 
 
