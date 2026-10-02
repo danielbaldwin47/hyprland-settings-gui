@@ -558,12 +558,12 @@ class RowFactory:
         """
         button = Gtk.ColorDialogButton(
             dialog=Gtk.ColorDialog(with_alpha=True, modal=True),
-            rgba=_rgba(_DEFAULT_STOP),
+            rgba=gdk_rgba(_DEFAULT_STOP),
             valign=Gtk.Align.CENTER,
         )
         control = (
             self._placeholder_stack(
-                option, button, on_set=lambda: self._set(option, _color_of(button))
+                option, button, on_set=lambda: self._set(option, color_of(button))
             )
             if option.nullable
             else button
@@ -577,12 +577,14 @@ class RowFactory:
                 # the placeholder's click writes the button's current colour, and a button
                 # still holding the colour the Row was just reset *from* would make reset
                 # then set silently reinstate it rather than start fresh.
-                button.set_rgba(_rgba(_DEFAULT_STOP if value is NO_VALUE else _as_color(value)))
+                button.set_rgba(
+                    gdk_rgba(_DEFAULT_STOP if value is NO_VALUE else _as_color(value))
+                )
                 _show_value(control, value is not NO_VALUE)
 
         def changed(*_: Any) -> None:
             if not self._echo_guard:
-                self._set(option, _color_of(button))
+                self._set(option, color_of(button))
 
         button.connect("notify::rgba", changed)
         return OptionRow(option, row, control, refresh, chrome)
@@ -641,7 +643,7 @@ class RowFactory:
             if index >= len(gradient.colors):
                 return
             colors = list(gradient.colors)
-            colors[index] = _color_of(button)
+            colors[index] = color_of(button)
             self._set(option, replace(gradient, colors=tuple(colors)))
 
         def add_stop() -> None:
@@ -667,7 +669,7 @@ class RowFactory:
                 # value it was built from straight back into the model.
                 button = Gtk.ColorDialogButton(
                     dialog=Gtk.ColorDialog(with_alpha=True, modal=True),
-                    rgba=_rgba(color),
+                    rgba=gdk_rgba(color),
                     valign=Gtk.Align.CENTER,
                     tooltip_text=f"Colour {index + 1}",
                 )
@@ -727,7 +729,7 @@ class RowFactory:
 
         sides = Gtk.Grid(column_spacing=12, row_spacing=6)
         for column, side in enumerate(_SIDES):
-            sides.attach(_caption(side.capitalize()), column, 0, 1, 1)
+            sides.attach(caption(side.capitalize()), column, 0, 1, 1)
             sides.attach(spins[side], column, 1, 1, 1)
 
         shape = Gtk.Stack()
@@ -948,19 +950,22 @@ def _field(label: str, control: Gtk.Widget, *, expand: bool = False) -> Gtk.Box:
     of width it can get, while a spin button stretched across 700 px is a text field with
     two tiny arrows a long way from the number (seen on the running app).
     """
-    caption = _caption(label)
-    caption.set_hexpand(not expand)
+    name = caption(label)
+    name.set_hexpand(not expand)
     control.set_hexpand(expand)
     control.set_halign(Gtk.Align.FILL if expand else Gtk.Align.END)
 
     box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-    box.append(caption)
+    box.append(name)
     box.append(control)
     return box
 
 
-def _caption(text: str) -> Gtk.Label:
-    return Gtk.Label(label=text, xalign=0.0, css_classes=["caption", "dim-label"])
+def caption(text: str, *, expand: bool = False) -> Gtk.Label:
+    """A dim caption naming one part of a control: a gap side, an editor field."""
+    return Gtk.Label(
+        label=text, xalign=0.0, hexpand=expand, css_classes=["caption", "dim-label"]
+    )
 
 
 def _icon_button(icon: str, tooltip: str, clicked: Callable[..., None]) -> Gtk.Button:
@@ -1023,21 +1028,21 @@ def _ends_gesture(widget: Gtk.Widget, gesture: Gesture) -> None:
     widget.add_controller(focus)
 
 
-def _rgba(color: Color) -> Gdk.RGBA:
+def gdk_rgba(color: Color) -> Gdk.RGBA:
     """A model colour as GTK's. Through `#rrggbbaa` -- alpha last, as everywhere but ARGB."""
     rgba = Gdk.RGBA()
     rgba.parse(f"#{color.rgba:08x}")
     return rgba
 
 
-def _color_of(button: Gtk.ColorDialogButton) -> Color:
+def color_of(button: Gtk.ColorDialogButton) -> Color:
     """GTK's colour as the model's packed ARGB word."""
-    rgba = button.get_rgba()
+    shown = button.get_rgba()
     return Color(
-        (_byte(rgba.alpha) << 24)
-        | (_byte(rgba.red) << 16)
-        | (_byte(rgba.green) << 8)
-        | _byte(rgba.blue)
+        (_byte(shown.alpha) << 24)
+        | (_byte(shown.red) << 16)
+        | (_byte(shown.green) << 8)
+        | _byte(shown.blue)
     )
 
 

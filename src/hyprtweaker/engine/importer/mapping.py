@@ -559,12 +559,20 @@ class _Mapper:
                 Animation(leaf=leaf, fields={"enabled": False}, origin=origin)
             )
             return
-        fields: dict[str, Any] = {"enabled": True}
-        if len(parts) > 2 and parts[2]:
-            speed = self._animation_speed(leaf, parts[2], origin, f"animation = {value}")
-            if speed is None:
-                return
-            fields["speed"] = speed
+        if len(parts) < 3 or not parts[2]:
+            # Lua requires a speed on an enabled animation and fails the whole Module
+            # without one; left out, the leaf keeps its default, as with a speed <= 0.
+            self.report.add(
+                LossCode.ANIMATION_RANGE,
+                f"{leaf} animation has no speed, so Hyprland's default animation is kept",
+                origin=origin,
+                source=f"animation = {value}",
+            )
+            return
+        speed = self._animation_speed(leaf, parts[2], origin, f"animation = {value}")
+        if speed is None:
+            return
+        fields: dict[str, Any] = {"enabled": True, "speed": speed}
         if len(parts) > 3 and parts[3]:
             fields["bezier"] = parts[3]
         if len(parts) > 4 and parts[4]:

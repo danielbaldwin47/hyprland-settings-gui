@@ -82,7 +82,13 @@ def effect_text(value: Any) -> str:
 
 
 class GrammarRow(Generic[T]):
-    """An `EffectHelper` for one string grammar, in controls or in text."""
+    """An `EffectHelper` for one string grammar, in controls or in text.
+
+    The value summary is the row's subtitle, not ADR-0013's dim suffix: that ADR is for
+    generated option rows, whose subtitle is a description. An effect row has none, its
+    suffix strip already holds "Edit as text" and the remove button, and a summary such
+    as a long event list or a text-mode reason must wrap rather than squeeze the title.
+    """
 
     def __init__(
         self,
@@ -93,11 +99,15 @@ class GrammarRow(Generic[T]):
         default: T,
         text: Callable[[T], str] | None = None,
         source_text: Callable[[object], str] = effect_text,
+        explain: Callable[[str], str | None] | None = None,
     ) -> None:
         """`emit` is the value to save for the controls; `text` is how a typed value reads
         as text (the emitted string when `emit` returns one); `source_text` is how an
-        original value reads as text, for one `parse` rejected or text mode opened on."""
+        original value reads as text, for one `parse` rejected or text mode opened on;
+        `explain` says why the controls cannot show a text, where the grammar knows more
+        than "cannot show this value"."""
         self._original = original
+        self._explain = explain
         self._parse = parse
         self._emit = emit
         self._text_of = text
@@ -245,11 +255,27 @@ class GrammarRow(Generic[T]):
             self.widget.set_subtitle(text.strip())
         else:
             self.raw_toggle.set_tooltip_text("The controls cannot show this text as it is")
-            self.widget.set_subtitle(
-                "The controls cannot show this value. Edit it as text."
-                if text.strip()
-                else "Needs a value."
-            )
+            reason = self._explain(text) if self._explain is not None else None
+            if reason is None:
+                reason = (
+                    "The controls cannot show this value. Edit it as text."
+                    if text.strip()
+                    else "Needs a value."
+                )
+            self.widget.set_subtitle(reason)
+
+
+def border_pair_reason(text: str) -> str | None:
+    """Why a `border_color` text stays text, when it is the active+inactive pair: two
+    colours and no angle, which the legacy string means and one gradient cannot say."""
+    tokens = text.split()
+    if len(tokens) == 2 and all(
+        rule_grammars.parse_border_color(t) is not None for t in tokens
+    ):
+        return (
+            "Two colors without an angle are the active and inactive border. Edit them as text."
+        )
+    return None
 
 
 # --- opacity ------------------------------------------------------------------------------
@@ -367,14 +393,25 @@ class FullscreenStateRow(GrammarRow[FullscreenState]):
 
 # --- suppress_event -----------------------------------------------------------------------
 
-_EVENT_TITLES = {
-    "fullscreen": "Fullscreen",
-    "maximize": "Maximize",
-    "activate": "Activate",
-    "activatefocus": "Activate and focus",
-    "fullscreenoutput": "Fullscreen on an output",
-    "x11configurerequest": "X11 configure request",
+_EVENT_WORDS = {
+    "fullscreen": ("Fullscreen requests", "The window cannot make itself fullscreen"),
+    "maximize": ("Maximize requests", "The window cannot maximize itself"),
+    "activate": ("Activation requests", "The window cannot bring itself to the front"),
+    "activatefocus": (
+        "Focus on activation",
+        "The window can ask for attention but not take focus",
+    ),
+    "fullscreenoutput": (
+        "Fullscreen monitor choice",
+        "The window goes fullscreen where it is, not on the monitor it asks for",
+    ),
+    "x11configurerequest": (
+        "X11 move and resize requests",
+        "A floating X11 window cannot move or resize itself",
+    ),
 }
+"""Each event's title and what suppressing it does, read from Hyprland 0.56.2's
+`Window.cpp`. The keys themselves are one toggle away, in Edit as text."""
 
 
 class SuppressEventRow(GrammarRow[tuple[str, ...]]):
@@ -391,7 +428,8 @@ class SuppressEventRow(GrammarRow[tuple[str, ...]]):
     def _build(self) -> list[Gtk.Widget]:
         self.switches: dict[str, Adw.SwitchRow] = {}
         for event in SUPPRESS_EVENTS:
-            switch = Adw.SwitchRow(title=_EVENT_TITLES[event], subtitle=event, use_markup=False)
+            title, subtitle = _EVENT_WORDS[event]
+            switch = Adw.SwitchRow(title=title, subtitle=subtitle, use_markup=False)
             switch.connect("notify::active", self._changed)
             self.switches[event] = switch
         return list(self.switches.values())

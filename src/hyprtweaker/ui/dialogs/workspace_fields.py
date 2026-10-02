@@ -29,7 +29,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from hyprtweaker.engine.entities_catalog import field_text  # noqa: E402
 from hyprtweaker.engine.scripting import layout_label  # noqa: E402
@@ -43,7 +43,8 @@ from hyprtweaker.engine.workspace_catalog import (  # noqa: E402
     find_field,
     retype_like,
 )
-from hyprtweaker.ui.gap_field import GapField  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
+from hyprtweaker.ui.rows.gap_field import GapField, gap_row  # noqa: E402
 
 _MISSING: Any = object()
 """No value: a row that holds none writes no key."""
@@ -86,6 +87,7 @@ class WorkspaceFieldRows:
         self._rows: dict[str, _Row] = {}
         self._opts_rows: dict[str, _Row] = {}
         self._gaps: dict[str, GapField] = {}
+        self._entries: dict[str, Gtk.Entry] = {}
         self._opts_original: Any = fields.get(LAYOUT_OPTS, _MISSING)
         self._opts_touched = False
 
@@ -122,7 +124,7 @@ class WorkspaceFieldRows:
         )
         self._picker.connect("notify::selected", self._on_picked)
         self._picker_group.add(self._picker)
-        self._opts_add = Adw.EntryRow(title="Add an option (its name)", show_apply_button=True)
+        self._opts_add = Adw.EntryRow(title="Add a layout option", show_apply_button=True)
         self._opts_add.connect("apply", lambda _row: self._on_add_option())
         self._opts_group.add(self._opts_add)
 
@@ -160,6 +162,10 @@ class WorkspaceFieldRows:
     def gap_field(self, key: str) -> GapField | None:
         """The gap control of a gap row, for tests and probes."""
         return self._gaps.get(key)
+
+    def text_entry(self, key: str) -> Gtk.Entry | None:
+        """The entry of a typed text row (Monitor, Display name), for tests and probes."""
+        return self._entries.get(key) if key in self._rows else None
 
     def option_row(self, key: str) -> Adw.EntryRow | None:
         row = self._opts_rows.get(key)
@@ -257,7 +263,7 @@ class WorkspaceFieldRows:
         if kind is WorkspaceFieldType.GAPS:
             field = GapField(opening, on_commit=lambda _gaps: self._touch(row))
             self._gaps[spec.name] = field
-            widget = _gap_row(spec.title, field, remove)
+            widget = gap_row(spec.title, field, subtitle=spec.help or None, suffix=remove)
             row = _Row(spec.name, widget, value, lambda: field.value)
         elif kind is WorkspaceFieldType.BOOL:
             switch = Adw.SwitchRow(title=spec.title, subtitle=spec.help, active=bool(opening))
@@ -297,13 +303,16 @@ class WorkspaceFieldRows:
                 lambda: choices[min(combo.get_selected(), len(choices) - 1)],
             )
         else:
-            entry = Adw.EntryRow(title=spec.title, text=str(opening))
-            if spec.help:
-                entry.set_tooltip_text(spec.help)
+            # ADR-0013 §2: an ActionRow with an entry suffix, so the help stays on screen
+            # as the subtitle, where an EntryRow could only hide it in a tooltip.
+            entry = Gtk.Entry(text=str(opening), valign=Gtk.Align.CENTER, hexpand=True)
             entry.connect("changed", lambda *_: self._touch(row))
-            entry.add_suffix(remove)
+            self._entries[spec.name] = entry
+            text_row = Adw.ActionRow(title=spec.title, subtitle=spec.help)
+            text_row.add_suffix(entry)
+            text_row.add_suffix(remove)
             row = _Row(
-                spec.name, entry, value, _blank_is_missing(lambda: entry.get_text().strip())
+                spec.name, text_row, value, _blank_is_missing(lambda: entry.get_text().strip())
             )
 
         remove.connect("clicked", lambda _b: self._remove(row))
@@ -316,6 +325,9 @@ class WorkspaceFieldRows:
         else:
             self._other_group.remove(row.widget)
             self._other_rows.remove(row.widget)
+        # From an idle: this runs inside the row's own trash button's handler, and the
+        # button's closure holds this object, a cycle `release` cuts.
+        GLib.idle_add(release, row.widget)
         del self._rows[row.key]
         self._gaps.pop(row.key, None)
         self._order.remove(row.key)
@@ -358,6 +370,7 @@ class WorkspaceFieldRows:
     def _remove_option(self, row: _Row) -> None:
         self._opts_group.remove(row.widget)
         self._opts_widgets.remove(row.widget)
+        GLib.idle_add(release, row.widget)
         del self._opts_rows[row.key]
         self._opts_touched = True
         self._dirty = True
@@ -435,23 +448,3 @@ def _trash(tooltip: str) -> Gtk.Button:
     )
     button.set_tooltip_text(tooltip)
     return button
-
-
-def _gap_row(title: str, field: GapField, remove: Gtk.Button) -> Adw.PreferencesRow:
-    """A row for the gap control, which is a box and not an `Adw.ActionRow`."""
-    heading = Gtk.Box(spacing=6)
-    heading.append(Gtk.Label(label=title, xalign=0.0, hexpand=True))
-    heading.append(remove)
-    box = Gtk.Box(
-        orientation=Gtk.Orientation.VERTICAL,
-        spacing=6,
-        margin_top=12,
-        margin_bottom=12,
-        margin_start=12,
-        margin_end=12,
-    )
-    box.append(heading)
-    box.append(field)
-    row = Adw.PreferencesRow(title=title, activatable=False)
-    row.set_child(box)
-    return row

@@ -162,9 +162,13 @@ class TestBindBadge:
             submap_bind("SUPER + R", "resize"), empty_submaps=frozenset({"resize"})
         )
         assert badge is not None
-        assert (badge.kind, badge.text) == (BadgeKind.EMPTY_SUBMAP, "Submap has no binds")
+        assert (badge.kind, badge.text) == (
+            BadgeKind.EMPTY_SUBMAP,
+            "Submap has no enabled keybinds",
+        )
         assert (
-            "Hyprland cannot enter a submap with no binds. Add a bind to it." in badge.tooltip
+            "Hyprland cannot enter a submap with no enabled keybinds. "
+            "Add or enable a keybind in it." in badge.tooltip
         )
         assert badge.kind.style == "warning"
 

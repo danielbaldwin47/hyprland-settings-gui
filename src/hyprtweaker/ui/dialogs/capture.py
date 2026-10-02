@@ -331,14 +331,18 @@ class CaptureDialog(Adw.Dialog):
     def _settle(self, trigger: Trigger) -> None:
         self._captured = trigger
         self._pick_problem = None
-        self._manual.handler_block_by_func(self._manual_changed_marshal)
-        self._manual.set_text(str(trigger))
-        self._manual.handler_unblock_by_func(self._manual_changed_marshal)
+        self._write_manual(str(trigger))
         self._recorder.reset()
         self._refresh()
 
+    def _write_manual(self, text: str) -> None:
+        """Show `text` in the manual entry without reading it back as typing."""
+        self._manual.handler_block_by_func(self._manual_changed_marshal)
+        self._manual.set_text(text)
+        self._manual.handler_unblock_by_func(self._manual_changed_marshal)
+
     def _manual_changed_marshal(self, _row: Adw.EntryRow) -> None:
-        """Named rather than a lambda so `_settle` can block it while it writes back."""
+        """Named rather than a lambda so `_write_manual` can block it while it writes."""
         self._manual_changed()
 
     def _manual_changed(self) -> None:
@@ -414,8 +418,10 @@ class CaptureDialog(Adw.Dialog):
         name = self._switch_names.get_string(index) or ""
         built = switch_trigger(name, _WHEN_PREFIX[self._when_row.get_selected()])
         if isinstance(built, TriggerProblem):
+            # The entry must not keep the last trigger beside a Set that is now off.
             self._captured = None
             self._pick_problem = built
+            self._write_manual("")
             self._refresh()
             return
         self._settle(Trigger((), built))

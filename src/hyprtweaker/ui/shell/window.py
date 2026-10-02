@@ -62,6 +62,8 @@ from hyprtweaker.engine.migration.flow import (  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
 from hyprtweaker.engine.model.entities import (  # noqa: E402
+    DISPLAY_KINDS,
+    KEYBIND_KINDS,
     Bind,
     LayerRule,
     PluginLoad,
@@ -75,10 +77,10 @@ from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
-from hyprtweaker.engine.workspace_catalog import BUILTIN_LAYOUTS  # noqa: E402
+from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
-from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
+from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.declaration_editor import (  # noqa: E402
     DeclarationEditor,
@@ -187,9 +189,14 @@ def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> Non
 
     An idle rather than the `closed` handler itself: libadwaita is still finishing the close
     when it emits `closed`, and every handler of it must still find the dialog whole.
+
+    Once per dialog: a dialog becomes visible again each time one it opened (Capture over
+    the bind editor) closes. The mark lives on the wrapper, which PyGObject then keeps for
+    as long as the dialog lives, so it cannot be forgotten and hooked twice.
     """
     dialog = window.get_visible_dialog()
-    if dialog is not None:
+    if dialog is not None and not getattr(dialog, "_release_on_close", False):
+        dialog._release_on_close = True
         dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
 
 
@@ -233,8 +240,9 @@ BREAKING_DEBOUNCE_MS = 400
 Long enough that dragging a display on the canvas or stepping a scale spinner lands as one
 apply and one countdown, short enough that the change still reads as the click's answer."""
 
-DISPLAY_KINDS = frozenset({"monitors", "workspace_rules"})
-"""The Entity lists a display countdown holds undo steps over: a profile sets both."""
+DISPLAY_CHANGED = entity_title("monitors", "changed")
+"""A display countdown's undo step, kept or with what survived its Revert: one title for both,
+in the Displays Page's word (review of #151, finding 19)."""
 
 UNDO_TOAST_SECONDS = 4
 """Long enough to notice and reach, short enough not to sit over the Row that just changed."""
@@ -340,8 +348,6 @@ class MainWindow(Adw.ApplicationWindow):
         than failing to open a window."""
         self._categories: tuple[CategoryPlan, ...] = ()
         self._built: list[SidebarEntry] = []
-        self._badges: dict[str, Gtk.Label] = {}
-        """Each sidebar row's count label by section, so `sync` can update it in place."""
         """Every built Page, in build order, as the sidebar needs to know it.
 
         The sidebar is filled from this rather than during construction: the two Views
@@ -355,6 +361,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
         self._scripting_page: ScriptingPage | None = None
+        self._shown_entities: dict[str, tuple[Any, ...]] = {}
+        """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
+        self._shown_live = False
+        """Whether the Entity Pages last drew their rows editable."""
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -638,6 +648,8 @@ class MainWindow(Adw.ApplicationWindow):
         undo.connect("activate", self._on_undo)
         self.add_action(undo)
         self._undo_action = undo
+        # A Ctrl+Z pressed over an edit still in flight runs once the edit lands (#151 review).
+        self._session.on_undo_due = self._undo
 
         for name, handler in (
             (IMPORT_ACTION, self._on_import),
@@ -986,7 +998,6 @@ class MainWindow(Adw.ApplicationWindow):
         self._pages = []
         self._section_titles = {}
         self._built = []
-        self._badges = {}
         self._sidebar.remove_all()
         # The window holds its focus widget. A focused Row of an old Page outlives `release`,
         # and its chrome then keeps the Page and the window (#219). Whether GTK lets go of it
@@ -1004,7 +1015,7 @@ class MainWindow(Adw.ApplicationWindow):
             page = ConfigPage(plan, self._factory)
             self._pages.append(page)
             self._stack.add_named(_scrolled(page.page), plan.section)
-            self._register(plan.section, plan.title, lambda n=plan.option_count: n)
+            self._register(plan.section, plan.title, plan.option_count)
             self._section_titles[plan.section] = plan.title
 
         # An Entity Page, so it comes from the model rather than from the Schema plan: there
@@ -1025,8 +1036,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
         self._stack.add_named(_scrolled(self._binds_page.page), BindsPage.section)
         self._section_titles[BindsPage.section] = BindsPage.title
-        binds_page = self._binds_page
-        self._register(BindsPage.section, BindsPage.title, lambda: len(binds_page.binds))
+        self._register(BindsPage.section, BindsPage.title, len(self._binds_page.binds))
 
         # The rule Pages: the same Entity-Page shape, twice (ADR-0008).
         self._window_rules_page = WindowRulesPage(
@@ -1038,9 +1048,7 @@ class MainWindow(Adw.ApplicationWindow):
         for rules_page in (self._window_rules_page, self._layer_rules_page):
             self._stack.add_named(_scrolled(rules_page.page), rules_page.section)
             self._section_titles[rules_page.section] = rules_page.title
-            self._register(
-                rules_page.section, rules_page.title, lambda page=rules_page: len(page.rules)
-            )
+            self._register(rules_page.section, rules_page.title, len(rules_page.rules))
 
         # The Workspaces Page: workspace rules, one row per selector (ADR-0008, #159).
         self._workspace_rules_page = WorkspaceRulesPage(
@@ -1054,7 +1062,7 @@ class MainWindow(Adw.ApplicationWindow):
         workspaces = self._workspace_rules_page
         self._stack.add_named(_scrolled(workspaces.page), workspaces.section)
         self._section_titles[workspaces.section] = workspaces.title
-        self._register(workspaces.section, workspaces.title, lambda: len(workspaces.rules))
+        self._register(workspaces.section, workspaces.title, len(workspaces.rules))
 
         # The Displays destination: an Entity Page over monitor rules plus the live
         # helper data the canvas draws from (ADR-0008, #68).
@@ -1076,10 +1084,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
         self._stack.add_named(_scrolled(self._monitors_page.page), MonitorsPage.section)
         self._section_titles[MonitorsPage.section] = MonitorsPage.title
-        monitors_page = self._monitors_page
-        self._register(
-            MonitorsPage.section, MonitorsPage.title, lambda: len(monitors_page.rules)
-        )
+        self._register(MonitorsPage.section, MonitorsPage.title, len(self._monitors_page.rules))
         # The app-open answer feeds the canvas *and* the Profile-match toast: one fetch,
         # riding the same helper-data lane hotplug refreshes use (ADR-0018).
         self._session.fetch_monitors(self._on_monitors_event)
@@ -1091,7 +1096,7 @@ class MainWindow(Adw.ApplicationWindow):
             page = page_class(self._session, actions=self._declaration_actions(page_class.kind))
             self._declaration_pages[page_class.kind] = page
             self._stack.add_named(_scrolled(page.page), page.section)
-            self._register(page.section, page.title, lambda page=page: len(page.entities))
+            self._register(page.section, page.title, len(page.entities))
             self._section_titles[page.section] = page.title
 
         # The Scripting Page: the plugin load list (#174) above a read-only inventory of the
@@ -1109,13 +1114,10 @@ class MainWindow(Adw.ApplicationWindow):
         scripting = self._scripting_page
         self._stack.add_named(_scrolled(scripting.page), scripting.section)
         self._section_titles[scripting.section] = scripting.title
-        # The calls found plus the plugin load list: both are listed on the Page.
-        self._register(
-            scripting.section,
-            scripting.title,
-            lambda: scripting.hit_count + len(self._session.declarations("plugins")),
-        )
+        self._register(scripting.section, scripting.title, self._scripting_count())
 
+        self._shown_entities = self._entity_lists()
+        self._shown_live = bool(self._session.live)
         self._fill_sidebar()
         self._select_section(self._restored(selected))
         self.sync()
@@ -1159,20 +1161,14 @@ class MainWindow(Adw.ApplicationWindow):
                 return None
         return self._mapping
 
-    def _register(self, section: str, title: str, count: Callable[[], int]) -> None:
+    def _register(self, section: str, title: str, count: int) -> None:
         self._built.append(SidebarEntry(section=section, title=title, count=count))
 
-    def _sidebar_entry(self, entry: SidebarEntry) -> Gtk.ListBoxRow:
-        row, badge = _sidebar_row(entry.section, entry.title, entry.count())
-        self._badges[entry.section] = badge
-        return row
-
-    def _refresh_counts(self) -> None:
-        """Every sidebar count from its Page's list now, in place: no row is rebuilt, so the
-        selection and the scroll stay where the user left them."""
-        for entry in self._built:
-            if (badge := self._badges.get(entry.section)) is not None:
-                badge.set_label(str(entry.count()))
+    def _scripting_count(self) -> int:
+        """The Scripting Page lists the calls found and the plugin load list: both count."""
+        page = self._scripting_page
+        hits = page.hit_count if page is not None else 0
+        return hits + len(self._session.declarations("plugins"))
 
     def _restored(self, selected: str | None) -> str:
         """Which Page to select after a rebuild: the one that was showing, if it still is.
@@ -1193,7 +1189,7 @@ class MainWindow(Adw.ApplicationWindow):
         """Put the built Pages in the sidebar, in the order the active View wants them."""
         if self.view is View.CONFIG or not self._categories:
             for entry in self._built:
-                self._sidebar.append(self._sidebar_entry(entry))
+                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
             return
 
         known = {entry.section: entry for entry in self._built}
@@ -1207,7 +1203,7 @@ class MainWindow(Adw.ApplicationWindow):
                     # a kind that has not shipped yet, or a renamed id. Skipping the row is
                     # right; inventing one would put a sidebar entry in front of no Page.
                     continue
-                self._sidebar.append(self._sidebar_entry(entry))
+                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
                 listed.add(entry.section)
 
         # Anything built but not named by the mapping still gets a row. Entity Pages are the
@@ -1217,7 +1213,7 @@ class MainWindow(Adw.ApplicationWindow):
         if leftovers:
             self._sidebar.append(_category_heading(ORPHAN_CATEGORY_TITLE))
             for entry in leftovers:
-                self._sidebar.append(self._sidebar_entry(entry))
+                self._sidebar.append(_sidebar_row(entry.section, entry.title, entry.count))
 
     # --- binds ---------------------------------------------------------------------------
 
@@ -1245,7 +1241,7 @@ class MainWindow(Adw.ApplicationWindow):
             on_done=done, bind=binds[index], fetch_switches=self._switch_fetch()
         ).present(self)
 
-    def _switch_fetch(self) -> Callable[..., None] | None:
+    def _switch_fetch(self) -> FetchSwitches | None:
         """The live switch list for Capture's picker, or `None` when nobody is answering.
 
         One source for every door that opens Capture (add, edit, rebind), so none of them
@@ -1329,9 +1325,7 @@ class MainWindow(Adw.ApplicationWindow):
         ).present(self)
 
     def _refresh_binds(self) -> None:
-        if self._binds_page is not None:
-            self._binds_page.refresh()
-        self.sync()
+        self._refresh_entity_pages(KEYBIND_KINDS)
 
     # --- rules ---------------------------------------------------------------------------
 
@@ -1401,16 +1395,15 @@ class MainWindow(Adw.ApplicationWindow):
             self._refresh_rules(kind)
 
     def _move_rule(self, kind: str, index: int, to: int) -> None:
+        """The drag reorder, and Alt+Up/Down: focus follows the moved rule, as for binds."""
         if self._session.move_rule(kind, index, to):
             self._refresh_rules(kind)
-            if (page := self._rules_page(kind)) is not None:
-                page.focus(to)
+            page = self._rules_page(kind)
+            if page is not None:
+                page.reveal(to)
 
     def _refresh_rules(self, kind: str) -> None:
-        page = self._rules_page(kind)
-        if page is not None:
-            page.refresh()
-        self.sync()
+        self._refresh_entity_pages(frozenset({f"{kind}_rules"}))
 
     # --- workspace rules (#159) ---------------------------------------------------------
 
@@ -1443,8 +1436,7 @@ class MainWindow(Adw.ApplicationWindow):
         placeholder, then the Lua layouts the user's files register (#175)."""
         option = self._session.schema.get(LAYOUT_OPTION)
         known = option.known_values.values if option and option.known_values else ()
-        named = tuple(choice for choice in known if "<" not in choice)
-        return (*(named or BUILTIN_LAYOUTS), *discovered_layouts(self._session.paths))
+        return (*layout_choices(known), *discovered_layouts(self._session.paths))
 
     def _add_workspace_rule(self) -> None:
         self.workspace_rule_editor().present(self)
@@ -1462,9 +1454,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._workspace_rules_page.reveal(selector)
 
     def _refresh_workspace_rules(self) -> None:
-        if self._workspace_rules_page is not None:
-            self._workspace_rules_page.refresh()
-        self.sync()
+        self._refresh_entity_pages(frozenset({"workspace_rules"}))
 
     # --- declarative entities (#70) -------------------------------------------------------
 
@@ -1560,19 +1550,8 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _refresh_declarations(self, kind: str) -> None:
-        page = self._declaration_pages.get(kind)
-        if page is not None:
-            page.refresh()
-        if kind == "curves":
-            animations = self._declaration_pages.get("animations")
-            if animations is not None:
-                animations.refresh()
-        if kind == "devices":
-            # A per-device override badges the Options it shadows, so the Option Pages are
-            # now out of date about themselves.
-            for page_ in self._pages:
-                page_.refresh()
-        self.sync()
+        # A per-device override badges the Options it shadows: `sync` refreshes those.
+        self._refresh_entity_pages(frozenset({kind}))
 
     # --- monitors -------------------------------------------------------------------------
 
@@ -1585,6 +1564,7 @@ class MainWindow(Adw.ApplicationWindow):
         once, after it stops.
         """
         self._pending_breaking.setdefault(output, {}).update(fields)
+        self._sync_undo_action()
         if self._debounce is not None:
             GLib.source_remove(self._debounce)
         self._debounce = GLib.timeout_add(BREAKING_DEBOUNCE_MS, self._on_debounce)
@@ -1623,7 +1603,10 @@ class MainWindow(Adw.ApplicationWindow):
         opens the undo group that turns the countdown into one step or none (#189). Joining
         applies the change and gives the clock back in full: the user must get a whole
         countdown to judge the newest change by, and never a second dialog (S3 of #151). A
-        refused change leaves no countdown behind that it would have opened.
+        refused change leaves no countdown behind that it would have opened, and neither does
+        a change that, netted out, moves no display-breaking field (scale 1 to 1.25 and back
+        inside the debounce): there is nothing on screen to confirm (review of #151, 38).
+        A profile activation always counts: its countdown is its only take-back.
         """
         countdown = self._countdown
         opened = countdown is None
@@ -1635,13 +1618,20 @@ class MainWindow(Adw.ApplicationWindow):
                     on_keep=self._keep_display, on_revert=self._revert_display
                 ),
             )
-        if not change():
-            if opened:
-                self._countdown = None
-                self._session.end_undo_group(countdown.group, title="Monitor rule changed")
+        applied = change()
+        nothing_to_confirm = not profile and not breaks_display(
+            countdown.snapshot.monitors, self._session.monitor_rules
+        )
+        if opened and (not applied or nothing_to_confirm):
+            self._countdown = None
+            self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
+        if not applied:
             return False
         countdown.includes_profile |= profile
-        self._refresh_monitors()
+        self._refresh_entity_pages(DISPLAY_KINDS)
+        self._sync_undo_action()
+        if self._countdown is not countdown:
+            return True
         if opened:
             countdown.dialog.present(self)
         else:
@@ -1653,7 +1643,7 @@ class MainWindow(Adw.ApplicationWindow):
         countdown, self._countdown = self._countdown, None
         if countdown is None:
             return
-        self._session.end_undo_group(countdown.group, title="Display settings changed")
+        self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
         self._refresh_monitors()
 
     def _revert_display(self) -> None:
@@ -1676,8 +1666,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.restore_monitor_rules(
                 revert_breaking(snapshot.monitors, self._session.monitor_rules)
             )
-        self._session.end_undo_group(countdown.group, title="Monitor rule changed")
-        self._refresh_monitors()
+        self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
+        self._refresh_entity_pages(DISPLAY_KINDS)
 
     @property
     def display_confirm(self) -> ConfirmRevertDialog | None:
@@ -1813,14 +1803,11 @@ class MainWindow(Adw.ApplicationWindow):
         and `set_connected` rebuilds on either, so refreshing here first would pay for
         every edit twice.
         """
-        # A profile's activation, its revert and its undo rewrite the workspace rules too,
-        # and every one of those paths ends here.
-        if self._workspace_rules_page is not None:
-            self._workspace_rules_page.refresh()
-        if self._monitors_page is None:
-            return
-        self._session.fetch_monitors(self._monitors_page.set_connected)
-        self.sync()
+        self._refresh_entity_pages(frozenset({"monitors"}))
+
+    def _set_connected(self, monitors: tuple[Mapping[str, Any], ...] | None) -> None:
+        if self._monitors_page is not None:
+            self._monitors_page.set_connected(monitors)
 
     def sync(self) -> None:
         """Make every control agree with the model, and the Banner with the session's health.
@@ -1834,13 +1821,15 @@ class MainWindow(Adw.ApplicationWindow):
         for page in self._pages:
             page.refresh()
         # A foreign reload lands here, and Hyprland reloads when a `require`d file such as
-        # `user.lua` changes: the Scripting inventory re-reads with it.
+        # `user.lua` changes: the Scripting inventory re-reads with it, its plugin list too.
         if self._scripting_page is not None:
             self._scripting_page.refresh()
-        self._refresh_counts()
+        self._draw_entity_pages(self._moved_entities())
+        # Always, not only when an Entity list moved: the Scripting count follows `user.lua`.
+        self._sync_entity_counts()
 
         self.sync_banner()
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
         # A result list on screen follows the model too: an undo or a foreign reload must
         # not leave a row that opens something no longer there (settled S2b).
         self._finder.requery()
@@ -1911,7 +1900,7 @@ class MainWindow(Adw.ApplicationWindow):
         # that has since applied would be the app reporting a failure that is over.
         for name in {*result.pending_restart, *result.keys}:
             self._refresh_chrome_for(name)
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
         self.sync_banner()
         # The transaction's reload may have loaded or unloaded a plugin: ask again (#174).
         if self._scripting_page is not None:
@@ -2135,7 +2124,7 @@ class MainWindow(Adw.ApplicationWindow):
         already on disk -- would otherwise raise an offer for whatever gesture happened to be
         underneath, naming a Row the user has not touched for a while.
         """
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
         self._dismiss_undo()
         toast = Adw.Toast(title=self._gesture_title(step), timeout=UNDO_TOAST_SECONDS)
         toast.set_button_label("Undo")
@@ -2154,8 +2143,24 @@ class MainWindow(Adw.ApplicationWindow):
             self._undo_toast = None
 
     def _undo(self) -> None:
-        """Take back the last gesture. The session decides whether there is one."""
+        """Take back the last gesture. The session decides whether there is one.
+
+        Except on the Displays: while a countdown shows, the newest gesture is the change on
+        its clock, so Ctrl+Z is its Revert -- the step beneath cannot be undone from under the
+        countdown without being lost (review of #151, finding 12 and owner call 4). A
+        breaking edit still in its debounce is the newest gesture too, and goes unapplied.
+        """
         self._dismiss_undo()
+        if self._countdown is not None:
+            # The Esc path: "revert" is the dialog's close response.
+            dialog = self._countdown.dialog
+            dialog.emit("response", "revert")
+            dialog.force_close()
+            return
+        if self._drop_pending_breaking():
+            self._refresh_monitors()
+            self._sync_undo_action()
+            return
         offered = self._session.can_undo
         step = self._session.last_gesture
         if _breaks_display(step):
@@ -2168,29 +2173,97 @@ class MainWindow(Adw.ApplicationWindow):
             # already moved the model and the Rows should not wait for the compositor to
             # confirm what the app is about to write.
             self.sync()
-            if isinstance(step, EntityStep):
-                # `sync` refreshes the Option Pages only; the lists just put back are shown
-                # by Entity Pages, which otherwise go on showing the undone edit.
-                self._refresh_entity_pages(step.kinds)
-        elif offered:
+        elif offered and not self._session.undo_queued:
             # An entity step whose list changed since -- a hand edit was adopted. The session
-            # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead.
+            # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead. A
+            # queued undo is not refused: it runs when the edit in flight lands.
             self._toasts.add_toast(Adw.Toast(title="Can't undo that change any more"))
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
+
+    def _sync_undo_action(self) -> None:
+        """Ctrl+Z is live while there is a step to undo, or a display change to revert."""
+        revertible = self._countdown is not None or bool(self._pending_breaking)
+        self._undo_action.set_enabled(self._session.can_undo or revertible)
 
     def _refresh_entity_pages(self, kinds: frozenset[str]) -> None:
-        """Re-render the Pages that show the Entity lists `kinds`."""
-        if kinds & {"binds", "unbinds", "submaps"}:
-            self._refresh_binds()
+        """Re-render the Pages that show the Entity lists `kinds`, then `sync` the rest.
+
+        For an edit the window made itself: those Pages are drawn even when their list did
+        not move (a monitor profile is not an Entity list, and its Page shows it).
+        """
+        self._draw_entity_pages(kinds)
+        self.sync()
+
+    def _moved_entities(self) -> frozenset[str]:
+        """The Entity lists that differ from what their Pages last drew: every one when the
+        session went live or read-only since, since each row's controls follow that."""
+        lists = self._entity_lists()
+        if bool(self._session.live) != self._shown_live:
+            return frozenset(lists)
+        return frozenset(
+            kind for kind, items in lists.items() if self._shown_entities.get(kind) != items
+        )
+
+    def _draw_entity_pages(self, kinds: frozenset[str]) -> None:
+        """Rebuild the Pages showing `kinds` from the model, and every sidebar count.
+
+        `sync` calls this with the lists that moved behind the window's back -- a foreign
+        reload adopting a hand edit, the startup load, an edit's cascade into another list
+        -- because rows are index-addressed: a stale row's Remove lands on another entity.
+        """
+        if not kinds:
+            return
+        if "curves" in kinds:
+            # The animations that named a curve may now carry a dangling reference, so their
+            # Page has to be rebuilt too -- the finding lives on a row nobody touched.
+            kinds |= {"animations"}
+        if kinds & KEYBIND_KINDS and self._binds_page is not None:
+            self._binds_page.refresh()
         for kind in ("window", "layer"):
-            if f"{kind}_rules" in kinds:
-                self._refresh_rules(kind)
-        if kinds & {"monitors", "workspace_rules"}:
-            self._refresh_monitors()
+            rules_page = self._rules_page(kind)
+            if f"{kind}_rules" in kinds and rules_page is not None:
+                rules_page.refresh()
+        if "workspace_rules" in kinds and self._workspace_rules_page is not None:
+            self._workspace_rules_page.refresh()
+        if "monitors" in kinds and self._monitors_page is not None:
+            # The answer rebuilds the Page (`_refresh_monitors`).
+            self._session.fetch_monitors(self._set_connected)
         for kind in kinds & self._declaration_pages.keys():
-            self._refresh_declarations(kind)
-        if "plugins" in kinds:
-            self._refresh_plugins()
+            self._declaration_pages[kind].refresh()
+        # "plugins" needs nothing here: its list is on the Scripting Page, which `sync`
+        # rebuilds every time, and `_refresh_entity_pages` ends in `sync`.
+
+        lists = self._entity_lists()
+        self._shown_entities.update((kind, lists[kind]) for kind in kinds if kind in lists)
+        self._shown_live = bool(self._session.live)
+        self._sync_entity_counts()
+
+    def _entity_lists(self) -> dict[str, tuple[Any, ...]]:
+        return {kind: tuple(items) for kind, items in self._session.model.entities.kinds()}
+
+    def _sync_entity_counts(self) -> None:
+        """Make each Entity Page's sidebar count say how many entities it lists now."""
+        counts: dict[str, int] = {}
+        if self._binds_page is not None:
+            counts[self._binds_page.section] = len(self._binds_page.binds)
+        for page in (self._window_rules_page, self._layer_rules_page):
+            if page is not None:
+                counts[page.section] = len(page.rules)
+        if self._workspace_rules_page is not None:
+            counts[self._workspace_rules_page.section] = len(self._workspace_rules_page.rules)
+        if self._monitors_page is not None:
+            counts[MonitorsPage.section] = len(self._monitors_page.rules)
+        for declarations in self._declaration_pages.values():
+            counts[declarations.section] = len(declarations.entities)
+        if self._scripting_page is not None:
+            counts[self._scripting_page.section] = self._scripting_count()
+        index = 0
+        while (row := self._sidebar.get_row_at_index(index)) is not None:
+            index += 1
+            count = counts.get(row.get_name())
+            badge = row.get_child().get_last_child() if count is not None else None
+            if isinstance(badge, Gtk.Label):
+                badge.set_label(str(count))
 
     def _on_undo(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         self._undo()
@@ -2643,9 +2716,7 @@ class SidebarEntry:
 
     section: str
     title: str
-    count: Callable[[], int]
-    """The Page's count now: an Option Page's is fixed per build, an Entity Page's follows
-    its list (`MainWindow._refresh_counts`)."""
+    count: int
 
 
 def _view_from(value: str) -> View:
@@ -2689,7 +2760,7 @@ def _category_heading(title: str) -> Gtk.ListBoxRow:
     return row
 
 
-def _sidebar_row(section: str, title: str, count: int) -> tuple[Gtk.ListBoxRow, Gtk.Label]:
+def _sidebar_row(section: str, title: str, count: int) -> Gtk.ListBoxRow:
     """One Section in the sidebar, with how many Options are on its Page.
 
     The count is the design canvas's "43 options" chip moved to the sidebar, and it earns
@@ -2705,7 +2776,7 @@ def _sidebar_row(section: str, title: str, count: int) -> tuple[Gtk.ListBoxRow, 
 
     row = Gtk.ListBoxRow(child=box, name=section)
     row.set_tooltip_text(section)
-    return row, badge
+    return row
 
 
 #: What each unhappy `ApplyOutcome` means to a person. The enum's own spelling is a wire
