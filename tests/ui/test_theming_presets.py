@@ -499,6 +499,29 @@ def test_a_preset_that_already_matches_says_so_instead_of_asking(tmp_path: Path)
     assert "Nord already matches your settings. Nothing changed." in toasts(window)
 
 
+def test_a_matching_preset_still_asks_whose_colours_win_under_a_wallpaper(
+    tmp_path: Path,
+) -> None:
+    """Finding 15 of the #153 review: the model's colours are not the wallpaper's, so a
+    Preset whose colours match the model still changes what is on screen."""
+    from hyprtweaker.engine.model.values import parse_value
+
+    session, window = build(tmp_path, live=True, wallpaper_source=True)
+    option = session.schema["general:col.active_border"]
+    value = parse_value(option.type, "ee33ccff")
+    session.model.set(option.name, value)
+    slug = a_preset(session, **{option.name: "ee33ccff"})
+    window.theming_page.refresh()
+    group = presets_of(window)
+    preview = session.preview_preset(dict(session.presets())[slug])
+    assert sum(len(section.changes) for section in preview.sections) == 0
+
+    group.button(slug, "apply").emit("clicked")
+
+    assert group.dialog is not None
+    assert "Nord already matches your settings. Nothing changed." not in toasts(window)
+
+
 def test_a_read_only_session_cannot_apply_and_the_button_says_why(tmp_path: Path) -> None:
     session, window = build(tmp_path, live=False)
     slug = a_preset(session)

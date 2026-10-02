@@ -419,13 +419,16 @@ class PresetsGroup:
             session.wallpaper_absent_reason() if preset.wallpaper is not None else None
         )
         can_change_wallpaper = preset.wallpaper is not None and wallpaper_reason is None
-        if changes == 0 and not can_change_wallpaper:
+        conflict = session.preset_color_conflict(preset)
+        # Under a wallpaper Color source the model's colours are not the ones on screen, so
+        # "already matches" would refuse a Preset that changes what the user sees: ask
+        # whose colours win instead (finding 15 of the #153 review).
+        if changes == 0 and not can_change_wallpaper and conflict is None:
             self._actions.toast(
                 f"{preset.name} already matches your settings. Nothing changed."
             )
             return
         body = changes_text(preset.name, preview)
-        conflict = session.preset_color_conflict(preset)
         remembered = self._actions.remembered()
         question: ColourConflictChoice | None = None
         if conflict is not None:
