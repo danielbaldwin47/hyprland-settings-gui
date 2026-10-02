@@ -42,6 +42,7 @@ from .resolve import (
     select_version,
     stamp_added_in,
 )
+from .supplement import newer_than_shipped, supplement
 from .types import (
     CurationFlag,
     Dependency,
@@ -54,6 +55,8 @@ from .types import (
     ResolvedOption,
     Restart,
     SectionOverlay,
+    Supplement,
+    SupplementKind,
     Vec2Range,
     Visibility,
     Widget,
@@ -75,6 +78,8 @@ __all__ = [
     "Restart",
     "Schema",
     "SectionOverlay",
+    "Supplement",
+    "SupplementKind",
     "Vec2Range",
     "Visibility",
     "Widget",
@@ -84,8 +89,10 @@ __all__ = [
     "derive_title",
     "humanise",
     "load_schema",
+    "newer_than_shipped",
     "resolve_option",
     "schema_dir",
     "select_version",
     "stamp_added_in",
+    "supplement",
 ]
