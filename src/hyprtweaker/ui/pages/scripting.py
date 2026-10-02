@@ -25,7 +25,6 @@ state the Writer reads, so a failed scan costs the user this list and nothing el
 from __future__ import annotations
 
 import enum
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,9 +40,11 @@ from hyprtweaker.engine.model.entities import PluginLoad  # noqa: E402
 from hyprtweaker.engine.scripting import (  # noqa: E402
     CallKind,
     IndirectUse,
+    LoadsFile,
     ScriptingHit,
     ScriptingScan,
     UnfinishedText,
+    UnsearchedFile,
     scan_scripting,
 )
 from hyprtweaker.session import Session  # noqa: E402
@@ -51,12 +52,10 @@ from hyprtweaker.ui.pages.rules import REORDER_HINT  # noqa: E402
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
 
-_log = logging.getLogger(__name__)
-
 LEAD_TITLE = "In your Lua files"
 CAVEAT = (
-    "Found by reading user.lua and legacy.lua. Calls built at runtime, in loops or "
-    "through other names may not appear."
+    "Found by reading user.lua and legacy.lua only, not the files they load. Calls built "
+    "at runtime, in loops or through other names may not appear."
 )
 EMPTY = "No event handlers, timers, custom layouts or plugin loads found"
 
@@ -397,11 +396,6 @@ class ScriptingPage:
         """How many calls the last read found: the sidebar's count."""
         return self._hit_count
 
-    @property
-    def caveat(self) -> str:
-        """The best-effort sentence, on the inventory's lead group."""
-        return CAVEAT
-
     def listed_rows(self) -> tuple[tuple[str, ScriptingRow], ...]:
         """Every inventory row with its group's title, in Page order. The UI tier's view."""
         return tuple(self._listed)
@@ -417,22 +411,7 @@ class ScriptingPage:
 
         lead = Adw.PreferencesGroup(title=LEAD_TITLE, description=CAVEAT)
         self._add_group(lead)
-        try:
-            scan = scan_scripting(self._session.paths)
-        except Exception:  # a scanner bug must not break the window
-            _log.exception("scanning user.lua and legacy.lua failed")
-            self._hit_count = 0
-            self._add_row(
-                lead,
-                ScriptingRow(
-                    "Could not search your Lua files",
-                    "This list is for reading only, so your settings are not affected.",
-                    open_file=None,
-                    file="",
-                ),
-            )
-            return
-
+        scan = scan_scripting(self._session.paths)
         self._hit_count = len(scan.hits)
         self._list_problems(lead, scan)
         if not scan.hits and not scan.unreadable and not scan.gaps:
@@ -475,6 +454,21 @@ class ScriptingPage:
                         f"Stopped reading {path.name} at line {line}",
                         "A comment or string starts there and never closes, so nothing "
                         "after it is listed.",
+                        open_file=self._opener(path),
+                        file=path.name,
+                    )
+                case LoadsFile(path=path, line=line):
+                    row = ScriptingRow(
+                        "Loads another file; calls in it are not listed",
+                        self._where(path, line),
+                        open_file=self._opener(path),
+                        file=path.name,
+                    )
+                case UnsearchedFile(path=path):
+                    row = ScriptingRow(
+                        f"Could not search {path.name}",
+                        "Nothing in it is listed. This list is for reading only, so your "
+                        "settings are not affected.",
                         open_file=self._opener(path),
                         file=path.name,
                     )
