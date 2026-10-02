@@ -11,11 +11,9 @@
 `Session` is what the window calls, so this is the app's own path with the widgets left off.
 Nothing is stubbed: the real `Writer`, the real `Applier`, the real sockets.
 
-No CI workflow runs this, and that is the tier's decided cadence rather than an oversight:
-ADR-0011 tier 3 was amended during #55 from "nightly" to **on demand**, because a nested
-Hyprland needs a host Wayland session and a stock runner has none -- a scheduled job could
-only skip and report green. `HYPRTWEAKER_REQUIRE_HARNESS=1` turns the skip into a failure
-for a machine that is supposed to host it; #89 is the spike to give CI a virtual seat.
+CI runs this nightly, never per commit: the `harness` job in `.github/workflows/ci.yml` hands
+the nested Hyprland a `vkms` card in an Arch container (ADR-0011 tier 3, #195), with
+`HYPRTWEAKER_REQUIRE_HARNESS=1` so a skip fails the job instead of reporting green.
 
     pytest tests/integration/test_shell_session.py -m hyprland
 """

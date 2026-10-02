@@ -364,7 +364,8 @@ plus `~/.config/hypr/<app>/modules/*.lua` (generated per section) and `user.lua`
 1. **Model edit** → mark section dirty; debounce in the app (e.g. 100–150 ms after last
    change, immediately on slider release / focus-out). Hyprland has no debounce, so the app
    must be the one that coalesces.
-2. **Optional live preview for continuous controls** (sliders, colour pickers): on each
+2. **Optional live preview for continuous controls** (sliders; colour dialogs later ruled
+   modal-commit in #93): on each
    tick, `hyprctl eval 'hl.config{<section>={<key>=<value>}}'` (or the matching
    `hl.window_rule`/`hl.monitor`) — sub-frame apply, correct prop refresh scheduled, real
    parse errors returned. On release, fall through to step 3, which makes it durable. Under

@@ -3,18 +3,21 @@ name: CI
 # The done checks on main and on a pull request out of draft. An effort branch
 # (docs/agents/implement-spec.md) is checked once when its PR leaves draft, then
 # on each push after that, so a green check means everything on the PR has been
-# addressed.
+# addressed. The Harness tier runs nightly and on dispatch only (the `harness` job).
 on:
   push:
     branches: [main]
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
+  schedule:
+    - cron: '17 6 * * *'
   workflow_dispatch:
 
 concurrency:
   # The draft flag is in the key: a push to a draft and the `ready_for_review` run that
-  # follows on the same SHA must not cancel each other.
-  group: ci-${{ github.ref }}-${{ github.event.pull_request.draft }}
+  # follows on the same SHA must not cancel each other. The schedule flag keeps the
+  # nightly run and a push to main from cancelling each other.
+  group: ci-${{ github.ref }}-${{ github.event_name == 'schedule' }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
 permissions:
@@ -32,7 +35,7 @@ env:
 jobs:
   lint:
     name: ruff + mypy (engine)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +52,7 @@ jobs:
 
   unit:
     name: unit tier (engine, headless)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +87,7 @@ jobs:
 
   ui-smoke:
     name: UI smoke tier (GTK4 + libadwaita)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,7 +123,7 @@ jobs:
 
   build:
     name: meson build + install
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -193,3 +196,60 @@ jobs:
               assert option.title and option.widget and option.visibility
           print(f"resolved {len(schema)} options for Hyprland {schema.hyprland_version}")
           PY
+
+  harness:
+    # ADR-0011 tier 3: the nested Hyprland, on a stock runner. Nightly and on dispatch only,
+    # never per push: it is minutes long and gates nothing. A runner has no GPU, so the
+    # Harness gets the kernel's virtual KMS card (`vkms`) with its connector forced off, the
+    # one render-node-less card `drm_card_problem` accepts. Ubuntu has no Hyprland, so the
+    # tier runs in an Arch container, as an unprivileged user: Hyprland refuses root.
+    name: Harness tier (nested Hyprland on vkms)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: A vkms card with its connector forced off
+        id: card
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)" >/dev/null
+          sudo modprobe vkms
+          sudo udevadm settle
+          # Read the card from sysfs: its number depends on what else the runner has.
+          card=""
+          for path in /sys/class/drm/card*; do
+            name="${path##*/}"
+            [[ "$name" =~ ^card[0-9]+$ ]] || continue
+            device="$(readlink -f "$path/device")"
+            echo "$name: device $device, driver $(readlink -f "$path/device/driver" || true)"
+            if [ "${device##*/}" = vkms ]; then card="$name"; fi
+          done
+          [ -n "$card" ] || { echo "::error::modprobe vkms gave no vkms card"; exit 1; }
+          # A connected connector is a monitor to the gate, which refuses the card.
+          for status in /sys/class/drm/"$card"-*/status; do
+            echo off | sudo tee "$status" >/dev/null
+            echo "$status: $(cat "$status")"
+          done
+          sudo chmod 666 "/dev/dri/$card"
+          # bwrap needs an unprivileged user namespace, which Ubuntu's AppArmor withholds.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          echo "card=$card" >> "$GITHUB_OUTPUT"
+      - name: The Harness tier in an Arch container
+        env:
+          HARNESS_DRM_CARD: /dev/dri/${{ steps.card.outputs.card }}
+        run: |
+          docker run --rm --privileged -v /dev:/dev -v /sys:/sys -v "$PWD:/repo" -w /repo \
+            -e HARNESS_DRM_CARD -e CI archlinux:latest bash -euo pipefail -c '
+              pacman -Syu --noconfirm --needed hyprland grim bubblewrap mesa ttf-dejavu \
+                python python-pytest python-gobject gtk4 python-numpy python-pillow \
+                >/tmp/pacman.log || { tail -40 /tmp/pacman.log; exit 1; }
+              pacman -Q hyprland mesa python
+              useradd -m harness
+              install -d -m 700 -o harness /tmp/xdg-harness
+              # HYPRTWEAKER_REQUIRE_HARNESS: a skipped tier fails the job, never goes green.
+              runuser -u harness -- env XDG_RUNTIME_DIR=/tmp/xdg-harness \
+                HARNESS_DRM_CARD="$HARNESS_DRM_CARD" CI="$CI" HYPRTWEAKER_REQUIRE_HARNESS=1 \
+                PYTHONDONTWRITEBYTECODE=1 \
+                python -m pytest tests/integration -p no:cacheprovider -v -rs'

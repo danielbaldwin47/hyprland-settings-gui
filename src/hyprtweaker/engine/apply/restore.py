@@ -213,16 +213,29 @@ class RestoreTransaction:
             changed = [
                 good.module
                 for good in self._restores
-                if self._writer.restore(self._model, good.module, good.data, good.options)
+                if self._writer.restore(
+                    self._model,
+                    good.module,
+                    good.data,
+                    good.options,
+                    before_replace=draft.preserve if draft is not None else None,
+                )
             ]
         except (LuaSyntaxError, ProtectedFile, ValueError) as error:
             # A Snapshot that will not parse, or one aimed at a file the app must not write.
-            # Nothing partial is left behind that the caller can act on, and saying so beats
-            # reporting a recovery that did not happen.
-            _log.error("restore refused before writing: %s", error)
-            if draft is not None:
-                draft.discard()
-            return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
+            # The Writer gates per Module, so an earlier Module may already have been
+            # replaced: then the App dir is half-restored, which is `WRITE_FAILED`'s
+            # sentence, and the bytes it overwrote are journalled like any other write's.
+            landed = draft.dirty() if draft is not None else ()
+            if not landed:
+                _log.error("restore refused before writing: %s", error)
+                if draft is not None:
+                    draft.discard()
+                return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
+            _log.error("restore refused part-way, after %s: %s", ", ".join(landed), error)
+            result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
+            self._record(draft, result, landed)
+            return result
         except OSError as error:
             _log.error("restore failed mid-write: %s", error)
             result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))

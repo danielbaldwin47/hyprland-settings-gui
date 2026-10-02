@@ -33,11 +33,15 @@ from hyprtweaker.engine.dispatchers import (  # noqa: E402
     lookup,
     namespaces,
 )
+from hyprtweaker.engine.importer.binds import dead_keysyms  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger, validate_trigger  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
 
 TRIGGER_HELP = "Modifiers and one key, joined by +. For example: SUPER + SHIFT + Q"
+
+ENABLES_NOTE = "Saving with a working key also enables this bind."
+"""Shown above Save while Save would enable an Importer-disabled bind (#149's review)."""
 
 FLAGS: tuple[tuple[str, str, str], ...] = (
     ("locked", "Works on the lock screen", ""),
@@ -186,6 +190,14 @@ class BindEditor(Adw.Dialog):
         self._error = Gtk.Label(css_classes=["error"], visible=False, wrap=True)
         box.append(self._error)
 
+        # An enable is never quiet: when Save would turn the bind on, this line says so.
+        self._enables_note = Gtk.Label(label=ENABLES_NOTE, visible=False, wrap=True)
+        box.append(self._enables_note)
+        self._trigger.connect(
+            "changed",
+            lambda _row: self._enables_note.set_visible(self._enables_on_save()),
+        )
+
         save = Gtk.Button(label="Save", css_classes=["suggested-action"], halign=Gtk.Align.END)
         save.connect("clicked", lambda _button: self._save())
         box.append(save)
@@ -296,15 +308,45 @@ class BindEditor(Adw.Dialog):
         )
         dialog.present(self)
 
+    def _enables_on_save(self) -> bool:
+        """Whether Save turns the bind on: the Importer disabled it for a dead key, and the
+        trigger now names working keys.
+
+        The Importer's disable is not the user's choice, so a working key undoes it, as
+        "Fix trigger…" on the row does. A bind disabled with a working trigger (the conflict
+        surface's disable) is the user's choice and stays off. Without an xkb validator
+        `dead_keysyms` finds nothing, so nothing here enables: it fails safe.
+        """
+        original = self._original
+        if original is None or original.enabled or not dead_keysyms(original.keys):
+            return False
+        trigger = self._trigger.get_text().strip()
+        if not trigger:
+            return False
+        problem = validate_trigger(trigger, in_submap=self._in_submap())
+        if problem is not None and problem.blocking:
+            return False
+        return not dead_keysyms(str(parse_trigger(trigger)))
+
     def _validate(self) -> str:
         trigger = self._trigger.get_text().strip()
         if not trigger:
             return "A keybind needs a trigger."
         # Typed triggers get the same hard block Capture applies. A dead keysym reaching
         # the writer is not a cosmetic problem: Lua fails the whole config on it, and the
-        # compositor gives no error to find it by (ADR-0007).
+        # compositor gives no error to find it by (ADR-0007). The one exception is a
+        # disabled bind whose trigger this edit left alone, such as a dead keysym the
+        # Importer disabled (#108): the Writer keeps a disabled bind commented out, so
+        # nothing dead reaches the compositor, and blocking would mean the user cannot
+        # fix the description until they have fixed the key.
         problem = validate_trigger(trigger, in_submap=self._in_submap())
-        if problem is not None and problem.blocking:
+        original = self._original
+        untouched_and_disabled = (
+            original is not None
+            and not original.enabled
+            and parse_trigger(trigger) == parse_trigger(original.keys)
+        )
+        if problem is not None and problem.blocking and not untouched_and_disabled:
             return problem.full_text()
         for left, right in INCOMPATIBLE:
             if (
@@ -356,8 +398,10 @@ class BindEditor(Adw.Dialog):
                 options=options,
                 submap=self._submap,
                 # Editing must not quietly re-enable a bind the conflict surface
-                # disabled -- `enabled` is list state, not something this form shows.
-                enabled=self._original.enabled if self._original else True,
+                # disabled -- `enabled` is list state, not something this form shows. The
+                # one enable is a dead key fixed, and `_enables_note` says so above Save.
+                enabled=(self._original.enabled if self._original else True)
+                or self._enables_on_save(),
                 origin=self._original.origin if self._original else "",
             )
         )

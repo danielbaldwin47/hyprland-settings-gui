@@ -138,7 +138,8 @@ class RuleRow:
         self.index = index
 
         subtitle = rule_subtitle(rule)
-        self.widget = Adw.ActionRow(title=rule_title(rule), subtitle=subtitle)
+        # Labels and match patterns are user text: as Pango markup `&` renders blank.
+        self.widget = Adw.ActionRow(title=rule_title(rule), subtitle=subtitle, use_markup=False)
 
         handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
         handle.add_css_class("dim-label")
@@ -216,7 +217,7 @@ class RulesPage:
     """
 
     kind = "window"
-    section = "window_rules"
+    section = "entity:window_rules"
     title = "Window rules"
     empty_hint = "Add one with the button above, or import an existing config."
 
@@ -333,7 +334,7 @@ class WindowRulesPage(RulesPage):
     and `title` off the class, so a parameterised constructor would not do."""
 
     kind = "window"
-    section = "window_rules"
+    section = "entity:window_rules"
     title = "Window rules"
 
 
@@ -341,5 +342,5 @@ class LayerRulesPage(RulesPage):
     """The layer-rule instantiation -- ADR-0008's "same list model and editor shell"."""
 
     kind = "layer"
-    section = "layer_rules"
+    section = "entity:layer_rules"
     title = "Layer rules"

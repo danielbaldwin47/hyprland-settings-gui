@@ -20,14 +20,23 @@ a question about a tuple on a machine with no display.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from hyprtweaker.engine.schema import ResolvedOption, Schema
 from hyprtweaker.engine.schema.resolve import schema_dir
 
-from .plan import GroupPlan, PagePlan, View, group_title, is_visible
+from .plan import (
+    DEFAULT_DISCLOSURE,
+    Disclosure,
+    GroupPlan,
+    PagePlan,
+    View,
+    group_title,
+    is_visible,
+    is_withheld,
+)
 
 TASKS_FILENAME = "tasks.json"
 FORMAT_VERSION = 1
@@ -228,9 +237,7 @@ class CategoryPlan:
 def plan_tasks_view(
     schema: Schema,
     mapping: TasksMapping,
-    *,
-    show_advanced: bool = False,
-    revealed: frozenset[str] = frozenset(),
+    disclosure: Disclosure = DEFAULT_DISCLOSURE,
 ) -> tuple[CategoryPlan, ...]:
     """Every curated Page, plus a fallback Page for any Section the mapping never placed.
 
@@ -238,7 +245,11 @@ def plan_tasks_view(
     behaviour on every Hyprland release between the release and its curation (ADR-0012).
     Exercise it in tests with a Section the mapping omits, never by trusting that the
     shipped mapping happens to be complete today.
+
+    Planned under the Tasks view's tier rule whatever `disclosure.view` says, so the
+    `hidden` tier has no route onto a curated Page (ADR-0013 §5).
     """
+    tasks = replace(disclosure, view=View.TASKS)
     placed = _placements(mapping)
     planned: list[CategoryPlan] = []
 
@@ -248,22 +259,10 @@ def plan_tasks_view(
             if isinstance(destination, EntitySpec):
                 pages.append(destination)
                 continue
-            pages.append(
-                _plan_page(
-                    schema,
-                    destination,
-                    placed,
-                    show_advanced=show_advanced,
-                    revealed=revealed,
-                )
-            )
+            pages.append(_plan_page(schema, destination, placed, tasks))
         planned.append(CategoryPlan(id=category.id, title=category.title, pages=tuple(pages)))
 
-    return tuple(
-        _with_fallbacks(
-            planned, schema, mapping, placed, show_advanced=show_advanced, revealed=revealed
-        )
-    )
+    return tuple(_with_fallbacks(planned, schema, mapping, placed, tasks))
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,9 +302,7 @@ def _plan_page(
     schema: Schema,
     spec: PageSpec,
     placed: dict[str, _Placement],
-    *,
-    show_advanced: bool,
-    revealed: frozenset[str],
+    disclosure: Disclosure,
 ) -> PagePlan:
     """One curated Page: its homed Sections first, then the Groups it curated by name.
 
@@ -321,10 +318,8 @@ def _plan_page(
         for option in schema.section(section):
             if _claimed_elsewhere(placed, option.name, spec.id):
                 continue
-            if not is_visible(
-                option, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
-            ):
-                withheld += 1
+            if not is_visible(option, disclosure):
+                withheld += is_withheld(option, disclosure)
                 continue
             title = _section_group_title(schema, option, section, multi=multi)
             section_groups.setdefault(title, []).append(option)
@@ -343,10 +338,8 @@ def _plan_page(
                 # shipped mapping honest for the shipped Schema; at runtime an older or
                 # newer compositor simply has fewer settings, which is not an error.
                 continue
-            if not is_visible(
-                curated, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
-            ):
-                withheld += 1
+            if not is_visible(curated, disclosure):
+                withheld += is_withheld(curated, disclosure)
                 continue
             members.append(curated)
         if members:
@@ -382,9 +375,7 @@ def _with_fallbacks(
     schema: Schema,
     mapping: TasksMapping,
     placed: dict[str, _Placement],
-    *,
-    show_advanced: bool,
-    revealed: frozenset[str],
+    disclosure: Disclosure,
 ) -> list[CategoryPlan]:
     """Append a Page per uncurated Section: a release adds settings rather than hiding them.
 
@@ -403,30 +394,32 @@ def _with_fallbacks(
     for section in schema.section_names:
         if section in homed:
             continue
-        visible = [
-            option
-            for option in schema.section(section)
-            if option.name not in placed
-            and is_visible(
-                option, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
-            )
-        ]
-        if not visible:
-            # Every Option here is either curated elsewhere by name or is the hidden tier,
-            # which has no Tasks home at any switch setting (ADR-0013 §5). Nothing to show.
+        unplaced = [option for option in schema.section(section) if option.name not in placed]
+        visible = [option for option in unplaced if is_visible(option, disclosure)]
+        # The hidden tier has no Tasks home at any switch setting (ADR-0013 §5), so it is not
+        # withheld: counting it would hint at a setting the switch cannot bring here.
+        withheld = sum(1 for option in unplaced if is_withheld(option, disclosure))
+        if not visible and not withheld:
+            # Every Option here is either curated elsewhere by name or is the hidden tier.
+            # Nothing to show, and nothing the user could turn on to see.
             continue
+        groups = (
+            (
+                GroupPlan(
+                    title=new_in_group_title(schema.hyprland_version),
+                    options=tuple(visible),
+                    description=NEW_IN_GROUP_DESCRIPTION,
+                ),
+            )
+            if visible
+            else ()
+        )
         fallbacks.append(
             PagePlan(
                 section=f"tasks.new.{section}",
                 title=schema.section_title(section),
-                groups=(
-                    GroupPlan(
-                        title=new_in_group_title(schema.hyprland_version),
-                        options=tuple(visible),
-                        description=NEW_IN_GROUP_DESCRIPTION,
-                    ),
-                ),
-                withheld=0,
+                groups=groups,
+                withheld=withheld,
             )
         )
 

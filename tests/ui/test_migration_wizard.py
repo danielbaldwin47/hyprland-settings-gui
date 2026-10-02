@@ -14,6 +14,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -185,6 +187,47 @@ class TestTheRescueRow:
         shown = _text_under(dialog)
         assert "**If Hyprland will not start:**" not in shown
         assert "`rm" not in shown
+
+
+class TestTheMigrationClient:
+    """The wizard's `reload full-reset` goes to the Session's compositor, never the ambient one.
+
+    A sandboxed app, or a Harness test, hands its Session a nested instance; a client built
+    from the environment would reload whatever compositor the shell names (#201).
+    """
+
+    def test_the_client_talks_to_the_instance_the_session_was_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import re
+        import socket
+
+        from hyprtweaker.engine.ipc import Instance, IpcError
+        from hyprtweaker.engine.paths import ConfigPaths
+        from hyprtweaker.session import Session
+        from hyprtweaker.ui.shell.window import MainWindow
+
+        # The ambient compositor: a live socket the environment names. Short path: a unix
+        # socket path is capped at 108 bytes, and xdist lengthens tmp_path.
+        (tmp_path / "r" / "hypr" / "a").mkdir(parents=True)
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "r"))
+        monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "a")
+        given = Instance(tmp_path / "nested")
+
+        with socket.socket(socket.AF_UNIX) as ambient:
+            ambient.bind(str(tmp_path / "r" / "hypr" / "a" / ".socket.sock"))
+            session = Session(
+                spawn=lambda coro: coro.close(),
+                paths=ConfigPaths.rooted_at(tmp_path),
+                app_version=APP_VERSION,
+                connect=lambda: given,
+            )
+            flow = MainWindow(session).migration_flow()
+
+            assert flow.client is not None
+            with pytest.raises(IpcError, match=re.escape(str(given.command_socket))):
+                asyncio.run(flow.client.configerrors())
 
 
 class TestExport:

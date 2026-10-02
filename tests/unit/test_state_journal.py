@@ -9,7 +9,10 @@ bug, and history that prunes away the one Snapshot recovery needs is a worse one
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 from hyprtweaker.engine.paths import ENTRYPOINT_NAME, ConfigPaths
 from hyprtweaker.engine.state import Journal, JournalEntry, ModuleChange, content_hash
@@ -123,6 +126,151 @@ def test_discarding_a_draft_leaves_no_trace(tmp_path: Path) -> None:
 
     assert draft.before_bytes(GENERAL) is None
     assert journal.entries() == ()
+
+
+# --- a crash between the write and the commit -----------------------------------------------
+
+
+def crashed_write(paths: ConfigPaths, module: str, text: str | None) -> None:
+    """One write that got as far as replacing `module`, and then the process died.
+
+    The Draft is preserved before the replace, the way the Writer does it, and then simply
+    abandoned: never committed, never discarded. The next process opens a fresh Journal.
+    """
+    draft = Journal(paths).begin([module])
+    draft.preserve(paths.file_for(module))
+    if text is not None:
+        put(paths, module, text)
+
+
+def test_a_crash_after_the_write_recovers_the_pre_write_bytes_from_the_journal(
+    tmp_path: Path,
+) -> None:
+    """ADR-0010: the snapshot is taken *before* each write, so it outlives the process.
+
+    Held in memory until the commit, a hand edit the zero-binds restore overwrote would be
+    gone for good if the app died before the reload answered -- and ADR-0016 spends that
+    edit only because it promises it back.
+    """
+    paths = ConfigPaths.rooted_at(tmp_path)
+    put(paths, GENERAL, "-- hand edit\n")
+    crashed_write(paths, GENERAL, "-- restored\n")
+
+    journal = Journal(paths)
+    # The next process's next write: its own Snapshot GC runs here, and must spare it.
+    transaction(journal, paths, DECORATION, "-- unrelated\n")
+
+    recovered = [entry for entry in journal.entries() if GENERAL in entry.modules]
+    assert len(recovered) == 1
+    entry = recovered[0]
+    assert entry.outcome == "interrupted"
+    assert not entry.confirmed, "nothing confirmed bytes the app never saw reload"
+    change = entry.change(GENERAL)
+    assert change is not None
+    assert journal.snapshot(change.before) == b"-- hand edit\n"
+    assert journal.snapshot(change.after) == b"-- restored\n"
+
+
+def test_a_crash_before_the_replace_landed_records_nothing(tmp_path: Path) -> None:
+    """The file still holds its old bytes, so there is no history to tell -- and no blob."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    put(paths, GENERAL, "-- untouched\n")
+    crashed_write(paths, GENERAL, None)
+
+    journal = Journal(paths)
+    transaction(journal, paths, DECORATION, "-- unrelated\n")
+
+    assert [entry.modules for entry in journal.entries()] == [(DECORATION,)]
+    assert sorted(p.name for p in paths.snapshots_dir.iterdir()) == [
+        content_hash(b"-- unrelated\n")
+    ]
+
+
+def test_a_committed_write_is_not_recovered_a_second_time(tmp_path: Path) -> None:
+    journal, paths = journal_for(tmp_path)
+    put(paths, GENERAL, "-- old\n")
+    draft = journal.begin([GENERAL])
+    draft.preserve(paths.file_for(GENERAL))
+    put(paths, GENERAL, "-- new\n")
+    draft.commit(keys=(), outcome="ok", confirmed=True, changed=[GENERAL])
+
+    fresh = Journal(paths)
+    transaction(fresh, paths, DECORATION, "-- unrelated\n")
+
+    assert [entry.outcome for entry in fresh.entries()] == ["ok", "ok"]
+
+
+def test_a_crash_between_the_append_and_the_release_is_not_journalled_twice(
+    tmp_path: Path,
+) -> None:
+    """The commit appends before it releases, so a crash in between leaves both the entry
+    and the pending record. Recovering that is a no-op, not a second, `interrupted`, copy."""
+    journal, paths = journal_for(tmp_path)
+    put(paths, GENERAL, "-- old\n")
+    draft = journal.begin([GENERAL])
+    draft.preserve(paths.file_for(GENERAL))
+    put(paths, GENERAL, "-- new\n")
+    draft.commit(keys=(), outcome="ok", confirmed=True, changed=[GENERAL])
+    journal.hold({GENERAL: content_hash(b"-- old\n")})  # the release that never happened
+
+    assert Journal(paths).recover() is None
+    assert [entry.outcome for entry in journal.entries()] == ["ok"]
+    assert not paths.journal_pending.exists()
+
+
+def test_an_unreadable_pending_record_is_dropped_by_the_next_begin(tmp_path: Path) -> None:
+    journal, paths = journal_for(tmp_path)
+    paths.journal_pending.parent.mkdir(parents=True, exist_ok=True)
+    paths.journal_pending.write_text("{not json", encoding="utf-8")
+
+    journal.begin([GENERAL])
+
+    assert not paths.journal_pending.exists()
+    assert journal.entries() == ()
+
+
+def test_pruning_reads_a_pending_record_without_deleting_it(tmp_path: Path) -> None:
+    """Collection only asks which Snapshots are spoken for; dropping a bad record is
+    `recover`'s call, made where the reader expects a write."""
+    journal, paths = journal_for(tmp_path)
+    paths.journal_pending.parent.mkdir(parents=True, exist_ok=True)
+    paths.journal_pending.write_text("{not json", encoding="utf-8")
+    journal.store(b"-- a blob, so collection has a store to walk\n")
+
+    journal.prune()
+
+    assert paths.journal_pending.read_text(encoding="utf-8") == "{not json"
+
+
+def test_preserving_syncs_the_snapshot_and_the_pending_record_to_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`preserve` runs before the Writer's rename, and the rename may survive a power loss.
+    The Snapshot it names, and the record naming it, must survive it too."""
+    synced: set[Path] = set()
+    real_fsync = os.fsync
+
+    def recording_fsync(fd: int) -> None:
+        path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        if path.name.startswith(".") and path.name.endswith(".tmp"):
+            path = path.with_name(path.name[1 : -len(".tmp")])  # synced, then renamed
+        synced.add(path)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", recording_fsync)
+    journal, paths = journal_for(tmp_path)
+    put(paths, GENERAL, "-- hand edit\n")
+
+    draft = journal.begin([GENERAL])
+    draft.preserve(paths.file_for(GENERAL))
+
+    snapshot = paths.snapshots_dir / content_hash(b"-- hand edit\n")
+    assert {
+        snapshot,
+        paths.snapshots_dir,
+        paths.journal_pending,
+        paths.journal_pending.parent,
+    } <= (synced)
 
 
 def test_a_half_written_app_dir_is_journalled_from_what_the_disk_says(tmp_path: Path) -> None:

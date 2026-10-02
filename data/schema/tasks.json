@@ -80,8 +80,8 @@
           "title": "Windows & Groups",
           "sections": ["group", "misc"]
         },
-        { "entity": "window_rules" },
-        { "entity": "layer_rules" }
+        { "entity": "entity:window_rules" },
+        { "entity": "entity:layer_rules" }
       ]
     },
     {
@@ -138,14 +138,14 @@
           "title": "Shortcut behaviour",
           "sections": ["binds"]
         },
-        { "entity": "binds" }
+        { "entity": "entity:binds" }
       ]
     },
     {
       "id": "system",
       "title": "System",
       "pages": [
-        { "entity": "monitors" },
+        { "entity": "entity:monitors" },
         {
           "id": "system.cursor",
           "title": "Cursor",

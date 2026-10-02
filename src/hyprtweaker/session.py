@@ -487,6 +487,15 @@ class Session:
         """
         return self._app_version
 
+    def instance(self) -> Instance:
+        """The compositor this Session talks to: its `connect`. Raises `NoInstance`.
+
+        Exposed for the Migration wizard, which builds its own client for the same reason
+        it builds its own Writer. Asking here rather than the environment keeps a sandboxed
+        or Harness Session's wizard on the compositor it was given (#201).
+        """
+        return self._connect()
+
     @property
     def recovery(self) -> Recovery:
         """The last reload's problems and what may be done about each (ADR-0016)."""
@@ -2088,7 +2097,10 @@ class Session:
         # own reload observes the config afresh, and announcing before that would have the
         # notice wiped by the very transaction it describes.
         self._pending_rescue = tuple(modules)
-        self.restore_last_good(*modules)
+        if not self.restore_last_good(*modules):
+            # Declined before anything ran -- no confirmed write to go back to. A notice
+            # left pending would surface on the next restore the user chooses themselves.
+            self._pending_rescue = ()
 
     # --- the recovery actions -----------------------------------------------------------------
 
@@ -2135,6 +2147,9 @@ class Session:
         except (IpcError, RuntimeError) as error:
             _log.error("the restore transaction failed: %s", error)
             self._recovery_halted = True
+            # Nothing was restored, so there is nothing to announce -- now or on the next
+            # restore, which would otherwise inherit this one's notice.
+            self._pending_rescue = ()
             self._changed()
             return
         finally:

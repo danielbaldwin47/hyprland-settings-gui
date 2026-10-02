@@ -30,12 +30,11 @@ skip cleanly on a machine that cannot host one::
     pytest tests/integration              # the whole tier; skips what this machine cannot run
     pytest tests/integration -m hyprland  # only the tests that need a compositor
 
-**Run it by hand before merging a change to the Importer or the Writer.** CI cannot: a
-GitHub runner has no seat, so the job could only ever skip and report green, which ADR-0011
-§tier-3 rates worse than no job at all. That makes `test_import_matches_port.py` the only
-end-to-end proof that a real rice still converts to a config Hyprland accepts, and nothing
-automatic will notice when it stops being true. Nightly is blocked on the virtual-seat spike
-the ADR names (`seatd` + `vkms`, or nesting inside a headless sway/cage).
+**Run it by hand before merging a change to the Importer or the Writer.** CI runs it only
+nightly, on main (the `harness` job in `.github/workflows/ci.yml`: a `vkms` card in an Arch
+container, ADR-0011 tier 3), so a branch that breaks it goes red the night after it merges,
+not on its PR. `test_import_matches_port.py` is the only end-to-end proof that a real rice
+still converts to a config Hyprland accepts.
 """
 
 from __future__ import annotations
@@ -51,6 +50,12 @@ if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
 from .corpus import Rice, StagedRice, rice, rices, rices_with_ground_truth, stage  # noqa: E402
+from .guard import (  # noqa: E402
+    REQUIRE_VARIABLE,
+    GuardedInstance,
+    guarded,
+    session_compositor_reason,
+)
 from .nested import (  # noqa: E402
     HarnessUnavailable,
     NestedHyprland,
@@ -80,8 +85,10 @@ from .visual import (  # noqa: E402
 
 __all__ = [
     "HEADLESS_OUTPUT",
+    "REQUIRE_VARIABLE",
     "Canvas",
     "CompositorState",
+    "GuardedInstance",
     "HarnessUnavailable",
     "ImageComparison",
     "ListDelta",
@@ -94,6 +101,7 @@ __all__ = [
     "capture",
     "compare",
     "diff",
+    "guarded",
     "home_environment",
     "hyprland_binary",
     "make_home",
@@ -102,6 +110,7 @@ __all__ = [
     "rice",
     "rices",
     "rices_with_ground_truth",
+    "session_compositor_reason",
     "stage",
     "unavailable_reason",
     "write_determinism_preamble",

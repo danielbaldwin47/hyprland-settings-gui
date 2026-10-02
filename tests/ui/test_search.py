@@ -34,6 +34,7 @@ HIDDEN_OPTION = "debug:manual_crash"
 """The `hidden` tier, which has no home in the Tasks view at any switch setting."""
 
 ROUNDING_OPTION = "decoration:rounding"
+BINDS_OPTION = "binds:workspace_back_and_forth"
 
 
 @pytest.fixture(scope="module")
@@ -203,6 +204,27 @@ def test_a_hit_navigates_and_flashes(window: Any) -> None:
 
     assert window.visible_section == home.plan.section
     assert row.widget.has_css_class(FLASH_CLASS), "the revealed Row was not flash-highlighted"
+
+
+def test_a_binds_option_hit_opens_the_binds_section_not_the_keybinds_page(
+    window: Any,
+) -> None:
+    """`binds:*` Options live on the Section page, which once shared an id with Keybinds (#120).
+
+    The Config view is the one where the two sit side by side, and the visible stack child
+    is asserted rather than the id alone: a shared id selected the right name and showed
+    whichever page GTK registered first.
+    """
+    window.search("workspace_back_and_forth")
+    settle()
+    window.open_hit(next(hit for hit in window.hits if hit.name == BINDS_OPTION))
+    settle()
+
+    home = next(page for page in window.pages if page.row(BINDS_OPTION) is not None)
+
+    assert window.visible_section == "binds"
+    assert home.page.is_ancestor(window._stack.get_visible_child())
+    assert not window.binds_page.page.is_ancestor(window._stack.get_visible_child())
 
 
 def test_hidden_tier_hit_switches_to_config_and_reveals(window: Any, state_dir: Path) -> None:

@@ -9,16 +9,17 @@ both kinds in one list without asking which it has.
 the layout-independent number-row binds the corpus is full of. This list is built from the
 model, which came from the file.
 
-**Nothing is hidden for being uneditable.** A function-valued action lives in `user.lua`
-and a multi-key `A&B` bind maps only approximately, so both are shown with their controls
-insensitive and a badge saying why. Dropping them would be the app quietly claiming a
-config is smaller than it is.
+**Nothing is hidden for being uneditable.** A function-valued action lives in `user.lua`,
+a multi-key `A&B` bind cannot load in Hyprland 0.56, and a dead-keysym bind was imported
+commented out, so each is shown with a badge saying why (`BadgeKind`). Dropping them would
+be the app quietly claiming a config is smaller than it is.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING
 
 import gi
@@ -26,7 +27,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from hyprtweaker.engine.binds_analysis import (  # noqa: E402
     find_conflicts,
@@ -34,6 +35,7 @@ from hyprtweaker.engine.binds_analysis import (  # noqa: E402
     unreachable_submaps,
 )
 from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup  # noqa: E402
+from hyprtweaker.engine.importer.binds import dead_keysyms  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 
@@ -41,8 +43,8 @@ if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
 
 MULTI_KEY = "&"
-"""The multi-key separator. Read-only: 0 uses in the corpus, and the mapping is approximate
-(ADR-0007), so a capture UX for it would be effort spent on a case nobody has."""
+"""The multi-key separator. Read-only: Hyprland 0.56 fails the whole config on an enabled
+`A&B` bind (`Unknown keysym: "A&B"`), so there is nothing valid to edit it into (#162)."""
 
 
 def trigger_text(bind: Bind) -> str:
@@ -168,17 +170,114 @@ def rival_label(bind: Bind, order: int | None) -> str:
     return f"{prefix}{action_text(bind)} ({place})"
 
 
-def read_only_reason(bind: Bind) -> str:
-    """Why this bind cannot be edited here, or `""` when it can be.
+class BadgeKind(Enum):
+    """Why a Bind row carries a badge: the one vocabulary for disabled and read-only binds.
 
-    A reason rather than a bool: the row shows it on the badge, and "read-only" with no
-    explanation is the kind of dead end that sends a user looking for a bug.
+    The Binds Page row reads this through `bind_badge`; the search entries #75 adds should
+    read it the same way, so a bind is described alike wherever it turns up. Each kind fixes
+    what the row offers and how it looks, not only what it says:
+
+    - `ERROR`: imported commented out because its Trigger names a key xkb does not know
+      (ADR-0007). Enabled as it stands, Hyprland would refuse the *whole* config, so the
+      row offers re-capture in place of Enable. Edit and Remove stay.
+    - `MULTI_KEY`: an `A&B` Trigger, which Hyprland (0.56.2, ADR-0007) cannot load.
+      Nothing in the app can make it valid, so no edit and no Enable; Remove is offered.
+    - `LUA_FUNCTION`: the action is a Lua function in `user.lua`, which the app does not
+      write. Badge only: no edit, no Enable, and no Remove of a line it cannot see.
+    - `DISABLED`: commented out by the user. One-click Enable, edit and Remove.
+    """
+
+    ERROR = "error"
+    MULTI_KEY = "multi-key"
+    LUA_FUNCTION = "lua-function"
+    DISABLED = "disabled"
+
+    @property
+    def editable(self) -> bool:
+        """Whether the row offers the bind editor."""
+        return self in (BadgeKind.ERROR, BadgeKind.DISABLED)
+
+    @property
+    def removable(self) -> bool:
+        """Whether the row offers Remove."""
+        return self is not BadgeKind.LUA_FUNCTION
+
+    @property
+    def style(self) -> str:
+        """The badge label's style class: loud where the badge asks the user to act."""
+        return {BadgeKind.ERROR: "error", BadgeKind.MULTI_KEY: "warning"}.get(self, "dim-label")
+
+    @property
+    def dims_row(self) -> bool:
+        """Whether a disabled bind's row is dimmed.
+
+        Not when the badge asks the user to act: row opacity reaches the badge too, and that
+        badge is the one line saying this bind needs them.
+        """
+        return self not in (BadgeKind.ERROR, BadgeKind.MULTI_KEY)
+
+    @property
+    def verb(self) -> RowVerb | None:
+        """The button the row offers to turn the bind on, if any."""
+        return _VERBS.get(self)
+
+
+@dataclass(frozen=True, slots=True)
+class BindBadge:
+    """What one badged row shows: its kind, the badge's words, and the tooltip's reason."""
+
+    kind: BadgeKind
+    text: str
+    tooltip: str
+
+
+def bind_badge(bind: Bind) -> BindBadge | None:
+    """The badge this Bind's row carries, or `None` for an enabled, editable bind.
+
+    Recomputed from the Bind rather than carried on the model: the Trigger already says
+    everything, and a stored flag could disagree with it after an edit.
+
+    Order matters. A function action wins first, since nothing on the row is the app's to
+    change. Multi-key goes before the dead-keysym check, because xkb reads `A&B` as one
+    unknown key: an error badge there would offer a re-capture that cannot fix a key the
+    bind never really named.
+
+    The dead-keysym check is the same oracle the Importer used to disable the bind
+    (`dead_keysyms`). Where libxkbcommon will not load it answers nothing, so a bind reads
+    as plain disabled -- but on such a machine the Importer could not have found the dead
+    key either, so the row never claims more than the import knew.
     """
     if bind.dispatcher is None:
-        return "Defined by a Lua function in user.lua"
+        return BindBadge(
+            BadgeKind.LUA_FUNCTION,
+            "Defined by a Lua function in user.lua",
+            "This keybind's action is a Lua function in user.lua. Edit it there.",
+        )
     if MULTI_KEY in bind.keys:
-        return "Multi-key binds are edited as text"
-    return ""
+        return BindBadge(
+            BadgeKind.MULTI_KEY,
+            "Multi-key: Hyprland can't load it",
+            f"Hyprland rejects multi-key triggers like {trigger_text(bind)}: enabled, "
+            "this keybind would stop your whole config from loading. It stays commented "
+            "out; remove it, or add a keybind with a single key instead.",
+        )
+    if bind.enabled:
+        return None
+    if dead := dead_keysyms(bind.keys):
+        names = ", ".join(f'"{name}"' for name in dead)
+        noun = "key" if len(dead) == 1 else "keys"
+        return BindBadge(
+            BadgeKind.ERROR,
+            f"Unknown {noun} {names}",
+            f"Hyprland has no {noun} named {names}, so this keybind was imported commented "
+            "out: enabled, it would stop your whole config from loading. Record a new "
+            "trigger to use it.",
+        )
+    return BindBadge(
+        BadgeKind.DISABLED,
+        "Disabled",
+        "Kept in place but commented out in binds.lua; it does not fire.",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,10 +296,37 @@ class BindActions:
     enable: Callable[[int, bool], None]
     rebind: Callable[[int], None]
     """Open Capture directly on the bind at this index (the conflict verb)."""
+    recapture: Callable[[int], None]
+    """Open Capture on an error-badged bind; a captured trigger also enables it."""
     swap: Callable[[int, int], None]
     """Exchange two binds' positions -- which same-submap duplicate fires first."""
     edit_submap: Callable[[str | None], None]
     """Open the Submap editor; `None` means create one."""
+
+
+@dataclass(frozen=True, slots=True)
+class RowVerb:
+    """The button a badged row offers to turn its bind on, and the action it calls."""
+
+    label: str
+    tooltip: str
+    run: Callable[[BindActions, int], None]
+
+
+_VERBS = {
+    BadgeKind.DISABLED: RowVerb(
+        "Enable",
+        "Uncomment this bind so it fires again",
+        lambda actions, index: actions.enable(index, True),
+    ),
+    # Never a bare Enable (ADR-0007): as it stands this bind fails the whole config, so the
+    # way back is a new trigger, and a captured one turns it on.
+    BadgeKind.ERROR: RowVerb(
+        "Fix trigger…",
+        "Record a key Hyprland knows, then enable this bind with it",
+        lambda actions, index: actions.recapture(index),
+    ),
+}
 
 
 class BindRow:
@@ -230,9 +356,12 @@ class BindRow:
         self.index = index
         self.conflict = conflict
         self.conflict_badge: Gtk.MenuButton | None = None
-        self.disabled_badge: Gtk.Label | None = None
-
-        reason = read_only_reason(bind)
+        self.badge = bind_badge(bind)
+        self.badge_label: Gtk.Label | None = None
+        self.enable_button: Gtk.Button | None = None
+        """Enable for a plain disabled bind; "Fix trigger…" (re-capture) for an error one."""
+        self.edit_button: Gtk.Button | None = None
+        self.remove_button: Gtk.Button | None = None
 
         # The description is what the user named this bind, so it is the line they will scan
         # for -- shown, not hidden in a tooltip. The call itself stays visible underneath:
@@ -245,26 +374,23 @@ class BindRow:
             title=trigger_text(bind),
             subtitle="\n".join(lines),
             subtitle_lines=len(lines),
+            # A trigger (`A&B`) or command (`a && b`) is text: as Pango markup it renders blank.
+            use_markup=False,
         )
         if description := bind.options.description:
             label = Gtk.Label(label=description, css_classes=["dim-label"], wrap=True)
             label.set_max_width_chars(28)
             self.widget.add_suffix(label)
 
-        if not bind.enabled:
-            self.disabled_badge = Gtk.Label(
-                label="Disabled", css_classes=["dim-label", "caption"]
+        badge = self.badge
+        if badge is not None:
+            self.badge_label = Gtk.Label(
+                label=badge.text, css_classes=[badge.kind.style, "caption"]
             )
-            self.disabled_badge.set_tooltip_text(
-                "Kept in place but commented out in binds.lua; it does not fire."
-            )
-            self.widget.add_suffix(self.disabled_badge)
-            self.widget.add_css_class("dim-label")
-
-        if reason:
-            badge = Gtk.Label(label="Read-only", css_classes=["dim-label", "caption"])
-            badge.set_tooltip_text(reason)
-            self.widget.add_suffix(badge)
+            self.badge_label.set_tooltip_text(badge.tooltip)
+            self.widget.add_suffix(self.badge_label)
+            if not bind.enabled and badge.kind.dims_row:
+                self.widget.add_css_class("dim-label")
 
         # A read-only bind still fires, so it still conflicts -- the badge is not gated
         # on editability.
@@ -274,27 +400,34 @@ class BindRow:
             )
             self.widget.add_suffix(self.conflict_badge)
 
-        if reason or not editable:
+        if not editable:
             return
+        kind = badge.kind if badge is not None else None
 
-        if not bind.enabled:
-            enable = Gtk.Button(label="Enable", valign=Gtk.Align.CENTER)
-            enable.add_css_class("flat")
-            enable.set_tooltip_text("Uncomment this bind so it fires again")
-            enable.connect("clicked", lambda _button: actions.enable(index, True))
-            self.widget.add_suffix(enable)
+        if kind is not None and (verb := kind.verb) is not None:
+            self.enable_button = Gtk.Button(label=verb.label, valign=Gtk.Align.CENTER)
+            self.enable_button.set_tooltip_text(verb.tooltip)
+            self.enable_button.connect("clicked", lambda _button: verb.run(actions, index))
+            self.enable_button.add_css_class("flat")
+            self.widget.add_suffix(self.enable_button)
 
-        edit = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER)
-        edit.add_css_class("flat")
-        edit.set_tooltip_text("Edit this bind")
-        edit.connect("clicked", lambda _button: actions.edit(index))
-        self.widget.add_suffix(edit)
+        if kind is None or kind.editable:
+            self.edit_button = Gtk.Button(
+                icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER
+            )
+            self.edit_button.add_css_class("flat")
+            self.edit_button.set_tooltip_text("Edit this bind")
+            self.edit_button.connect("clicked", lambda _button: actions.edit(index))
+            self.widget.add_suffix(self.edit_button)
 
-        remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
-        remove.add_css_class("flat")
-        remove.set_tooltip_text("Remove this bind")
-        remove.connect("clicked", lambda _button: actions.remove(index))
-        self.widget.add_suffix(remove)
+        if kind is None or kind.removable:
+            self.remove_button = Gtk.Button(
+                icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER
+            )
+            self.remove_button.add_css_class("flat")
+            self.remove_button.set_tooltip_text("Remove this bind")
+            self.remove_button.connect("clicked", lambda _button: actions.remove(index))
+            self.widget.add_suffix(self.remove_button)
 
     def _conflict_button(
         self,
@@ -403,8 +536,9 @@ class BindsPage:
     re-derive them all anyway, and a stale index is an edit landing on the wrong bind.
     """
 
-    section = "binds"
-    """The stack name. Matches the Section vocabulary the shell keys pages by."""
+    section = "entity:binds"
+    """The stack name, namespaced `entity:` because Hyprland also has a `binds` Section
+    (see `DeclarationKind.section`, #120)."""
 
     title = "Keybinds"
 
@@ -504,7 +638,10 @@ class BindsPage:
             description = "These keybinds only fire while this submap is active."
             if name in unreachable:
                 description += f" {UNREACHABLE}"
-            group = Adw.PreferencesGroup(title=f"Submap: {name}", description=description)
+            # The title is Pango markup: a name with `&` would render blank unescaped.
+            group = Adw.PreferencesGroup(
+                title=f"Submap: {GLib.markup_escape_text(name)}", description=description
+            )
             suffix = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
             suffix.append(
                 self._header_button(
