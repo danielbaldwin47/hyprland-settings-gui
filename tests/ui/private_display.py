@@ -1,21 +1,33 @@
-"""A private Xvfb for GTK, and the environment that keeps GTK on it.
+"""A private Xvfb and session bus for GTK, and the environment that keeps GTK on them.
 
 Shared by the UI tier (`conftest.py`) and the widget probe route (`tools/widget_probe.py`,
 #202), so both fence GTK off the desktop session the same way. Starting an Xvfb is not
 enough on its own: a desktop session exports `GDK_BACKEND=wayland,x11,*` and
 `WAYLAND_DISPLAY`, so GTK picks Wayland first, and its x11 fallback finds the session's
 `DISPLAY`, which is XWayland on the desktop. `pin_environment` overrides all of them.
+
+The session bus is private too (#212): GTK and libadwaita read the desktop's settings
+portal over it, and an app that registers on it can hand its launch to the owner's open
+window. `start_bus` runs a `dbus-daemon` with a configuration of its own that names no
+service directory, so nothing on it can be activated: the portal, dconf and the
+accessibility bus all answer `ServiceUnknown`, and no helper process of the owner's
+starts and outlives the run.
 """
 
 from __future__ import annotations
 
 import ctypes
 import os
+import select
+import shutil
 import signal
 import socket
 import subprocess
+import tempfile
 import time
 from collections.abc import MutableMapping
+from dataclasses import dataclass
+from pathlib import Path
 
 # Every variable `pin_environment` sets or removes, for a caller that restores them.
 PINNED = (
@@ -25,6 +37,9 @@ PINNED = (
     "HYPRLAND_INSTANCE_SIGNATURE",
     "GDK_SCALE",
     "GTK_A11Y",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "GSETTINGS_BACKEND",
+    "ADW_DISABLE_PORTAL",
 )
 
 _libc = ctypes.CDLL(None, use_errno=True)
@@ -130,16 +145,132 @@ def _lock_pid(number: int) -> int | None:
         return None
 
 
-def pin_environment(environ: MutableMapping[str, str], display: str) -> None:
-    """Point GTK at `display` over X11 only, with no way back to the desktop session.
+# `session.conf`'s default policy, and nothing else of it: no `<standard_session_servicedirs/>`,
+# no `<servicedir>`, no `<include>` or `<includedir>`, so there is nothing to activate.
+_BUS_CONFIG = """\
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:path={directory}/bus</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"""
+
+
+def session_bus_config(directory: str | os.PathLike[str]) -> str:
+    """The bus configuration for a daemon that listens in `directory` and activates nothing."""
+    return _BUS_CONFIG.format(directory=directory)
+
+
+@dataclass
+class PrivateBus:
+    """A session bus this process started: its address, and the daemon behind it."""
+
+    address: str
+    directory: str
+    process: subprocess.Popen[bytes]
+
+    @property
+    def pid(self) -> int:
+        return self.process.pid
+
+    def stop(self) -> None:
+        """End the daemon this started, by its handle, and remove its directory; idempotent."""
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+
+def start_bus(dbus_daemon: str) -> PrivateBus | None:
+    """Start a session bus of this process's own that activates nothing; None if none came up.
+
+    A non-forking `dbus-daemon` that is this process's child, with the configuration of
+    `session_bus_config`, never `dbus-run-session` or `--session`, which load the
+    desktop's `session.conf` and with it `/usr/share/dbus-1/services`. Like the Xvfb it dies
+    with this process (PR_SET_PDEATHSIG), including a `timeout` or out-of-memory kill that
+    runs no cleanup, and takes its socket with it. The daemon's environment has no
+    `DBUS_SESSION_BUS_ADDRESS`. Its directory is a fresh one under the temp dir; the
+    configuration file goes once the daemon has read it.
+    """
+    directory = tempfile.mkdtemp(prefix="hyprtweaker-bus-")
+    config = Path(directory, "session.conf")
+    config.write_text(session_bus_config(directory))
+    read_end, write_end = os.pipe()
+    environ = {k: v for k, v in os.environ.items() if k != "DBUS_SESSION_BUS_ADDRESS"}
+    try:
+        daemon = subprocess.Popen(
+            [
+                dbus_daemon,
+                "--nofork",
+                f"--config-file={config}",
+                f"--print-address={write_end}",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=environ,
+            pass_fds=(write_end,),
+            preexec_fn=lambda: _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM),
+        )
+    except OSError:
+        os.close(read_end)
+        os.close(write_end)
+        shutil.rmtree(directory, ignore_errors=True)
+        return None
+    os.close(write_end)
+    bus = PrivateBus("", directory, daemon)
+    try:
+        # The daemon prints its address once it listens; EOF means it exited first.
+        line = b""
+        deadline = time.monotonic() + 10
+        while not line.endswith(b"\n"):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([read_end], [], [], remaining)[0]:
+                break
+            chunk = os.read(read_end, 512)
+            if not chunk:
+                break
+            line += chunk
+    finally:
+        os.close(read_end)
+    bus.address = line.decode().strip()
+    if not bus.address.startswith("unix:"):
+        bus.stop()
+        return None
+    config.unlink(missing_ok=True)
+    return bus
+
+
+def pin_environment(environ: MutableMapping[str, str], display: str, bus: str) -> None:
+    """Point GTK at `display` over X11 and at the session bus `bus`, with no way back.
 
     `HYPRLAND_INSTANCE_SIGNATURE` goes too: it is how the app finds a compositor to talk
     to. So do the session's `GDK_SCALE`, which shrank the 1280x1024 screen to 640x512 on
     the owner's HiDPI desktop, and the accessibility bus, which would register the widgets
     with the desktop's screen reader.
+
+    The bus is always set, never unset: GIO falls back to `$XDG_RUNTIME_DIR/bus`, the
+    owner's own socket, when `DBUS_SESSION_BUS_ADDRESS` is missing. On it there is no
+    settings portal, so libadwaita is told not to ask for one, and GSettings is kept in
+    memory so a render never reads the owner's dconf: "system" colours are GTK's default,
+    the same on every machine.
     """
     environ["DISPLAY"] = display
     environ["GDK_BACKEND"] = "x11"
     environ["GTK_A11Y"] = "none"
+    environ["DBUS_SESSION_BUS_ADDRESS"] = bus
+    environ["GSETTINGS_BACKEND"] = "memory"
+    environ["ADW_DISABLE_PORTAL"] = "1"
     for name in ("WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "GDK_SCALE"):
         environ.pop(name, None)

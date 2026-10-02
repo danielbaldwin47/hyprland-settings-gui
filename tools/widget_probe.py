@@ -12,11 +12,13 @@ before `gi` and before any `hyprtweaker.ui` import, since either initialises GTK
     ...
     widget_probe.shoot(page.page, "/path/to/page.png")  # a PNG cropped to that widget
 
-This runner starts an Xvfb of its own (the UI tier's, `tests/ui/private_display.py`), sets
-`DISPLAY` to it and `GDK_BACKEND=x11`, drops `WAYLAND_DISPLAY` and
-`HYPRLAND_INSTANCE_SIGNATURE`, points `XDG_CONFIG_HOME` and `XDG_STATE_HOME` at a throwaway
-directory, runs the app non-unique as `tools/sandbox.py` does, and runs the probe in its own
-process with the worktree's `src` importable.
+This runner starts an Xvfb and a session bus of its own (the UI tier's,
+`tests/ui/private_display.py`), sets `DISPLAY` to the Xvfb and `GDK_BACKEND=x11`, sets
+`DBUS_SESSION_BUS_ADDRESS` to the bus, keeps GSettings in memory and the settings portal
+off, drops `WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE`, points `XDG_CONFIG_HOME`
+and `XDG_STATE_HOME` at a throwaway directory, runs the app non-unique as
+`tools/sandbox.py` does, and runs the probe in this process with the worktree's `src`
+importable. Both servers end with it, a `timeout` kill included.
 
 The import is the fence: imported by a probe this runner did not start, `widget_probe`
 exits at once with one line naming this command, before GTK can open a display. On
@@ -41,15 +43,22 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMAND = ".venv/bin/python tools/widget_probe.py <probe.py> [args...]"
 
 sys.path.insert(0, str(REPO_ROOT / "tests" / "ui"))
-from private_display import pin_environment, session_display_clash, start_xvfb  # noqa: E402
+from private_display import (  # noqa: E402
+    pin_environment,
+    session_display_clash,
+    start_bus,
+    start_xvfb,
+)
 
 # The Xvfb this process started, set only by `main`. A probe that imports this module
 # without the runner gets a fresh copy, where it is None, so the fence refuses.
 _route_display: str | None = None
+# The session bus it started, likewise: the owner's own address, or none, is a refusal.
+_route_bus: str | None = None
 
 
 def fence_problems(environ: Mapping[str, str]) -> list[str]:
-    """What in `environ` could let GTK reach a display other than this route's Xvfb."""
+    """What in `environ` could let GTK reach a display or bus other than this route's own."""
     problems = []
     display = environ.get("DISPLAY")
     if _route_display is None or display != _route_display:
@@ -57,6 +66,13 @@ def fence_problems(environ: Mapping[str, str]) -> list[str]:
             f"DISPLAY={display} is not an Xvfb this route started"
             if display
             else "DISPLAY is unset"
+        )
+    bus = environ.get("DBUS_SESSION_BUS_ADDRESS")
+    if _route_bus is None or bus != _route_bus:
+        problems.append(
+            f"DBUS_SESSION_BUS_ADDRESS={bus} is not a session bus this route started"
+            if bus
+            else "DBUS_SESSION_BUS_ADDRESS is unset, so GTK falls back to the desktop's bus"
         )
     if "WAYLAND_DISPLAY" in environ:
         problems.append(f"WAYLAND_DISPLAY={environ['WAYLAND_DISPLAY']} is set")
@@ -66,7 +82,7 @@ def fence_problems(environ: Mapping[str, str]) -> list[str]:
 
 
 def refuse_unless_routed() -> None:
-    """Exit with one line naming the route's command if GTK could leave its Xvfb."""
+    """Exit with one line naming the route's command if GTK could leave its Xvfb or bus."""
     if problems := fence_problems(os.environ):
         raise SystemExit(
             f"widget_probe: refusing to start GTK: {', '.join(problems)}, so this probe "
@@ -175,7 +191,6 @@ def shoot(widget: Any, path: str | os.PathLike[str], *, margin: int = 0) -> tupl
 
 
 def main(argv: list[str]) -> int:
-    global _route_display
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0 if argv else 2
@@ -190,9 +205,22 @@ def main(argv: list[str]) -> int:
         raise SystemExit("widget_probe: Xvfb did not open a display within 10 s")
     if clash := session_display_clash(display, os.environ.get("DISPLAY")):
         raise SystemExit(f"widget_probe: {clash}")
+    dbus_daemon = shutil.which("dbus-daemon")
+    if dbus_daemon is None:
+        raise SystemExit("widget_probe: dbus-daemon is not installed (pacman -S dbus)")
+    bus = start_bus(dbus_daemon)
+    if bus is None:
+        raise SystemExit("widget_probe: dbus-daemon did not open a private session bus in 10 s")
+    try:
+        return _run(probe, argv, display, bus.address)
+    finally:
+        bus.stop()
 
-    _route_display = display
-    pin_environment(os.environ, display)
+
+def _run(probe: Path, argv: list[str], display: str, bus: str) -> int:
+    global _route_display, _route_bus
+    _route_display, _route_bus = display, bus
+    pin_environment(os.environ, display, bus)
     # Versions only, which opens no display: the probe then imports Gtk and Adw as is.
     import gi
 
