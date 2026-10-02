@@ -54,6 +54,7 @@ from hyprtweaker.engine.migration.export import render as export_render  # noqa:
 from hyprtweaker.engine.migration.flow import (  # noqa: E402
     Decision,
     MigrationFlow,
+    asks_consent,
     fresh_start,
 )
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
@@ -568,7 +569,10 @@ class MainWindow(Adw.ApplicationWindow):
         )
         if source is not None:
             flow.detect()
-            flow.build_preview(source)
+            if not asks_consent(source):
+                # A `.lua` is read only once the wizard has asked (#190); building its
+                # preview here would raise `ConsentRequired` out of the file chooser.
+                flow.build_preview(source)
         return flow
 
     def show_migration(self, source: Path | None = None) -> MigrationDialog:
@@ -578,6 +582,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.migration_flow(source),
             spawn=self._spawn,
             on_finished=self._on_migration_finished,
+            source=source,
         )
 
     def _on_migration_finished(self, decision: Decision | None) -> None:

@@ -620,6 +620,16 @@ class Session:
         """Whether the model emits this Option at all -- ADR-0005's tri-state, not `!=`."""
         return self._model.is_set(option.name)
 
+    def unknown_to_version(self, option: ResolvedOption) -> bool:
+        """Whether the running Hyprland was described and does not have this Option.
+
+        The `unknown-to-this-version` Row state (#77): the app degraded onto a Schema the
+        compositor does not match (ADR-0012). False with no snapshot -- no compositor is
+        no evidence -- so an offline session badges nothing as missing.
+        """
+        live = self._live_hyprland
+        return live is not None and option.name not in live.names
+
     # --- what the UI writes -----------------------------------------------------------------
 
     def set_option(self, name: str, value: Any) -> None:

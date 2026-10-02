@@ -85,6 +85,8 @@ def _option_to_json(option: GeneratedOption) -> dict[str, Any]:
         payload["refresh"] = list(option.refresh)
     if option.curation_flags:
         payload["curation_flags"] = [flag.value for flag in option.curation_flags]
+    if option.added_in is not None:
+        payload["added_in"] = option.added_in
 
     return payload
 
@@ -126,6 +128,7 @@ def _option_from_json(payload: dict[str, Any]) -> GeneratedOption:
         device_overridable=bool(payload.get("device_overridable", False)),
         refresh=tuple(str(bit) for bit in payload.get("refresh", ())),
         curation_flags=tuple(CurationFlag(flag) for flag in payload.get("curation_flags", ())),
+        added_in=str(payload["added_in"]) if "added_in" in payload else None,
     )
 
 

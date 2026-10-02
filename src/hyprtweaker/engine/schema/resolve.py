@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +62,43 @@ def version_key(version: str) -> tuple[int, ...]:
     schema than the one shipped for the running compositor.
     """
     return tuple(int(part) for part in re.findall(r"\d+", version))
+
+
+def stamp_added_in(
+    schema: GeneratedSchema, predecessor: GeneratedSchema | None
+) -> GeneratedSchema:
+    """Stamp each Option `predecessor` lacks with `added_in = schema`'s version.
+
+    The one definition of "added" between two consecutive Generated schemas: what the
+    release check's diff classifies as added and what the Tasks view groups under
+    `New in <version>` come from the same rule. An Option the predecessor has keeps the
+    predecessor's stamp, so it stays in its `New in` group until someone curates it
+    (ADR-0012), not for one release only. No predecessor means no stamps, and the
+    provenance then names none. A predecessor that is not older is a caller's mistake:
+    every Option would read as old, silently.
+    """
+    if predecessor is None:
+        return schema
+    if version_key(predecessor.hyprland_version) >= version_key(schema.hyprland_version):
+        raise ValueError(
+            f"predecessor {predecessor.hyprland_version} is not older than "
+            f"{schema.hyprland_version}"
+        )
+    earlier = {option.name: option for option in predecessor.options}
+    options = tuple(
+        replace(
+            option,
+            added_in=earlier[option.name].added_in
+            if option.name in earlier
+            else schema.hyprland_version,
+        )
+        for option in schema.options
+    )
+    return GeneratedSchema(
+        hyprland_version=schema.hyprland_version,
+        options=options,
+        provenance={**schema.provenance, "predecessor": predecessor.hyprland_version},
+    )
 
 
 def derive_title(option: GeneratedOption) -> str:
@@ -189,6 +226,7 @@ def resolve_option(
         refresh=generated.refresh,
         curation_flags=generated.curation_flags,
         renamed_from=entry.renamed_from,
+        added_in=generated.added_in,
     )
 
 

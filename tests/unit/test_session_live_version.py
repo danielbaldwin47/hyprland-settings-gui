@@ -14,12 +14,19 @@ from pathlib import Path
 
 import pytest
 from _fake_hyprland import CONVERSATION, FakeHyprland, run_with_fake
-from _support import SAMPLE_APP_VERSION, Runner, synthetic_schema_dir
+from _support import (
+    SAMPLE_APP_VERSION,
+    Runner,
+    sample_schema,
+    session_for,
+    synthetic_schema_dir,
+)
 
 from hyprtweaker.engine.ipc import Instance, LiveHyprland, NoInstance
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema.resolve import SCHEMA_DIR_ENV
 from hyprtweaker.session import Session
+from hyprtweaker.ui.rows.state import row_state
 
 SHIPPED = ("0.56.2", "0.58.0")
 
@@ -134,3 +141,37 @@ def test_below_lua_hyprland_the_session_stays_read_only_and_never_connects(
         assert session.schema.hyprland_version == "0.56.2"
 
     run_with_fake(scenario, running("0.55.0"))
+
+
+def _described_without(missing: str) -> LiveHyprland:
+    return LiveHyprland(
+        "0.56.0", tuple({"name": o.name} for o in sample_schema() if o.name != missing)
+    )
+
+
+def test_a_row_names_the_option_the_running_hyprland_lacks(tmp_path: Path) -> None:
+    """#77's unknown-to-this-version badge, through the real Session's `RowContext`."""
+    live = _described_without("decoration:rounding")
+    session = session_for(FakeHyprland(), tmp_path, Runner(), live_hyprland=live)
+    rounding = session.schema["decoration:rounding"]
+
+    assert session.unknown_to_version(rounding)
+    assert not session.unknown_to_version(session.schema["general:gaps_in"])
+    (pill,) = row_state(rounding, session).pills
+    assert (pill.label, pill.tooltip) == (
+        "Not in this Hyprland",
+        "Hyprland 0.56.0 does not have this option; the app is using its 0.56.2 schema.",
+    )
+
+
+def test_with_no_compositor_described_no_row_wears_the_pill(tmp_path: Path) -> None:
+    """No snapshot is no evidence: an offline session badges nothing as missing."""
+    session = session_for(FakeHyprland(), tmp_path, Runner(), live_hyprland=None)
+
+    labels = {
+        pill.label for option in session.schema for pill in row_state(option, session).pills
+    }
+
+    assert not any(session.unknown_to_version(option) for option in session.schema)
+    assert "Not in this Hyprland" not in labels
+    assert labels >= {"Advanced", "Restart"}, "the other pills still show"

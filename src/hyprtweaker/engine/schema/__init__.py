@@ -40,6 +40,7 @@ from .resolve import (
     resolve_option,
     schema_dir,
     select_version,
+    stamp_added_in,
 )
 from .types import (
     CurationFlag,
@@ -86,4 +87,5 @@ __all__ = [
     "resolve_option",
     "schema_dir",
     "select_version",
+    "stamp_added_in",
 ]
