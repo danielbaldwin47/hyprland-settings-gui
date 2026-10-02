@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from hyprtweaker.engine.ipc import LiveHyprland
     from hyprtweaker.engine.model import ConfigModel
     from hyprtweaker.engine.schema import Schema
+    from hyprtweaker.engine.wallpaper import Wallpapers
     from hyprtweaker.session import Session
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -227,6 +228,7 @@ def session_for(
     runner: Runner,
     *,
     live_hyprland: LiveHyprland | None = None,
+    wallpapers: Wallpapers | None = None,
 ) -> Session:
     """A Session over `fake`, posing as the Hyprland `live_hyprland` describes, if any.
 
@@ -244,6 +246,7 @@ def session_for(
         app_version=SAMPLE_APP_VERSION,
         connect=lambda: fake.instance,
         read_live=lambda: live_hyprland,
+        wallpapers=wallpapers,
     )
 
 

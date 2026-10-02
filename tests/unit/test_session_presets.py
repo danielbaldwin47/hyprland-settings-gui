@@ -135,7 +135,9 @@ def test_a_preset_file_never_holds_a_bind_rule_or_monitor(tmp_path: Path) -> Non
     session.model.set("animations:enabled", False)
     session.model.set("input:kb_layout", "de")
 
-    [result] = save(session, "Everything", *CaptureScope)
+    # Every scope but the wallpaper, which only a running daemon can say (#170).
+    scopes = [scope for scope in CaptureScope if scope is not CaptureScope.WALLPAPER]
+    [result] = save(session, "Everything", *scopes)
 
     assert isinstance(result, PresetSaved)
     data = preset_file(tmp_path, "everything")

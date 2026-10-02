@@ -68,10 +68,12 @@ from .undo import (
     EntityEdit,
     EntityStep,
     PresetStep,
+    SourceChange,
     Step,
     UndoGroup,
     UndoStack,
     UndoStep,
+    WallpaperChange,
 )
 
 __all__ = [
@@ -102,11 +104,13 @@ __all__ = [
     "ReloadReport",
     "Reloader",
     "RestoreTransaction",
+    "SourceChange",
     "Step",
     "Transaction",
     "UndoGroup",
     "UndoStack",
     "UndoStep",
+    "WallpaperChange",
     "app_owned_options",
     "attribute",
     "own_write_modules",
