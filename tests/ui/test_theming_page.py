@@ -585,6 +585,39 @@ def test_regenerate_runs_the_tool_once_on_the_chosen_image_and_loads_its_first_c
     assert page.toasts == ["wallust made new colors."]
 
 
+def test_a_run_that_ends_after_a_rebuild_reports_on_the_new_page(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """F23 of the #148 review: a rebuild during a Regenerate (up to 120 s) landed the result
+    on the released page, so its dialog was lost and the new page offered Regenerate mid-run."""
+    import threading
+
+    from hyprtweaker.ui.pages.theming import ThemingMemory
+
+    stub_tool("wallust", "echo 'cannot read image' >&2\nexit 3")
+    session, _ = make_session(tmp_path)
+    wired(session, "wallust", source="wallust")
+    release = threading.Event()
+    from hyprtweaker.engine.tools import run_tool
+
+    def held_run(argv: Any, **kwargs: Any) -> Any:
+        release.wait(10)
+        return run_tool(argv, **kwargs)
+
+    memory = ThemingMemory()
+    first = build_page(session, memory, current_wallpaper=lambda: Path("/w.png"), run=held_run)
+    click(first, "Regenerate")
+    wait_until(lambda: first.running == "wallust", "the run to start")
+
+    second = build_page(session, memory, current_wallpaper=lambda: Path("/w.png"), run=held_run)
+    assert second.running == "wallust"
+    release.set()
+    wait_until(lambda: second.running is None, "the run to end")
+
+    assert second.dialog is not None
+    assert second.dialog.get_heading() == "wallust did not make new colors"
+
+
 def test_a_failed_run_says_what_the_tool_said(tmp_path: Path, stub_tool: Any) -> None:
     stub_tool("wallust", "echo 'cannot read image' >&2\nexit 3")
     session, _ = make_session(tmp_path)

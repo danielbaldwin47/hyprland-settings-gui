@@ -33,6 +33,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import gi
 
@@ -201,6 +202,11 @@ class ThemingMemory:
     """Per backend, the Regenerate options chosen here."""
     shown: str | None = None
     """The backend tab last shown."""
+    running: str | None = None
+    """The backend a Regenerate is running for, so a rebuilt page shows it running."""
+    page: Any = None
+    """The page now showing: where a worker thread's result is delivered, never a page a
+    rebuild released (F23 of the #148 review)."""
 
 
 class ThemingPage:
@@ -214,6 +220,7 @@ class ThemingPage:
     ) -> None:
         self._session = session
         self._memory = memory if memory is not None else ThemingMemory()
+        self._memory.page = self
         self._actions = actions
         self._page = Adw.PreferencesPage(title=self.title)
         self._source = Adw.PreferencesGroup(title=SOURCE_TITLE)
@@ -241,7 +248,6 @@ class ThemingPage:
         self._rows: dict[Adw.PreferencesGroup, list[Gtk.Widget]] = {
             group: [] for group in (self._source, self._backends, self._options, self._other)
         }
-        self._running: str | None = None
         self._tab_rows: dict[str, Gtk.Widget] = {}
         self._other_rows: dict[str, Adw.ActionRow] = {}
         self._regenerate: Adw.ActionRow | None = None
@@ -312,7 +318,7 @@ class ThemingPage:
     @property
     def running(self) -> str | None:
         """The tool a Regenerate is running, while it runs."""
-        return self._running
+        return self._memory.running
 
     # --- the API other tickets build on ---------------------------------------------------
 
@@ -543,9 +549,9 @@ class ThemingPage:
         row = _row(REGENERATE, self._command_text(tool))
         row.add_suffix(
             _button(
-                "Running…" if self._running == tool else "Regenerate",
+                "Running…" if self._memory.running == tool else "Regenerate",
                 lambda: self.regenerate(tool),
-                sensitive=self._running is None,
+                sensitive=self._memory.running is None,
             )
         )
         self._regenerate = row
@@ -691,7 +697,7 @@ class ThemingPage:
         def look() -> None:
             image = current()
             argv = spec.rerun_argv(binary, image, self._memory.values[tool]) if image else None
-            GLib.idle_add(self._confirm_switch, tool, plan, argv)
+            GLib.idle_add(self._deliver, "_confirm_switch", tool, plan, argv)
 
         threading.Thread(target=look, name=f"wallpaper-{tool}", daemon=True).start()
 
@@ -746,7 +752,7 @@ class ThemingPage:
             switched = isinstance(done, Wired)
         if switched and command is not None:
             # The command the confirm named, and nothing else: argv[0] is the tool found.
-            self._running = tool
+            self._memory.running = tool
             self._start(tool, command)
         self.refresh()
 
@@ -922,12 +928,12 @@ class ThemingPage:
                 f"{spec.title} was not found, so it cannot run. Install it, then try again.",
             )
             return
-        self._running = tool
+        self._memory.running = tool
         self.refresh()
         current = self._actions.current_wallpaper
 
         def look() -> None:
-            GLib.idle_add(self._have_image, tool, binary, current())
+            GLib.idle_add(self._deliver, "_have_image", tool, binary, current())
 
         threading.Thread(target=look, name=f"wallpaper-{tool}", daemon=True).start()
 
@@ -935,12 +941,12 @@ class ThemingPage:
         if image is not None:
             self._run(tool, binary, image)
             return False
-        self._running = None
+        self._memory.running = None
         self.refresh()
 
         def chosen(path: Path | None) -> None:
             if path is not None:
-                self._running = tool
+                self._memory.running = tool
                 self.refresh()
                 self._run(tool, binary, path)
 
@@ -976,13 +982,24 @@ class ThemingPage:
                     f"{spec.title} could not be started ({why}). Check that it is installed "
                     "correctly, then try again."
                 )
-            GLib.idle_add(self._ran, tool, outcome)
+            GLib.idle_add(self._deliver, "_ran", tool, outcome)
 
         threading.Thread(target=work, name=f"regenerate-{tool}", daemon=True).start()
 
+    def _deliver(self, method: str, *args: Any) -> bool:
+        """Hand a worker thread's result to the page showing now, from the main loop.
+
+        A rebuild releases this page and builds another over the same memory while a
+        Regenerate may run for two minutes; its result belongs to the page the user sees.
+        """
+        page = self._memory.page
+        if page is not None:
+            getattr(page, method)(*args)
+        return GLib.SOURCE_REMOVE
+
     def _ran(self, tool: str, outcome: ToolRun | str) -> bool:
         title = REGISTRY[tool].title
-        self._running = None
+        self._memory.running = None
         if isinstance(outcome, str):
             self._tell(f"{title} did not make new colors", outcome)
         elif outcome.returncode != 0:
