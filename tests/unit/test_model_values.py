@@ -152,6 +152,14 @@ class TestFontWeight:
         assert str(FontWeight.parse("bold")) == "bold"
         assert str(FontWeight.parse(700)) == "700"
 
+    def test_a_name_reads_as_the_number_hyprland_gives_it_whatever_its_case(self) -> None:
+        assert FontWeight.parse("bold").number == 700
+        assert FontWeight.parse("Semilight").number == 350
+        assert FontWeight.parse("550").number == 550
+
+    def test_a_name_hyprland_does_not_know_has_no_number(self) -> None:
+        assert FontWeight.parse("extrabold").number is None
+
 
 class TestScalars:
     @pytest.mark.parametrize(

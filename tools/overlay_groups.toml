@@ -1,0 +1,812 @@
+# The curated Groups of each Section's Page, in display order (#157, #158).
+#
+# One `[[<section>]]` row per Group: `title`, an optional one-sentence `description`, and
+# `options`, its member settings in display order. Every setting of a curated Section sits
+# in exactly one row. The conventions a row follows (size, titles, descriptions, order) are
+# in the docstring of tests/unit/test_overlay_completeness.py.
+#
+# After editing, write the rows into data/schema/overlay.json:
+#     .venv/bin/python tools/curate_overlay.py
+# Never edit `group` or `order` in overlay.json by hand: tests/unit/test_curate_overlay.py
+# fails while the two disagree.
+
+# --- general ---------------------------------------------------------------------------------
+
+[[general]]
+title = "Layout and gaps"
+options = [
+  "general:layout",
+  "general:gaps_in",
+  "general:gaps_out",
+  "general:gaps_workspaces",
+  "general:float_gaps",
+]
+
+[[general]]
+title = "Borders"
+options = [
+  "general:border_size",
+  "general:col.active_border",
+  "general:col.inactive_border",
+  "general:col.nogroup_border_active",
+  "general:col.nogroup_border",
+]
+
+[[general]]
+title = "Resizing"
+description = "Resizing windows with the mouse."
+options = [
+  "general:resize_on_border",
+  "general:extend_border_grab_area",
+  "general:hover_icon_on_border",
+  "general:resize_corner",
+]
+
+[[general]]
+title = "Snapping"
+description = "Floating windows snap to nearby windows and monitor edges as you drag them."
+options = [
+  "general:snap:enabled",
+  "general:snap:window_gap",
+  "general:snap:monitor_gap",
+  "general:snap:border_overlap",
+  "general:snap:respect_gaps",
+]
+
+[[general]]
+title = "Tearing and focus"
+description = "Screen tearing, moving focus between windows, and the language of Hyprland's messages."
+options = [
+  "general:allow_tearing",
+  "general:no_focus_fallback",
+  "general:modal_parent_blocking",
+  "general:locale",
+]
+
+# --- decoration ------------------------------------------------------------------------------
+
+[[decoration]]
+title = "Corners and opacity"
+options = [
+  "decoration:rounding",
+  "decoration:rounding_power",
+  "decoration:active_opacity",
+  "decoration:inactive_opacity",
+  "decoration:fullscreen_opacity",
+  "decoration:border_part_of_window",
+]
+
+[[decoration]]
+title = "Blur"
+description = "Frosted glass behind see-through windows."
+options = [
+  "decoration:blur:enabled",
+  "decoration:blur:size",
+  "decoration:blur:passes",
+  "decoration:blur:noise",
+  "decoration:blur:contrast",
+  "decoration:blur:brightness",
+  "decoration:blur:vibrancy",
+  "decoration:blur:vibrancy_darkness",
+  "decoration:blur:ignore_opacity",
+  "decoration:blur:xray",
+  "decoration:blur:new_optimizations",
+]
+
+[[decoration]]
+title = "Blurred surfaces"
+description = "What else gets blurred besides windows: popups, input methods and the special workspace."
+options = [
+  "decoration:blur:popups",
+  "decoration:blur:popups_ignorealpha",
+  "decoration:blur:input_methods",
+  "decoration:blur:input_methods_ignorealpha",
+  "decoration:blur:special",
+]
+
+[[decoration]]
+title = "Shadows"
+options = [
+  "decoration:shadow:enabled",
+  "decoration:shadow:range",
+  "decoration:shadow:render_power",
+  "decoration:shadow:sharp",
+  "decoration:shadow:color",
+  "decoration:shadow:color_inactive",
+  "decoration:shadow:offset",
+  "decoration:shadow:scale",
+]
+
+[[decoration]]
+title = "Dimming"
+options = [
+  "decoration:dim_inactive",
+  "decoration:dim_strength",
+  "decoration:dim_special",
+  "decoration:dim_around",
+  "decoration:dim_modal",
+]
+
+[[decoration]]
+title = "Glow"
+description = "A soft light just inside each window's edge."
+options = [
+  "decoration:glow:enabled",
+  "decoration:glow:range",
+  "decoration:glow:render_power",
+  "decoration:glow:color",
+  "decoration:glow:color_inactive",
+]
+
+[[decoration]]
+title = "Screen effects"
+options = [
+  "decoration:screen_shader",
+  "decoration:motion_blur:enabled",
+  "decoration:motion_blur:samples",
+]
+
+# --- input -----------------------------------------------------------------------------------
+
+[[input]]
+title = "Keyboard layout"
+options = [
+  "input:kb_layout",
+  "input:kb_variant",
+  "input:kb_model",
+  "input:kb_options",
+  "input:kb_rules",
+  "input:kb_file",
+  "input:resolve_binds_by_sym",
+]
+
+[[input]]
+title = "Typing"
+options = [
+  "input:repeat_rate",
+  "input:repeat_delay",
+  "input:numlock_by_default",
+]
+
+[[input]]
+title = "Pointer"
+options = [
+  "input:sensitivity",
+  "input:accel_profile",
+  "input:force_no_accel",
+  "input:left_handed",
+  "input:rotation",
+]
+
+[[input]]
+title = "Scrolling"
+description = "Mice and touchpads each take their own direction and speed."
+options = [
+  "input:natural_scroll",
+  "input:scroll_factor",
+  "input:touchpad:natural_scroll",
+  "input:touchpad:scroll_factor",
+  "input:scroll_method",
+  "input:scroll_button",
+  "input:scroll_button_lock",
+  "input:emulate_discrete_scroll",
+  "input:off_window_axis_events",
+  "input:scroll_points",
+]
+
+[[input]]
+title = "Touchpad"
+options = [
+  "input:touchpad:tap-to-click",
+  "input:touchpad:disable_while_typing",
+  "input:touchpad:clickfinger_behavior",
+  "input:touchpad:tap_button_map",
+  "input:touchpad:tap-and-drag",
+  "input:touchpad:drag_lock",
+  "input:touchpad:drag_3fg",
+  "input:touchpad:middle_button_emulation",
+  "input:touchpad:flip_x",
+  "input:touchpad:flip_y",
+]
+
+[[input]]
+title = "Focus"
+description = "How the window under the mouse takes keyboard focus."
+options = [
+  "input:follow_mouse",
+  "input:follow_mouse_threshold",
+  "input:follow_mouse_shrink",
+  "input:mouse_refocus",
+  "input:focus_on_close",
+  "input:float_switch_override_focus",
+  "input:special_fallthrough",
+]
+
+[[input]]
+title = "Touchscreen"
+options = [
+  "input:touchdevice:enabled",
+  "input:touchdevice:output",
+  "input:touchdevice:transform",
+]
+
+[[input]]
+title = "Drawing tablet"
+options = [
+  "input:tablet:output",
+  "input:tablet:transform",
+  "input:tablet:left_handed",
+  "input:tablet:relative_input",
+  "input:tablettool:pressure_range_min",
+  "input:tablettool:pressure_range_max",
+  "input:tablettool:eraser_button_mode",
+  "input:tablettool:eraser_button_override",
+]
+
+[[input]]
+title = "Tablet area"
+description = "Which part of the screen the tablet maps to, and which part of the tablet responds."
+options = [
+  "input:tablet:region_position",
+  "input:tablet:absolute_region_position",
+  "input:tablet:region_size",
+  "input:tablet:active_area_position",
+  "input:tablet:active_area_size",
+]
+
+[[input]]
+title = "Virtual keyboards"
+description = "On-screen and remote keyboards that apps create."
+options = [
+  "input:virtualkeyboard:share_states",
+  "input:virtualkeyboard:release_pressed_on_close",
+]
+
+# --- group -----------------------------------------------------------------------------------
+# The Page is titled "Groups", and on the Tasks view these read "Groups · <title>".
+
+[[group]]
+title = "Adding and removing"
+options = [
+  "group:auto_group",
+  "group:insert_after_current",
+  "group:focus_removed_window",
+  "group:group_on_movetoworkspace",
+]
+
+[[group]]
+title = "Dragging"
+description = "What happens when you drag a window onto a group or its tab bar."
+options = [
+  "group:drag_into_group",
+  "group:merge_groups_on_drag",
+  "group:merge_groups_on_groupbar",
+  "group:merge_floated_into_tiled_on_groupbar",
+]
+
+[[group]]
+title = "Border colours"
+options = [
+  "group:col.border_active",
+  "group:col.border_inactive",
+  "group:col.border_locked_active",
+  "group:col.border_locked_inactive",
+]
+
+[[group]]
+title = "Tab bar"
+description = "The row of window tabs drawn above a group, which Hyprland calls the group bar."
+options = [
+  "group:groupbar:enabled",
+  "group:groupbar:disable_when_only",
+  "group:groupbar:render_titles",
+  "group:groupbar:stacked",
+  "group:groupbar:scrolling",
+  "group:groupbar:middle_click_close",
+  "group:groupbar:priority",
+]
+
+[[group]]
+title = "Tab titles"
+options = [
+  "group:groupbar:font_family",
+  "group:groupbar:font_size",
+  "group:groupbar:font_weight_active",
+  "group:groupbar:font_weight_inactive",
+  "group:groupbar:text_color",
+  "group:groupbar:text_color_inactive",
+  "group:groupbar:text_color_locked_active",
+  "group:groupbar:text_color_locked_inactive",
+]
+
+[[group]]
+title = "Tab colours"
+options = [
+  "group:groupbar:col.active",
+  "group:groupbar:col.inactive",
+  "group:groupbar:col.locked_active",
+  "group:groupbar:col.locked_inactive",
+  "group:groupbar:gradients",
+  "group:groupbar:blur",
+]
+
+[[group]]
+title = "Tab sizing"
+options = [
+  "group:groupbar:height",
+  "group:groupbar:indicator_height",
+  "group:groupbar:indicator_gap",
+  "group:groupbar:gaps_in",
+  "group:groupbar:gaps_out",
+  "group:groupbar:keep_upper_gap",
+  "group:groupbar:text_offset",
+  "group:groupbar:text_padding",
+]
+
+[[group]]
+title = "Tab corners"
+options = [
+  "group:groupbar:rounding",
+  "group:groupbar:rounding_power",
+  "group:groupbar:round_only_edges",
+  "group:groupbar:gradient_rounding",
+  "group:groupbar:gradient_rounding_power",
+  "group:groupbar:gradient_round_only_edges",
+]
+
+# --- misc ------------------------------------------------------------------------------------
+# On the Tasks view these read "Miscellaneous · <title>".
+
+[[misc]]
+title = "Wallpaper and splash"
+description = "What Hyprland draws when no wallpaper app is running, and the font it uses for its own text."
+options = [
+  "misc:force_default_wallpaper",
+  "misc:background_color",
+  "misc:disable_hyprland_logo",
+  "misc:disable_splash_rendering",
+  "misc:splash_font_family",
+  "misc:col.splash",
+  "misc:font_family",
+]
+
+[[misc]]
+title = "Displays and power"
+options = [
+  "misc:vrr",
+  "misc:mouse_move_enables_dpms",
+  "misc:key_press_enables_dpms",
+  "misc:render_unfocused_fps",
+  "misc:screencopy_force_8b",
+]
+
+[[misc]]
+title = "Focus and placement"
+options = [
+  "misc:focus_on_activate",
+  "misc:mouse_move_focuses_monitor",
+  "misc:on_focus_under_fullscreen",
+  "misc:layers_hog_keyboard_focus",
+  "misc:always_follow_on_dnd",
+  "misc:initial_workspace_tracking",
+  "misc:initial_workspace_token_timeout",
+]
+
+[[misc]]
+title = "Windows and animation"
+options = [
+  "misc:exit_window_retains_fullscreen",
+  "misc:close_special_on_empty",
+  "misc:size_limits_tiled",
+  "misc:animate_manual_resizes",
+  "misc:animate_mouse_windowdragging",
+]
+
+[[misc]]
+title = "Swallowing"
+description = "A terminal hides while an app it launched is open, and comes back when the app closes."
+options = [
+  "misc:enable_swallow",
+  "misc:swallow_regex",
+  "misc:swallow_exception_regex",
+]
+
+[[misc]]
+title = "Mouse and keyboard"
+options = [
+  "misc:middle_click_paste",
+  "misc:name_vk_after_proc",
+]
+
+[[misc]]
+title = "Session lock"
+options = [
+  "misc:allow_session_lock_restore",
+  "misc:session_lock_blur",
+  "misc:session_lock_xray",
+  "misc:lockdead_screen_delay",
+]
+
+[[misc]]
+title = "Reloads and warnings"
+options = [
+  "misc:disable_autoreload",
+  "misc:enable_anr_dialog",
+  "misc:anr_missed_pings",
+  "misc:disable_scale_notification",
+  "misc:disable_watchdog_warning",
+  "misc:disable_xdg_env_checks",
+  "misc:disable_hyprland_guiutils_check",
+]
+
+# --- the rest (#158) -------------------------------------------------------------------------
+# Sections of one to four settings get one titled Group. Hidden-tier Sections (debug, quirks,
+# experimental, input-capture) appear on the Config view with the Advanced switch on.
+
+# --- animations ------------------------------------------------------------------------------
+
+[[animations]]
+title = "Playback"
+options = [
+  "animations:enabled",
+  "animations:workspace_wraparound",
+]
+
+# --- gestures --------------------------------------------------------------------------------
+
+[[gestures]]
+title = "Workspace swipe"
+options = [
+  "gestures:workspace_swipe_touch",
+  "gestures:workspace_swipe_invert",
+  "gestures:workspace_swipe_touch_invert",
+  "gestures:workspace_swipe_create_new",
+  "gestures:workspace_swipe_forever",
+  "gestures:workspace_swipe_use_r",
+]
+
+[[gestures]]
+title = "Swipe sensitivity"
+description = "How far and how fast a swipe has to go before Hyprland acts on it."
+options = [
+  "gestures:workspace_swipe_distance",
+  "gestures:workspace_swipe_cancel_ratio",
+  "gestures:workspace_swipe_min_speed_to_force",
+  "gestures:workspace_swipe_direction_lock",
+  "gestures:workspace_swipe_direction_lock_threshold",
+]
+
+[[gestures]]
+title = "Window gestures"
+options = [
+  "gestures:close_max_timeout",
+  "gestures:scrolling:move_snap_to_grid",
+  "gestures:scrolling:move_snap_cursor",
+]
+
+# --- binds -----------------------------------------------------------------------------------
+
+[[binds]]
+title = "Workspaces"
+options = [
+  "binds:workspace_back_and_forth",
+  "binds:allow_workspace_cycles",
+  "binds:workspace_center_on",
+  "binds:hide_special_on_workspace_change",
+]
+
+[[binds]]
+title = "Moving focus"
+options = [
+  "binds:focus_preferred_method",
+  "binds:movefocus_cycles_fullscreen",
+  "binds:movefocus_cycles_groupfirst",
+  "binds:window_direction_monitor_fallback",
+]
+
+[[binds]]
+title = "Mouse and scroll"
+options = [
+  "binds:pass_mouse_when_bound",
+  "binds:scroll_event_delay",
+  "binds:drag_threshold",
+]
+
+[[binds]]
+title = "Overrides"
+description = "Exceptions to how keybinds normally treat groups, pinned windows and apps."
+options = [
+  "binds:ignore_group_lock",
+  "binds:allow_pin_fullscreen",
+  "binds:disable_keybind_grabbing",
+]
+
+# --- xwayland --------------------------------------------------------------------------------
+
+[[xwayland]]
+title = "X11 apps"
+description = "Older applications that run through XWayland instead of natively on Wayland."
+options = [
+  "xwayland:enabled",
+  "xwayland:use_nearest_neighbor",
+  "xwayland:force_zero_scaling",
+  "xwayland:create_abstract_socket",
+]
+
+# --- opengl ----------------------------------------------------------------------------------
+
+[[opengl]]
+title = "NVIDIA workarounds"
+options = [
+  "opengl:nvidia_anti_flicker",
+]
+
+# --- render ----------------------------------------------------------------------------------
+
+[[render]]
+title = "Performance and quality"
+options = [
+  "render:direct_scanout",
+  "render:new_render_scheduling",
+  "render:commit_timing_enabled",
+  "render:xp_mode",
+  "render:use_shader_blur_blend",
+  "render:expand_undersized_textures",
+]
+
+[[render]]
+title = "Colour management"
+options = [
+  "render:cm_enabled",
+  "render:cm_auto_hdr",
+  "render:cm_sdr_eotf",
+  "render:send_content_type",
+  "render:ctm_animation",
+  "render:icc_vcgt_enabled",
+]
+
+[[render]]
+title = "Colour pipeline"
+description = "Experimental internals: leave them alone unless a colour problem needs them."
+options = [
+  "render:non_shader_cm",
+  "render:non_shader_cm_interop",
+  "render:use_fp16",
+  "render:fp16_sdr_tf",
+  "render:keep_unmodified_copy",
+]
+
+# --- cursor ----------------------------------------------------------------------------------
+
+[[cursor]]
+title = "Hiding"
+options = [
+  "cursor:inactive_timeout",
+  "cursor:hide_on_key_press",
+  "cursor:hide_on_touch",
+  "cursor:hide_on_tablet",
+  "cursor:invisible",
+]
+
+[[cursor]]
+title = "Cursor drawing"
+description = "Cursor theme and size come from environment variables; these settings control how the cursor is loaded and drawn."
+options = [
+  "cursor:enable_hyprcursor",
+  "cursor:sync_gsettings_theme",
+  "cursor:no_hardware_cursors",
+  "cursor:hotspot_padding",
+  "cursor:use_cpu_buffer",
+]
+
+[[cursor]]
+title = "Warping"
+description = "Jumping the cursor to a window or monitor when focus moves."
+options = [
+  "cursor:no_warps",
+  "cursor:warp_on_change_workspace",
+  "cursor:warp_on_toggle_special",
+  "cursor:persistent_warps",
+  "cursor:warp_back_after_non_mouse_input",
+  "cursor:default_monitor",
+]
+
+[[cursor]]
+title = "Zoom"
+description = "Magnifies the screen around the cursor."
+options = [
+  "cursor:zoom_factor",
+  "cursor:zoom_rigid",
+  "cursor:zoom_detached_camera",
+  "cursor:zoom_disable_aa",
+]
+
+[[cursor]]
+title = "Fullscreen VRR"
+description = "How cursor movement behaves in fullscreen apps that use variable refresh rate."
+options = [
+  "cursor:no_break_fs_vrr",
+  "cursor:min_refresh_rate",
+]
+
+# --- ecosystem -------------------------------------------------------------------------------
+
+[[ecosystem]]
+title = "Notices and permissions"
+options = [
+  "ecosystem:no_update_news",
+  "ecosystem:no_donation_nag",
+  "ecosystem:enforce_permissions",
+]
+
+# --- layout ----------------------------------------------------------------------------------
+
+[[layout]]
+title = "Single window"
+description = "Shapes a window that is alone on its workspace; pick the layout itself on the General page."
+options = [
+  "layout:single_window_aspect_ratio",
+  "layout:single_window_aspect_ratio_tolerance",
+]
+
+# --- dwindle ---------------------------------------------------------------------------------
+
+[[dwindle]]
+title = "Split direction"
+options = [
+  "dwindle:preserve_split",
+  "dwindle:force_split",
+  "dwindle:smart_split",
+  "dwindle:use_active_for_splits",
+  "dwindle:permanent_direction_override",
+]
+
+[[dwindle]]
+title = "Sizes"
+options = [
+  "dwindle:default_split_ratio",
+  "dwindle:split_bias",
+  "dwindle:split_width_multiplier",
+  "dwindle:special_scale_factor",
+]
+
+[[dwindle]]
+title = "Mouse"
+options = [
+  "dwindle:smart_resizing",
+  "dwindle:precise_mouse_move",
+]
+
+# --- master ----------------------------------------------------------------------------------
+
+[[master]]
+title = "Size and position"
+options = [
+  "master:mfact",
+  "master:orientation",
+  "master:allow_small_split",
+  "master:always_keep_position",
+  "master:special_scale_factor",
+]
+
+[[master]]
+title = "New windows"
+options = [
+  "master:new_status",
+  "master:new_on_top",
+  "master:new_on_active",
+]
+
+[[master]]
+title = "Centred master"
+description = "Used when the master area position is set to centre."
+options = [
+  "master:slave_count_for_center_master",
+  "master:center_master_fallback",
+  "master:center_ignores_reserved",
+]
+
+[[master]]
+title = "Mouse and focus"
+options = [
+  "master:smart_resizing",
+  "master:drop_at_cursor",
+  "master:focus_master_on_close",
+]
+
+# --- scrolling -------------------------------------------------------------------------------
+
+[[scrolling]]
+title = "Columns"
+options = [
+  "scrolling:column_width",
+  "scrolling:explicit_column_widths",
+  "scrolling:direction",
+  "scrolling:fullscreen_on_one_column",
+]
+
+[[scrolling]]
+title = "Focus and wrapping"
+options = [
+  "scrolling:follow_focus",
+  "scrolling:follow_min_visible",
+  "scrolling:focus_fit_method",
+  "scrolling:wrap_focus",
+  "scrolling:wrap_swapcol",
+]
+
+# --- debug (hidden tier) ---------------------------------------------------------------------
+
+[[debug]]
+title = "Logging"
+options = [
+  "debug:disable_logs",
+  "debug:enable_stdout_logs",
+  "debug:colored_stdout_logs",
+  "debug:disable_time",
+]
+
+[[debug]]
+title = "Errors and crashes"
+options = [
+  "debug:suppress_errors",
+  "debug:error_limit",
+  "debug:error_position",
+  "debug:manual_crash",
+  "debug:disable_scale_checks",
+]
+
+[[debug]]
+title = "Overlays and tracing"
+options = [
+  "debug:overlay",
+  "debug:damage_blink",
+  "debug:log_damage",
+  "debug:pass",
+  "debug:gl_debugging",
+]
+
+[[debug]]
+title = "Frame rendering"
+options = [
+  "debug:damage_tracking",
+  "debug:vfr",
+  "debug:render_solitary_wo_damage",
+  "debug:invalidate_fp16",
+]
+
+[[debug]]
+title = "Protocol workarounds"
+options = [
+  "debug:ds_handle_same_buffer",
+  "debug:ds_handle_same_buffer_fifo",
+  "debug:fifo_pending_workaround",
+  "debug:full_cm_proto",
+]
+
+# --- quirks (hidden tier) --------------------------------------------------------------------
+
+[[quirks]]
+title = "Display workarounds"
+options = [
+  "quirks:prefer_hdr",
+  "quirks:skip_non_kms_dmabuf_formats",
+]
+
+# --- experimental (hidden tier) --------------------------------------------------------------
+
+[[experimental]]
+title = "Colour protocol"
+description = "A preview of newer colour-management protocol support."
+options = [
+  "experimental:wp_cm_1_2",
+]
+
+# --- input-capture (hidden tier) -------------------------------------------------------------
+
+[[input-capture]]
+title = "Barriers and modifiers"
+options = [
+  "input-capture:enforce_barriers",
+  "input-capture:capture_modifiers",
+]

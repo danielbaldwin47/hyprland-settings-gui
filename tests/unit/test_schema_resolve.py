@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from hyprtweaker.engine.schema import (
     OptionType,
     Overlay,
     OverlayEntry,
+    OverlayGroup,
     Range,
     Schema,
     SectionOverlay,
@@ -407,6 +409,80 @@ def test_nullable_without_a_label_is_rejected_at_load_time() -> None:
 def test_an_unknown_widget_is_rejected() -> None:
     text = json.dumps({"format_version": 1, "options": {"a:b": {"widget": "spinner"}}})
     with pytest.raises(ValueError):
+        overlay_module.loads(text)
+
+
+def overlay_with_groups(groups: object, **options: dict[str, object]) -> str:
+    """An Overlay whose Section `a` declares `groups`; option names use `__` for `:`."""
+    return json.dumps(
+        {
+            "format_version": 1,
+            "sections": {"a": {"title": "A", "groups": groups}},
+            "options": {name.replace("__", ":"): entry for name, entry in options.items()},
+        }
+    )
+
+
+def test_a_section_reads_its_groups_in_the_order_the_curator_wrote_them() -> None:
+    text = overlay_with_groups(
+        [{"title": "Typing", "description": "How keys repeat."}, {"title": "Layout"}],
+        a__b={"group": "Layout", "order": 1},
+    )
+
+    section = overlay_module.loads(text).sections["a"]
+
+    assert section.groups == (
+        OverlayGroup(title="Typing", description="How keys repeat."),
+        OverlayGroup(title="Layout", description=None),
+    )
+
+
+def test_an_unknown_field_inside_a_group_is_rejected() -> None:
+    text = overlay_with_groups([{"title": "Typing", "descripton": "typo"}])
+    with pytest.raises(ValueError, match="unknown overlay field"):
+        overlay_module.loads(text)
+
+
+@pytest.mark.parametrize(
+    ("groups", "says"),
+    [
+        ([{"description": "No title."}], "section 'a' group: missing title"),
+        ([{"title": ""}], "section 'a' group: empty title"),
+        ([{"title": 3}], "section 'a' group: title 3 is not text"),
+        (
+            [{"title": "Typing", "description": 7}],
+            "section 'a' group 'Typing': description 7 is not text",
+        ),
+        ({"title": "Typing"}, "section 'a': groups must be a list"),
+    ],
+)
+def test_a_malformed_group_is_rejected_naming_its_section(groups: object, says: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(says)):
+        overlay_module.loads(overlay_with_groups(groups))  # type: ignore[arg-type]
+
+
+def test_two_groups_with_one_title_in_a_section_are_rejected() -> None:
+    text = overlay_with_groups([{"title": "Typing"}, {"title": "Typing"}])
+    with pytest.raises(ValueError, match="duplicate group 'Typing'"):
+        overlay_module.loads(text)
+
+
+def test_an_option_naming_a_group_its_section_does_not_declare_is_rejected() -> None:
+    """A misspelt group would otherwise render as a stray heading of its own."""
+    text = overlay_with_groups([{"title": "Typing"}], a__b={"group": "Typng"})
+    with pytest.raises(ValueError, match=r"'a:b'.*'Typng'"):
+        overlay_module.loads(text)
+
+
+def test_an_option_may_name_a_group_only_of_its_own_section() -> None:
+    text = json.dumps(
+        {
+            "format_version": 1,
+            "sections": {"a": {"groups": [{"title": "Typing"}]}, "c": {}},
+            "options": {"c:d": {"group": "Typing"}},
+        }
+    )
+    with pytest.raises(ValueError, match=r"'c:d'.*'Typing'"):
         overlay_module.loads(text)
 
 

@@ -3,333 +3,772 @@
   "sections": {
     "general": {
       "title": "General",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#general"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#general",
+      "groups": [
+        { "title": "Layout and gaps" },
+        { "title": "Borders" },
+        { "title": "Resizing", "description": "Resizing windows with the mouse." },
+        {
+          "title": "Snapping",
+          "description": "Floating windows snap to nearby windows and monitor edges as you drag them."
+        },
+        {
+          "title": "Tearing and focus",
+          "description": "Screen tearing, moving focus between windows, and the language of Hyprland's messages."
+        }
+      ]
     },
     "decoration": {
       "title": "Decoration",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#decoration"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#decoration",
+      "groups": [
+        { "title": "Corners and opacity" },
+        { "title": "Blur", "description": "Frosted glass behind see-through windows." },
+        {
+          "title": "Blurred surfaces",
+          "description": "What else gets blurred besides windows: popups, input methods and the special workspace."
+        },
+        { "title": "Shadows" },
+        { "title": "Dimming" },
+        { "title": "Glow", "description": "A soft light just inside each window's edge." },
+        { "title": "Screen effects" }
+      ]
     },
     "animations": {
       "title": "Animations",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#animations"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#animations",
+      "groups": [{ "title": "Playback" }]
     },
     "input": {
       "title": "Input",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#input"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#input",
+      "groups": [
+        { "title": "Keyboard layout" },
+        { "title": "Typing" },
+        { "title": "Pointer" },
+        {
+          "title": "Scrolling",
+          "description": "Mice and touchpads each take their own direction and speed."
+        },
+        { "title": "Touchpad" },
+        { "title": "Focus", "description": "How the window under the mouse takes keyboard focus." },
+        { "title": "Touchscreen" },
+        { "title": "Drawing tablet" },
+        {
+          "title": "Tablet area",
+          "description": "Which part of the screen the tablet maps to, and which part of the tablet responds."
+        },
+        {
+          "title": "Virtual keyboards",
+          "description": "On-screen and remote keyboards that apps create."
+        }
+      ]
     },
     "gestures": {
       "title": "Gestures",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#gestures"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#gestures",
+      "groups": [
+        { "title": "Workspace swipe" },
+        {
+          "title": "Swipe sensitivity",
+          "description": "How far and how fast a swipe has to go before Hyprland acts on it."
+        },
+        { "title": "Window gestures" }
+      ]
     },
     "group": {
       "title": "Groups",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#group"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#group",
+      "groups": [
+        { "title": "Adding and removing" },
+        {
+          "title": "Dragging",
+          "description": "What happens when you drag a window onto a group or its tab bar."
+        },
+        { "title": "Border colours" },
+        {
+          "title": "Tab bar",
+          "description": "The row of window tabs drawn above a group, which Hyprland calls the group bar."
+        },
+        { "title": "Tab titles" },
+        { "title": "Tab colours" },
+        { "title": "Tab sizing" },
+        { "title": "Tab corners" }
+      ]
     },
     "misc": {
       "title": "Miscellaneous",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#misc"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#misc",
+      "groups": [
+        {
+          "title": "Wallpaper and splash",
+          "description": "What Hyprland draws when no wallpaper app is running, and the font it uses for its own text."
+        },
+        { "title": "Displays and power" },
+        { "title": "Focus and placement" },
+        { "title": "Windows and animation" },
+        {
+          "title": "Swallowing",
+          "description": "A terminal hides while an app it launched is open, and comes back when the app closes."
+        },
+        { "title": "Mouse and keyboard" },
+        { "title": "Session lock" },
+        { "title": "Reloads and warnings" }
+      ]
     },
     "binds": {
       "title": "Keybind behaviour",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#binds"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#binds",
+      "groups": [
+        { "title": "Workspaces" },
+        { "title": "Moving focus" },
+        { "title": "Mouse and scroll" },
+        {
+          "title": "Overrides",
+          "description": "Exceptions to how keybinds normally treat groups, pinned windows and apps."
+        }
+      ]
     },
     "xwayland": {
       "title": "XWayland",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#xwayland"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#xwayland",
+      "groups": [
+        {
+          "title": "X11 apps",
+          "description": "Older applications that run through XWayland instead of natively on Wayland."
+        }
+      ]
     },
     "opengl": {
       "title": "OpenGL",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#opengl"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#opengl",
+      "groups": [{ "title": "NVIDIA workarounds" }]
     },
     "render": {
       "title": "Rendering",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#render"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#render",
+      "groups": [
+        { "title": "Performance and quality" },
+        { "title": "Colour management" },
+        {
+          "title": "Colour pipeline",
+          "description": "Experimental internals: leave them alone unless a colour problem needs them."
+        }
+      ]
     },
     "cursor": {
       "title": "Cursor",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#cursor"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#cursor",
+      "groups": [
+        { "title": "Hiding" },
+        {
+          "title": "Cursor drawing",
+          "description": "Cursor theme and size come from environment variables; these settings control how the cursor is loaded and drawn."
+        },
+        {
+          "title": "Warping",
+          "description": "Jumping the cursor to a window or monitor when focus moves."
+        },
+        { "title": "Zoom", "description": "Magnifies the screen around the cursor." },
+        {
+          "title": "Fullscreen VRR",
+          "description": "How cursor movement behaves in fullscreen apps that use variable refresh rate."
+        }
+      ]
     },
     "ecosystem": {
       "title": "Ecosystem",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#ecosystem"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#ecosystem",
+      "groups": [{ "title": "Notices and permissions" }]
     },
     "debug": {
       "title": "Debug",
       "visibility": "hidden",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#debug"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#debug",
+      "groups": [
+        { "title": "Logging" },
+        { "title": "Errors and crashes" },
+        { "title": "Overlays and tracing" },
+        { "title": "Frame rendering" },
+        { "title": "Protocol workarounds" }
+      ]
     },
     "layout": {
       "title": "Layout",
-      "help_url": "https://wiki.hypr.land/Configuring/Variables/#layout"
+      "help_url": "https://wiki.hypr.land/Configuring/Variables/#layout",
+      "groups": [
+        {
+          "title": "Single window",
+          "description": "Shapes a window that is alone on its workspace; pick the layout itself on the General page."
+        }
+      ]
     },
     "dwindle": {
       "title": "Dwindle layout",
-      "help_url": "https://wiki.hypr.land/Configuring/Dwindle-Layout/"
+      "help_url": "https://wiki.hypr.land/Configuring/Dwindle-Layout/",
+      "groups": [{ "title": "Split direction" }, { "title": "Sizes" }, { "title": "Mouse" }]
     },
     "master": {
       "title": "Master layout",
-      "help_url": "https://wiki.hypr.land/Configuring/Master-Layout/"
+      "help_url": "https://wiki.hypr.land/Configuring/Master-Layout/",
+      "groups": [
+        { "title": "Size and position" },
+        { "title": "New windows" },
+        {
+          "title": "Centred master",
+          "description": "Used when the master area position is set to centre."
+        },
+        { "title": "Mouse and focus" }
+      ]
     },
     "scrolling": {
       "title": "Scrolling layout",
-      "help_url": "https://wiki.hypr.land/Configuring/Scrolling-Layout/"
+      "help_url": "https://wiki.hypr.land/Configuring/Scrolling-Layout/",
+      "groups": [{ "title": "Columns" }, { "title": "Focus and wrapping" }]
     },
     "experimental": {
       "title": "Experimental",
-      "visibility": "hidden"
+      "visibility": "hidden",
+      "groups": [
+        {
+          "title": "Colour protocol",
+          "description": "A preview of newer colour-management protocol support."
+        }
+      ]
     },
     "input-capture": {
       "title": "Input capture",
-      "visibility": "hidden"
+      "visibility": "hidden",
+      "groups": [{ "title": "Barriers and modifiers" }]
     },
     "quirks": {
       "title": "Quirks",
-      "visibility": "hidden"
+      "visibility": "hidden",
+      "groups": [{ "title": "Display workarounds" }]
     }
   },
   "options": {
-    "general:border_size": { "title": "Border size", "unit": "px" },
-    "general:gaps_in": { "title": "Inner gaps", "unit": "px" },
-    "general:gaps_out": { "title": "Outer gaps", "unit": "px" },
+    "general:border_size": {
+      "title": "Border size",
+      "unit": "px",
+      "group": "Borders",
+      "order": 1,
+      "help": "Width of the border around every window, in pixels. Set it to 0 to remove borders."
+    },
+    "general:gaps_in": {
+      "title": "Inner gaps",
+      "unit": "px",
+      "group": "Layout and gaps",
+      "order": 2,
+      "help": "Space left between neighbouring tiled windows. Raise it for a more open layout, or set 0 to make windows touch."
+    },
+    "general:gaps_out": {
+      "title": "Outer gaps",
+      "unit": "px",
+      "group": "Layout and gaps",
+      "order": 3,
+      "help": "Space left between tiled windows and the screen edges. Set 0 to let windows reach the edges."
+    },
     "general:float_gaps": {
       "title": "Floating window gaps",
       "unit": "px",
       "nullable": true,
       "null_label": "Same as outer gaps",
-      "null_value": -1
+      "null_value": -1,
+      "group": "Layout and gaps",
+      "order": 5,
+      "help": "Space Hyprland leaves between floating windows and the screen edges when it places or moves them. Same as outer gaps reuses the outer gaps."
     },
-    "general:gaps_workspaces": { "title": "Workspace gaps", "unit": "px" },
-    "general:col.inactive_border": { "title": "Inactive border colour" },
-    "general:col.active_border": { "title": "Active border colour" },
-    "general:col.nogroup_border": { "title": "Ungrouped border colour" },
-    "general:col.nogroup_border_active": { "title": "Active ungrouped border colour" },
+    "general:gaps_workspaces": {
+      "title": "Workspace gaps",
+      "unit": "px",
+      "group": "Layout and gaps",
+      "order": 4,
+      "help": "Space between workspaces, in pixels. It adds to the outer gaps."
+    },
+    "general:col.inactive_border": {
+      "title": "Inactive border colour",
+      "group": "Borders",
+      "order": 3,
+      "help": "Border colour of windows without focus. Use one colour, or several with an angle for a gradient."
+    },
+    "general:col.active_border": {
+      "title": "Active border colour",
+      "group": "Borders",
+      "order": 2,
+      "help": "Border colour of the window with focus. Use one colour, or several with an angle for a gradient."
+    },
+    "general:col.nogroup_border": {
+      "title": "Border colour for windows kept out of groups",
+      "group": "Borders",
+      "order": 5,
+      "help": "Border colour of a window without focus that a window rule keeps out of groups."
+    },
+    "general:col.nogroup_border_active": {
+      "title": "Active border colour for windows kept out of groups",
+      "group": "Borders",
+      "order": 4,
+      "help": "Border colour of the window with focus when a window rule keeps it out of groups."
+    },
     "general:layout": {
       "title": "Layout",
-      "known_values": {
-        "values": ["dwindle", "master", "scrolling", "monocle"],
-        "open": true
-      },
+      "known_values": { "values": ["dwindle", "master", "scrolling", "monocle"], "open": true },
       "labels": {
         "dwindle": "Dwindle",
         "master": "Master",
         "scrolling": "Scrolling",
         "monocle": "Monocle"
       },
-      "help": "Which tiling layout to use. Layouts your Lua files register are listed too, marked “Lua layout”."
+      "help": "Which tiling layout to use. Layouts your Lua files register are listed too, marked “Lua layout”.",
+      "group": "Layout and gaps",
+      "order": 1
     },
-    "general:no_focus_fallback": { "title": "Never refocus after closing a window" },
-    "general:resize_on_border": { "title": "Resize windows by dragging their border" },
+    "general:no_focus_fallback": {
+      "title": "Keep focus when no window is in that direction",
+      "group": "Tearing and focus",
+      "order": 2,
+      "help": "Stops focus from jumping to another window when you move it in a direction that has no window."
+    },
+    "general:resize_on_border": {
+      "title": "Resize windows by dragging their border",
+      "group": "Resizing",
+      "order": 1,
+      "help": "Lets you resize a window by dragging its border, or the gaps around it, with the mouse."
+    },
     "general:extend_border_grab_area": {
       "title": "Border grab area",
       "unit": "px",
-      "depends_on": { "option": "general:resize_on_border", "value": true }
+      "depends_on": { "option": "general:resize_on_border", "value": true },
+      "group": "Resizing",
+      "order": 2,
+      "help": "How far outside a border, in pixels, you can still grab it to resize. Applies only when resizing by border is on."
     },
     "general:hover_icon_on_border": {
       "title": "Show the resize cursor on borders",
-      "depends_on": { "option": "general:resize_on_border", "value": true }
+      "depends_on": { "option": "general:resize_on_border", "value": true },
+      "group": "Resizing",
+      "order": 3,
+      "help": "Shows a resize cursor when the pointer is over a border. Applies only when resizing by border is on."
     },
-    "general:allow_tearing": { "title": "Allow tearing" },
-    "general:resize_corner": { "title": "Resize corner" },
-    "general:snap:enabled": { "title": "Snap floating windows" },
+    "general:allow_tearing": {
+      "title": "Allow tearing",
+      "group": "Tearing and focus",
+      "order": 1,
+      "help": "Master switch for screen tearing. A window tears only when it asks to, or when a window rule marks it immediate."
+    },
+    "general:resize_corner": {
+      "title": "Resize corner",
+      "group": "Resizing",
+      "order": 4,
+      "help": "Makes floating windows always resize from one corner, instead of the one nearest the pointer."
+    },
+    "general:snap:enabled": {
+      "title": "Snap floating windows",
+      "group": "Snapping",
+      "order": 1,
+      "help": "Makes a floating window you drag line up with nearby windows and screen edges."
+    },
     "general:snap:window_gap": {
       "title": "Snap distance to windows",
       "unit": "px",
-      "depends_on": { "option": "general:snap:enabled", "value": true }
+      "depends_on": { "option": "general:snap:enabled", "value": true },
+      "group": "Snapping",
+      "order": 2,
+      "help": "How close, in pixels, a dragged window must come to another window before it snaps to it."
     },
     "general:snap:monitor_gap": {
       "title": "Snap distance to monitor edges",
       "unit": "px",
-      "depends_on": { "option": "general:snap:enabled", "value": true }
+      "depends_on": { "option": "general:snap:enabled", "value": true },
+      "group": "Snapping",
+      "order": 3,
+      "help": "How close, in pixels, a dragged window must come to a screen edge before it snaps to it."
     },
     "general:snap:border_overlap": {
       "title": "Overlap borders when snapping",
-      "depends_on": { "option": "general:snap:enabled", "value": true }
+      "depends_on": { "option": "general:snap:enabled", "value": true },
+      "group": "Snapping",
+      "order": 4,
+      "help": "Lets snapped windows sit with only one border's width between them, so their borders overlap."
     },
     "general:snap:respect_gaps": {
       "title": "Respect gaps when snapping",
-      "depends_on": { "option": "general:snap:enabled", "value": true }
+      "depends_on": { "option": "general:snap:enabled", "value": true },
+      "group": "Snapping",
+      "order": 5,
+      "help": "Keeps the inner gap between snapped windows instead of letting them touch."
     },
-    "general:modal_parent_blocking": { "title": "Block interaction with modal parents" },
+    "general:modal_parent_blocking": {
+      "title": "Block interaction with modal parents",
+      "group": "Tearing and focus",
+      "order": 3,
+      "help": "Blocks clicks and typing in a window while one of its modal dialogs is open."
+    },
     "general:locale": {
       "title": "Locale",
       "widget": "string",
       "nullable": true,
       "null_label": "System locale",
-      "null_value": ""
+      "null_value": "",
+      "group": "Tearing and focus",
+      "order": 4,
+      "help": "Language of Hyprland's own messages, such as en_US or es. Leave it empty to follow the system."
     },
 
-    "decoration:rounding": { "title": "Corner rounding", "unit": "px" },
-    "decoration:rounding_power": { "title": "Rounding power" },
-    "decoration:active_opacity": { "title": "Active window opacity" },
-    "decoration:inactive_opacity": { "title": "Inactive window opacity" },
-    "decoration:fullscreen_opacity": { "title": "Fullscreen window opacity" },
-    "decoration:shadow:enabled": { "title": "Drop shadow" },
+    "decoration:rounding": {
+      "title": "Corner rounding",
+      "unit": "px",
+      "group": "Corners and opacity",
+      "order": 1,
+      "help": "Radius of rounded window corners. Set it to 0 for square corners."
+    },
+    "decoration:rounding_power": {
+      "title": "Rounding power",
+      "group": "Corners and opacity",
+      "order": 2,
+      "help": "Shapes the rounded corners: 2 is a circle, 4 a squircle, and higher is squarer still."
+    },
+    "decoration:active_opacity": {
+      "title": "Active window opacity",
+      "group": "Corners and opacity",
+      "order": 3,
+      "help": "How opaque the window with focus is, from 0 (invisible) to 1 (solid)."
+    },
+    "decoration:inactive_opacity": {
+      "title": "Inactive window opacity",
+      "group": "Corners and opacity",
+      "order": 4,
+      "help": "How opaque windows without focus are, from 0 (invisible) to 1 (solid)."
+    },
+    "decoration:fullscreen_opacity": {
+      "title": "Fullscreen window opacity",
+      "group": "Corners and opacity",
+      "order": 5,
+      "help": "How opaque fullscreen windows are, from 0 (invisible) to 1 (solid)."
+    },
+    "decoration:shadow:enabled": {
+      "title": "Drop shadow",
+      "group": "Shadows",
+      "order": 1,
+      "help": "Draws a soft shadow behind every window."
+    },
     "decoration:shadow:range": {
       "title": "Shadow size",
       "unit": "px",
-      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true },
+      "group": "Shadows",
+      "order": 2,
+      "help": "How far a shadow reaches out from its window."
     },
     "decoration:shadow:render_power": {
       "title": "Shadow falloff",
       "widget": "segmented",
       "labels": { "1": "Softest", "2": "Soft", "3": "Sharp", "4": "Sharpest" },
-      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true },
+      "group": "Shadows",
+      "order": 3,
+      "help": "How quickly a shadow fades towards its outer edge. A sharper falloff keeps the shadow tight against the window."
     },
     "decoration:shadow:sharp": {
       "title": "Sharp shadow",
-      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true },
+      "group": "Shadows",
+      "order": 4,
+      "help": "Gives shadows a hard edge instead of a soft fade."
     },
     "decoration:shadow:color": {
       "title": "Shadow colour",
-      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true },
+      "group": "Shadows",
+      "order": 5,
+      "help": "Colour of window shadows. Its alpha sets how opaque the shadow is."
     },
     "decoration:shadow:color_inactive": {
       "title": "Inactive shadow colour",
       "nullable": true,
       "null_label": "Same as shadow colour",
       "null_value": -1,
-      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true },
+      "group": "Shadows",
+      "order": 6,
+      "help": "Shadow colour of windows without focus. When unset, the normal shadow colour is used."
     },
     "decoration:shadow:offset": {
       "title": "Shadow offset",
       "unit": "px",
-      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true },
+      "group": "Shadows",
+      "order": 7,
+      "help": "How far shadows shift from their window, horizontally and vertically."
     },
     "decoration:shadow:scale": {
       "title": "Shadow scale",
-      "depends_on": { "option": "decoration:shadow:enabled", "value": true }
+      "depends_on": { "option": "decoration:shadow:enabled", "value": true },
+      "group": "Shadows",
+      "order": 8,
+      "help": "Size of each shadow compared with its full size: 1 is full size, and lower values shrink it towards the window's centre."
     },
-    "decoration:glow:enabled": { "title": "Inner glow" },
+    "decoration:glow:enabled": {
+      "title": "Inner glow",
+      "group": "Glow",
+      "order": 1,
+      "help": "Draws a coloured light just inside each window's edge."
+    },
     "decoration:glow:range": {
       "title": "Glow size",
       "unit": "px",
-      "depends_on": { "option": "decoration:glow:enabled", "value": true }
+      "depends_on": { "option": "decoration:glow:enabled", "value": true },
+      "group": "Glow",
+      "order": 2,
+      "help": "How far the glow reaches into the window."
     },
     "decoration:glow:render_power": {
       "title": "Glow falloff",
       "widget": "segmented",
       "labels": { "1": "Softest", "2": "Soft", "3": "Sharp", "4": "Sharpest" },
-      "depends_on": { "option": "decoration:glow:enabled", "value": true }
+      "depends_on": { "option": "decoration:glow:enabled", "value": true },
+      "group": "Glow",
+      "order": 3,
+      "help": "How quickly the glow fades as it reaches into the window. A sharper falloff keeps the glow tight against the edge."
     },
     "decoration:glow:color": {
       "title": "Glow colour",
-      "depends_on": { "option": "decoration:glow:enabled", "value": true }
+      "depends_on": { "option": "decoration:glow:enabled", "value": true },
+      "group": "Glow",
+      "order": 4,
+      "help": "Colour of the glow. Its alpha sets how strong the glow is."
     },
     "decoration:glow:color_inactive": {
       "title": "Inactive glow colour",
       "nullable": true,
       "null_label": "Same as glow colour",
       "null_value": -1,
-      "depends_on": { "option": "decoration:glow:enabled", "value": true }
+      "depends_on": { "option": "decoration:glow:enabled", "value": true },
+      "group": "Glow",
+      "order": 5,
+      "help": "Glow colour of windows without focus. When unset, the normal glow colour is used."
     },
-    "decoration:dim_modal": { "title": "Dim parents of modal windows" },
-    "decoration:dim_inactive": { "title": "Dim inactive windows" },
+    "decoration:dim_modal": {
+      "title": "Dim parents of modal windows",
+      "group": "Dimming",
+      "order": 5,
+      "help": "Dims the parent window while one of its modal dialogs is open."
+    },
+    "decoration:dim_inactive": {
+      "title": "Dim inactive windows",
+      "group": "Dimming",
+      "order": 1,
+      "help": "Dims windows that do not have focus, by the amount set in dim strength."
+    },
     "decoration:dim_strength": {
       "title": "Dim strength",
-      "depends_on": { "option": "decoration:dim_inactive", "value": true }
+      "depends_on": { "option": "decoration:dim_inactive", "value": true },
+      "group": "Dimming",
+      "order": 2,
+      "help": "How strongly windows without focus are dimmed, from 0 (not at all) to 1 (fully dark)."
     },
-    "decoration:dim_special": { "title": "Special workspace dim" },
-    "decoration:dim_around": { "title": "Dim around dialogs" },
+    "decoration:dim_special": {
+      "title": "Special workspace dim",
+      "group": "Dimming",
+      "order": 3,
+      "help": "How much the rest of the screen dims while a special workspace is open, from 0 (not at all) to 1 (black)."
+    },
+    "decoration:dim_around": {
+      "title": "Dim around strength",
+      "group": "Dimming",
+      "order": 4,
+      "help": "How much a window with the dim around rule darkens everything behind it, from 0 (not at all) to 1 (black)."
+    },
     "decoration:screen_shader": {
       "title": "Screen shader",
       "widget": "file-picker",
       "nullable": true,
       "null_label": "None",
-      "null_value": ""
+      "null_value": "",
+      "group": "Screen effects",
+      "order": 1,
+      "help": "Path to a GLSL shader file applied to the whole screen after everything else is drawn. Leave it empty for none."
     },
-    "decoration:border_part_of_window": { "title": "Border counts as part of the window" },
-    "decoration:blur:enabled": { "title": "Blur" },
+    "decoration:border_part_of_window": {
+      "title": "Border counts as part of the window",
+      "group": "Corners and opacity",
+      "order": 6
+    },
+    "decoration:blur:enabled": {
+      "title": "Blur",
+      "group": "Blur",
+      "order": 1,
+      "help": "Blurs whatever shows through see-through windows. It costs some graphics performance."
+    },
     "decoration:blur:size": {
       "title": "Blur size",
       "unit": "px",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 2,
+      "help": "How far each blur pass spreads. Larger values look softer, and the blur also grows with the number of passes."
     },
     "decoration:blur:passes": {
       "title": "Blur passes",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 3,
+      "help": "How many times the blur is applied. More passes look smoother but cost more performance."
     },
     "decoration:blur:ignore_opacity": {
       "title": "Ignore window opacity when blurring",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 9,
+      "help": "Keeps the blur at full strength behind a see-through window, instead of fading it with the window's opacity."
     },
     "decoration:blur:new_optimizations": {
       "title": "Blur optimisations",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 11,
+      "help": "Blurs tiled windows from one cached blur of the background, which is cheaper than blurring behind each window separately."
     },
     "decoration:blur:xray": {
       "title": "X-ray blur",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 10,
+      "help": "Makes floating windows blur only the wallpaper behind them, not the tiled windows. Needs blur optimisations, and is cheaper."
     },
     "decoration:blur:noise": {
       "title": "Blur noise",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 4,
+      "help": "How much film grain is added to the blur."
     },
     "decoration:blur:contrast": {
       "title": "Blur contrast",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 5,
+      "help": "Contrast of the blurred area: 1 leaves it unchanged, lower flattens it and higher strengthens it."
     },
     "decoration:blur:brightness": {
       "title": "Blur brightness",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 6,
+      "help": "Brightness of the blurred area: 1 leaves it unchanged, lower darkens it and higher brightens it."
     },
     "decoration:blur:vibrancy": {
       "title": "Blur vibrancy",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 7,
+      "help": "Boosts the colour saturation of the blur. Set it to 0 to turn the boost off."
     },
     "decoration:blur:vibrancy_darkness": {
       "title": "Blur vibrancy on dark colours",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blur",
+      "order": 8,
+      "help": "How much the saturation boost also reaches dark colours, which it otherwise holds back."
     },
     "decoration:blur:special": {
       "title": "Blur the special workspace",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blurred surfaces",
+      "order": 5,
+      "help": "Blurs what is behind the special workspace. This costs extra performance."
     },
     "decoration:blur:popups": {
       "title": "Blur popups",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blurred surfaces",
+      "order": 1,
+      "help": "Blurs popups such as right-click menus."
     },
     "decoration:blur:popups_ignorealpha": {
       "title": "Popup blur alpha threshold",
-      "depends_on": { "option": "decoration:blur:popups", "value": true }
+      "depends_on": { "option": "decoration:blur:popups", "value": true },
+      "group": "Blurred surfaces",
+      "order": 2,
+      "help": "Popup pixels more see-through than this are not blurred."
     },
     "decoration:blur:input_methods": {
       "title": "Blur input methods",
-      "depends_on": { "option": "decoration:blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:blur:enabled", "value": true },
+      "group": "Blurred surfaces",
+      "order": 3,
+      "help": "Blurs behind input method popups, such as those of fcitx5."
     },
     "decoration:blur:input_methods_ignorealpha": {
       "title": "Input method blur alpha threshold",
-      "depends_on": { "option": "decoration:blur:input_methods", "value": true }
+      "depends_on": { "option": "decoration:blur:input_methods", "value": true },
+      "group": "Blurred surfaces",
+      "order": 4,
+      "help": "Input method pixels more see-through than this are not blurred."
     },
-    "decoration:motion_blur:enabled": { "title": "Motion blur" },
+    "decoration:motion_blur:enabled": {
+      "title": "Motion blur",
+      "group": "Screen effects",
+      "order": 2,
+      "help": "Blurs windows while they move or resize, whether you drag them or Hyprland animates them."
+    },
     "decoration:motion_blur:samples": {
       "title": "Motion blur samples",
-      "depends_on": { "option": "decoration:motion_blur:enabled", "value": true }
+      "depends_on": { "option": "decoration:motion_blur:enabled", "value": true },
+      "group": "Screen effects",
+      "order": 3,
+      "help": "How many copies of a moving window are blended into its motion blur; 1 turns it off. More look smoother but cost more performance."
     },
 
-    "animations:enabled": { "title": "Animations" },
-    "animations:workspace_wraparound": { "title": "Wrap workspace animations" },
+    "animations:enabled": {
+      "title": "Animations",
+      "group": "Playback",
+      "order": 1,
+      "help": "Turns all of Hyprland's animations on or off. Turn it off for instant window and workspace changes."
+    },
+    "animations:workspace_wraparound": {
+      "title": "Wrap workspace animations",
+      "group": "Playback",
+      "order": 2,
+      "help": "Slides between the first and last workspace as if they were neighbours."
+    },
 
     "input:kb_model": {
       "title": "Keyboard model",
       "widget": "xkb-model",
       "nullable": true,
       "null_label": "Default",
-      "null_value": ""
+      "null_value": "",
+      "group": "Keyboard layout",
+      "order": 3,
+      "help": "The XKB keyboard model. Keep the default unless your keyboard needs a specific one."
     },
-    "input:kb_layout": { "title": "Keyboard layout", "widget": "xkb-layout" },
+    "input:kb_layout": {
+      "title": "Keyboard layout",
+      "widget": "xkb-layout",
+      "group": "Keyboard layout",
+      "order": 1,
+      "help": "Your keyboard layout as an XKB code, such as us or de. Separate several layouts with commas to switch between them."
+    },
     "input:kb_variant": {
       "title": "Keyboard variant",
       "widget": "xkb-variant",
       "nullable": true,
       "null_label": "None",
-      "null_value": ""
+      "null_value": "",
+      "group": "Keyboard layout",
+      "order": 2,
+      "help": "A variant of your layout, such as dvorak. With several layouts, give one variant for each, separated by commas."
     },
     "input:kb_options": {
       "title": "Keyboard options",
       "widget": "xkb-options",
       "nullable": true,
       "null_label": "None",
-      "null_value": ""
+      "null_value": "",
+      "group": "Keyboard layout",
+      "order": 4,
+      "help": "Extra XKB options, such as caps:escape or grp:alt_shift_toggle. Separate several with commas."
     },
     "input:kb_rules": {
       "title": "Keyboard rules",
@@ -337,7 +776,10 @@
       "nullable": true,
       "null_label": "Default",
       "null_value": "",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Keyboard layout",
+      "order": 5,
+      "help": "The XKB rules Hyprland builds the keymap from. Keep the default unless you know you need other rules."
     },
     "input:kb_file": {
       "title": "Keymap file",
@@ -345,32 +787,84 @@
       "nullable": true,
       "null_label": "None",
       "null_value": "",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Keyboard layout",
+      "order": 6,
+      "help": "Path to your own .xkb keymap file. If it loads, it takes the place of the keyboard layout, variant, model, rules and XKB options."
     },
-    "input:numlock_by_default": { "title": "Enable Num Lock at startup" },
-    "input:resolve_binds_by_sym": { "title": "Match keybinds by symbol" },
-    "input:repeat_rate": { "title": "Key repeat rate", "unit": "/s" },
-    "input:repeat_delay": { "title": "Key repeat delay", "unit": "ms" },
-    "input:sensitivity": { "title": "Pointer sensitivity" },
+    "input:numlock_by_default": {
+      "title": "Enable Num Lock at startup",
+      "group": "Typing",
+      "order": 3,
+      "help": "Turns Num Lock on when Hyprland starts."
+    },
+    "input:resolve_binds_by_sym": {
+      "title": "Match keybinds by symbol",
+      "group": "Keyboard layout",
+      "order": 7,
+      "help": "With several layouts, matches a keybind against the symbol you type, not the key's place in the first layout."
+    },
+    "input:repeat_rate": {
+      "title": "Key repeat rate",
+      "unit": "/s",
+      "group": "Typing",
+      "order": 1,
+      "help": "How many times per second a held key repeats."
+    },
+    "input:repeat_delay": {
+      "title": "Key repeat delay",
+      "unit": "ms",
+      "group": "Typing",
+      "order": 2,
+      "help": "How long you hold a key, in milliseconds, before it starts repeating."
+    },
+    "input:sensitivity": {
+      "title": "Pointer sensitivity",
+      "group": "Pointer",
+      "order": 1,
+      "help": "Pointer speed for mice and touchpads. Lower values slow the pointer down and higher values speed it up."
+    },
     "input:accel_profile": {
       "title": "Pointer acceleration",
       "nullable": true,
       "null_label": "Device default",
       "null_value": "",
       "known_values": { "values": ["adaptive", "flat", "custom"] },
-      "labels": { "adaptive": "Adaptive", "flat": "Flat", "custom": "Custom" }
+      "labels": { "adaptive": "Adaptive", "flat": "Flat", "custom": "Custom" },
+      "group": "Pointer",
+      "order": 2,
+      "help": "How the pointer speeds up as you move the device faster. Device default keeps the device's own profile."
     },
-    "input:force_no_accel": { "title": "Disable pointer acceleration" },
-    "input:rotation": { "title": "Pointer rotation", "unit": "deg" },
-    "input:left_handed": { "title": "Swap left and right buttons" },
+    "input:force_no_accel": {
+      "title": "Disable pointer acceleration",
+      "group": "Pointer",
+      "order": 3,
+      "help": "Removes pointer acceleration and most pointer adjustments for a raw signal. Not recommended: the cursor can fall out of sync."
+    },
+    "input:rotation": {
+      "title": "Pointer rotation",
+      "unit": "deg",
+      "group": "Pointer",
+      "order": 5,
+      "help": "Rotates a device's input by this many degrees clockwise. Devices that cannot be rotated ignore it."
+    },
+    "input:left_handed": {
+      "title": "Swap left and right buttons",
+      "group": "Pointer",
+      "order": 4,
+      "help": "Swaps the left and right mouse buttons."
+    },
     "input:scroll_points": {
-      "title": "Custom acceleration points",
+      "title": "Custom scroll acceleration",
       "widget": "float-list",
       "nullable": true,
       "null_label": "None",
       "null_value": "",
       "visibility": "advanced",
-      "depends_on": { "option": "input:accel_profile", "value": "custom" }
+      "depends_on": { "option": "input:accel_profile", "value": "custom" },
+      "group": "Scrolling",
+      "order": 10,
+      "help": "Custom scroll acceleration curve, written as a step and then the points. Used only when the pointer acceleration profile is custom."
     },
     "input:scroll_method": {
       "title": "Scroll method",
@@ -383,50 +877,176 @@
         "edge": "Edge",
         "on_button_down": "While button held",
         "no_scroll": "Disabled"
-      }
+      },
+      "group": "Scrolling",
+      "order": 5,
+      "help": "What you do on a touchpad or mouse to scroll. Device default keeps the device's own method."
     },
-    "input:scroll_button": { "title": "Scroll button", "visibility": "advanced" },
-    "input:scroll_button_lock": { "title": "Scroll button lock" },
-    "input:scroll_factor": { "title": "Scroll speed" },
-    "input:natural_scroll": { "title": "Natural scrolling" },
-    "input:follow_mouse": { "title": "Focus follows mouse" },
-    "input:follow_mouse_threshold": { "title": "Focus follows mouse threshold", "unit": "px" },
-    "input:focus_on_close": { "title": "Focus after closing a window" },
-    "input:mouse_refocus": { "title": "Refocus when the mouse moves" },
+    "input:scroll_button": {
+      "title": "Scroll button",
+      "group": "Scrolling",
+      "order": 6,
+      "help": "Which mouse button scrolls while held, as a button code; 0 keeps the device's default. Find a code with the wev tool."
+    },
+    "input:scroll_button_lock": {
+      "title": "Scroll button lock",
+      "group": "Scrolling",
+      "order": 7,
+      "help": "Lets you press the scroll button once to start scrolling and again to stop, instead of holding it."
+    },
+    "input:scroll_factor": {
+      "title": "Mouse scroll speed",
+      "group": "Scrolling",
+      "order": 2,
+      "help": "Multiplier for scrolling with an external mouse; 1 is the normal speed. Touchpads have their own setting."
+    },
+    "input:natural_scroll": {
+      "title": "Mouse natural scrolling",
+      "group": "Scrolling",
+      "order": 1,
+      "help": "Reverses the mouse scroll direction, so scrolling moves the content directly instead of the scrollbar."
+    },
+    "input:follow_mouse": {
+      "title": "Focus follows mouse",
+      "group": "Focus",
+      "order": 1,
+      "help": "Whether moving the pointer changes which window has focus, and how. When off, you click a window to focus it."
+    },
+    "input:follow_mouse_threshold": {
+      "title": "Focus follows mouse threshold",
+      "unit": "px",
+      "group": "Focus",
+      "order": 2,
+      "help": "How far the pointer must travel, in logical pixels, before the window under it gets focus. Applies only when Focus follows mouse is set to Follow."
+    },
+    "input:focus_on_close": {
+      "title": "Focus after closing a window",
+      "group": "Focus",
+      "order": 5,
+      "help": "Which window gets focus after you close the focused one. Most recently used picks the window you used last on that workspace.",
+      "labels": { "0": "Next in layout", "1": "Under the cursor", "2": "Most recently used" }
+    },
+    "input:mouse_refocus": {
+      "title": "Refocus when the mouse moves",
+      "group": "Focus",
+      "order": 4,
+      "help": "When off, hovering a window does not move focus unless the pointer crosses into it from another window. Applies when focus follows the mouse."
+    },
     "input:float_switch_override_focus": {
-      "title": "Refocus on float/tile switch",
+      "title": "Focus across tiled and floating",
       "widget": "segmented",
-      "labels": { "0": "Off", "1": "On", "2": "Also float to float" }
+      "labels": { "0": "Off", "1": "On", "2": "Also float to float" },
+      "group": "Focus",
+      "order": 6,
+      "help": "Moves focus to the window under the pointer when it crosses between a tiled and a floating window. Applies only when Focus follows mouse is not Follow."
     },
-    "input:special_fallthrough": { "title": "Special workspace fallthrough" },
-    "input:off_window_axis_events": { "title": "Scroll events outside windows" },
-    "input:emulate_discrete_scroll": { "title": "Emulate discrete scrolling" },
-    "input:follow_mouse_shrink": { "title": "Shrink focus hitboxes by", "unit": "px" },
-    "input:touchpad:disable_while_typing": { "title": "Disable while typing" },
-    "input:touchpad:natural_scroll": { "title": "Natural scrolling" },
-    "input:touchpad:scroll_factor": { "title": "Scroll speed" },
-    "input:touchpad:middle_button_emulation": { "title": "Middle button emulation" },
+    "input:special_fallthrough": {
+      "title": "Special workspace fallthrough",
+      "group": "Focus",
+      "order": 7,
+      "help": "Lets you focus windows on the regular workspace when the special workspace holds only floating windows."
+    },
+    "input:off_window_axis_events": {
+      "title": "Scroll events outside windows",
+      "group": "Scrolling",
+      "order": 9,
+      "help": "How scrolling is handled when the pointer is just outside the focused window, in its gaps or at its edges."
+    },
+    "input:emulate_discrete_scroll": {
+      "title": "Emulate discrete scrolling",
+      "group": "Scrolling",
+      "order": 8,
+      "help": "Turns smooth, high-resolution scrolling into notched wheel steps, for apps that expect them."
+    },
+    "input:follow_mouse_shrink": {
+      "title": "Shrink focus hitboxes by",
+      "unit": "px",
+      "group": "Focus",
+      "order": 3,
+      "help": "Shrinks the area of inactive windows that counts for focus by this many pixels, leaving a dead zone in the gaps. Applies when focus follows the mouse."
+    },
+    "input:touchpad:disable_while_typing": {
+      "title": "Disable while typing",
+      "group": "Touchpad",
+      "order": 2,
+      "help": "Turns the touchpad off while you type, so a resting palm does not move the cursor."
+    },
+    "input:touchpad:natural_scroll": {
+      "title": "Touchpad natural scrolling",
+      "group": "Scrolling",
+      "order": 3,
+      "help": "Reverses the touchpad scroll direction, so scrolling moves the content directly instead of the scrollbar."
+    },
+    "input:touchpad:scroll_factor": {
+      "title": "Touchpad scroll speed",
+      "group": "Scrolling",
+      "order": 4,
+      "help": "Multiplier for touchpad scrolling; 1 is the normal speed. Mice have their own setting."
+    },
+    "input:touchpad:middle_button_emulation": {
+      "title": "Middle button emulation",
+      "group": "Touchpad",
+      "order": 8,
+      "help": "Pressing the left and right buttons together counts as a middle click. This turns off any touchpad area that sends a middle click."
+    },
     "input:touchpad:tap_button_map": {
       "title": "Tap button mapping",
       "nullable": true,
       "null_label": "Device default",
       "null_value": "",
       "known_values": { "values": ["lrm", "lmr"] },
-      "labels": { "lrm": "Left, right, middle", "lmr": "Left, middle, right" }
+      "labels": { "lrm": "Left, right, middle", "lmr": "Left, middle, right" },
+      "group": "Touchpad",
+      "order": 4,
+      "help": "Which mouse buttons a tap with one, two and three fingers sends."
     },
-    "input:touchpad:clickfinger_behavior": { "title": "Clickfinger behaviour" },
-    "input:touchpad:tap-to-click": { "title": "Tap to click" },
+    "input:touchpad:clickfinger_behavior": {
+      "title": "Clickfinger behaviour",
+      "group": "Touchpad",
+      "order": 3,
+      "help": "Clicking with 1, 2 or 3 fingers sends a left, right or middle click, instead of depending on where you press."
+    },
+    "input:touchpad:tap-to-click": {
+      "title": "Tap to click",
+      "group": "Touchpad",
+      "order": 1,
+      "help": "Tapping with 1, 2 or 3 fingers sends a left, right or middle click."
+    },
     "input:touchpad:drag_lock": {
       "title": "Drag lock",
       "widget": "segmented",
-      "labels": { "0": "Disabled", "1": "With timeout", "2": "Sticky" }
+      "labels": { "0": "Disabled", "1": "With timeout", "2": "Sticky" },
+      "group": "Touchpad",
+      "order": 6,
+      "help": "Lifting your finger during a tap-and-drag does not drop the item. With timeout drops it after a short wait."
     },
-    "input:touchpad:tap-and-drag": { "title": "Tap and drag" },
-    "input:touchpad:flip_x": { "title": "Flip the horizontal axis" },
-    "input:touchpad:flip_y": { "title": "Flip the vertical axis" },
-    "input:touchpad:drag_3fg": { "title": "Three-finger drag" },
+    "input:touchpad:tap-and-drag": {
+      "title": "Tap and drag",
+      "group": "Touchpad",
+      "order": 5,
+      "help": "Lets you tap, then touch again and drag, to move things with one finger."
+    },
+    "input:touchpad:flip_x": {
+      "title": "Flip the horizontal axis",
+      "group": "Touchpad",
+      "order": 9,
+      "help": "Reverses left and right movement on the touchpad."
+    },
+    "input:touchpad:flip_y": {
+      "title": "Flip the vertical axis",
+      "group": "Touchpad",
+      "order": 10,
+      "help": "Reverses up and down movement on the touchpad."
+    },
+    "input:touchpad:drag_3fg": {
+      "title": "Multi-finger drag",
+      "group": "Touchpad",
+      "order": 7,
+      "help": "Lets you drag with three or four fingers on the touchpad. Touchpads that cannot do it ignore this setting.",
+      "labels": { "0": "Off", "1": "Three fingers", "2": "Four fingers" }
+    },
     "input:touchdevice:transform": {
-      "title": "Rotation",
+      "title": "Orientation",
       "widget": "enum-map",
       "labels": {
         "0": "None",
@@ -436,26 +1056,43 @@
         "4": "Flipped",
         "5": "Flipped, 90°",
         "6": "Flipped, 180°"
-      }
+      },
+      "group": "Touchscreen",
+      "order": 3,
+      "help": "Rotates or flips touchscreen input so that touches line up with a rotated monitor."
     },
     "input:touchdevice:output": {
       "title": "Bound monitor",
       "widget": "monitor-picker",
       "nullable": true,
-      "null_label": "Auto",
-      "null_value": ""
+      "null_label": "Focused monitor",
+      "null_value": "",
+      "group": "Touchscreen",
+      "order": 2,
+      "help": "Which monitor touchscreen input maps to. With Focused monitor, each touch lands on the monitor that has focus."
     },
-    "input:touchdevice:enabled": { "title": "Enable touch devices" },
+    "input:touchdevice:enabled": {
+      "title": "Enable touch devices",
+      "group": "Touchscreen",
+      "order": 1
+    },
     "input:virtualkeyboard:share_states": {
       "title": "Share virtual keyboard states",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Virtual keyboards",
+      "order": 1,
+      "help": "Whether keys and modifiers held on a virtual keyboard combine with those held on your other keyboards.",
+      "labels": { "0": "Off", "1": "On", "2": "Except input methods" }
     },
     "input:virtualkeyboard:release_pressed_on_close": {
       "title": "Release pressed keys on close",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Virtual keyboards",
+      "order": 2,
+      "help": "Releases every key a virtual keyboard still holds down when it closes."
     },
     "input:tablet:transform": {
-      "title": "Rotation",
+      "title": "Orientation",
       "widget": "enum-map",
       "labels": {
         "0": "None",
@@ -465,84 +1102,273 @@
         "4": "Flipped",
         "5": "Flipped, 90°",
         "6": "Flipped, 180°"
-      }
+      },
+      "group": "Drawing tablet",
+      "order": 2,
+      "help": "Rotates or flips tablet input, for a tablet you use turned sideways or upside down."
     },
     "input:tablet:output": {
       "title": "Bound monitor",
       "widget": "monitor-picker",
       "nullable": true,
-      "null_label": "Auto",
-      "null_value": ""
+      "null_label": "All monitors",
+      "null_value": "",
+      "group": "Drawing tablet",
+      "order": 1,
+      "help": "Which monitor the tablet maps to. With no monitor chosen, it spans all monitors."
     },
-    "input:tablet:region_position": { "title": "Region position" },
-    "input:tablet:absolute_region_position": { "title": "Absolute region position" },
-    "input:tablet:region_size": { "title": "Region size" },
-    "input:tablet:relative_input": { "title": "Relative input" },
-    "input:tablet:left_handed": { "title": "Left-handed" },
-    "input:tablet:active_area_size": { "title": "Active area size" },
-    "input:tablet:active_area_position": { "title": "Active area position" },
+    "input:tablet:region_position": {
+      "title": "Region position",
+      "group": "Tablet area",
+      "order": 1,
+      "help": "Where the tablet's screen region starts, in logical pixels from the top left of the bound monitor, or of all monitors together."
+    },
+    "input:tablet:absolute_region_position": {
+      "title": "Absolute region position",
+      "group": "Tablet area",
+      "order": 2,
+      "help": "Treats the region position as a spot in the layout of all monitors. Applies only when no monitor is bound."
+    },
+    "input:tablet:region_size": {
+      "title": "Region size",
+      "group": "Tablet area",
+      "order": 3,
+      "help": "Size of the screen region the tablet maps to, in logical pixels. At 0 by 0 it keeps the size of the bound monitor, or of all monitors."
+    },
+    "input:tablet:relative_input": {
+      "title": "Relative input",
+      "group": "Drawing tablet",
+      "order": 4,
+      "help": "Makes the tablet move the pointer like a mouse, relative to where it is, instead of by absolute position."
+    },
+    "input:tablet:left_handed": {
+      "title": "Left-handed",
+      "group": "Drawing tablet",
+      "order": 3,
+      "help": "Rotates the tablet by 180 degrees, for left-handed use."
+    },
+    "input:tablet:active_area_size": {
+      "title": "Active area size",
+      "group": "Tablet area",
+      "order": 5,
+      "help": "Size of the part of the tablet that responds, in millimetres."
+    },
+    "input:tablet:active_area_position": {
+      "title": "Active area position",
+      "group": "Tablet area",
+      "order": 4,
+      "help": "Where the responding part of the tablet starts, in millimetres."
+    },
     "input:tablettool:eraser_button_mode": {
       "title": "Eraser button",
       "widget": "segmented",
       "range": { "min": 0, "max": 1 },
-      "labels": { "0": "Hardware default", "1": "Send a button event" }
+      "labels": { "0": "Hardware default", "1": "Send a button event" },
+      "group": "Drawing tablet",
+      "order": 7,
+      "help": "Whether the pen's eraser button keeps its hardware behaviour or acts as an ordinary button. Set the button it sends under Eraser button code."
     },
     "input:tablettool:eraser_button_override": {
       "title": "Eraser button code",
       "range": { "min": 0, "soft_max": 600 },
       "visibility": "advanced",
-      "depends_on": { "option": "input:tablettool:eraser_button_mode", "value": 1 }
+      "depends_on": { "option": "input:tablettool:eraser_button_mode", "value": 1 },
+      "group": "Drawing tablet",
+      "order": 8,
+      "help": "Button code the eraser button sends when set to Send a button event. 0 keeps the pen's default button; the wev tool shows codes."
     },
     "input:tablettool:pressure_range_min": {
       "title": "Minimum pressure",
       "nullable": true,
       "null_label": "Device default",
-      "null_value": -1
+      "null_value": -1,
+      "group": "Drawing tablet",
+      "order": 5,
+      "help": "Lower end of the pen's pressure range. Device default keeps the pen's own minimum, usually 0."
     },
     "input:tablettool:pressure_range_max": {
       "title": "Maximum pressure",
       "nullable": true,
       "null_label": "Device default",
-      "null_value": -1
+      "null_value": -1,
+      "group": "Drawing tablet",
+      "order": 6,
+      "help": "Upper end of the pen's pressure range. Device default keeps the pen's own maximum, usually 1."
     },
 
-    "gestures:workspace_swipe_distance": { "title": "Swipe distance", "unit": "px" },
-    "gestures:workspace_swipe_touch": { "title": "Swipe on touchscreens" },
-    "gestures:workspace_swipe_invert": { "title": "Invert swipe direction" },
-    "gestures:workspace_swipe_touch_invert": { "title": "Invert touchscreen swipe direction" },
-    "gestures:workspace_swipe_min_speed_to_force": { "title": "Minimum speed to force a switch" },
-    "gestures:workspace_swipe_cancel_ratio": { "title": "Cancel ratio" },
-    "gestures:workspace_swipe_create_new": { "title": "Create a workspace by swiping past the end" },
-    "gestures:workspace_swipe_direction_lock": { "title": "Direction lock" },
+    "gestures:workspace_swipe_distance": {
+      "title": "Swipe distance",
+      "unit": "px",
+      "group": "Swipe sensitivity",
+      "order": 1,
+      "help": "How far you drag on the touchpad, in pixels, to swipe one workspace."
+    },
+    "gestures:workspace_swipe_touch": {
+      "title": "Swipe on touchscreens",
+      "group": "Workspace swipe",
+      "order": 1,
+      "help": "Lets you swipe between workspaces from the edge of a touchscreen."
+    },
+    "gestures:workspace_swipe_invert": {
+      "title": "Invert swipe direction",
+      "group": "Workspace swipe",
+      "order": 2,
+      "help": "Reverses the direction of workspace swipes on the touchpad."
+    },
+    "gestures:workspace_swipe_touch_invert": {
+      "title": "Invert touchscreen swipe direction",
+      "group": "Workspace swipe",
+      "order": 3,
+      "help": "Reverses the direction of workspace swipes on a touchscreen."
+    },
+    "gestures:workspace_swipe_min_speed_to_force": {
+      "title": "Minimum speed to force a switch",
+      "group": "Swipe sensitivity",
+      "order": 3,
+      "help": "A swipe faster than this switches workspace even if it was short, ignoring the cancel ratio. 0 turns this off."
+    },
+    "gestures:workspace_swipe_cancel_ratio": {
+      "title": "Cancel ratio",
+      "group": "Swipe sensitivity",
+      "order": 2,
+      "help": "How much of the swipe distance you must cover to switch workspace. At 0.7, less than 70 percent snaps back."
+    },
+    "gestures:workspace_swipe_create_new": {
+      "title": "Create a workspace by swiping past the end",
+      "group": "Workspace swipe",
+      "order": 4,
+      "help": "Swiping right on the last workspace creates a new one."
+    },
+    "gestures:workspace_swipe_direction_lock": {
+      "title": "Direction lock",
+      "group": "Swipe sensitivity",
+      "order": 4,
+      "help": "Once a swipe passes the lock threshold, it can no longer change direction. Touchpad only."
+    },
     "gestures:workspace_swipe_direction_lock_threshold": {
       "title": "Direction lock threshold",
       "unit": "px",
-      "depends_on": { "option": "gestures:workspace_swipe_direction_lock", "value": true }
+      "depends_on": { "option": "gestures:workspace_swipe_direction_lock", "value": true },
+      "group": "Swipe sensitivity",
+      "order": 5,
+      "help": "How far a swipe must travel, in pixels, before its direction locks. Touchpad only."
     },
-    "gestures:workspace_swipe_forever": { "title": "Keep swiping past the last workspace" },
-    "gestures:workspace_swipe_use_r": { "title": "Use the r workspace prefix" },
-    "gestures:close_max_timeout": { "title": "Close gesture timeout", "unit": "ms" },
-    "gestures:scrolling:move_snap_to_grid": { "title": "Snap to the grid when moving" },
-    "gestures:scrolling:move_snap_cursor": { "title": "Snap to the cursor when moving" },
+    "gestures:workspace_swipe_forever": {
+      "title": "Swipe through several workspaces",
+      "group": "Workspace swipe",
+      "order": 5,
+      "help": "Lets a swipe carry past the neighbouring workspace to ones further away, instead of stopping at it."
+    },
+    "gestures:workspace_swipe_use_r": {
+      "title": "Swipe through empty workspaces",
+      "group": "Workspace swipe",
+      "order": 6,
+      "help": "Swipes step through every workspace number on this monitor, even empty ones, instead of only the workspaces that are open."
+    },
+    "gestures:close_max_timeout": {
+      "title": "Close gesture timeout",
+      "unit": "ms",
+      "group": "Window gestures",
+      "order": 1,
+      "help": "How long, in milliseconds, a window has to close after a close gesture before it springs back."
+    },
+    "gestures:scrolling:move_snap_to_grid": {
+      "title": "Snap to a column after scrolling",
+      "group": "Window gestures",
+      "order": 2,
+      "help": "Settles the scrolling layout on a column when you release the gesture that scrolls it. When off, it stops wherever the swipe leaves it."
+    },
+    "gestures:scrolling:move_snap_cursor": {
+      "title": "Move cursor to focused window",
+      "group": "Window gestures",
+      "order": 3,
+      "help": "Moves the cursor to the middle of the newly focused window when you release the gesture that scrolls the scrolling layout."
+    },
 
-    "group:insert_after_current": { "title": "Insert after the current window" },
-    "group:focus_removed_window": { "title": "Focus a window removed from a group" },
-    "group:merge_groups_on_drag": { "title": "Merge groups on drag" },
-    "group:merge_groups_on_groupbar": { "title": "Merge groups dropped on a group bar" },
-    "group:col.border_active": { "title": "Active group border colour" },
-    "group:col.border_inactive": { "title": "Inactive group border colour" },
-    "group:col.border_locked_inactive": { "title": "Locked inactive group border colour" },
-    "group:col.border_locked_active": { "title": "Locked active group border colour" },
-    "group:auto_group": { "title": "Group new windows automatically" },
-    "group:drag_into_group": { "title": "Drag windows into groups" },
-    "group:merge_floated_into_tiled_on_groupbar": {
-      "title": "Merge floating windows into tiled groups"
+    "group:insert_after_current": {
+      "title": "Insert after the current window",
+      "group": "Adding and removing",
+      "order": 2,
+      "help": "Opens a new window in a group right after the current tab instead of at the end."
     },
-    "group:group_on_movetoworkspace": { "title": "Group when moving to a workspace" },
-    "group:groupbar:enabled": { "title": "Group bar" },
+    "group:focus_removed_window": {
+      "title": "Focus a window removed from a group",
+      "group": "Adding and removing",
+      "order": 3,
+      "help": "Focuses a window right after you move it out of its group."
+    },
+    "group:merge_groups_on_drag": {
+      "title": "Merge groups on drag",
+      "group": "Dragging",
+      "order": 2,
+      "help": "Lets you drag one group into another to merge them."
+    },
+    "group:merge_groups_on_groupbar": {
+      "title": "Merge groups dropped on a group bar",
+      "group": "Dragging",
+      "order": 3,
+      "help": "Lets you merge a group into another by dropping it on that group's bar. Needs Merge groups on drag on, and Drag windows into groups not Disabled."
+    },
+    "group:col.border_active": {
+      "title": "Active group border colour",
+      "group": "Border colours",
+      "order": 1,
+      "help": "Border colour of the group with focus. Use one colour, or several with an angle for a gradient."
+    },
+    "group:col.border_inactive": {
+      "title": "Inactive group border colour",
+      "group": "Border colours",
+      "order": 2,
+      "help": "Border colour of groups without focus. Use one colour, or several with an angle for a gradient."
+    },
+    "group:col.border_locked_inactive": {
+      "title": "Locked inactive group border colour",
+      "group": "Border colours",
+      "order": 4,
+      "help": "Border colour of a locked group without focus."
+    },
+    "group:col.border_locked_active": {
+      "title": "Locked active group border colour",
+      "group": "Border colours",
+      "order": 3,
+      "help": "Border colour of a locked group with focus."
+    },
+    "group:auto_group": {
+      "title": "Group new windows automatically",
+      "group": "Adding and removing",
+      "order": 1,
+      "help": "Puts each new window into the focused group automatically, unless that group is locked."
+    },
+    "group:drag_into_group": {
+      "title": "Drag windows into groups",
+      "group": "Dragging",
+      "order": 1,
+      "help": "Whether dragging a window onto an unlocked group adds it to that group, and where you must drop it."
+    },
+    "group:merge_floated_into_tiled_on_groupbar": {
+      "title": "Merge floating windows into tiled groups",
+      "group": "Dragging",
+      "order": 4,
+      "help": "Lets you drop a floating window on a tiled window's group bar to merge them."
+    },
+    "group:group_on_movetoworkspace": {
+      "title": "Group when moving to a workspace",
+      "group": "Adding and removing",
+      "order": 4,
+      "help": "Moving a window to a workspace that holds nothing but one unlocked group adds the window to that group."
+    },
+    "group:groupbar:enabled": {
+      "title": "Group bar",
+      "group": "Tab bar",
+      "order": 1,
+      "help": "Shows a bar with one tab per window on every group."
+    },
     "group:groupbar:disable_when_only": {
       "title": "Hide when the group has one window",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab bar",
+      "order": 2,
+      "help": "Hides the group bar when its group holds only one window."
     },
     "group:groupbar:font_family": {
       "title": "Font",
@@ -550,199 +1376,407 @@
       "nullable": true,
       "null_label": "Inherit the global font",
       "null_value": "",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab titles",
+      "order": 1,
+      "help": "Font for the titles in the group bar. With none chosen, it uses the Global font setting."
     },
     "group:groupbar:font_weight_active": {
       "title": "Active title weight",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab titles",
+      "order": 3,
+      "labels": {
+        "thin": "Thin",
+        "ultralight": "Ultralight",
+        "light": "Light",
+        "semilight": "Semilight",
+        "book": "Book",
+        "normal": "Normal",
+        "medium": "Medium",
+        "semibold": "Semibold",
+        "bold": "Bold",
+        "ultrabold": "Ultrabold",
+        "heavy": "Heavy",
+        "ultraheavy": "Ultraheavy"
+      },
+      "help": "How heavy the font of the active window's title is in the group bar. Pick a name, or type a number from 100 to 1000."
     },
     "group:groupbar:font_weight_inactive": {
       "title": "Inactive title weight",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab titles",
+      "order": 4,
+      "labels": {
+        "thin": "Thin",
+        "ultralight": "Ultralight",
+        "light": "Light",
+        "semilight": "Semilight",
+        "book": "Book",
+        "normal": "Normal",
+        "medium": "Medium",
+        "semibold": "Semibold",
+        "bold": "Bold",
+        "ultrabold": "Ultrabold",
+        "heavy": "Heavy",
+        "ultraheavy": "Ultraheavy"
+      },
+      "help": "How heavy the font of the other windows' titles is in the group bar. Pick a name, or type a number from 100 to 1000."
     },
     "group:groupbar:font_size": {
       "title": "Font size",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab titles",
+      "order": 2,
+      "help": "Size of the title text in the group bar, in pixels."
     },
     "group:groupbar:gradients": {
       "title": "Gradient backgrounds",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab colours",
+      "order": 5,
+      "help": "Paints a gradient background behind each tab in the group bar."
     },
     "group:groupbar:height": {
       "title": "Height",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab sizing",
+      "order": 1,
+      "help": "Height of the group bar, in pixels."
     },
     "group:groupbar:indicator_gap": {
       "title": "Indicator gap",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab sizing",
+      "order": 3,
+      "help": "Space between each tab's indicator and its title, in pixels."
     },
     "group:groupbar:indicator_height": {
       "title": "Indicator height",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab sizing",
+      "order": 2,
+      "help": "Height of each tab's indicator, the coloured strip below its title, in pixels."
     },
     "group:groupbar:stacked": {
       "title": "Stack titles vertically",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab bar",
+      "order": 4,
+      "help": "Lists a group's tabs one above the other instead of side by side."
     },
     "group:groupbar:priority": {
       "title": "Decoration priority",
       "widget": "int-range",
       "visibility": "advanced",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab bar",
+      "order": 7
     },
     "group:groupbar:render_titles": {
       "title": "Show window titles",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab bar",
+      "order": 3,
+      "help": "Shows each window's title on its tab."
     },
     "group:groupbar:scrolling": {
       "title": "Scroll to switch windows",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab bar",
+      "order": 5,
+      "help": "Scrolling over the group bar switches to the next or previous window in the group."
     },
     "group:groupbar:middle_click_close": {
       "title": "Middle-click to close",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab bar",
+      "order": 6,
+      "help": "Middle-clicking a tab closes that window."
     },
     "group:groupbar:rounding": {
       "title": "Corner rounding",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab corners",
+      "order": 1,
+      "help": "Rounds the corners of the group bar's indicator, in pixels."
     },
     "group:groupbar:rounding_power": {
       "title": "Rounding power",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab corners",
+      "order": 2,
+      "help": "Shapes the rounded corners of the tab indicators: 2 is a circle, 4 a squircle."
     },
     "group:groupbar:gradient_rounding": {
       "title": "Gradient corner rounding",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:gradients", "value": true }
+      "depends_on": { "option": "group:groupbar:gradients", "value": true },
+      "group": "Tab corners",
+      "order": 4,
+      "help": "Rounds the corners of the gradient backgrounds, in pixels."
     },
     "group:groupbar:gradient_rounding_power": {
       "title": "Gradient rounding power",
-      "depends_on": { "option": "group:groupbar:gradients", "value": true }
+      "depends_on": { "option": "group:groupbar:gradients", "value": true },
+      "group": "Tab corners",
+      "order": 5,
+      "help": "Shapes the rounded corners of the gradient backgrounds: 2 is a circle, 4 a squircle."
     },
     "group:groupbar:round_only_edges": {
       "title": "Round only the outer edges",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab corners",
+      "order": 3,
+      "help": "Rounds only the outer ends of the indicator across the whole bar, not every tab's corners."
     },
     "group:groupbar:gradient_round_only_edges": {
       "title": "Round only the outer gradient edges",
-      "depends_on": { "option": "group:groupbar:gradients", "value": true }
+      "depends_on": { "option": "group:groupbar:gradients", "value": true },
+      "group": "Tab corners",
+      "order": 6,
+      "help": "Rounds only the outer ends of the gradients across the whole bar, not every tab's corners."
     },
     "group:groupbar:text_color": {
       "title": "Title colour",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab titles",
+      "order": 5,
+      "help": "Colour of the window titles in the group bar."
     },
     "group:groupbar:text_color_inactive": {
       "title": "Inactive title colour",
       "nullable": true,
       "null_label": "Same as the title colour",
       "null_value": -1,
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab titles",
+      "order": 6,
+      "help": "Title colour of windows without focus in the group bar. Unset uses the title colour."
     },
     "group:groupbar:text_color_locked_active": {
       "title": "Locked active title colour",
       "nullable": true,
       "null_label": "Same as the title colour",
       "null_value": -1,
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab titles",
+      "order": 7,
+      "help": "Title colour of the active window in a locked group. Unset uses the title colour."
     },
     "group:groupbar:text_color_locked_inactive": {
       "title": "Locked inactive title colour",
       "nullable": true,
       "null_label": "Same as the inactive title colour",
       "null_value": -1,
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab titles",
+      "order": 8,
+      "help": "Title colour of the other windows in a locked group. Unset uses the inactive title colour."
     },
     "group:groupbar:col.active": {
-      "title": "Active background",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "title": "Active tab colour",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab colours",
+      "order": 1,
+      "help": "Colour of the focused tab's indicator in the group bar, and its background when Gradient backgrounds is on. The indicator uses only the first colour."
     },
     "group:groupbar:col.inactive": {
-      "title": "Inactive background",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "title": "Inactive tab colour",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab colours",
+      "order": 2,
+      "help": "Colour of the other tabs' indicators in the group bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first colour."
     },
     "group:groupbar:col.locked_active": {
-      "title": "Locked active background",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "title": "Locked active tab colour",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab colours",
+      "order": 3,
+      "help": "Colour of the focused tab's indicator in a locked group's bar, and its background when Gradient backgrounds is on. The indicator uses only the first colour."
     },
     "group:groupbar:col.locked_inactive": {
-      "title": "Locked inactive background",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "title": "Locked inactive tab colour",
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab colours",
+      "order": 4,
+      "help": "Colour of the other tabs' indicators in a locked group's bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first colour."
     },
     "group:groupbar:gaps_out": {
       "title": "Outer gaps",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab sizing",
+      "order": 5,
+      "help": "Space between the group bar and its window, in pixels. Keep the upper gap adds the same space above the bar."
     },
     "group:groupbar:gaps_in": {
       "title": "Inner gaps",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab sizing",
+      "order": 4,
+      "help": "Space between neighbouring tabs in the group bar, in pixels."
     },
     "group:groupbar:keep_upper_gap": {
       "title": "Keep the upper gap",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab sizing",
+      "order": 6,
+      "help": "Adds the Outer gaps value again as space above the group bar. Turn it off to remove that gap."
     },
     "group:groupbar:text_offset": {
       "title": "Text offset",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab sizing",
+      "order": 7,
+      "help": "Moves the titles up or down in the group bar, in pixels."
     },
     "group:groupbar:text_padding": {
       "title": "Text padding",
       "unit": "px",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab sizing",
+      "order": 8,
+      "help": "Space on each side of a title in the group bar, in pixels."
     },
     "group:groupbar:blur": {
       "title": "Blur the background",
-      "depends_on": { "option": "group:groupbar:enabled", "value": true }
+      "depends_on": { "option": "group:groupbar:enabled", "value": true },
+      "group": "Tab colours",
+      "order": 6,
+      "help": "Blurs what lies behind the group bar's tab indicators and gradient backgrounds."
     },
 
-    "misc:disable_hyprland_logo": { "title": "Hide the Hyprland logo" },
+    "misc:disable_hyprland_logo": {
+      "title": "Hide the Hyprland logo",
+      "group": "Wallpaper and splash",
+      "order": 3,
+      "help": "Hides the random Hyprland logo or anime picture drawn on the desktop background."
+    },
     "misc:disable_splash_rendering": {
       "title": "Hide the splash text",
-      "restart": "monitor-reload"
+      "restart": "monitor-reload",
+      "group": "Wallpaper and splash",
+      "order": 4,
+      "help": "Hides the splash text drawn on the Hyprland background."
     },
-    "misc:col.splash": { "title": "Splash text colour", "restart": "monitor-reload" },
-    "misc:font_family": { "title": "Font", "widget": "font-picker" },
+    "misc:col.splash": {
+      "title": "Splash text colour",
+      "restart": "monitor-reload",
+      "group": "Wallpaper and splash",
+      "order": 6
+    },
+    "misc:font_family": {
+      "title": "Global font",
+      "widget": "font-picker",
+      "group": "Wallpaper and splash",
+      "order": 7,
+      "help": "The font Hyprland uses for its own text, such as the FPS counter, notifications and error messages."
+    },
     "misc:splash_font_family": {
       "title": "Splash font",
       "widget": "font-picker",
       "nullable": true,
       "null_label": "Inherit the global font",
       "null_value": "",
-      "restart": "monitor-reload"
+      "restart": "monitor-reload",
+      "group": "Wallpaper and splash",
+      "order": 5,
+      "help": "The font used for the splash text. Choose one installed on this system."
     },
     "misc:force_default_wallpaper": {
-      "title": "Default wallpaper",
+      "title": "Built-in wallpaper",
       "widget": "enum-map",
       "nullable": false,
-      "labels": { "-1": "Random", "0": "None", "1": "Variant 1", "2": "Variant 2" }
+      "labels": {
+        "-1": "Random",
+        "0": "Hyprland logo",
+        "1": "Triangles",
+        "2": "Anime illustration"
+      },
+      "group": "Wallpaper and splash",
+      "order": 1,
+      "help": "Which of Hyprland's three built-in wallpapers is drawn. Random picks one each time Hyprland starts.",
+      "restart": "hyprland"
     },
-    "misc:vrr": { "title": "Variable refresh rate" },
-    "misc:mouse_move_enables_dpms": { "title": "Wake displays on mouse movement" },
-    "misc:key_press_enables_dpms": { "title": "Wake displays on key press" },
+    "misc:vrr": {
+      "title": "Variable refresh rate",
+      "group": "Displays and power",
+      "order": 1,
+      "help": "Lets monitors change their refresh rate to match what is on screen, which smooths motion and reduces tearing."
+    },
+    "misc:mouse_move_enables_dpms": {
+      "title": "Wake displays on mouse movement",
+      "group": "Displays and power",
+      "order": 2,
+      "help": "Wakes sleeping monitors when you move the mouse."
+    },
+    "misc:key_press_enables_dpms": {
+      "title": "Wake displays on key press",
+      "group": "Displays and power",
+      "order": 3,
+      "help": "Wakes sleeping monitors when you press a key."
+    },
     "misc:name_vk_after_proc": {
       "title": "Name virtual keyboards after their process",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Mouse and keyboard",
+      "order": 2,
+      "help": "Names each virtual keyboard after the program that created it."
     },
-    "misc:always_follow_on_dnd": { "title": "Follow drag and drop" },
-    "misc:layers_hog_keyboard_focus": { "title": "Layers may hold keyboard focus" },
-    "misc:animate_manual_resizes": { "title": "Animate manual resizes" },
-    "misc:animate_mouse_windowdragging": { "title": "Animate window dragging" },
-    "misc:disable_autoreload": { "title": "Disable config auto-reload" },
-    "misc:enable_swallow": { "title": "Window swallowing" },
+    "misc:always_follow_on_dnd": {
+      "title": "Focus follows the dragged item",
+      "group": "Focus and placement",
+      "order": 5,
+      "help": "During a drag and drop, focus moves with the pointer as if Focus follows mouse were set to Follow. Best left on."
+    },
+    "misc:layers_hog_keyboard_focus": {
+      "title": "Layers may hold keyboard focus",
+      "group": "Focus and placement",
+      "order": 4,
+      "help": "Lets launchers such as wofi and bemenu keep keyboard focus when the mouse moves."
+    },
+    "misc:animate_manual_resizes": {
+      "title": "Animate manual resizes",
+      "group": "Windows and animation",
+      "order": 4,
+      "help": "Animates windows when you resize or move them by hand."
+    },
+    "misc:animate_mouse_windowdragging": {
+      "title": "Animate window dragging",
+      "group": "Windows and animation",
+      "order": 5,
+      "help": "Animates a window as you drag it with the mouse. Some animation curves look odd with this on."
+    },
+    "misc:disable_autoreload": {
+      "title": "Disable config auto-reload",
+      "group": "Reloads and warnings",
+      "order": 1,
+      "help": "Stops Hyprland reloading the config when you save it, so changes apply only on a manual reload."
+    },
+    "misc:enable_swallow": {
+      "title": "Window swallowing",
+      "group": "Swallowing",
+      "order": 1,
+      "help": "Hides a window, usually a terminal, while a program launched from it is open. Does nothing until Swallow window class is set."
+    },
     "misc:swallow_regex": {
       "title": "Swallow window class",
       "widget": "regex",
       "nullable": true,
       "null_label": "None",
       "null_value": "",
-      "depends_on": { "option": "misc:enable_swallow", "value": true }
+      "depends_on": { "option": "misc:enable_swallow", "value": true },
+      "group": "Swallowing",
+      "order": 2,
+      "help": "A regular expression matching the class of windows that get swallowed, usually your terminal."
     },
     "misc:swallow_exception_regex": {
       "title": "Swallow exception title",
@@ -750,108 +1784,339 @@
       "nullable": true,
       "null_label": "None",
       "null_value": "",
-      "depends_on": { "option": "misc:enable_swallow", "value": true }
+      "depends_on": { "option": "misc:enable_swallow", "value": true },
+      "group": "Swallowing",
+      "order": 3,
+      "help": "A regular expression for the terminal's title. When it matches, the terminal is not swallowed, which excludes programs such as wev."
     },
-    "misc:focus_on_activate": { "title": "Focus windows that request activation" },
-    "misc:mouse_move_focuses_monitor": { "title": "Mouse movement focuses the monitor" },
-    "misc:allow_session_lock_restore": { "title": "Allow session lock restore" },
-    "misc:session_lock_xray": { "title": "Session lock X-ray" },
-    "misc:session_lock_blur": { "title": "Blur under the session lock" },
-    "misc:background_color": { "title": "Background colour" },
-    "misc:close_special_on_empty": { "title": "Close the special workspace when empty" },
-    "misc:on_focus_under_fullscreen": { "title": "Focusing a window under a fullscreen one" },
-    "misc:exit_window_retains_fullscreen": { "title": "Keep fullscreen when a window exits" },
+    "misc:focus_on_activate": {
+      "title": "Focus windows that request activation",
+      "group": "Focus and placement",
+      "order": 1,
+      "help": "Lets an app take focus when it asks for it."
+    },
+    "misc:mouse_move_focuses_monitor": {
+      "title": "Mouse movement focuses the monitor",
+      "group": "Focus and placement",
+      "order": 2,
+      "help": "Moving the pointer onto another monitor gives that monitor focus."
+    },
+    "misc:allow_session_lock_restore": {
+      "title": "Allow session lock restore",
+      "group": "Session lock",
+      "order": 1,
+      "help": "Lets you start a lockscreen app again if it crashes while the session is locked."
+    },
+    "misc:session_lock_xray": {
+      "title": "Session lock X-ray",
+      "group": "Session lock",
+      "order": 3,
+      "help": "Keeps drawing your workspaces underneath the lockscreen, so it can show them through."
+    },
+    "misc:session_lock_blur": {
+      "title": "Blur under the session lock",
+      "group": "Session lock",
+      "order": 2,
+      "help": "Blurs what shows through the lockscreen. Works only while Session lock X-ray is on."
+    },
+    "misc:background_color": {
+      "title": "Background colour",
+      "group": "Wallpaper and splash",
+      "order": 2,
+      "help": "Colour shown behind everything when no wallpaper covers the screen. Needs the Hyprland logo hidden."
+    },
+    "misc:close_special_on_empty": {
+      "title": "Close the special workspace when empty",
+      "group": "Windows and animation",
+      "order": 2,
+      "help": "Closes the special workspace when its last window goes away."
+    },
+    "misc:on_focus_under_fullscreen": {
+      "title": "Focusing a window under a fullscreen one",
+      "group": "Focus and placement",
+      "order": 3,
+      "help": "What happens when something asks to focus a tiled window while another window is fullscreen or maximised."
+    },
+    "misc:exit_window_retains_fullscreen": {
+      "title": "Keep fullscreen when a window exits",
+      "group": "Windows and animation",
+      "order": 1,
+      "help": "Closing a fullscreen window makes the window that gets focus next fullscreen too."
+    },
     "misc:initial_workspace_tracking": {
       "title": "Initial workspace tracking",
       "widget": "segmented",
-      "labels": { "0": "Disabled", "1": "Single-shot", "2": "Persistent" }
+      "labels": { "0": "Disabled", "1": "Single-shot", "2": "Persistent" },
+      "group": "Focus and placement",
+      "order": 6,
+      "help": "Opens a launched program's first window on the workspace you started it from. Persistent also covers its later windows while the first one stays open."
     },
-    "misc:initial_workspace_token_timeout": { "title": "Workspace token timeout", "unit": "ms" },
-    "misc:middle_click_paste": { "title": "Middle-click paste" },
-    "misc:render_unfocused_fps": { "title": "Unfocused render rate", "unit": "fps" },
+    "misc:initial_workspace_token_timeout": {
+      "title": "Workspace token timeout",
+      "unit": "s",
+      "group": "Focus and placement",
+      "order": 7,
+      "help": "How long, in seconds, a new window has to open before it stops following the workspace it was launched from."
+    },
+    "misc:middle_click_paste": {
+      "title": "Middle-click paste",
+      "group": "Mouse and keyboard",
+      "order": 1,
+      "help": "Middle-clicking pastes the primary selection, which is the text you last highlighted."
+    },
+    "misc:render_unfocused_fps": {
+      "title": "Unfocused render rate",
+      "unit": "fps",
+      "group": "Displays and power",
+      "order": 4,
+      "help": "Caps the frame rate, in frames per second, of windows kept rendering in the background by the render_unfocused window rule."
+    },
     "misc:disable_xdg_env_checks": {
       "title": "Skip XDG environment checks",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Reloads and warnings",
+      "order": 6,
+      "help": "Hides the warning shown when the XDG environment is set up outside Hyprland."
     },
     "misc:disable_hyprland_guiutils_check": {
       "title": "Skip the hyprland-guiutils check",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Reloads and warnings",
+      "order": 7,
+      "help": "Hides the warning shown when hyprland-guiutils is not installed."
     },
     "misc:disable_watchdog_warning": {
       "title": "Hide the watchdog warning",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Reloads and warnings",
+      "order": 5,
+      "help": "Hides the warning shown when Hyprland was not started with start-hyprland."
     },
     "misc:lockdead_screen_delay": {
-      "title": "Lock-dead screen delay",
+      "title": "Lockscreen failure delay",
       "unit": "ms",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Session lock",
+      "order": 4,
+      "help": "How long Hyprland waits, in milliseconds, before showing its recovery screen when a lockscreen app dies or leaves a monitor uncovered."
     },
-    "misc:enable_anr_dialog": { "title": "Show the “not responding” dialog" },
+    "misc:enable_anr_dialog": {
+      "title": "Show the “not responding” dialog",
+      "group": "Reloads and warnings",
+      "order": 2,
+      "help": "Shows a dialog when an app stops responding."
+    },
     "misc:anr_missed_pings": {
       "title": "Missed pings before “not responding”",
       "visibility": "advanced",
-      "depends_on": { "option": "misc:enable_anr_dialog", "value": true }
+      "depends_on": { "option": "misc:enable_anr_dialog", "value": true },
+      "group": "Reloads and warnings",
+      "order": 3,
+      "help": "How many missed checks before an app counts as not responding and the dialog appears."
     },
-    "misc:screencopy_force_8b": { "title": "Force 8-bit screen capture" },
-    "misc:disable_scale_notification": { "title": "Hide the scale notification" },
-    "misc:size_limits_tiled": { "title": "Apply size limits to tiled windows" },
+    "misc:screencopy_force_8b": {
+      "title": "Force 8-bit screen capture",
+      "group": "Displays and power",
+      "order": 5,
+      "help": "Forces 8-bit colour in screen captures and recordings."
+    },
+    "misc:disable_scale_notification": {
+      "title": "Hide the scale notification",
+      "group": "Reloads and warnings",
+      "order": 4,
+      "help": "Hides the popup shown when a monitor cannot use the scale you asked for."
+    },
+    "misc:size_limits_tiled": {
+      "title": "Apply size limits to tiled windows",
+      "group": "Windows and animation",
+      "order": 3,
+      "help": "Applies the minimum and maximum size window rules to tiled windows, not only floating ones."
+    },
 
-    "binds:pass_mouse_when_bound": { "title": "Pass mouse events when bound" },
-    "binds:scroll_event_delay": { "title": "Scroll bind delay", "unit": "ms" },
-    "binds:workspace_back_and_forth": { "title": "Workspace back and forth" },
-    "binds:hide_special_on_workspace_change": {
-      "title": "Hide the special workspace on switch"
+    "binds:pass_mouse_when_bound": {
+      "title": "Pass mouse events when bound",
+      "group": "Mouse and scroll",
+      "order": 1,
+      "help": "Also sends a mouse click to the app or window beneath it when that click triggered a keybind. When off, the keybind takes the click."
     },
-    "binds:allow_workspace_cycles": { "title": "Allow workspace cycles" },
+    "binds:scroll_event_delay": {
+      "title": "Scroll bind delay",
+      "unit": "ms",
+      "group": "Mouse and scroll",
+      "order": 2,
+      "help": "How long to wait, in milliseconds, after a scroll event before another one can trigger a scroll keybind."
+    },
+    "binds:workspace_back_and_forth": {
+      "title": "Workspace back and forth",
+      "group": "Workspaces",
+      "order": 1,
+      "help": "Switching to the workspace you are already on takes you back to the previous one, as in i3."
+    },
+    "binds:hide_special_on_workspace_change": {
+      "title": "Hide the special workspace on switch",
+      "group": "Workspaces",
+      "order": 4,
+      "help": "Switching workspace also hides the special workspace on that monitor."
+    },
+    "binds:allow_workspace_cycles": {
+      "title": "Allow workspace cycles",
+      "group": "Workspaces",
+      "order": 2,
+      "help": "Workspaces remember the one before them, so going to the previous workspace can cycle endlessly."
+    },
     "binds:workspace_center_on": {
       "title": "Centre the cursor on workspace switch",
       "widget": "segmented",
-      "labels": { "0": "The workspace", "1": "The last active window" }
+      "labels": { "0": "The workspace", "1": "The last active window" },
+      "group": "Workspaces",
+      "order": 3,
+      "help": "Where the cursor goes when you switch to a workspace shown on another monitor."
     },
     "binds:focus_preferred_method": {
       "title": "Directional focus method",
       "widget": "segmented",
-      "labels": { "0": "History", "1": "Length" }
+      "labels": { "0": "History", "1": "Length" },
+      "group": "Moving focus",
+      "order": 1,
+      "help": "How moving focus in a direction picks between neighbours: History prefers the most recently used window, Length the one sharing the longest edge."
     },
-    "binds:ignore_group_lock": { "title": "Ignore group lock" },
-    "binds:movefocus_cycles_fullscreen": { "title": "Move focus cycles fullscreen windows" },
-    "binds:movefocus_cycles_groupfirst": { "title": "Move focus cycles the group first" },
-    "binds:disable_keybind_grabbing": { "title": "Disable keybind grabbing" },
+    "binds:ignore_group_lock": {
+      "title": "Ignore group lock",
+      "group": "Overrides",
+      "order": 1,
+      "help": "Moving a window into or out of a group works even when the group is locked."
+    },
+    "binds:movefocus_cycles_fullscreen": {
+      "title": "Move focus cycles windows in fullscreen",
+      "group": "Moving focus",
+      "order": 2,
+      "help": "On a fullscreen window, moving focus switches to the next or previous window instead of moving in a direction."
+    },
+    "binds:movefocus_cycles_groupfirst": {
+      "title": "Move focus cycles the group first",
+      "group": "Moving focus",
+      "order": 3,
+      "help": "On a grouped window, moving focus steps through the group's tabs first, then moves on to other windows."
+    },
+    "binds:disable_keybind_grabbing": {
+      "title": "Disable keybind grabbing",
+      "group": "Overrides",
+      "order": 3,
+      "help": "Stops apps that ask to disable your keybinds, such as virtual machines, from doing so."
+    },
     "binds:window_direction_monitor_fallback": {
-      "title": "Fall back to the monitor for directional moves"
+      "title": "Fall back to the monitor for directional moves",
+      "group": "Moving focus",
+      "order": 4,
+      "help": "Moving a window or focus past a monitor's edge continues onto the next monitor in that direction."
     },
-    "binds:allow_pin_fullscreen": { "title": "Allow pinning fullscreen windows" },
+    "binds:allow_pin_fullscreen": {
+      "title": "Allow fullscreen for pinned windows",
+      "group": "Overrides",
+      "order": 2,
+      "help": "Lets a pinned window go fullscreen, then pins it again when it leaves fullscreen."
+    },
     "binds:drag_threshold": {
       "title": "Drag threshold",
       "unit": "px",
-      "range": { "min": 0, "soft_max": 100 }
+      "range": { "min": 0, "soft_max": 100 },
+      "group": "Mouse and scroll",
+      "order": 3,
+      "help": "How far the mouse must move, in pixels, before a window drag or a click-or-drag keybind starts. 0 starts on mouse down."
     },
 
-    "xwayland:enabled": { "title": "XWayland", "restart": "hyprland" },
-    "xwayland:use_nearest_neighbor": { "title": "Nearest-neighbour scaling" },
-    "xwayland:force_zero_scaling": { "title": "Force zero scaling" },
+    "xwayland:enabled": {
+      "title": "XWayland",
+      "restart": "hyprland",
+      "group": "X11 apps",
+      "order": 1,
+      "help": "Lets apps written for X11 run under Wayland, through XWayland."
+    },
+    "xwayland:use_nearest_neighbor": {
+      "title": "Nearest-neighbour scaling",
+      "group": "X11 apps",
+      "order": 2,
+      "help": "Scales X11 apps without smoothing, so they look pixelated instead of blurry on scaled monitors."
+    },
+    "xwayland:force_zero_scaling": {
+      "title": "Force zero scaling",
+      "group": "X11 apps",
+      "order": 3,
+      "help": "Draws X11 apps at scale 1 on scaled monitors. They look sharp but small unless the app scales itself."
+    },
     "xwayland:create_abstract_socket": {
       "title": "Create an abstract socket",
       "restart": "xwayland",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "X11 apps",
+      "order": 4
     },
 
     "opengl:nvidia_anti_flicker": {
       "title": "NVIDIA anti-flicker",
-      "visibility": "advanced"
+      "group": "NVIDIA workarounds",
+      "order": 1,
+      "help": "Reduces flicker on NVIDIA cards, at the cost of possible dropped frames on weaker GPUs. Ignored on other cards."
     },
 
-    "render:direct_scanout": { "title": "Direct scanout" },
-    "render:expand_undersized_textures": { "title": "Expand undersized textures" },
-    "render:xp_mode": { "title": "XP mode" },
-    "render:ctm_animation": { "title": "Colour transform animation" },
-    "render:cm_enabled": { "title": "Colour management", "restart": "hyprland" },
-    "render:send_content_type": { "title": "Send the content type" },
-    "render:cm_auto_hdr": { "title": "Automatic HDR", "visibility": "advanced" },
-    "render:new_render_scheduling": { "title": "New render scheduling" },
+    "render:direct_scanout": {
+      "title": "Direct scanout",
+      "group": "Performance and quality",
+      "order": 1,
+      "help": "Sends a lone fullscreen app's frames straight to the display, which can cut lag in games. Turn it off if the app shows glitches."
+    },
+    "render:expand_undersized_textures": {
+      "title": "Expand undersized textures",
+      "group": "Performance and quality",
+      "order": 6,
+      "help": "While a window is still resizing, stretches its edge to fill the gap instead of scaling the whole picture."
+    },
+    "render:xp_mode": {
+      "title": "XP mode",
+      "group": "Performance and quality",
+      "order": 4,
+      "help": "Stops drawing the wallpaper and everything else that sits below windows."
+    },
+    "render:ctm_animation": {
+      "title": "Colour transform animation",
+      "group": "Colour management",
+      "order": 5,
+      "help": "Fades between colour filter changes, such as from hyprsunset, instead of jumping."
+    },
+    "render:cm_enabled": {
+      "title": "Colour management",
+      "restart": "hyprland",
+      "group": "Colour management",
+      "order": 1,
+      "help": "Runs Hyprland's colour management, which HDR tone mapping relies on. When off, apps also cannot tell Hyprland their colour space."
+    },
+    "render:send_content_type": {
+      "title": "Send the content type",
+      "group": "Colour management",
+      "order": 4,
+      "help": "Tells the monitor what kind of content is on screen so it can switch picture profile. This can cause a black screen during the switch."
+    },
+    "render:cm_auto_hdr": {
+      "title": "Automatic HDR",
+      "visibility": "advanced",
+      "group": "Colour management",
+      "order": 2,
+      "help": "Switches to HDR mode by itself when a fullscreen app shows HDR content.",
+      "labels": { "0": "Off", "1": "HDR", "2": "HDR with the display's primaries" }
+    },
+    "render:new_render_scheduling": {
+      "title": "New render scheduling",
+      "group": "Performance and quality",
+      "order": 2,
+      "help": "Uses triple buffering when needed, which can improve the frame rate on underpowered machines."
+    },
     "render:non_shader_cm": {
       "title": "Non-shader colour management",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 1,
+      "help": "Corrects a fullscreen window's colours with the display hardware instead of a shader. On demand does so only during direct scanout; Ignore skips the checks.",
+      "labels": { "0": "Disable", "1": "Always", "2": "On demand", "3": "Ignore" }
     },
     "render:cm_sdr_eotf": {
       "title": "SDR transfer function",
@@ -863,111 +2128,446 @@
         "gamma22force": "Gamma 2.2 (forced)",
         "srgb": "sRGB"
       },
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Colour management",
+      "order": 3,
+      "help": "Which gamma curve ordinary SDR apps are shown with."
     },
-    "render:commit_timing_enabled": { "title": "Commit timing", "restart": "hyprland" },
-    "render:icc_vcgt_enabled": { "title": "Apply ICC VCGT tables", "visibility": "advanced" },
-    "render:use_shader_blur_blend": { "title": "Shader blur blending" },
-    "render:use_fp16": { "title": "Use FP16 buffers", "visibility": "advanced" },
+    "render:commit_timing_enabled": {
+      "title": "Commit timing",
+      "restart": "hyprland",
+      "group": "Performance and quality",
+      "order": 3,
+      "help": "Supports the commit timing protocol, which lets apps schedule exactly when a frame appears."
+    },
+    "render:icc_vcgt_enabled": {
+      "title": "Apply ICC VCGT tables",
+      "visibility": "advanced",
+      "group": "Colour management",
+      "order": 6,
+      "help": "Sends the calibration curves of an ICC colour profile to the display hardware."
+    },
+    "render:use_shader_blur_blend": {
+      "title": "Shader blur blending",
+      "group": "Performance and quality",
+      "order": 5,
+      "help": "Blends the blurred background in a shader. Experimental and glitchy on rotated screens; try it if blur goes missing with FP16 buffers."
+    },
+    "render:use_fp16": {
+      "title": "Use FP16 buffers",
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 3,
+      "help": "Draws into experimental 16-bit floating-point buffers internally. Auto uses them only on a monitor not in plain sRGB, such as one in HDR."
+    },
     "render:keep_unmodified_copy": {
       "title": "Keep an unmodified copy",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 5,
+      "help": "Keeps an unmodified SDR copy of each frame for screen sharing. Choose Enable if screenshots come out transparent."
     },
     "render:non_shader_cm_interop": {
-      "title": "Non-shader colour management interop",
-      "visibility": "advanced"
+      "title": "Colour filters in fullscreen",
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 2,
+      "help": "Whether colour filters from tools such as hyprsunset stay active in fullscreen. Auto turns them off only for fullscreen photo, video and game content."
     },
     "render:fp16_sdr_tf": {
       "title": "FP16 SDR transfer function",
-      "visibility": "advanced"
+      "visibility": "advanced",
+      "group": "Colour pipeline",
+      "order": 4
     },
 
-    "cursor:invisible": { "title": "Hide the cursor" },
-    "cursor:no_hardware_cursors": { "title": "Hardware cursors" },
-    "cursor:no_break_fs_vrr": { "title": "Keep VRR in fullscreen" },
-    "cursor:min_refresh_rate": { "title": "Minimum refresh rate", "unit": "Hz" },
-    "cursor:hotspot_padding": { "title": "Hotspot padding", "unit": "px" },
-    "cursor:inactive_timeout": { "title": "Hide after inactivity", "unit": "s" },
-    "cursor:no_warps": { "title": "Disable cursor warps" },
-    "cursor:persistent_warps": { "title": "Persistent warps" },
-    "cursor:warp_on_change_workspace": { "title": "Warp on workspace change" },
-    "cursor:warp_on_toggle_special": { "title": "Warp on special workspace toggle" },
+    "cursor:invisible": {
+      "title": "Hide the cursor",
+      "group": "Hiding",
+      "order": 5,
+      "help": "Hides the cursor everywhere."
+    },
+    "cursor:no_hardware_cursors": {
+      "title": "Hardware cursors",
+      "group": "Cursor drawing",
+      "order": 3,
+      "help": "Lets the display hardware draw the cursor instead of Hyprland drawing it into every frame. Automatic avoids it on NVIDIA with several GPUs or with VRR on.",
+      "labels": { "0": "Use when possible", "1": "Never use", "2": "Automatic" }
+    },
+    "cursor:no_break_fs_vrr": {
+      "title": "Keep VRR in fullscreen",
+      "group": "Fullscreen VRR",
+      "order": 1,
+      "help": "Stops cursor movement from scheduling extra frames in fullscreen apps with variable refresh rate, which avoids frame rate spikes."
+    },
+    "cursor:min_refresh_rate": {
+      "title": "Minimum cursor refresh rate",
+      "unit": "Hz",
+      "group": "Fullscreen VRR",
+      "order": 2,
+      "help": "Lowest refresh rate, in Hz, for cursor movement while Keep VRR in fullscreen is in effect. Set it to your monitor's minimum rate or higher."
+    },
+    "cursor:hotspot_padding": {
+      "title": "Hotspot padding",
+      "unit": "px",
+      "group": "Cursor drawing",
+      "order": 4,
+      "help": "Space kept between the screen edges and the cursor's hotspot, in pixels."
+    },
+    "cursor:inactive_timeout": {
+      "title": "Hide after inactivity",
+      "unit": "s",
+      "group": "Hiding",
+      "order": 1,
+      "help": "Hides the cursor after this many seconds without movement. 0 never hides it."
+    },
+    "cursor:no_warps": {
+      "title": "Disable cursor warps",
+      "group": "Warping",
+      "order": 1,
+      "help": "Stops Hyprland moving the cursor by itself, for example when focus changes or a keybind runs."
+    },
+    "cursor:persistent_warps": {
+      "title": "Persistent warps",
+      "group": "Warping",
+      "order": 4,
+      "help": "When a window regains focus, the cursor returns to where it was in that window instead of its centre."
+    },
+    "cursor:warp_on_change_workspace": {
+      "title": "Warp on workspace change",
+      "group": "Warping",
+      "order": 2,
+      "help": "Moves the cursor to the last focused window after a workspace change. Force does so even when Disable cursor warps is on."
+    },
+    "cursor:warp_on_toggle_special": {
+      "title": "Warp on special workspace toggle",
+      "group": "Warping",
+      "order": 3,
+      "help": "Moves the cursor to the last focused window when you toggle a special workspace. Force does so even when Disable cursor warps is on."
+    },
     "cursor:default_monitor": {
-      "title": "Startup monitor",
+      "title": "Monitor the cursor starts on",
       "widget": "monitor-picker",
       "nullable": true,
       "null_label": "Auto",
-      "null_value": ""
+      "null_value": "",
+      "group": "Warping",
+      "order": 6,
+      "help": "The monitor the cursor starts on when Hyprland launches. Auto puts it on the first monitor Hyprland detects."
     },
-    "cursor:zoom_factor": { "title": "Zoom factor", "visibility": "advanced" },
-    "cursor:zoom_rigid": { "title": "Rigid zoom" },
-    "cursor:zoom_disable_aa": { "title": "Disable zoom antialiasing" },
-    "cursor:zoom_detached_camera": { "title": "Detached zoom camera" },
-    "cursor:enable_hyprcursor": { "title": "Use hyprcursor" },
-    "cursor:hide_on_key_press": { "title": "Hide on key press" },
-    "cursor:hide_on_touch": { "title": "Hide on touch" },
-    "cursor:hide_on_tablet": { "title": "Hide on tablet input" },
-    "cursor:use_cpu_buffer": { "title": "Use a CPU buffer", "visibility": "advanced" },
-    "cursor:sync_gsettings_theme": { "title": "Sync the cursor theme to GSettings" },
-    "cursor:warp_back_after_non_mouse_input": { "title": "Warp back after non-mouse input" },
+    "cursor:zoom_factor": {
+      "title": "Zoom factor",
+      "group": "Zoom",
+      "order": 1,
+      "help": "How much the screen is magnified around the cursor, like a magnifying glass. 1 means no zoom."
+    },
+    "cursor:zoom_rigid": {
+      "title": "Rigid zoom",
+      "group": "Zoom",
+      "order": 2,
+      "help": "Keeps the cursor centred in the zoomed view when it can, instead of letting it drift."
+    },
+    "cursor:zoom_disable_aa": {
+      "title": "Disable zoom antialiasing",
+      "group": "Zoom",
+      "order": 4,
+      "help": "Shows zoomed-in content as sharp pixels instead of smoothing it."
+    },
+    "cursor:zoom_detached_camera": {
+      "title": "Detached zoom camera",
+      "group": "Zoom",
+      "order": 3,
+      "help": "While zoomed in, the view moves only when the cursor reaches the screen edge, instead of following it."
+    },
+    "cursor:enable_hyprcursor": {
+      "title": "Use hyprcursor",
+      "group": "Cursor drawing",
+      "order": 1,
+      "help": "Uses hyprcursor themes for the cursor. When off, Hyprland falls back to XCursor themes."
+    },
+    "cursor:hide_on_key_press": {
+      "title": "Hide on key press",
+      "group": "Hiding",
+      "order": 2,
+      "help": "Hides the cursor while you type, until the mouse moves again."
+    },
+    "cursor:hide_on_touch": {
+      "title": "Hide on touch",
+      "group": "Hiding",
+      "order": 3,
+      "help": "Hides the cursor after touch input, until you use the mouse again."
+    },
+    "cursor:hide_on_tablet": {
+      "title": "Hide on tablet input",
+      "group": "Hiding",
+      "order": 4,
+      "help": "Hides the cursor after tablet input, until you use the mouse again."
+    },
+    "cursor:use_cpu_buffer": {
+      "title": "Use a CPU buffer",
+      "visibility": "advanced",
+      "group": "Cursor drawing",
+      "order": 5,
+      "help": "Makes hardware cursors use a CPU buffer, which NVIDIA cards need for hardware cursors. Auto turns it on for NVIDIA only."
+    },
+    "cursor:sync_gsettings_theme": {
+      "title": "Sync the cursor theme to GSettings",
+      "group": "Cursor drawing",
+      "order": 2,
+      "help": "Shares the cursor theme with GTK apps through GSettings, so most of them use the same cursor."
+    },
+    "cursor:warp_back_after_non_mouse_input": {
+      "title": "Warp back after non-mouse input",
+      "group": "Warping",
+      "order": 5,
+      "help": "After a keyboard or touch action moves the cursor, returns it to where it was once you use the mouse again."
+    },
 
-    "ecosystem:no_update_news": { "title": "Hide update news" },
-    "ecosystem:no_donation_nag": { "title": "Hide the donation reminder" },
+    "ecosystem:no_update_news": {
+      "title": "Hide update news",
+      "group": "Notices and permissions",
+      "order": 1,
+      "help": "Hides the popup shown after Hyprland updates to a new version."
+    },
+    "ecosystem:no_donation_nag": {
+      "title": "Hide the donation reminder",
+      "group": "Notices and permissions",
+      "order": 2,
+      "help": "Hides the donation reminder popup that appears twice a year."
+    },
     "ecosystem:enforce_permissions": {
       "title": "Enforce permissions",
-      "visibility": "advanced"
+      "group": "Notices and permissions",
+      "order": 3,
+      "help": "Turns on permission control, so apps must be allowed to use features such as screen capture."
     },
 
-    "debug:overlay": { "title": "Debug overlay" },
-    "debug:damage_blink": { "title": "Blink on damage" },
-    "debug:gl_debugging": { "title": "OpenGL debugging", "restart": "hyprland" },
-    "debug:disable_logs": { "title": "Disable logging" },
-    "debug:disable_time": { "title": "Omit timestamps from logs" },
-    "debug:damage_tracking": { "title": "Damage tracking" },
-    "debug:enable_stdout_logs": { "title": "Log to stdout" },
+    "debug:overlay": {
+      "title": "Debug overlay",
+      "group": "Overlays and tracing",
+      "order": 1,
+      "help": "Draws a performance panel on screen. Turn off variable frame rate for accurate numbers.",
+      "visibility": "advanced"
+    },
+    "debug:damage_blink": {
+      "title": "Blink on damage",
+      "group": "Overlays and tracing",
+      "order": 2,
+      "help": "Flashes the screen areas that were redrawn. Warning: flashing lights."
+    },
+    "debug:gl_debugging": {
+      "title": "OpenGL debugging",
+      "restart": "hyprland",
+      "group": "Overlays and tracing",
+      "order": 5
+    },
+    "debug:disable_logs": {
+      "title": "Disable logging",
+      "group": "Logging",
+      "order": 1,
+      "help": "Stops Hyprland writing its log to a file.",
+      "visibility": "advanced"
+    },
+    "debug:disable_time": {
+      "title": "Omit timestamps from logs",
+      "group": "Logging",
+      "order": 4,
+      "help": "Leaves the time out of log lines."
+    },
+    "debug:damage_tracking": {
+      "title": "Damage tracking",
+      "group": "Frame rendering",
+      "order": 1,
+      "help": "Redraws only the parts of the screen that changed. Best left alone."
+    },
+    "debug:enable_stdout_logs": {
+      "title": "Log to stdout",
+      "group": "Logging",
+      "order": 2,
+      "help": "Also prints Hyprland's log to standard output."
+    },
     "debug:manual_crash": {
       "title": "Manual crash",
       "widget": "segmented",
-      "labels": { "0": "Armed", "1": "Crash Hyprland" }
+      "labels": { "0": "Off", "1": "Armed" },
+      "group": "Errors and crashes",
+      "order": 4,
+      "help": "Choosing Armed and then Off crashes Hyprland on purpose, and you lose your session."
     },
-    "debug:suppress_errors": { "title": "Suppress errors" },
-    "debug:disable_scale_checks": { "title": "Disable scale checks" },
-    "debug:error_limit": { "title": "Displayed error limit" },
-    "debug:error_position": { "title": "Error position" },
-    "debug:colored_stdout_logs": { "title": "Colour stdout logs" },
-    "debug:log_damage": { "title": "Log damage" },
-    "debug:pass": { "title": "Log render passes" },
+    "debug:suppress_errors": {
+      "title": "Suppress errors",
+      "group": "Errors and crashes",
+      "order": 1,
+      "help": "Hides the error bar Hyprland shows when your config has mistakes."
+    },
+    "debug:disable_scale_checks": {
+      "title": "Disable scale checks",
+      "group": "Errors and crashes",
+      "order": 5,
+      "help": "Skips checking that monitor scales fit the pixel grid, which causes rounding errors."
+    },
+    "debug:error_limit": {
+      "title": "Displayed error limit",
+      "group": "Errors and crashes",
+      "order": 2,
+      "help": "The most config errors the error bar lists at once."
+    },
+    "debug:error_position": {
+      "title": "Error position",
+      "group": "Errors and crashes",
+      "order": 3,
+      "help": "Where the config error bar appears on the screen."
+    },
+    "debug:colored_stdout_logs": {
+      "title": "Colour stdout logs",
+      "group": "Logging",
+      "order": 3,
+      "help": "Colours the log lines printed to standard output."
+    },
+    "debug:log_damage": {
+      "title": "Log damage",
+      "group": "Overlays and tracing",
+      "order": 3,
+      "help": "Logs which screen areas were redrawn."
+    },
+    "debug:pass": { "title": "Render pass debugging", "group": "Overlays and tracing", "order": 4 },
     "debug:full_cm_proto": {
       "title": "Full colour-management protocol",
-      "restart": "hyprland"
+      "restart": "hyprland",
+      "group": "Protocol workarounds",
+      "order": 4,
+      "visibility": "advanced"
     },
-    "debug:ds_handle_same_buffer": { "title": "Direct scanout of the same buffer" },
+    "debug:ds_handle_same_buffer": {
+      "title": "Direct scanout of the same buffer",
+      "group": "Protocol workarounds",
+      "order": 1
+    },
     "debug:ds_handle_same_buffer_fifo": {
-      "title": "Direct scanout of the same buffer (FIFO)"
+      "title": "Direct scanout of the same buffer (FIFO)",
+      "group": "Protocol workarounds",
+      "order": 2
     },
-    "debug:fifo_pending_workaround": { "title": "FIFO pending workaround" },
-    "debug:render_solitary_wo_damage": { "title": "Render solitary windows without damage" },
-    "debug:vfr": { "title": "Variable frame rate" },
-    "debug:invalidate_fp16": { "title": "Invalidate FP16 buffers" },
+    "debug:fifo_pending_workaround": {
+      "title": "FIFO pending workaround",
+      "group": "Protocol workarounds",
+      "order": 3
+    },
+    "debug:render_solitary_wo_damage": {
+      "title": "Render solitary windows without damage",
+      "group": "Frame rendering",
+      "order": 3
+    },
+    "debug:vfr": {
+      "title": "Variable frame rate",
+      "group": "Frame rendering",
+      "order": 2,
+      "help": "Redraws only when something changes, which saves power and processing. Leave it on unless you are debugging."
+    },
+    "debug:invalidate_fp16": {
+      "title": "Invalidate FP16 buffers",
+      "group": "Frame rendering",
+      "order": 4,
+      "help": "Lets Hyprland discard the contents of unused FP16 buffers, which is faster but can glitch on some systems. Auto does not on NVIDIA."
+    },
 
-    "layout:single_window_aspect_ratio": { "title": "Single window aspect ratio" },
-    "layout:single_window_aspect_ratio_tolerance": { "title": "Aspect ratio tolerance" },
+    "layout:single_window_aspect_ratio": {
+      "title": "Single window aspect ratio",
+      "group": "Single window",
+      "order": 1,
+      "help": "Pads a lone tiled window to this width-to-height ratio, so 4 and 3 on a 16:9 screen give a centred 4:3 window. A height of 0 turns it off."
+    },
+    "layout:single_window_aspect_ratio_tolerance": {
+      "title": "Aspect ratio tolerance",
+      "group": "Single window",
+      "order": 2,
+      "help": "If the padding on each side would be smaller than this fraction of the screen, the window is left unpadded."
+    },
 
-    "dwindle:force_split": { "title": "Force split direction" },
-    "dwindle:preserve_split": { "title": "Preserve the split direction" },
-    "dwindle:smart_split": { "title": "Smart split" },
-    "dwindle:smart_resizing": { "title": "Smart resizing" },
-    "dwindle:permanent_direction_override": { "title": "Permanent direction override" },
-    "dwindle:special_scale_factor": { "title": "Special workspace scale" },
-    "dwindle:split_width_multiplier": { "title": "Split width multiplier" },
-    "dwindle:use_active_for_splits": { "title": "Split from the active window" },
-    "dwindle:default_split_ratio": { "title": "Default split ratio" },
-    "dwindle:split_bias": { "title": "Split bias" },
-    "dwindle:precise_mouse_move": { "title": "Precise mouse move" },
+    "dwindle:force_split": {
+      "title": "Force split direction",
+      "group": "Split direction",
+      "order": 2,
+      "help": "Which side of a split a new window opens on. Left also means top in a stacked split, and Right means bottom."
+    },
+    "dwindle:preserve_split": {
+      "title": "Preserve the split direction",
+      "group": "Split direction",
+      "order": 1,
+      "help": "Keeps each split's direction, side by side or stacked, fixed whatever happens to the windows."
+    },
+    "dwindle:smart_split": {
+      "title": "Smart split",
+      "group": "Split direction",
+      "order": 3,
+      "help": "Splits a window towards the edge the cursor is nearest, so you pick the side by pointing. It also keeps split directions, like Preserve the split direction."
+    },
+    "dwindle:smart_resizing": {
+      "title": "Smart resizing",
+      "group": "Mouse",
+      "order": 1,
+      "help": "When you resize a window with the mouse, the corner nearest the pointer moves. When off, the direction depends on the window's place in the layout."
+    },
+    "dwindle:permanent_direction_override": {
+      "title": "Permanent direction override",
+      "group": "Split direction",
+      "order": 5,
+      "help": "Keeps a preselected split direction until you pick another or turn this off, instead of using it once."
+    },
+    "dwindle:special_scale_factor": {
+      "title": "Special workspace scale",
+      "group": "Sizes",
+      "order": 4,
+      "help": "Scales windows on the special workspace, from 0 to 1. 1 leaves them unscaled."
+    },
+    "dwindle:split_width_multiplier": {
+      "title": "Split width multiplier",
+      "group": "Sizes",
+      "order": 3,
+      "help": "A window splits side by side only when it is wider than its height times this number. Raise it on wide monitors to get stacked splits sooner."
+    },
+    "dwindle:use_active_for_splits": {
+      "title": "Split from the active window",
+      "group": "Split direction",
+      "order": 4,
+      "help": "Splits the focused window instead of the one under the mouse."
+    },
+    "dwindle:default_split_ratio": {
+      "title": "Default split ratio",
+      "group": "Sizes",
+      "order": 1,
+      "help": "How a new window shares space with its neighbour. 1 is an even 50/50 split; the range is 0.1 to 1.9."
+    },
+    "dwindle:split_bias": {
+      "title": "Split bias",
+      "group": "Sizes",
+      "order": 2,
+      "help": "Which window of a split gets the split ratio: the top or left one, or the current one."
+    },
+    "dwindle:precise_mouse_move": {
+      "title": "Precise mouse move",
+      "group": "Mouse",
+      "order": 2,
+      "help": "Drops a window you drag with a mouse bind more precisely, depending on where the pointer is."
+    },
 
-    "master:allow_small_split": { "title": "Allow small splits" },
-    "master:special_scale_factor": { "title": "Special workspace scale" },
-    "master:mfact": { "title": "Master area size" },
+    "master:allow_small_split": {
+      "title": "Allow small splits",
+      "group": "Size and position",
+      "order": 3
+    },
+    "master:special_scale_factor": {
+      "title": "Special workspace scale",
+      "group": "Size and position",
+      "order": 5,
+      "help": "Scales windows on the special workspace, from 0 to 1. 1 leaves them unscaled."
+    },
+    "master:mfact": {
+      "title": "Master area size",
+      "group": "Size and position",
+      "order": 1,
+      "help": "How much of the screen the master area takes, from 0 to 1. At 0.7 the master takes 70 percent and the other windows 30."
+    },
     "master:new_status": {
       "title": "New window placement",
       "widget": "enum-string",
@@ -976,14 +2576,25 @@
         "master": "Becomes master",
         "slave": "Joins the stack",
         "inherit": "Inherit from focus"
-      }
+      },
+      "group": "New windows",
+      "order": 1,
+      "help": "Decides the role a new window takes in the master layout."
     },
-    "master:new_on_top": { "title": "New windows on top" },
+    "master:new_on_top": {
+      "title": "New windows on top",
+      "group": "New windows",
+      "order": 2,
+      "help": "Puts a newly opened window at the top of the stack instead of the bottom."
+    },
     "master:new_on_active": {
       "title": "Place new windows relative to focus",
       "widget": "enum-string",
       "known_values": { "values": ["before", "after", "none"] },
-      "labels": { "before": "Before", "after": "After", "none": "Use “new on top”" }
+      "labels": { "before": "Before", "after": "After", "none": "Use “new on top”" },
+      "group": "New windows",
+      "order": 3,
+      "help": "Places a new window just before or after the focused one, instead of at the top or bottom of the stack."
     },
     "master:orientation": {
       "title": "Master area position",
@@ -995,46 +2606,147 @@
         "top": "Top",
         "bottom": "Bottom",
         "center": "Centre"
-      }
+      },
+      "group": "Size and position",
+      "order": 2,
+      "help": "Which side of the screen the master area takes. Centre puts it in the middle with the stack on both sides, once enough windows are open."
     },
-    "master:slave_count_for_center_master": { "title": "Stack windows before centring master" },
+    "master:slave_count_for_center_master": {
+      "title": "Stack windows before centring master",
+      "group": "Centred master",
+      "order": 1,
+      "help": "With a centred master, centres it only when at least this many other windows are open. 0 always centres it."
+    },
     "master:center_master_fallback": {
       "title": "Centre master fallback",
       "widget": "enum-string",
       "known_values": { "values": ["left", "right", "top", "bottom"] },
       "labels": { "left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom" },
-      "depends_on": { "option": "master:orientation", "value": "center" }
+      "depends_on": { "option": "master:orientation", "value": "center" },
+      "group": "Centred master",
+      "order": 2,
+      "help": "Where the master goes when there are too few other windows to centre it."
     },
-    "master:center_ignores_reserved": { "title": "Centre ignores the reserved area" },
-    "master:smart_resizing": { "title": "Smart resizing" },
-    "master:drop_at_cursor": { "title": "Drop at the cursor" },
-    "master:always_keep_position": { "title": "Always keep position" },
-    "master:focus_master_on_close": { "title": "Focus master when a window closes" },
+    "master:center_ignores_reserved": {
+      "title": "Centre ignores the reserved area",
+      "group": "Centred master",
+      "order": 3,
+      "help": "Centres the master window on the whole monitor, ignoring areas reserved by bars."
+    },
+    "master:smart_resizing": {
+      "title": "Smart resizing",
+      "group": "Mouse and focus",
+      "order": 1,
+      "help": "When you resize a window with the mouse, the corner nearest the pointer moves. When off, the direction depends on the window's place in the layout."
+    },
+    "master:drop_at_cursor": {
+      "title": "Drop at the cursor",
+      "group": "Mouse and focus",
+      "order": 2,
+      "help": "Dropping a dragged window places it at the cursor. When off, a window dropped on the stack goes to its top or bottom."
+    },
+    "master:always_keep_position": {
+      "title": "Always keep position",
+      "group": "Size and position",
+      "order": 4,
+      "help": "Keeps the master window where it is configured even when there are no other windows."
+    },
+    "master:focus_master_on_close": {
+      "title": "Focus master when a window closes",
+      "group": "Mouse and focus",
+      "order": 3,
+      "help": "Closing a window focuses the master window."
+    },
 
-    "scrolling:fullscreen_on_one_column": { "title": "Fullscreen with a single column" },
-    "scrolling:column_width": { "title": "Column width" },
-    "scrolling:focus_fit_method": { "title": "Focus fit method" },
-    "scrolling:follow_focus": { "title": "Follow focus" },
-    "scrolling:follow_min_visible": { "title": "Minimum visible fraction" },
+    "scrolling:fullscreen_on_one_column": {
+      "title": "Fullscreen with a single column",
+      "group": "Columns",
+      "order": 4,
+      "help": "A single column on a workspace always fills the screen."
+    },
+    "scrolling:column_width": {
+      "title": "Column width",
+      "group": "Columns",
+      "order": 1,
+      "help": "Default width of a new column, as a fraction of the screen from 0.1 to 1."
+    },
+    "scrolling:focus_fit_method": {
+      "title": "Focus fit method",
+      "group": "Focus and wrapping",
+      "order": 3,
+      "help": "How a focused column is brought into view: centred, or moved only as far as needed to fit."
+    },
+    "scrolling:follow_focus": {
+      "title": "Follow focus",
+      "group": "Focus and wrapping",
+      "order": 1,
+      "help": "Scrolls the layout to bring a newly focused window into view."
+    },
+    "scrolling:follow_min_visible": {
+      "title": "Minimum visible fraction",
+      "group": "Focus and wrapping",
+      "order": 2,
+      "help": "When focus moves other than by a click or keybind, the layout scrolls to the window only if it already fills this fraction of the screen."
+    },
     "scrolling:explicit_column_widths": {
       "title": "Preset column widths",
-      "widget": "float-list"
+      "widget": "float-list",
+      "group": "Columns",
+      "order": 2,
+      "help": "Preset column widths, as fractions of the screen, that the column resize keybinds step through."
     },
     "scrolling:direction": {
       "title": "Scroll direction",
       "widget": "enum-string",
       "known_values": { "values": ["left", "right", "up", "down"] },
-      "labels": { "left": "Left", "right": "Right", "up": "Up", "down": "Down" }
+      "labels": { "left": "Left", "right": "Right", "up": "Up", "down": "Down" },
+      "group": "Columns",
+      "order": 3,
+      "help": "Which way new windows appear and the layout scrolls."
     },
-    "scrolling:wrap_focus": { "title": "Wrap focus" },
-    "scrolling:wrap_swapcol": { "title": "Wrap column swapping" },
+    "scrolling:wrap_focus": {
+      "title": "Wrap focus",
+      "group": "Focus and wrapping",
+      "order": 4,
+      "help": "Moving focus past the first or last column wraps around to the other end."
+    },
+    "scrolling:wrap_swapcol": {
+      "title": "Wrap column swapping",
+      "group": "Focus and wrapping",
+      "order": 5,
+      "help": "Swapping columns past the first or last wraps around to the other end."
+    },
 
-    "experimental:wp_cm_1_2": { "title": "Colour-management protocol v1.2" },
+    "experimental:wp_cm_1_2": {
+      "title": "Colour-management protocol v1.2",
+      "group": "Colour protocol",
+      "order": 1,
+      "help": "Offers apps a newer revision of the colour management protocol. Has no effect while Colour management is off."
+    },
 
-    "input-capture:capture_modifiers": { "title": "Capture modifiers" },
-    "input-capture:enforce_barriers": { "title": "Enforce barriers" },
+    "input-capture:capture_modifiers": {
+      "title": "Capture modifiers",
+      "group": "Barriers and modifiers",
+      "order": 2
+    },
+    "input-capture:enforce_barriers": {
+      "title": "Enforce barriers",
+      "group": "Barriers and modifiers",
+      "order": 1,
+      "help": "Sends an input capture app an error when it sets up an invalid barrier. When off, Hyprland adds the barrier anyway."
+    },
 
-    "quirks:prefer_hdr": { "title": "Prefer HDR" },
-    "quirks:skip_non_kms_dmabuf_formats": { "title": "Skip non-KMS DMA-BUF formats" }
+    "quirks:prefer_hdr": {
+      "title": "Prefer HDR",
+      "group": "Display workarounds",
+      "order": 1,
+      "help": "Tells apps that HDR is the preferred mode, always or only for gamescope.",
+      "visibility": "advanced"
+    },
+    "quirks:skip_non_kms_dmabuf_formats": {
+      "title": "Skip non-KMS DMA-BUF formats",
+      "group": "Display workarounds",
+      "order": 2
+    }
   }
 }

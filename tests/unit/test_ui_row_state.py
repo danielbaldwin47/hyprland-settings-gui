@@ -370,7 +370,7 @@ def test_a_retired_row_is_read_only_and_says_what_it_keeps() -> None:
     assert not state.resettable
     assert row_value(option, context) == 8
     assert state.subtitle == (
-        "rounded corners' radius (in layout px)\n"
+        f"{option.description}\n"
         "Your value: 8. Hyprland 0.57.0 removed this setting; it is kept for when the "
         "setting returns."
     )
@@ -389,7 +389,7 @@ def test_a_value_kept_for_a_quiet_reason_is_read_only_without_a_pill() -> None:
 
     assert (state.editable, state.resettable, state.pills) == (False, False, ())
     assert state.subtitle == (
-        "gaps between windows\nYour value: 4. It is kept for when Hyprland has this "
+        f"{option.description}\nYour value: 4. It is kept for when Hyprland has this "
         "setting again."
     )
     assert state.summary is not None and state.summary.text == "4"
@@ -425,11 +425,11 @@ def test_an_unset_row_the_running_hyprland_lacks_is_read_only() -> None:
         "Hyprland 0.56.0 does not have this setting, so it cannot be changed here."
     )
     assert state.subtitle == (
-        "rounded corners' radius (in layout px)\n"
+        f"{option.description}\n"
         "Hyprland 0.56.0 does not have this setting, so it cannot be changed here."
     )
     other = row_state(SCHEMA["general:gaps_in"], context)
-    assert other.editable and other.subtitle == "gaps between windows"
+    assert other.editable and other.subtitle == SCHEMA["general:gaps_in"].description
 
 
 def test_a_row_matching_more_than_two_pills_shows_the_top_two_and_lists_the_rest() -> None:

@@ -6,10 +6,10 @@ general:float_gaps | css_gaps | css-gaps | null | Same as outer gaps | default |
 general:gaps_workspaces | int | int-range | - | - | default | - | min=0,max=100 | - | px | Workspace gaps
 general:col.inactive_border | gradient | gradient | - | - | default | - | - | - | - | Inactive border colour
 general:col.active_border | gradient | gradient | - | - | default | - | - | - | - | Active border colour
-general:col.nogroup_border | gradient | gradient | - | - | default | - | - | - | - | Ungrouped border colour
-general:col.nogroup_border_active | gradient | gradient | - | - | default | - | - | - | - | Active ungrouped border colour
+general:col.nogroup_border | gradient | gradient | - | - | default | - | - | - | - | Border colour for windows kept out of groups
+general:col.nogroup_border_active | gradient | gradient | - | - | default | - | - | - | - | Active border colour for windows kept out of groups
 general:layout | string | enum-string | - | - | default | - | - | dwindle=Dwindle/master=Master/scrolling=Scrolling/monocle=Monocle | - | Layout
-general:no_focus_fallback | bool | toggle | - | - | default | - | - | - | - | Never refocus after closing a window
+general:no_focus_fallback | bool | toggle | - | - | default | - | - | - | - | Keep focus when no window is in that direction
 general:resize_on_border | bool | toggle | - | - | default | - | - | - | - | Resize windows by dragging their border
 general:extend_border_grab_area | int | int-range | - | - | default | general:resize_on_border=True | min=0,max=100 | - | px | Border grab area
 general:hover_icon_on_border | bool | toggle | - | - | default | general:resize_on_border=True | - | - | - | Show the resize cursor on borders
@@ -44,7 +44,7 @@ decoration:dim_modal | bool | toggle | - | - | default | - | - | - | - | Dim par
 decoration:dim_inactive | bool | toggle | - | - | default | - | - | - | - | Dim inactive windows
 decoration:dim_strength | float | float-range | - | - | default | decoration:dim_inactive=True | min=0,max=1 | - | - | Dim strength
 decoration:dim_special | float | float-range | - | - | default | - | min=0,max=1 | - | - | Special workspace dim
-decoration:dim_around | float | float-range | - | - | default | - | min=0,max=1 | - | - | Dim around dialogs
+decoration:dim_around | float | float-range | - | - | default | - | min=0,max=1 | - | - | Dim around strength
 decoration:screen_shader | string | file-picker | null | None | default | - | - | - | - | Screen shader
 decoration:border_part_of_window | bool | toggle | - | - | default | - | - | - | - | Border counts as part of the window
 decoration:blur:enabled | bool | toggle | - | - | default | - | - | - | - | Blur
@@ -82,24 +82,24 @@ input:accel_profile | string | enum-string | null | Device default | default | -
 input:force_no_accel | bool | toggle | - | - | default | - | - | - | - | Disable pointer acceleration
 input:rotation | int | int-range | - | - | default | - | min=0,max=359 | - | deg | Pointer rotation
 input:left_handed | bool | toggle | - | - | default | - | - | - | - | Swap left and right buttons
-input:scroll_points | string | float-list | null | None | advanced | input:accel_profile=custom | - | - | - | Custom acceleration points
+input:scroll_points | string | float-list | null | None | advanced | input:accel_profile=custom | - | - | - | Custom scroll acceleration
 input:scroll_method | string | enum-string | null | Device default | default | - | - | 2fg=Two fingers/edge=Edge/on_button_down=While button held/no_scroll=Disabled | - | Scroll method
-input:scroll_button | int | int-range | - | - | advanced | - | min=0,max=300 | - | - | Scroll button
+input:scroll_button | int | int-range | - | - | default | - | min=0,max=300 | - | - | Scroll button
 input:scroll_button_lock | bool | toggle | - | - | default | - | - | - | - | Scroll button lock
-input:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Scroll speed
-input:natural_scroll | bool | toggle | - | - | default | - | - | - | - | Natural scrolling
+input:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Mouse scroll speed
+input:natural_scroll | bool | toggle | - | - | default | - | - | - | - | Mouse natural scrolling
 input:follow_mouse | int | enum-map | - | - | default | - | min=0,max=3 | - | - | Focus follows mouse
 input:follow_mouse_threshold | float | free-float | - | - | default | - | - | - | px | Focus follows mouse threshold
-input:focus_on_close | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Focus after closing a window
+input:focus_on_close | int | enum-map | - | - | default | - | min=0,max=2 | 0=Next in layout/1=Under the cursor/2=Most recently used | - | Focus after closing a window
 input:mouse_refocus | bool | toggle | - | - | default | - | - | - | - | Refocus when the mouse moves
-input:float_switch_override_focus | int | segmented | - | - | default | - | min=0,max=2 | 0=Off/1=On/2=Also float to float | - | Refocus on float/tile switch
+input:float_switch_override_focus | int | segmented | - | - | default | - | min=0,max=2 | 0=Off/1=On/2=Also float to float | - | Focus across tiled and floating
 input:special_fallthrough | bool | toggle | - | - | default | - | - | - | - | Special workspace fallthrough
 input:off_window_axis_events | int | enum-map | - | - | default | - | min=0,max=3 | - | - | Scroll events outside windows
 input:emulate_discrete_scroll | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Emulate discrete scrolling
 input:follow_mouse_shrink | int | int-range | - | - | default | - | min=0,max=300 | - | px | Shrink focus hitboxes by
 input:touchpad:disable_while_typing | bool | toggle | - | - | default | - | - | - | - | Disable while typing
-input:touchpad:natural_scroll | bool | toggle | - | - | default | - | - | - | - | Natural scrolling
-input:touchpad:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Scroll speed
+input:touchpad:natural_scroll | bool | toggle | - | - | default | - | - | - | - | Touchpad natural scrolling
+input:touchpad:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Touchpad scroll speed
 input:touchpad:middle_button_emulation | bool | toggle | - | - | default | - | - | - | - | Middle button emulation
 input:touchpad:tap_button_map | string | enum-string | null | Device default | default | - | - | lrm=Left, right, middle/lmr=Left, middle, right | - | Tap button mapping
 input:touchpad:clickfinger_behavior | bool | toggle | - | - | default | - | - | - | - | Clickfinger behaviour
@@ -108,14 +108,14 @@ input:touchpad:drag_lock | int | segmented | - | - | default | - | min=0,max=2 |
 input:touchpad:tap-and-drag | bool | toggle | - | - | default | - | - | - | - | Tap and drag
 input:touchpad:flip_x | bool | toggle | - | - | default | - | - | - | - | Flip the horizontal axis
 input:touchpad:flip_y | bool | toggle | - | - | default | - | - | - | - | Flip the vertical axis
-input:touchpad:drag_3fg | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Three-finger drag
-input:touchdevice:transform | int | enum-map | - | - | default | - | min=0,max=6 | 0=None/1=90°/2=180°/3=270°/4=Flipped/5=Flipped, 90°/6=Flipped, 180° | - | Rotation
-input:touchdevice:output | string | monitor-picker | null | Auto | default | - | - | - | - | Bound monitor
+input:touchpad:drag_3fg | int | enum-map | - | - | default | - | min=0,max=2 | 0=Off/1=Three fingers/2=Four fingers | - | Multi-finger drag
+input:touchdevice:transform | int | enum-map | - | - | default | - | min=0,max=6 | 0=None/1=90°/2=180°/3=270°/4=Flipped/5=Flipped, 90°/6=Flipped, 180° | - | Orientation
+input:touchdevice:output | string | monitor-picker | null | Focused monitor | default | - | - | - | - | Bound monitor
 input:touchdevice:enabled | bool | toggle | - | - | default | - | - | - | - | Enable touch devices
-input:virtualkeyboard:share_states | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Share virtual keyboard states
+input:virtualkeyboard:share_states | int | enum-map | - | - | advanced | - | min=0,max=2 | 0=Off/1=On/2=Except input methods | - | Share virtual keyboard states
 input:virtualkeyboard:release_pressed_on_close | bool | toggle | - | - | advanced | - | - | - | - | Release pressed keys on close
-input:tablet:transform | int | enum-map | - | - | default | - | min=0,max=6 | 0=None/1=90°/2=180°/3=270°/4=Flipped/5=Flipped, 90°/6=Flipped, 180° | - | Rotation
-input:tablet:output | string | monitor-picker | null | Auto | default | - | - | - | - | Bound monitor
+input:tablet:transform | int | enum-map | - | - | default | - | min=0,max=6 | 0=None/1=90°/2=180°/3=270°/4=Flipped/5=Flipped, 90°/6=Flipped, 180° | - | Orientation
+input:tablet:output | string | monitor-picker | null | All monitors | default | - | - | - | - | Bound monitor
 input:tablet:region_position | vec2 | vec2 | - | - | default | - | - | - | - | Region position
 input:tablet:absolute_region_position | bool | toggle | - | - | default | - | - | - | - | Absolute region position
 input:tablet:region_size | vec2 | vec2 | - | - | default | - | - | - | - | Region size
@@ -136,11 +136,11 @@ gestures:workspace_swipe_cancel_ratio | float | float-range | - | - | default | 
 gestures:workspace_swipe_create_new | bool | toggle | - | - | default | - | - | - | - | Create a workspace by swiping past the end
 gestures:workspace_swipe_direction_lock | bool | toggle | - | - | default | - | - | - | - | Direction lock
 gestures:workspace_swipe_direction_lock_threshold | int | int-range | - | - | default | gestures:workspace_swipe_direction_lock=True | min=0,max=200 | - | px | Direction lock threshold
-gestures:workspace_swipe_forever | bool | toggle | - | - | default | - | - | - | - | Keep swiping past the last workspace
-gestures:workspace_swipe_use_r | bool | toggle | - | - | default | - | - | - | - | Use the r workspace prefix
+gestures:workspace_swipe_forever | bool | toggle | - | - | default | - | - | - | - | Swipe through several workspaces
+gestures:workspace_swipe_use_r | bool | toggle | - | - | default | - | - | - | - | Swipe through empty workspaces
 gestures:close_max_timeout | int | int-range | - | - | default | - | min=10,max=2000 | - | ms | Close gesture timeout
-gestures:scrolling:move_snap_to_grid | bool | toggle | - | - | default | - | - | - | - | Snap to the grid when moving
-gestures:scrolling:move_snap_cursor | bool | toggle | - | - | default | - | - | - | - | Snap to the cursor when moving
+gestures:scrolling:move_snap_to_grid | bool | toggle | - | - | default | - | - | - | - | Snap to a column after scrolling
+gestures:scrolling:move_snap_cursor | bool | toggle | - | - | default | - | - | - | - | Move cursor to focused window
 group:insert_after_current | bool | toggle | - | - | default | - | - | - | - | Insert after the current window
 group:focus_removed_window | bool | toggle | - | - | default | - | - | - | - | Focus a window removed from a group
 group:merge_groups_on_drag | bool | toggle | - | - | default | - | - | - | - | Merge groups on drag
@@ -156,8 +156,8 @@ group:group_on_movetoworkspace | bool | toggle | - | - | default | - | - | - | -
 group:groupbar:enabled | bool | toggle | - | - | default | - | - | - | - | Group bar
 group:groupbar:disable_when_only | bool | toggle | - | - | default | group:groupbar:enabled=True | - | - | - | Hide when the group has one window
 group:groupbar:font_family | string | font-picker | null | Inherit the global font | default | group:groupbar:enabled=True | - | - | - | Font
-group:groupbar:font_weight_active | font_weight | font-weight | - | - | default | group:groupbar:enabled=True | - | - | - | Active title weight
-group:groupbar:font_weight_inactive | font_weight | font-weight | - | - | default | group:groupbar:enabled=True | - | - | - | Inactive title weight
+group:groupbar:font_weight_active | font_weight | font-weight | - | - | default | group:groupbar:enabled=True | - | thin=Thin/ultralight=Ultralight/light=Light/semilight=Semilight/book=Book/normal=Normal/medium=Medium/semibold=Semibold/bold=Bold/ultrabold=Ultrabold/heavy=Heavy/ultraheavy=Ultraheavy | - | Active title weight
+group:groupbar:font_weight_inactive | font_weight | font-weight | - | - | default | group:groupbar:enabled=True | - | thin=Thin/ultralight=Ultralight/light=Light/semilight=Semilight/book=Book/normal=Normal/medium=Medium/semibold=Semibold/bold=Bold/ultrabold=Ultrabold/heavy=Heavy/ultraheavy=Ultraheavy | - | Inactive title weight
 group:groupbar:font_size | int | int-range | - | - | default | group:groupbar:enabled=True | min=2,max=64 | - | px | Font size
 group:groupbar:gradients | bool | toggle | - | - | default | group:groupbar:enabled=True | - | - | - | Gradient backgrounds
 group:groupbar:height | int | int-range | - | - | default | group:groupbar:enabled=True | min=1,max=64 | - | px | Height
@@ -178,10 +178,10 @@ group:groupbar:text_color | color | color | - | - | default | group:groupbar:ena
 group:groupbar:text_color_inactive | color | color | null | Same as the title colour | default | group:groupbar:enabled=True | - | - | - | Inactive title colour
 group:groupbar:text_color_locked_active | color | color | null | Same as the title colour | default | group:groupbar:enabled=True | - | - | - | Locked active title colour
 group:groupbar:text_color_locked_inactive | color | color | null | Same as the inactive title colour | default | group:groupbar:enabled=True | - | - | - | Locked inactive title colour
-group:groupbar:col.active | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Active background
-group:groupbar:col.inactive | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Inactive background
-group:groupbar:col.locked_active | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Locked active background
-group:groupbar:col.locked_inactive | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Locked inactive background
+group:groupbar:col.active | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Active tab colour
+group:groupbar:col.inactive | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Inactive tab colour
+group:groupbar:col.locked_active | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Locked active tab colour
+group:groupbar:col.locked_inactive | gradient | gradient | - | - | default | group:groupbar:enabled=True | - | - | - | Locked inactive tab colour
 group:groupbar:gaps_out | int | int-range | - | - | default | group:groupbar:enabled=True | min=0,max=20 | - | px | Outer gaps
 group:groupbar:gaps_in | int | int-range | - | - | default | group:groupbar:enabled=True | min=0,max=20 | - | px | Inner gaps
 group:groupbar:keep_upper_gap | bool | toggle | - | - | default | group:groupbar:enabled=True | - | - | - | Keep the upper gap
@@ -191,14 +191,14 @@ group:groupbar:blur | bool | toggle | - | - | default | group:groupbar:enabled=T
 misc:disable_hyprland_logo | bool | toggle | - | - | default | - | - | - | - | Hide the Hyprland logo
 misc:disable_splash_rendering | bool | toggle | - | - | default | - | - | - | - | Hide the splash text
 misc:col.splash | color | color | - | - | default | - | - | - | - | Splash text colour
-misc:font_family | string | font-picker | - | - | default | - | - | - | - | Font
+misc:font_family | string | font-picker | - | - | default | - | - | - | - | Global font
 misc:splash_font_family | string | font-picker | null | Inherit the global font | default | - | - | - | - | Splash font
-misc:force_default_wallpaper | int | enum-map | - | - | default | - | min=-1,max=2 | -1=Random/0=None/1=Variant 1/2=Variant 2 | - | Default wallpaper
+misc:force_default_wallpaper | int | enum-map | - | - | default | - | min=-1,max=2 | -1=Random/0=Hyprland logo/1=Triangles/2=Anime illustration | - | Built-in wallpaper
 misc:vrr | int | enum-map | - | - | default | - | min=0,max=3 | - | - | Variable refresh rate
 misc:mouse_move_enables_dpms | bool | toggle | - | - | default | - | - | - | - | Wake displays on mouse movement
 misc:key_press_enables_dpms | bool | toggle | - | - | default | - | - | - | - | Wake displays on key press
 misc:name_vk_after_proc | bool | toggle | - | - | advanced | - | - | - | - | Name virtual keyboards after their process
-misc:always_follow_on_dnd | bool | toggle | - | - | default | - | - | - | - | Follow drag and drop
+misc:always_follow_on_dnd | bool | toggle | - | - | default | - | - | - | - | Focus follows the dragged item
 misc:layers_hog_keyboard_focus | bool | toggle | - | - | default | - | - | - | - | Layers may hold keyboard focus
 misc:animate_manual_resizes | bool | toggle | - | - | default | - | - | - | - | Animate manual resizes
 misc:animate_mouse_windowdragging | bool | toggle | - | - | default | - | - | - | - | Animate window dragging
@@ -216,13 +216,13 @@ misc:close_special_on_empty | bool | toggle | - | - | default | - | - | - | - | 
 misc:on_focus_under_fullscreen | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Focusing a window under a fullscreen one
 misc:exit_window_retains_fullscreen | bool | toggle | - | - | default | - | - | - | - | Keep fullscreen when a window exits
 misc:initial_workspace_tracking | int | segmented | - | - | default | - | min=0,max=2 | 0=Disabled/1=Single-shot/2=Persistent | - | Initial workspace tracking
-misc:initial_workspace_token_timeout | int | int-range | - | - | default | - | min=1,max=3600 | - | ms | Workspace token timeout
+misc:initial_workspace_token_timeout | int | int-range | - | - | default | - | min=1,max=3600 | - | s | Workspace token timeout
 misc:middle_click_paste | bool | toggle | - | - | default | - | - | - | - | Middle-click paste
 misc:render_unfocused_fps | int | int-range | - | - | default | - | min=1,max=120 | - | fps | Unfocused render rate
 misc:disable_xdg_env_checks | bool | toggle | - | - | advanced | - | - | - | - | Skip XDG environment checks
 misc:disable_hyprland_guiutils_check | bool | toggle | - | - | advanced | - | - | - | - | Skip the hyprland-guiutils check
 misc:disable_watchdog_warning | bool | toggle | - | - | advanced | - | - | - | - | Hide the watchdog warning
-misc:lockdead_screen_delay | int | int-range | - | - | advanced | - | min=0,max=5000 | - | ms | Lock-dead screen delay
+misc:lockdead_screen_delay | int | int-range | - | - | advanced | - | min=0,max=5000 | - | ms | Lockscreen failure delay
 misc:enable_anr_dialog | bool | toggle | - | - | default | - | - | - | - | Show the “not responding” dialog
 misc:anr_missed_pings | int | int-range | - | - | advanced | misc:enable_anr_dialog=True | min=1,max=20 | - | - | Missed pings before “not responding”
 misc:screencopy_force_8b | bool | toggle | - | - | default | - | - | - | - | Force 8-bit screen capture
@@ -236,46 +236,46 @@ binds:allow_workspace_cycles | bool | toggle | - | - | default | - | - | - | - |
 binds:workspace_center_on | int | segmented | - | - | default | - | min=0,max=1 | 0=The workspace/1=The last active window | - | Centre the cursor on workspace switch
 binds:focus_preferred_method | int | segmented | - | - | default | - | min=0,max=1 | 0=History/1=Length | - | Directional focus method
 binds:ignore_group_lock | bool | toggle | - | - | default | - | - | - | - | Ignore group lock
-binds:movefocus_cycles_fullscreen | bool | toggle | - | - | default | - | - | - | - | Move focus cycles fullscreen windows
+binds:movefocus_cycles_fullscreen | bool | toggle | - | - | default | - | - | - | - | Move focus cycles windows in fullscreen
 binds:movefocus_cycles_groupfirst | bool | toggle | - | - | default | - | - | - | - | Move focus cycles the group first
 binds:disable_keybind_grabbing | bool | toggle | - | - | default | - | - | - | - | Disable keybind grabbing
 binds:window_direction_monitor_fallback | bool | toggle | - | - | default | - | - | - | - | Fall back to the monitor for directional moves
-binds:allow_pin_fullscreen | bool | toggle | - | - | default | - | - | - | - | Allow pinning fullscreen windows
+binds:allow_pin_fullscreen | bool | toggle | - | - | default | - | - | - | - | Allow fullscreen for pinned windows
 binds:drag_threshold | int | free-int | - | - | default | - | min=0,max=2147483647,soft_max=100 | - | px | Drag threshold
 xwayland:enabled | bool | toggle | - | - | default | - | - | - | - | XWayland
 xwayland:use_nearest_neighbor | bool | toggle | - | - | default | - | - | - | - | Nearest-neighbour scaling
 xwayland:force_zero_scaling | bool | toggle | - | - | default | - | - | - | - | Force zero scaling
 xwayland:create_abstract_socket | bool | toggle | - | - | advanced | - | - | - | - | Create an abstract socket
-opengl:nvidia_anti_flicker | bool | toggle | - | - | advanced | - | - | - | - | NVIDIA anti-flicker
+opengl:nvidia_anti_flicker | bool | toggle | - | - | default | - | - | - | - | NVIDIA anti-flicker
 render:direct_scanout | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Direct scanout
 render:expand_undersized_textures | bool | toggle | - | - | default | - | - | - | - | Expand undersized textures
 render:xp_mode | bool | toggle | - | - | default | - | - | - | - | XP mode
 render:ctm_animation | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Colour transform animation
 render:cm_enabled | bool | toggle | - | - | default | - | - | - | - | Colour management
 render:send_content_type | bool | toggle | - | - | default | - | - | - | - | Send the content type
-render:cm_auto_hdr | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Automatic HDR
+render:cm_auto_hdr | int | enum-map | - | - | advanced | - | min=0,max=2 | 0=Off/1=HDR/2=HDR with the display's primaries | - | Automatic HDR
 render:new_render_scheduling | bool | toggle | - | - | default | - | - | - | - | New render scheduling
-render:non_shader_cm | int | enum-map | - | - | advanced | - | min=0,max=3 | - | - | Non-shader colour management
+render:non_shader_cm | int | enum-map | - | - | advanced | - | min=0,max=3 | 0=Disable/1=Always/2=On demand/3=Ignore | - | Non-shader colour management
 render:cm_sdr_eotf | string | enum-string | - | - | advanced | - | - | default=Default/gamma22=Gamma 2.2/gamma22force=Gamma 2.2 (forced)/srgb=sRGB | - | SDR transfer function
 render:commit_timing_enabled | bool | toggle | - | - | default | - | - | - | - | Commit timing
 render:icc_vcgt_enabled | bool | toggle | - | - | advanced | - | - | - | - | Apply ICC VCGT tables
 render:use_shader_blur_blend | bool | toggle | - | - | default | - | - | - | - | Shader blur blending
 render:use_fp16 | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Use FP16 buffers
 render:keep_unmodified_copy | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Keep an unmodified copy
-render:non_shader_cm_interop | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Non-shader colour management interop
+render:non_shader_cm_interop | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Colour filters in fullscreen
 render:fp16_sdr_tf | int | enum-map | - | - | advanced | - | min=0,max=1 | - | - | FP16 SDR transfer function
 cursor:invisible | bool | toggle | - | - | default | - | - | - | - | Hide the cursor
-cursor:no_hardware_cursors | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Hardware cursors
+cursor:no_hardware_cursors | int | enum-map | - | - | default | - | min=0,max=2 | 0=Use when possible/1=Never use/2=Automatic | - | Hardware cursors
 cursor:no_break_fs_vrr | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Keep VRR in fullscreen
-cursor:min_refresh_rate | int | int-range | - | - | default | - | min=10,max=500 | - | Hz | Minimum refresh rate
+cursor:min_refresh_rate | int | int-range | - | - | default | - | min=10,max=500 | - | Hz | Minimum cursor refresh rate
 cursor:hotspot_padding | int | int-range | - | - | default | - | min=0,max=20 | - | px | Hotspot padding
 cursor:inactive_timeout | float | float-range | - | - | default | - | min=0,max=20 | - | s | Hide after inactivity
 cursor:no_warps | bool | toggle | - | - | default | - | - | - | - | Disable cursor warps
 cursor:persistent_warps | bool | toggle | - | - | default | - | - | - | - | Persistent warps
 cursor:warp_on_change_workspace | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Warp on workspace change
 cursor:warp_on_toggle_special | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Warp on special workspace toggle
-cursor:default_monitor | string | monitor-picker | null | Auto | default | - | - | - | - | Startup monitor
-cursor:zoom_factor | float | float-range | - | - | advanced | - | min=1,max=10 | - | - | Zoom factor
+cursor:default_monitor | string | monitor-picker | null | Auto | default | - | - | - | - | Monitor the cursor starts on
+cursor:zoom_factor | float | float-range | - | - | default | - | min=1,max=10 | - | - | Zoom factor
 cursor:zoom_rigid | bool | toggle | - | - | default | - | - | - | - | Rigid zoom
 cursor:zoom_disable_aa | bool | toggle | - | - | default | - | - | - | - | Disable zoom antialiasing
 cursor:zoom_detached_camera | bool | toggle | - | - | default | - | - | - | - | Detached zoom camera
@@ -288,23 +288,23 @@ cursor:sync_gsettings_theme | bool | toggle | - | - | default | - | - | - | - | 
 cursor:warp_back_after_non_mouse_input | bool | toggle | - | - | default | - | - | - | - | Warp back after non-mouse input
 ecosystem:no_update_news | bool | toggle | - | - | default | - | - | - | - | Hide update news
 ecosystem:no_donation_nag | bool | toggle | - | - | default | - | - | - | - | Hide the donation reminder
-ecosystem:enforce_permissions | bool | toggle | - | - | advanced | - | - | - | - | Enforce permissions
-debug:overlay | bool | toggle | - | - | hidden | - | - | - | - | Debug overlay
+ecosystem:enforce_permissions | bool | toggle | - | - | default | - | - | - | - | Enforce permissions
+debug:overlay | bool | toggle | - | - | advanced | - | - | - | - | Debug overlay
 debug:damage_blink | bool | toggle | - | - | hidden | - | - | - | - | Blink on damage
 debug:gl_debugging | bool | toggle | - | - | hidden | - | - | - | - | OpenGL debugging
-debug:disable_logs | bool | toggle | - | - | hidden | - | - | - | - | Disable logging
+debug:disable_logs | bool | toggle | - | - | advanced | - | - | - | - | Disable logging
 debug:disable_time | bool | toggle | - | - | hidden | - | - | - | - | Omit timestamps from logs
 debug:damage_tracking | int | enum-map | - | - | hidden | - | min=0,max=2 | - | - | Damage tracking
 debug:enable_stdout_logs | bool | toggle | - | - | hidden | - | - | - | - | Log to stdout
-debug:manual_crash | int | segmented | - | - | hidden | - | min=0,max=1 | 0=Armed/1=Crash Hyprland | - | Manual crash
+debug:manual_crash | int | segmented | - | - | hidden | - | min=0,max=1 | 0=Off/1=Armed | - | Manual crash
 debug:suppress_errors | bool | toggle | - | - | hidden | - | - | - | - | Suppress errors
 debug:disable_scale_checks | bool | toggle | - | - | hidden | - | - | - | - | Disable scale checks
 debug:error_limit | int | int-range | - | - | hidden | - | min=0,max=20 | - | - | Displayed error limit
 debug:error_position | int | enum-map | - | - | hidden | - | min=0,max=1 | - | - | Error position
 debug:colored_stdout_logs | bool | toggle | - | - | hidden | - | - | - | - | Colour stdout logs
 debug:log_damage | bool | toggle | - | - | hidden | - | - | - | - | Log damage
-debug:pass | bool | toggle | - | - | hidden | - | - | - | - | Log render passes
-debug:full_cm_proto | bool | toggle | - | - | hidden | - | - | - | - | Full colour-management protocol
+debug:pass | bool | toggle | - | - | hidden | - | - | - | - | Render pass debugging
+debug:full_cm_proto | bool | toggle | - | - | advanced | - | - | - | - | Full colour-management protocol
 debug:ds_handle_same_buffer | bool | toggle | - | - | hidden | - | - | - | - | Direct scanout of the same buffer
 debug:ds_handle_same_buffer_fifo | bool | toggle | - | - | hidden | - | - | - | - | Direct scanout of the same buffer (FIFO)
 debug:fifo_pending_workaround | bool | toggle | - | - | hidden | - | - | - | - | FIFO pending workaround
@@ -350,5 +350,5 @@ scrolling:wrap_swapcol | bool | toggle | - | - | default | - | - | - | - | Wrap 
 experimental:wp_cm_1_2 | bool | toggle | - | - | hidden | - | - | - | - | Colour-management protocol v1.2
 input-capture:capture_modifiers | bool | toggle | - | - | hidden | - | - | - | - | Capture modifiers
 input-capture:enforce_barriers | bool | toggle | - | - | hidden | - | - | - | - | Enforce barriers
-quirks:prefer_hdr | int | enum-map | - | - | hidden | - | min=0,max=2 | - | - | Prefer HDR
+quirks:prefer_hdr | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Prefer HDR
 quirks:skip_non_kms_dmabuf_formats | bool | toggle | - | - | hidden | - | - | - | - | Skip non-KMS DMA-BUF formats

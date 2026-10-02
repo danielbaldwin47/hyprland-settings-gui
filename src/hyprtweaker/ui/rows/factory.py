@@ -6,13 +6,9 @@ module only has to know how to build each *kind*. That is the whole architecture
 here.
 
 The four basic controls -- switch, spinner, combo, entry -- the four complex-value editors
--- colour, gradient, css-gaps, vec2 -- and the suffix strip every one of them wears
-(`chrome.py`: state pills, Value summary, Dependency badge, reset, ⓘ Help popover). Font
-weights are the one type still rendered read-only: the two Options that have one take either
-a number or a preset name, and offering the names is Overlay curation (`labels`) rather than
-a widget this module can invent. They render their value rather than being left out -- an
-Option missing from its Page is one a user cannot find, and a blank control is the falsehood
-prototype #8 measured (`[[EMPTY]]` rendering as an empty row).
+-- colour, gradient, css-gaps, vec2 -- the font-weight picker, and the suffix strip every
+one of them wears (`chrome.py`: state pills, Value summary, Dependency badge, reset, ⓘ Help
+popover). Every widget type is editable; none is rendered read-only.
 
 Five conventions worth stating, four from ADR-0013 and one from ADR-0010:
 
@@ -48,9 +44,12 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Adw, Gdk, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model import (  # noqa: E402
+    FONT_WEIGHT_NAMES,
+    FONT_WEIGHT_RANGE,
     UNSET,
     Color,
     CssGaps,
+    FontWeight,
     Gradient,
     Vec2,
     display_text,
@@ -137,6 +136,17 @@ reset arrow is one click back.
 *Not* what "add a colour" puts in a gradient — that duplicates the last stop, so the new
 swatch starts from the colour beside it rather than from an unrelated white."""
 
+_CUSTOM = "Custom"
+"""The font-weight combo's last choice: the app's own, revealing a spinner for a number."""
+
+_NORMAL_WEIGHT = FONT_WEIGHT_NAMES["normal"]
+"""Where the font-weight spinner starts when the held weight is a name Hyprland lacks."""
+
+_WEIGHT_REACH = 999_999.0
+"""The font-weight spinner's bounds, far past what it accepts (`FONT_WEIGHT_RANGE`): a
+spin button clamps typed text to its bounds silently, so the Row checks the range itself and
+says why it refuses a number."""
+
 _ANGLE_MAX = 360.0
 _ANGLE_PAGE = 15.0
 """Angles are a full turn in degrees, paged in 15° steps -- the increments a gradient is
@@ -202,7 +212,11 @@ class RowFactory:
         self._echo_guard = False
 
     def build(self, option: ResolvedOption) -> OptionRow:
-        """The Row for one Option. Never raises on an unfamiliar widget."""
+        """The Row for one Option.
+
+        Every `Widget` has a branch (`tests/ui/test_row_editors.py` builds each one), so the
+        `ValueError` is for a widget added to the Schema without one.
+        """
         if option.widget is Widget.TOGGLE:
             row = self._toggle(option)
         elif option.widget in _SPIN_WIDGETS:
@@ -219,8 +233,10 @@ class RowFactory:
             row = self._css_gaps(option)
         elif option.widget is Widget.VEC2:
             row = self._vec2(option)
+        elif option.widget is Widget.FONT_WEIGHT:
+            row = self._font_weight(option)
         else:
-            row = self._read_only(option)
+            raise ValueError(f"no Row is built for the {option.widget.value!r} widget")
 
         # Only the values: the chrome decided itself when `_row` built it.
         row.refresh()
@@ -863,28 +879,160 @@ class RowFactory:
             return fallback
         return parsed if isinstance(parsed, type(fallback)) else fallback
 
-    # --- what has no editor yet ---------------------------------------------------------------
+    # --- font weights ---------------------------------------------------------------------
 
-    def _read_only(self, option: ResolvedOption) -> OptionRow:
-        """Font weights, shown but not editable.
+    def _font_weight(self, option: ResolvedOption) -> OptionRow:
+        """A weight name from a combo, or a number typed after choosing "Custom".
 
-        The two Options that have one take either a number (`400`) or a preset name
-        (`"bold"`), and a control that offered both would be inventing the preset list --
-        which is Overlay curation (`labels`), not a widget. Shown as their display text so
-        the Page still answers "what is this set to?", which is the question an omitted Row
-        cannot answer at all.
+        Hyprland takes either (`"bold"` or `700`), so the Row writes what the user chose: a
+        name as the name, a number as the number. The names are Hyprland's own
+        (`FONT_WEIGHT_NAMES`, in weight order); the Overlay's `labels` only spell them for
+        display, so a label for a name Hyprland lacks never reaches the combo.
+
+        One `Gtk.Box` is the Row's single control (ADR-0013 §3), so the dependency badge dims
+        the combo and the spinner together. The spinner shows only while "Custom" is chosen.
+        A box is not focusable, so the Row names the combo as its activatable widget: a click
+        on the Row body opens the combo, as on every other combo Row.
+
+        **What a held value shows, never rewriting it.** A name, or a number equal to a
+        name's weight, selects that name: a held `700` reads "Bold" and stays `700`. Any
+        other number selects "Custom" and shows as typed, even outside 100 to 1000. A name
+        the list lacks (an imported `"extrabold"`) joins the list as written, before
+        "Custom", as the bind editor keeps an unlisted value (#86).
+
+        A typed number a name matches reads as that name once Enter or focus leaving commits
+        it, and stays a number in the model.
+
+        **A typed number outside 100 to 1000 is refused, with the reason beside it.** The
+        spinner's own bounds are wide on purpose: a spin button clamps out-of-range text to
+        its bound, which would write `1000` for a typed `1200` without a word.
         """
-        label = Gtk.Label(valign=Gtk.Align.CENTER, css_classes=["dim-label"], selectable=True)
-        row, chrome = self._row(option, label)
+        names = list(FONT_WEIGHT_NAMES)
+        shown = option.labels or {}
+        low, high = FONT_WEIGHT_RANGE[0], FONT_WEIGHT_RANGE[-1]
+        strings = Gtk.StringList.new([*(shown.get(n, humanise(n)) for n in names), _CUSTOM])
+        dropdown = Gtk.DropDown(model=strings, valign=Gtk.Align.CENTER)
+        spin = Gtk.SpinButton(
+            adjustment=Gtk.Adjustment(
+                lower=-_WEIGHT_REACH,
+                upper=_WEIGHT_REACH,
+                step_increment=10.0,
+                page_increment=100.0,
+            ),
+            digits=0,
+            numeric=True,
+            valign=Gtk.Align.CENTER,
+            width_chars=5,
+            tooltip_text=f"A weight from {low} (thin) to {high} (ultraheavy)",
+            visible=False,
+        )
+        refusal = Gtk.Label(
+            css_classes=["error", "caption"],
+            visible=False,
+            justify=Gtk.Justification.RIGHT,
+        )
+        control = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        control.append(refusal)
+        control.append(dropdown)
+        control.append(spin)
+        row, chrome = self._row(option, control)
+        row.set_activatable_widget(dropdown)
+
+        unlisted: str | None = None  # a held name the list lacks, offered before "Custom"
+        last_good = _NORMAL_WEIGHT  # what the spinner goes back to after a refusal
+
+        def offer(name: str | None) -> None:
+            nonlocal unlisted
+            if name != unlisted:
+                strings.splice(
+                    len(names), 0 if unlisted is None else 1, [] if name is None else [name]
+                )
+                unlisted = name
+
+        def show_number(number: int) -> None:
+            nonlocal last_good
+            last_good = number
+            with self._quiet():
+                spin.set_value(number)
+
+        def refuse(message: str | None) -> None:
+            refusal.set_text(message or "")
+            refusal.set_visible(message is not None)
+            if message is None:
+                spin.remove_css_class("error")
+            else:
+                spin.add_css_class("error")
 
         def refresh() -> None:
-            value = shown_value(option, row_value(option, self._session))
-            if value is NO_VALUE:
-                label.set_text(no_value_label(option))
-            else:
-                label.set_text(display_text(value))
+            held = self._typed(option, FontWeight(_NORMAL_WEIGHT))
+            named = next(
+                (
+                    i
+                    for i, name in enumerate(names)
+                    if FONT_WEIGHT_NAMES.get(name) == held.number
+                ),
+                None,
+            )
+            refuse(None)
+            show_number(held.number if held.number is not None else _NORMAL_WEIGHT)
+            with self._quiet():
+                if named is not None:
+                    offer(None)
+                    dropdown.set_selected(named)
+                elif isinstance(held.weight, str):
+                    offer(held.weight)
+                    dropdown.set_selected(len(names))
+                else:
+                    offer(None)
+                    dropdown.set_selected(strings.get_n_items() - 1)
+                spin.set_visible(named is None and isinstance(held.weight, int))
 
-        return OptionRow(option, row, label, refresh, chrome)
+        def chosen(*_: Any) -> None:
+            if self._echo_guard:
+                return
+            index = dropdown.get_selected()
+            refuse(None)
+            custom = index == strings.get_n_items() - 1
+            spin.set_visible(custom)
+            if custom:
+                return  # reveals the spinner at the current weight; writes nothing
+            if index < len(names):
+                show_number(FONT_WEIGHT_NAMES[names[index]])
+                self._set(option, names[index])
+            elif unlisted is not None:
+                self._set(option, unlisted)
+
+        def typed(*_: Any) -> None:
+            if self._echo_guard:
+                return
+            number = int(spin.get_value())
+            if number == last_good:
+                return  # the spinner's own echo of a restore, or no change at all
+            if number not in FONT_WEIGHT_RANGE:
+                refuse(f"{number} is out of range.\nUse a weight from {low} to {high}.")
+                show_number(last_good)
+                return
+            refuse(None)
+            show_number(number)
+            # Per keystroke-commit and per held arrow repeat: the queue coalesces the burst
+            # (ADR-0010), as for every spinner.
+            self._touch(option, number)
+
+        def committed(*_: Any) -> None:
+            """Enter, or focus leaving: a typed weight a name matches now reads as that name,
+            as the same number held in the file does. Nothing more is written."""
+            spin.update()
+            held = self._typed(option, FontWeight(_NORMAL_WEIGHT))
+            if spin.get_visible() and held.number in FONT_WEIGHT_NAMES.values():
+                refresh()
+
+        focus = Gtk.EventControllerFocus()
+        focus.connect("leave", committed)
+        spin.add_controller(focus)
+        dropdown.connect("notify::selected", chosen)
+        spin.connect("notify::value", typed)
+        spin.connect("activate", committed)
+        return OptionRow(option, row, control, refresh, chrome)
 
     # --- echo suppression -------------------------------------------------------------------
 

@@ -118,6 +118,46 @@ def schema_without(*names: str, version: str) -> Schema:
     )
 
 
+def curated(
+    section: str, groups: dict[str, str | None], members: dict[str, list[str]]
+) -> Schema:
+    """The sample Schema with `section`'s Groups replaced by these, and no others.
+
+    `groups` maps each title to its description, in display order; `members` maps a title to
+    its Options in curated order. Every other Option of the Section is left uncurated, so a
+    test states the whole curation it plans rather than inheriting the shipped one.
+    """
+    from dataclasses import replace
+
+    from hyprtweaker.engine.schema import OverlayGroup, Schema, SectionOverlay
+
+    base = sample_schema()
+    placed = {
+        name: (title, order)
+        for title, names in members.items()
+        for order, name in enumerate(names, start=1)
+    }
+    sections = dict(base.sections)
+    sections[section] = replace(
+        sections.get(section, SectionOverlay()),
+        groups=tuple(OverlayGroup(title, description) for title, description in groups.items()),
+    )
+    return Schema(
+        hyprland_version=base.hyprland_version,
+        options=tuple(
+            replace(
+                option,
+                group=placed.get(option.name, (None, None))[0],
+                group_order=placed.get(option.name, (None, None))[1],
+            )
+            if option.section == section
+            else option
+            for option in base
+        ),
+        sections=sections,
+    )
+
+
 def schema_renaming(old: str, new: str, *, version: str) -> Schema:
     """The sample Schema as a release that renamed `old` to `new` would ship it."""
     from dataclasses import replace

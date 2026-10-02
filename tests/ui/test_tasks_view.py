@@ -154,11 +154,39 @@ def test_a_curated_heading_with_an_ampersand_is_not_swallowed_by_pango(
     the string we give libadwaita is markup that parses, and parses to the heading the
     curator wrote.
     """
+    from dataclasses import replace
+
     from gi.repository import Pango
 
     from hyprtweaker.ui.pages.config import escaped
+    from hyprtweaker.ui.pages.tasks import PageSpec
 
     _session, window = build_window(tmp_path)
+    # The shipped headings no longer carry one ("Wallpaper and splash", review of spec
+    # #154), so the curator's ampersand is planted in the window's mapping.
+    mapping = window._load_mapping()
+    window._mapping = replace(
+        mapping,
+        categories=tuple(
+            replace(
+                category,
+                pages=tuple(
+                    replace(
+                        page,
+                        groups=tuple(
+                            replace(group, title="Splash & wallpaper") if index == 0 else group
+                            for index, group in enumerate(page.groups)
+                        ),
+                    )
+                    if isinstance(page, PageSpec) and page.id == "look.general"
+                    else page
+                    for page in category.pages
+                ),
+            )
+            for category in mapping.categories
+        ),
+    )
+    window.rebuild()
 
     # Reaching for a private helper is deliberate: the claim is about the exact string
     # handed to the toolkit, and no public surface reports that consistently across
@@ -351,7 +379,24 @@ def uncurate(window: Any, section: str) -> None:
 
 
 def test_a_fallback_page_with_only_advanced_options_says_so(tmp_path: Path) -> None:
-    _session, window = build_window(tmp_path)
+    """No shipped Section is all advanced since the review of spec #154, so `opengl`'s one
+    setting is raised to the tier here."""
+    from dataclasses import replace
+
+    from hyprtweaker.engine.schema import Schema, Visibility
+
+    session, window = build_window(tmp_path)
+    shipped = session.schema
+    session._schema = Schema(
+        hyprland_version=shipped.hyprland_version,
+        options=tuple(
+            replace(option, visibility=Visibility.ADVANCED)
+            if option.section == "opengl"
+            else option
+            for option in shipped
+        ),
+        sections=shipped.sections,
+    )
     uncurate(window, "opengl")
 
     assert "tasks.new.opengl" in sidebar_ids(window)
@@ -365,14 +410,14 @@ def test_a_fallback_page_with_only_advanced_options_says_so(tmp_path: Path) -> N
 
 
 def test_a_fallback_page_with_some_advanced_options_still_says_so(tmp_path: Path) -> None:
-    """The user who can see 20 cursor options must learn the other 2 exist."""
+    """The user who can see 21 cursor settings must learn the other one exists."""
     _session, window = build_window(tmp_path)
     uncurate(window, "cursor")
 
     page = next(page for page in window.pages if page.plan.section == "tasks.new.cursor")
-    assert len(page.rows) == 20
+    assert len(page.rows) == 21
     assert [title for title, _sub, _sens in hint_rows(window, "tasks.new.cursor")] == [
-        "2 advanced settings"
+        "1 advanced setting"
     ]
 
 

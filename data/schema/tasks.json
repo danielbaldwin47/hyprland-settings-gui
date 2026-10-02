@@ -20,7 +20,9 @@
     "Absent from this file on purpose: the hidden tier (`debug`, `quirks`, `experimental`,",
     "`input-capture`). ADR-0013 §5 makes it Config-view-only, so it has no Tasks home at any",
     "switch setting. The canvas's 19th page was an Advanced page holding exactly those; the",
-    "ADR is later and wins, so that page is not here.",
+    "ADR is later and wins, so that page is not here. The four settings of those Sections the",
+    "Overlay raises to the advanced tier (HDR and logging, review of spec #154) are homed on",
+    "Rendering, beside the settings they go with.",
     "",
     "Counts, so a curator can check them: 25 destinations in all -- 12 option Pages and 13",
     "entity references. That is more rows than the canvas's 19 because its consolidated",
@@ -39,7 +41,7 @@
           "sections": ["general"],
           "groups": [
             {
-              "title": "Splash & wallpaper",
+              "title": "Wallpaper and splash",
               "options": [
                 "misc:disable_hyprland_logo",
                 "misc:disable_splash_rendering",
@@ -167,14 +169,13 @@
           "sections": ["render", "opengl", "xwayland"],
           "groups": [
             {
-              "title": "Power & displays",
+              "title": "Displays and power",
               "options": [
                 "misc:vrr",
                 "misc:mouse_move_enables_dpms",
                 "misc:key_press_enables_dpms",
                 "misc:render_unfocused_fps",
-                "misc:screencopy_force_8b",
-                "misc:disable_scale_notification"
+                "misc:screencopy_force_8b"
               ]
             },
             {
@@ -187,15 +188,24 @@
               ]
             },
             {
-              "title": "Diagnostics",
+              "title": "Reloads and warnings",
               "options": [
                 "misc:disable_autoreload",
                 "misc:disable_xdg_env_checks",
                 "misc:disable_hyprland_guiutils_check",
                 "misc:disable_watchdog_warning",
                 "misc:enable_anr_dialog",
-                "misc:anr_missed_pings"
+                "misc:anr_missed_pings",
+                "misc:disable_scale_notification"
               ]
+            },
+            {
+              "title": "HDR compatibility",
+              "options": ["quirks:prefer_hdr", "debug:full_cm_proto"]
+            },
+            {
+              "title": "Logging and overlay",
+              "options": ["debug:disable_logs", "debug:overlay"]
             }
           ]
         },

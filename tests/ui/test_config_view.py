@@ -89,8 +89,8 @@ def test_the_advanced_switch_reveals_every_remaining_option(tmp_path: Path) -> N
 def test_a_page_that_shows_some_options_says_how_many_the_switch_withholds(
     tmp_path: Path,
 ) -> None:
-    """#136: Config ▸ Cursor shows 20 settings and withholds 2. The hint row closes the Page,
-    after its Groups, so the 2 are discoverable; the switch shows them and drops the hint."""
+    """#136: Config ▸ Cursor shows 21 settings and withholds 1. The hint row closes the Page,
+    after its Groups, so the 1 is discoverable; the switch shows it and drops the hint."""
     from gi.repository import Adw
 
     _session, window = build_window(tmp_path)
@@ -114,10 +114,10 @@ def test_a_page_that_shows_some_options_says_how_many_the_switch_withholds(
         return len(page.rows), hints
 
     assert foot("cursor") == (
-        20,
+        21,
         [
             (
-                "2 advanced settings",
+                "1 advanced setting",
                 "Turn on “Show advanced settings” in the main menu to see them.",
             )
         ],

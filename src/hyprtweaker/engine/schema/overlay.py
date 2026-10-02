@@ -22,6 +22,7 @@ from .types import (
     Dependency,
     KnownValues,
     OverlayEntry,
+    OverlayGroup,
     Range,
     Restart,
     SectionOverlay,
@@ -33,6 +34,7 @@ OVERLAY_FORMAT_VERSION = 1
 
 _ENTRY_KEYS = frozenset(field.name for field in fields(OverlayEntry))
 _SECTION_KEYS = frozenset(field.name for field in fields(SectionOverlay))
+_GROUP_KEYS = frozenset(field.name for field in fields(OverlayGroup))
 _TOP_LEVEL_KEYS = frozenset({"format_version", "sections", "options"})
 
 
@@ -123,13 +125,57 @@ def _parse_entry(name: str, payload: dict[str, Any]) -> OverlayEntry:
     )
 
 
+def _parse_groups(section: str, payload: Any) -> tuple[OverlayGroup, ...]:
+    if payload is None:
+        return ()
+    if not isinstance(payload, list):
+        raise ValueError(f"section {section!r}: groups must be a list")
+    groups: list[OverlayGroup] = []
+    for entry in payload:
+        where = f"section {section!r} group"
+        _reject_unknown(where, entry, _GROUP_KEYS)
+        if "title" not in entry:
+            raise ValueError(f"{where}: missing title")
+        title, description = entry["title"], entry.get("description")
+        if not isinstance(title, str):
+            raise ValueError(f"{where}: title {title!r} is not text")
+        if not title:
+            raise ValueError(f"{where}: empty title")
+        if description is not None and not isinstance(description, str):
+            raise ValueError(f"{where} {title!r}: description {description!r} is not text")
+        group = OverlayGroup(title=title, description=description)
+        if any(seen.title == group.title for seen in groups):
+            raise ValueError(f"section {section!r}: duplicate group {group.title!r}")
+        groups.append(group)
+    return tuple(groups)
+
+
 def _parse_section(name: str, payload: dict[str, Any]) -> SectionOverlay:
     _reject_unknown(f"section {name!r}", payload, _SECTION_KEYS)
     return SectionOverlay(
         title=payload.get("title"),
         help_url=payload.get("help_url"),
         visibility=Visibility(payload["visibility"]) if "visibility" in payload else None,
+        groups=_parse_groups(name, payload.get("groups")),
     )
+
+
+def _check_groups_declared(
+    sections: dict[str, SectionOverlay], options: dict[str, OverlayEntry]
+) -> None:
+    """An Option's `group` must name a Group its own Section declares.
+
+    A misspelt name would otherwise render as a stray heading of its own, after the curated
+    ones, with every test that reads titles still green."""
+    for name, entry in options.items():
+        if entry.group is None:
+            continue
+        section = sections.get(name.split(":", 1)[0])
+        declared = {group.title for group in section.groups} if section else set()
+        if entry.group not in declared:
+            raise ValueError(
+                f"option {name!r}: group {entry.group!r} is not one its Section declares"
+            )
 
 
 def loads(text: str) -> Overlay:
@@ -142,16 +188,14 @@ def loads(text: str) -> Overlay:
             f"overlay format version {found!r}, but this build reads {OVERLAY_FORMAT_VERSION}"
         )
 
-    return Overlay(
-        sections={
-            name: _parse_section(name, entry)
-            for name, entry in payload.get("sections", {}).items()
-        },
-        options={
-            name: _parse_entry(name, entry)
-            for name, entry in payload.get("options", {}).items()
-        },
-    )
+    sections = {
+        name: _parse_section(name, entry) for name, entry in payload.get("sections", {}).items()
+    }
+    options = {
+        name: _parse_entry(name, entry) for name, entry in payload.get("options", {}).items()
+    }
+    _check_groups_declared(sections, options)
+    return Overlay(sections=sections, options=options)
 
 
 def load(path: Path) -> Overlay:

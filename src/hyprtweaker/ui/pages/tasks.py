@@ -34,10 +34,10 @@ from .plan import (
     GroupPlan,
     PagePlan,
     View,
-    group_title,
     is_visible,
     is_withheld,
     new_in_group_title,
+    plan_groups,
 )
 
 TASKS_FILENAME = "tasks.json"
@@ -296,34 +296,37 @@ def _plan_page(
     like Rendering are settings pulled in from `misc`, and leading with borrowed settings
     would read as though `misc` were the subject.
 
+    A homed Section's Groups are the Config view's (`plan_groups`: curated Groups first,
+    then path-derived ones), Section by Section in the order the mapping names them; on a
+    Page spanning several, each heading leads with its Section's title.
+
     An Option the mapping places by name sits only where it was placed, on this Page or on
     another: one Option, one Row. One no group places, that a newer Hyprland added
-    (`added_in`), leaves its Section's Group for a `New in <version>` Group at the foot of
-    its home Page, so it stands out among the settings that were always there until
-    curation places it (ADR-0012).
+    (`added_in`) and that no Overlay Group places yet, leaves its Section's Groups for a
+    `New in <version>` Group at the foot of its home Page, so it stands out among the
+    settings that were always there until curation places it (ADR-0012).
     """
     withheld = 0
 
-    section_groups: dict[str, list[ResolvedOption]] = {}
+    groups: list[GroupPlan] = []
     new_in: dict[str, list[ResolvedOption]] = {}
     multi = len(spec.sections) > 1
     for section in spec.sections:
+        shown: list[ResolvedOption] = []
         for option in schema.section(section):
             if option.name in placed:
                 continue
             if not is_visible(option, disclosure):
                 withheld += is_withheld(option, disclosure)
                 continue
-            if option.added_in is not None:
+            if option.added_in is not None and option.group is None:
                 new_in.setdefault(option.added_in, []).append(option)
                 continue
-            title = _section_group_title(schema, option, section, multi=multi)
-            section_groups.setdefault(title, []).append(option)
-
-    groups = [
-        GroupPlan(title=title, options=tuple(options))
-        for title, options in sorted(section_groups.items(), key=lambda item: item[1][0].order)
-    ]
+            shown.append(option)
+        groups.extend(
+            _under_section(schema, group, section) if multi else group
+            for group in plan_groups(schema, section, shown)
+        )
 
     for group in spec.groups:
         members: list[ResolvedOption] = []
@@ -358,21 +361,17 @@ def _plan_page(
     )
 
 
-def _section_group_title(
-    schema: Schema, option: ResolvedOption, section: str, *, multi: bool
-) -> str:
-    """The heading an Option sits under on a curated Page.
+def _under_section(schema: Schema, group: GroupPlan, section: str) -> GroupPlan:
+    """A Group on a Page spanning several Sections, headed by its Section's title.
 
-    On a single-Section Page this is exactly the Config view's answer, so a Page that
-    happens to be one Section reads the same in both views. On a Page spanning several --
-    Layouts is four -- the Section's own title leads, because the alternative is every
-    Section's untitled lead Group merging into one heap of unrelated settings.
+    On a single-Section Page the Group is exactly the Config view's, so a Page that happens
+    to be one Section reads the same in both Views. On a Page spanning several -- Layouts
+    is four -- the Section's own title leads, because the alternative is every Section's
+    untitled lead Group merging into one heap of unrelated settings.
     """
-    derived = group_title(option)
-    if not multi:
-        return derived
     section_title = schema.section_title(section)
-    return f"{section_title} · {derived}" if derived else section_title
+    title = f"{section_title} · {group.title}" if group.title else section_title
+    return replace(group, title=title)
 
 
 PLUGIN_GROUP_TITLE = "Plugin options"
