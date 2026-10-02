@@ -23,8 +23,11 @@ from typing import Any
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
 
-from gi.repository import Gtk  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
+
+from hyprtweaker.ui.rows.factory import caption  # noqa: E402
 
 SIDES: tuple[str, ...] = ("top", "right", "bottom", "left")
 """CSS order, and Hyprland's: a four-element css-gap table reads top, right, bottom, left."""
@@ -91,12 +94,12 @@ class GapField(Gtk.Box):
         self.uniform_toggle = Gtk.CheckButton(label="Same on all sides", active=not per_side)
 
         uniform_box = Gtk.Box(spacing=12)
-        uniform_box.append(_caption("All sides", expand=True))
+        uniform_box.append(caption("All sides", expand=True))
         uniform_box.append(self.all_sides)
 
         grid = Gtk.Grid(column_spacing=12, row_spacing=6)
         for column, side in enumerate(SIDES):
-            grid.attach(_caption(side.capitalize()), column, 0, 1, 1)
+            grid.attach(caption(side.capitalize()), column, 0, 1, 1)
             grid.attach(self.sides[side], column, 1, 1, 1)
 
         self._shape = Gtk.Stack()
@@ -161,7 +164,36 @@ def _int(value: Any) -> int:
         return 0
 
 
-def _caption(text: str, *, expand: bool = False) -> Gtk.Label:
-    return Gtk.Label(
-        label=text, xalign=0.0, hexpand=expand, css_classes=["caption", "dim-label"]
+def gap_row(
+    title: str,
+    field: GapField,
+    *,
+    subtitle: str | None = None,
+    suffix: Gtk.Widget | None = None,
+) -> Adw.PreferencesRow:
+    """The row a `GapField` sits in: its title (and `suffix`, a trash button say) on one
+    line, the help under it, the control below. A box in a plain `PreferencesRow`, because
+    the field is too wide to be an `Adw.ActionRow` suffix."""
+    heading = Gtk.Box(spacing=6)
+    heading.append(Gtk.Label(label=title, xalign=0.0, hexpand=True))
+    if suffix is not None:
+        heading.append(suffix)
+    box = Gtk.Box(
+        orientation=Gtk.Orientation.VERTICAL,
+        spacing=6,
+        margin_top=12,
+        margin_bottom=12,
+        margin_start=12,
+        margin_end=12,
     )
+    box.append(heading)
+    if subtitle:
+        box.append(
+            Gtk.Label(
+                label=subtitle, xalign=0.0, wrap=True, css_classes=["dim-label", "caption"]
+            )
+        )
+    box.append(field)
+    row = Adw.PreferencesRow(title=title, activatable=False)
+    row.set_child(box)
+    return row

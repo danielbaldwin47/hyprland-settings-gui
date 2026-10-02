@@ -38,7 +38,7 @@ from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     parse_mode,
     sdr_eotf_name,
 )
-from hyprtweaker.ui.rows.gap_field import GapField, commit_on_settle  # noqa: E402
+from hyprtweaker.ui.rows.gap_field import GapField, commit_on_settle, gap_row  # noqa: E402
 
 Apply = Callable[[Mapping[str, Any]], None]
 """One edit to the display's rule: `{field: value}`, `UNSET` meaning "remove this key"."""
@@ -285,27 +285,11 @@ def reserved_row(value: Any, apply: Apply, *, editable: bool) -> Adw.Preferences
         on_commit=lambda gaps: apply({"reserved": gaps}),
     )
     field.set_sensitive(editable)
-    box = Gtk.Box(
-        orientation=Gtk.Orientation.VERTICAL,
-        spacing=6,
-        margin_top=12,
-        margin_bottom=12,
-        margin_start=12,
-        margin_end=12,
+    return gap_row(
+        "Reserved area",
+        field,
+        subtitle="Space kept free at the edges, in pixels, for bars and docks.",
     )
-    box.append(Gtk.Label(label="Reserved area", xalign=0.0))
-    box.append(
-        Gtk.Label(
-            label="Space kept free at the edges, in pixels, for bars and docks.",
-            xalign=0.0,
-            wrap=True,
-            css_classes=["dim-label", "caption"],
-        )
-    )
-    box.append(field)
-    row = Adw.PreferencesRow(title="Reserved area", activatable=False)
-    row.set_child(box)
-    return row
 
 
 # --- Advanced colour --------------------------------------------------------------------

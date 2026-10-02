@@ -42,7 +42,7 @@ from hyprtweaker.engine.workspace_catalog import (  # noqa: E402
     find_field,
     retype_like,
 )
-from hyprtweaker.ui.rows.gap_field import GapField  # noqa: E402
+from hyprtweaker.ui.rows.gap_field import GapField, gap_row  # noqa: E402
 
 _MISSING: Any = object()
 """No value: a row that holds none writes no key."""
@@ -256,7 +256,7 @@ class WorkspaceFieldRows:
         if kind is WorkspaceFieldType.GAPS:
             field = GapField(opening, on_commit=lambda _gaps: self._touch(row))
             self._gaps[spec.name] = field
-            widget = _gap_row(spec.title, field, remove)
+            widget = gap_row(spec.title, field, subtitle=spec.help or None, suffix=remove)
             row = _Row(spec.name, widget, value, lambda: field.value)
         elif kind is WorkspaceFieldType.BOOL:
             switch = Adw.SwitchRow(title=spec.title, subtitle=spec.help, active=bool(opening))
@@ -431,23 +431,3 @@ def _trash(tooltip: str) -> Gtk.Button:
     )
     button.set_tooltip_text(tooltip)
     return button
-
-
-def _gap_row(title: str, field: GapField, remove: Gtk.Button) -> Adw.PreferencesRow:
-    """A row for the gap control, which is a box and not an `Adw.ActionRow`."""
-    heading = Gtk.Box(spacing=6)
-    heading.append(Gtk.Label(label=title, xalign=0.0, hexpand=True))
-    heading.append(remove)
-    box = Gtk.Box(
-        orientation=Gtk.Orientation.VERTICAL,
-        spacing=6,
-        margin_top=12,
-        margin_bottom=12,
-        margin_start=12,
-        margin_end=12,
-    )
-    box.append(heading)
-    box.append(field)
-    row = Adw.PreferencesRow(title=title, activatable=False)
-    row.set_child(box)
-    return row
