@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--predecessor",
         type=Path,
-        help="the previous shipped Generated schema: stamps `added_in` (absent file: no stamps)",
+        help="previous shipped Generated schema: stamps `added_in` (absent file: no stamps)",
     )
     parser.add_argument("-o", "--out", type=Path, required=True)
     args = parser.parse_args(argv)
