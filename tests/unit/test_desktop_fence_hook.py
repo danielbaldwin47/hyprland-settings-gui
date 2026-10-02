@@ -1,7 +1,9 @@
-"""The desktop fence (#204, #209): a PreToolUse hook on Bash that refuses an agent's bare
-`hyprctl`, `Hyprland`, `wtype` and `ydotool` against the owner's desktop compositor, a pattern
-kill (`pkill`, `killall`), a GTK start outside the probe route, an X server started from the
-agent's shell, and a removal, move or link of the session's X sockets and locks.
+"""The desktop fence (#204, #209, review of #151): a PreToolUse hook on Bash and Monitor that
+refuses an agent's bare `hyprctl`, `Hyprland`, `wtype`, `xdotool` and `ydotool` against the
+owner's desktop compositor, a pattern kill (`pkill`, `killall`, `kill $(pgrep …)`), a GTK start
+outside the probe route, an X server started from the agent's shell, a removal, move or link of
+the session's X sockets and locks, and the owner's `HYPRTWEAKER_UI_HOST_DISPLAY` opt-in. A
+command line handed to a shell (`bash -c`, `eval`, `watch`) is judged in turn.
 
 The hook is fed tool-call payloads on stdin, as Claude Code feeds it, and its stdout is read
 for the verdict. Nothing here runs `hyprctl`, `Hyprland`, `wtype`, `ydotool`, `pkill`,
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -89,10 +92,12 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[World]:
             process.wait()
 
 
-def verdict(hook: Path, command: str, env: dict[str, str]) -> str | None:
+def verdict(
+    hook: Path, command: str, env: dict[str, str], tool_name: str = "Bash"
+) -> str | None:
     """The hook's refusal reason for `command`, or None when it lets the call through."""
     payload = json.dumps(
-        {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(ROOT)}
+        {"tool_name": tool_name, "tool_input": {"command": command}, "cwd": str(ROOT)}
     )
     result = subprocess.run(
         [tool("bash"), str(hook)],
@@ -193,6 +198,70 @@ REFUSED = [
     "unlink /tmp/.X11-unix/X0",
     "find /tmp/.X11-unix -name 'X*' -delete",
     "ls /tmp/.X11-unix && rm /tmp/.X11-unix/X0",
+    # review #151, 4: a kill by name or of a process group, in the shapes tried after pkill
+    "kill $(pgrep -f Xvfb)",
+    "kill $(pidof Hyprland)",
+    "pgrep -f foot | xargs kill",
+    "kill -9 -1",
+    "kill 0",
+    "kill -- -4321",
+    "kill -TERM `pgrep foot`",
+    "kill -s KILL $(pgrep foot)",
+    "pids=$(pgrep -f Xvfb); kill $pids",
+    'pgrep -f foot | while read -r p; do kill "$p"; done',
+    'for p in $(pidof foot); do kill "$p"; done',
+    "ps aux | grep Xvfb | awk '{print $2}' | xargs kill -9",
+    "fuser -k /tmp/.X11-unix/X0",
+    # review #151, 5: the owner's opt-in that maps the UI tier on the desktop
+    "HYPRTWEAKER_UI_HOST_DISPLAY=1 .venv/bin/pytest tests/ui",
+    "export HYPRTWEAKER_UI_HOST_DISPLAY=1",
+    "export HYPRTWEAKER_UI_HOST_DISPLAY=1 && .venv/bin/pytest -q tests/ui",
+    "env HYPRTWEAKER_UI_HOST_DISPLAY=1 .venv/bin/pytest tests/ui",
+    # review #151, 7: a wrapper option that takes a value, and the other wrappers
+    "sudo -u diggle hyprctl reload",
+    "timeout -s KILL 5 hyprctl reload",
+    "timeout --signal KILL 5 hyprctl reload",
+    "xargs -a cmds.txt hyprctl",
+    "sudo -u diggle env hyprctl reload",
+    "nice -n 5 hyprctl reload",
+    "ionice -c 3 hyprctl reload",
+    "taskset -c 0 hyprctl reload",
+    "flock /tmp/x.lock hyprctl reload",
+    "flock /tmp/x.lock -c 'hyprctl reload'",
+    "systemd-run --user -p Nice=5 hyprctl reload",
+    "strace -o /tmp/t hyprctl reload",
+    "watch -n 1 hyprctl -j clients",
+    "watch 'hyprctl -j clients | jq length'",
+    # review #151, 8: a command line handed to a shell
+    "bash -c 'hyprctl reload'",
+    "timeout 60 sh -c 'Xvfb :1'",
+    "bash -lc 'cd /tmp && hyprctl -j clients'",
+    "bash -c 'ls\nhyprctl reload'",
+    "bash <<'EOF'\nls\nhyprctl reload\nEOF",
+    "eval 'hyprctl reload'",
+    # review #151, 9: the other X servers, and xdotool on the session's display
+    "Xephyr :1",
+    "Xnest :1",
+    "Xvnc :1",
+    "X :1",
+    "startx",
+    "xdotool key ctrl+c",
+    "DISPLAY=:0 xdotool type hi",
+    "DISPLAY=:1 xdotool type hi",
+    "DISPLAY=$D xdotool type hi",
+    # review #151, 10: python code that runs a fenced command, or loads GTK on stdin
+    "python3 -c \"import subprocess; subprocess.run(['hyprctl','reload'])\"",
+    "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['hyprctl', 'reload'])\nEOF",
+    "python3 -c 'import os; os.system(\"Xvfb :1 &\")'",
+    "python3 -c \"import os; os.unlink('/tmp/.X11-unix/X0')\"",
+    "python3 <<< 'from gi.repository import Gtk'",
+    "echo 'from gi.repository import Gtk' | python3 -",
+    # review #151, 22: the module attached to its flag
+    ".venv/bin/python -mhyprtweaker",
+    "python3 -c'from gi.repository import Gtk'",
+    # review #151, 23: what the narrower X-file checks still refuse
+    "find /tmp/.X11-unix -exec rm {} +",
+    "cd /tmp && rm .X0-lock",
 ]
 
 ALLOWED = [
@@ -253,6 +322,57 @@ ALLOWED = [
     "ln -s /tmp/a /tmp/b",
     "find src -name '*.py'",
     "cd /tmp && ls .X11-unix",
+    # review #151, 4: a recorded pid, a signal by number, a listing
+    'kill "$(cat /tmp/x.pid)"',
+    "kill -1 1234",
+    "kill -9 1234 5678",
+    "kill -l",
+    "kill %1",
+    "pgrep -f Xvfb || echo none",
+    "pgrep -f foot | wc -l",
+    "pids=$(pgrep -f Xvfb); echo $pids",
+    "pgrep -af Xvfb; kill 1234",
+    "fuser /tmp/.X11-unix/X0",
+    # review #151, 5: the variable as data, cleared, or empty
+    "grep -rn HYPRTWEAKER_UI_HOST_DISPLAY tests/ docs/",
+    "unset HYPRTWEAKER_UI_HOST_DISPLAY",
+    "HYPRTWEAKER_UI_HOST_DISPLAY= .venv/bin/pytest tests/ui",
+    "echo 'HYPRTWEAKER_UI_HOST_DISPLAY=1 is for the owner'",
+    # review #151, 7: wrappers around commands that cannot reach the desktop
+    "timeout -s KILL 60 .venv/bin/pytest -q tests/unit",
+    "timeout 60 grep -rn hyprctl docs/",
+    "sudo -u diggle ls /root",
+    "xargs -a files.txt grep hyprctl",
+    "flock /tmp/x.lock .venv/bin/pytest -q",
+    "taskset -c 0 .venv/bin/pytest -q",
+    "watch -n 1 'grep -c hyprctl docs/agents/local-checks.md'",
+    # review #151, 8: a shell whose command line cannot reach the desktop
+    "bash -c 'echo hyprctl'",
+    "sh -c 'ls /tmp/.X11-unix'",
+    "bash -c 'cd /tmp && ls'",
+    "bash <<'EOF'\necho hyprctl reload\nEOF",
+    "bash tools/some_script.sh",
+    "eval 'echo hyprctl'",
+    # review #151, 9: xdotool on a private display, the words as data
+    "DISPLAY=:250 xdotool type hi",
+    "env DISPLAY=:201.0 xdotool key Return",
+    "which Xephyr xdotool",
+    # review #151, 10: python that only names GTK, or runs nothing fenced
+    "python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -m \"Binds: Gtk row\"",
+    "python3 -c \"print('Gtk')\"",
+    "python3 - <<'EOF'\nimport ast, pathlib\n"
+    "for p in pathlib.Path('src').rglob('*.py'):\n"
+    "    tree = ast.parse(p.read_text())\n"
+    "    print(p, sum(getattr(n.value, 'id', '') == 'Gtk' for n in ast.walk(tree)"
+    " if isinstance(n, ast.Attribute)))\nEOF",
+    "python3 -c \"import subprocess; subprocess.run(['git', 'log'])\"",
+    "python3 -c \"import subprocess; subprocess.run(['grep', '-c', 'x', 'hyprland.lua'])\"",
+    "python3 -c \"import os; print(os.listdir('/tmp/.X11-unix'))\"",
+    # review #151, 22: another module attached to its flag
+    ".venv/bin/python -mpytest -q tests/unit",
+    # review #151, 23: an X lock name outside /tmp, and a find that only reads
+    "rm /tmp/pytest-of-diggle/pytest-1/test_lock0/.X200-lock",
+    "find /tmp/.X11-unix -exec ls -l {} +",
 ]
 
 
@@ -291,6 +411,23 @@ def test_the_fence_lets_through_what_cannot_reach_the_desktop(
         ("Xwayland :5", "`Xwayland`", "start_xvfb"),
         ("rm /tmp/.X11-unix/X0", "`rm`", "ls /tmp/.X11-unix"),
         ("ln /tmp/.X11-unix/X0_ /tmp/.X11-unix/X0", "`ln`", "ls /tmp/.X11-unix"),
+        ("kill $(pgrep -f Xvfb)", "`kill`", "kill <pid>"),
+        ("pgrep -f foot | xargs kill", "`pgrep`", "kill <pid>"),
+        ("kill -9 -1", "process group", "kill <pid>"),
+        ("fuser -k /tmp/.X11-unix/X0", "`fuser -k`", "kill <pid>"),
+        (
+            "HYPRTWEAKER_UI_HOST_DISPLAY=1 .venv/bin/pytest tests/ui",
+            "owner's opt-in",
+            ".venv/bin/pytest tests/ui",
+        ),
+        ("Xephyr :1", "`Xephyr`", "start_xvfb"),
+        ("DISPLAY=:0 xdotool type hi", "`xdotool`", "DISPLAY=:<200-999>"),
+        ("bash -c 'hyprctl reload'", "`hyprctl reload`", "hyprctl --instance <signature"),
+        (
+            "python3 -c \"import subprocess; subprocess.run(['hyprctl','reload'])\"",
+            "`hyprctl`",
+            "hyprctl --instance <signature",
+        ),
     ],
 )
 def test_a_refusal_names_the_call_why_and_the_shape_that_works(
@@ -313,6 +450,15 @@ def test_a_refusal_says_why_this_selector_is_not_nested(world: World) -> None:
     assert inherited is not None and "HYPRLAND_INSTANCE_SIGNATURE" in inherited
     unexpanded = verdict(FENCE, "HYPRLAND_INSTANCE_SIGNATURE=$SIG hyprctl clients", world.env)
     assert unexpanded is not None and "$SIG" in unexpanded
+
+
+def test_a_command_past_the_argument_limit_is_judged_not_refused_unread(world: World) -> None:
+    # 140 KB is past the 128 KiB that one environment string may hold (review #151, 21).
+    filler = "a plain line of notes, nothing fenced in it\n" * 3300
+    assert len(filler) > 140_000
+    tool("jq")
+    assert verdict(FENCE, f"cat > notes.md <<'EOF'\n{filler}EOF", world.env) is None
+    assert verdict(FENCE, f"cat > notes.md <<'EOF'\n{filler}EOF\nhyprctl reload", world.env)
 
 
 @pytest.fixture
@@ -345,6 +491,15 @@ def test_without_jq_the_fence_fails_closed_on_the_four_words(no_jq_env: dict[str
         "rm /tmp/.X11-unix/X0",
         "ln /tmp/.X11-unix/X0_ /tmp/.X11-unix/X0",
         "rm -f /tmp/.X0-lock",
+        "kill $(pgrep -f Xvfb)",
+        "pgrep -f foot | xargs kill",
+        "kill -9 -1",
+        "fuser -k /tmp/.X11-unix/X0",
+        "HYPRTWEAKER_UI_HOST_DISPLAY=1 .venv/bin/pytest tests/ui",
+        "Xephyr :1",
+        "X :1",
+        "xdotool key ctrl+c",
+        ".venv/bin/python -mhyprtweaker",
     ],
 )
 def test_without_jq_the_fence_refuses_the_new_words(
@@ -368,6 +523,10 @@ def test_without_jq_the_fence_refuses_the_new_words(
         ".venv/bin/ruff check src/hyprtweaker",
         "ls /tmp/.X11-unix/",
         "rm -f /tmp/scratch.txt",
+        "kill -9 1234",
+        "kill -1 1234",
+        "pgrep -af foot",
+        "HYPRTWEAKER_UI_HOST_DISPLAY= .venv/bin/pytest tests/ui",
     ],
 )
 def test_without_jq_the_fence_still_lets_the_ordinary_checks_through(
@@ -376,17 +535,38 @@ def test_without_jq_the_fence_still_lets_the_ordinary_checks_through(
     assert verdict(FENCE, command, no_jq_env) is None
 
 
+def hooks_for(tool_name: str) -> list[str]:
+    """The PreToolUse hook commands Claude Code runs for `tool_name`: a matcher is a regex."""
+    settings = json.loads((ROOT / ".claude" / "settings.json").read_text())
+    return [
+        hook["command"]
+        for entry in settings["hooks"]["PreToolUse"]
+        if re.fullmatch(entry["matcher"], tool_name)
+        for hook in entry["hooks"]
+    ]
+
+
 def test_settings_register_both_hooks_on_bash_and_the_base_guard_still_refuses_a_merge(
     world: World,
 ) -> None:
     tool("jq")
-    settings = json.loads((ROOT / ".claude" / "settings.json").read_text())
-    commands = [
-        hook["command"]
-        for entry in settings["hooks"]["PreToolUse"]
-        if entry["matcher"] == "Bash"
-        for hook in entry["hooks"]
-    ]
+    commands = hooks_for("Bash")
     assert any(command.endswith("/.claude/hooks/pr-base-guard.sh") for command in commands)
     assert any(command.endswith("/.claude/hooks/desktop-fence.sh") for command in commands)
     assert verdict(BASE_GUARD, "gh pr merge 5", world.env) is not None
+
+
+def test_the_fence_also_judges_a_monitor_command(world: World) -> None:
+    # The Monitor tool runs a shell command too; agents arm one while CI runs (review #151, 6).
+    assert any(
+        command.endswith("/.claude/hooks/desktop-fence.sh") for command in hooks_for("Monitor")
+    )
+    assert not any(
+        command.endswith("/.claude/hooks/desktop-fence.sh") for command in hooks_for("Read")
+    )
+    tool("jq")
+    loop = "while true; do hyprctl -j clients; sleep 5; done"
+    assert verdict(FENCE, loop, world.env, tool_name="Monitor") is not None
+    assert (
+        verdict(FENCE, "gh run watch 5 --exit-status", world.env, tool_name="Monitor") is None
+    )
