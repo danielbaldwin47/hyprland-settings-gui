@@ -847,19 +847,29 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_rollback_response(
         self, _dialog: Adw.AlertDialog, response: str, pending: Sentinel
     ) -> None:
+        # Answered once: closing the dialog emits its close response ("roll-back") again,
+        # and a second roll back used to delete the file the first put back (hand-test 19).
+        _dialog.disconnect_by_func(self._on_rollback_response)
         flow = self.migration_flow()
         if response == "keep":
             flow.keep()
             return
         flow.roll_back(pending)
         self._spawn(flow.reload_restored())
-        if flow.rollback_notes:
-            # A theming tool's file left as the user changed it, or one that could not be
-            # put back, is said here as the wizard's own Roll back says it (finding 21).
-            GLib.idle_add(self._show_rollback_notes, flow.rollback_notes)
+        # The user's own file is back, so the session must not write to the app's Modules
+        # any more: the same offer a launch on that file makes (#148 hand-tests 19, 20).
+        detection = self._detect()
+        if detection.offers_import:
+            self._offered = detection
+            self._session.set_read_only(READ_ONLY_REASON[detection.kind])
+            self.sync_banner()
+        # Said, as the wizard's own Roll back says it, with any theming tool's file left
+        # as the user changed it or not put back (finding 21).
+        GLib.idle_add(self._show_rollback_notes, flow.rollback_notes)
 
     def _show_rollback_notes(self, notes: tuple[str, ...]) -> bool:
-        dialog = Adw.AlertDialog(heading="Rolled back", body="\n\n".join(notes))
+        body = "\n\n".join(("You are on the configuration you had before the switch.", *notes))
+        dialog = Adw.AlertDialog(heading="Rolled back", body=body)
         dialog.add_response("ok", "OK")
         dialog.present(self)
         return GLib.SOURCE_REMOVE

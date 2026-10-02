@@ -3217,6 +3217,10 @@ class Session:
             return
         await self._scan_drift(client)
         self.load_waiting_bridges()
+        if self._lua_missing is None and self._unsupported_reason is None:
+            # Held read-only behind an import offer (a rolled-back switch, #148 hand-test
+            # 20): the import is kept now, so the session applies again.
+            self._offline_reason = None
         self._changed()
 
     async def _reread_after_foreign_reload(self, keep: Collection[str] = ()) -> None:

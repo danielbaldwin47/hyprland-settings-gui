@@ -50,7 +50,7 @@ from ..state.manifest import Manifest
 from ..tools import detached_environment, find_tool
 from ..writer import Writer, load_manifest
 from ..writer.binds import live_bind_count
-from ..writer.lua import table_key
+from ..writer.lua import GENERATED_BANNER, table_key
 from . import backup as backups
 from . import bridge_setup
 from . import sentinel as sentinels
@@ -729,6 +729,9 @@ class MigrationFlow:
         never made: after a crash the marker on disk is the only thing that remembers what
         the previous config was.
 
+        Idempotent, and it only ever deletes an Entrypoint this app generated: a second call
+        finds the `.bak` already moved back and the user's own file in place, and leaves it.
+
         Each theming tool the switch wired is unwired first, while the Entrypoint still has
         its line (#187). One that cannot be put back is said in `rollback_notes` and does
         not stop the rest: the user is never stranded on the new config for a tool's sake.
@@ -744,11 +747,30 @@ class MigrationFlow:
 
         if restore and restore.is_file():
             os.replace(restore, self.paths.entrypoint)
-        else:
-            self.paths.entrypoint.unlink(missing_ok=True)
+        elif _generated_by_this_app(self.paths.entrypoint):
+            self.paths.entrypoint.unlink()
+        # Otherwise the Entrypoint is the user's own -- put back by an earlier call of this
+        # (a second answer to the relaunch offer, #148 hand-test 19) -- and is never deleted.
+        if not _generated_by_this_app(self.paths.entrypoint):
+            self._disown_app_dir()
 
         sentinels.clear(self.paths)
         self.step = Step.DONE
+
+    def _disown_app_dir(self) -> None:
+        """Move the App dir the rolled-back switch wrote into the state directory.
+
+        Nothing loads it now, and left in place its Manifest claimed the user's own config
+        for the app: the next launch wrote edits into Modules nothing loads (#148 hand-tests
+        20, 25). Moved, never deleted: presets or profiles in it stay in reach.
+        """
+        app_dir = self.paths.app_dir
+        if not app_dir.is_dir():
+            return
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        target = self.paths.state_dir / ROLLED_BACK_DIR / stamp
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(app_dir), str(target / app_dir.name))
 
     async def roll_back_live(self, marker: sentinels.Sentinel | None = None) -> None:
         """Roll back and make the running session read the restored config."""
@@ -970,3 +992,16 @@ __all__ = [
     "VerifyGate",
     "fresh_start",
 ]
+
+
+ROLLED_BACK_DIR = "rolled-back"
+"""Where a Roll back keeps the App dir it disowns, one `<timestamp>/` each."""
+
+
+def _generated_by_this_app(path: Path) -> bool:
+    """Whether `path` is a file this app generated: it opens with the app's banner."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return text.startswith(GENERATED_BANNER.split("{", 1)[0])

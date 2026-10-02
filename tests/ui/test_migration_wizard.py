@@ -1347,7 +1347,7 @@ def test_a_relaunched_roll_back_says_which_tool_file_it_left(tmp_path: Path) -> 
 
     said = window.get_visible_dialog()
     assert said.get_heading() == "Rolled back"
-    assert said.get_body() == (
+    assert said.get_body() == "You are on the configuration you had before the switch.\n\n" + (
         f"{tmp_path}/matugen/config.toml changed after matugen was set up, so it was left "
         f"as it is. The copy from before setup is in {tmp_path}/state/bridge-backups/."
     )
