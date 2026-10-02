@@ -1189,9 +1189,7 @@ class MainWindow(Adw.ApplicationWindow):
                     forget=lambda: self._remember(
                         self._prefs.without_remembered(COLOR_CONFLICT_DIALOG)
                     ),
-                    remember=lambda choice: self._remember(
-                        self._prefs.with_remembered(COLOR_CONFLICT_DIALOG, choice.value)
-                    ),
+                    remember=self._remember_colours,
                     toast=self._toast,
                 ),
             ),
@@ -2214,7 +2212,7 @@ class MainWindow(Adw.ApplicationWindow):
         part could not do arrives through `show_preset_note`.
         """
         if remember and colors is not None:
-            self._remember(self._prefs.with_remembered(COLOR_CONFLICT_DIALOG, colors.value))
+            self._remember_colours(colors)
         if colors is None:
             colors = remembered_choice(self._prefs.remembered)
         result = self._session.apply_preset(slug, colors=colors, wallpaper=wallpaper)
@@ -2246,10 +2244,13 @@ class MainWindow(Adw.ApplicationWindow):
     def _answer_colours(
         self, slug: str, wallpaper: bool, choice: ColorChoice, remember: bool
     ) -> None:
-        if remember:
-            self._remember(self._prefs.with_remembered(COLOR_CONFLICT_DIALOG, choice.value))
-        self.apply_preset(slug, wallpaper=wallpaper, colors=choice)
+        self.apply_preset(slug, wallpaper=wallpaper, colors=choice, remember=remember)
         self.sync()
+
+    def _remember_colours(self, choice: ColorChoice) -> None:
+        """Keep the answer to "whose colours win", so it is not asked again: the one place
+        it is written, for the Apply dialog, the colour question and the import alike."""
+        self._remember(self._prefs.with_remembered(COLOR_CONFLICT_DIALOG, choice.value))
 
     def _on_colour_conflict_closed(self, dialog: ColourConflictDialog) -> None:
         if self._colour_conflict is dialog:
