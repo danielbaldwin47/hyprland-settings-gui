@@ -164,6 +164,43 @@ def test_values_round_trip_after_the_app_is_closed_and_reopened(
         assert set(second) == set(BEFORE), "and nothing beyond what the app itself wrote"
 
 
+def test_an_override_already_in_user_lua_is_badged_at_launch(
+    harness_home: Path, artifacts: Path
+) -> None:
+    """The drift scan (#191) against a real compositor: `user.lua` beats the app's Module
+    while the app is closed, and the next session knows before anything is edited."""
+    paths = config_root(harness_home)
+    paths.entrypoint.write_text(f'require("{paths.require_path(paths.user_lua)}")\n')
+
+    with start_nested(paths, harness_home, artifacts / "nested.log") as nested:
+        asyncio.run(run_session(nested, paths, {ROUNDING: AFTER_ROUNDING}))
+        with paths.user_lua.open("a", encoding="utf-8") as user_lua:
+            user_lua.write("hl.config({ decoration = { rounding = 3 } })\n")
+        nested.hyprctl_text("reload")
+        assert _value(nested.getoptions([ROUNDING])[ROUNDING]) == 3
+
+        async def launch() -> tuple[frozenset[str], frozenset[str]]:
+            loop = Loop()
+            session = Session(
+                spawn=loop.spawn,
+                schema=SCHEMA,
+                paths=paths,
+                app_version=APP_VERSION,
+                connect=lambda: nested.instance,
+            )
+            session.start()
+            await loop.settle()
+            assert session.live, session.offline_reason
+            marks = session.overridden, session.unapplied
+            await session.aclose()
+            return marks
+
+        overridden, unapplied = asyncio.run(launch())
+
+        assert overridden == {ROUNDING}
+        assert unapplied == frozenset()
+
+
 def _value(record: Any) -> Any:
     from harness.state import option_value
 

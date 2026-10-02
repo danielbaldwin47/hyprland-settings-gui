@@ -310,6 +310,23 @@ def test_a_restart_flagged_row_swaps_its_pill_once_the_write_lands() -> None:
     assert row.chrome.pill_labels == ("Pending restart",)
 
 
+def test_a_row_overridden_at_launch_wears_the_pill_before_any_edit() -> None:
+    """The launch drift scan (#191) fills `overridden` before the window is built: the Row
+    shows it on sight, and clears it when a later scan finds the override gone."""
+    session = FakeSession()
+    session.overridden = frozenset({GAPS_IN})
+
+    row = build_row(GAPS_IN, session)
+
+    assert row.chrome.pill_labels == ("Overridden",)
+    assert session.applied == [], "nothing was edited"
+
+    session.overridden = frozenset()
+    row.chrome.refresh()
+
+    assert row.chrome.pill_labels == ()
+
+
 def test_a_row_the_running_hyprland_lacks_says_so_and_still_writes() -> None:
     """#181: the pill informs, the control stays live, and an edit is written as before."""
     live = LiveHyprland("0.56.0", tuple({"name": o.name} for o in SCHEMA if o.name != ROUNDING))
