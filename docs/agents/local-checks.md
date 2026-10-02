@@ -14,7 +14,7 @@ timeout 900 .venv/bin/pytest -q -n auto
 - `pytest` with no path runs the per-commit tiers (ADR-0011 tiers 1, 2 and 4) in `pyproject.toml` `testpaths` (unit, static, ui): 2245 passed, 12 skipped in about 12 s with `-n auto` (68 s serial) with #146. CI fails a run with more skips than `SKIP_CEILING` in `.github/workflows/ci.yml`; a ticket that adds or removes an intentional skip moves that number.
 - **One pytest run at a time on the machine.** The controller takes a lock, `$XDG_RUNTIME_DIR/hyprtweaker-pytest.lock` (root `conftest.py`), before it collects. A run started while another holds it, from any checkout or worktree, prints `pytest: waiting for <lock>, held by PID <n> (<checkout>)` and queues, then `pytest: took <lock> after <s> s` when its turn comes; a run that gets the lock at once prints neither. The `timeout 900` counts the wait. xdist workers, pytest runs a test starts inside a locked run, and CI (`CI` set) take no lock.
 - `-n auto` is pytest-xdist, installed in the shared venv. It stays out of `addopts`: `meson test` runs the system pytest, which may lack xdist.
-- The UI tier draws on an Xvfb of its own in each pytest process and sandboxes the config dir per test (`tests/ui/conftest.py`), so it never reaches the desktop compositor. It skips without GTK or without `Xvfb`; `HYPRTWEAKER_REQUIRE_UI=1` makes that skip a failure. To watch it, set `HYPRTWEAKER_UI_HOST_DISPLAY=1`: its windows then map on the desktop session, and Hyprland may raise its "Application Not Responding" dialog over them.
+- The UI tier draws on an Xvfb of its own in each pytest process, on a display in 200-999 (§ Private X displays), and sandboxes the config dir per test (`tests/ui/conftest.py`), so it never reaches the desktop compositor. It skips without GTK or without `Xvfb`; `HYPRTWEAKER_REQUIRE_UI=1` makes that skip a failure. To watch it, set `HYPRTWEAKER_UI_HOST_DISPLAY=1`: its windows then map on the desktop session, and Hyprland may raise its "Application Not Responding" dialog over them.
 - `mypy` checks only the `files` list in `pyproject.toml` (the Engine and the gi-free modules above it, ADR-0011).
 
 ## Worktrees
@@ -44,6 +44,15 @@ It starts a nested Hyprland with a fresh sandbox `$HOME`, launches the app insid
 
   `hyprctl instances -j | jq length`, `systemctl --user show-environment`, `pytest`, and the four words as data (`grep hyprctl docs/`, a quoted string, a heredoc) pass. Without `jq` it refuses any call that names one of the four words. It binds every Claude Code session opened in this repo, the owner's included; the owner's own terminal is unaffected. A script, `bash -c '…'`, `eval`, an alias or a write to the compositor's socket passes it: there the Live probes rule is the only fence.
 - Real monitors and input devices exist only on the desktop session; a nested instance shows one virtual output and the host's forwarded keyboard and pointer. A ticket whose proof needs real hardware says so, and the effort PR lists it for the owner (`implement-spec.md` step 8).
+
+### Private X displays
+
+Read this before starting any X server. An agent's X server takes a display number in **200-999**, chosen by `start_xvfb` in `tests/ui/private_display.py`, which the UI tier and the widget probe runner already call. A script that needs its own X server calls that function too; for a one-off diagnosis, start `Xvfb :<number in 200-999>` with that number written out, and stop it by the PID you recorded.
+
+- **Why.** An X server unlinks the socket path of the display it binds, `/tmp/.X11-unix/X<n>`, without checking who listens there (xtrans `SocketUNIXCreateListener`), and `-displayfd` also skips the `/tmp/.X<n>-lock` check while it walks up from display 0. The desktop's Xwayland (Hyprland 0.56.2) listens on `/tmp/.X11-unix/X0` with no abstract socket to stop it, so from #146 (2026-10-01) the UI tier's `Xvfb -displayfd` replaced the desktop's `:0`: X11 apps the owner started afterwards reached an agent's Xvfb or nothing. Hence the explicit number, which keeps Xvfb's lock check, and never `-displayfd` or a number below 200.
+- **Leftovers.** `start_xvfb` skips a number whose lock file or socket already exists, live or left by a crashed run, and leaves those files alone; its own Xvfb removes its lock and socket when it exits. Several processes starting at once each get a different number: Xvfb takes its lock file atomically before it creates a socket, and the loser moves to the next number.
+- **Fence.** The UI tier and the widget probe runner refuse a display whose number is the session's own `DISPLAY`, with `refusing display :<n>: it is the desktop session's own DISPLAY …`.
+- **Hands off the session's X files.** `/tmp/.X11-unix/X0`, `X0_` and `/tmp/.X0-lock` belong to the desktop; reading them (`ls`, `ss -xlp`) is the whole of an agent's business there.
 
 ### Widget probes
 
