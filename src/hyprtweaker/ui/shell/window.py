@@ -198,7 +198,22 @@ def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> Non
     dialog = window.get_visible_dialog()
     if dialog is not None and not getattr(dialog, "_release_on_close", False):
         dialog._release_on_close = True
-        dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
+        dialog.connect("closed", _release_once_detached)
+
+
+def _release_once_detached(dialog: Adw.Dialog) -> None:
+    """Release `dialog` once libadwaita has taken it off the window: an `Adw.AlertDialog`
+    closed by its own response button is still parented when `closed` runs, and its idle."""
+    if dialog.get_parent() is None:
+        GLib.idle_add(release, dialog)
+        return
+
+    def detached(widget: Adw.Dialog, _pspec: Any) -> None:
+        if widget.get_parent() is None:
+            widget.disconnect(handler)
+            GLib.idle_add(release, widget)
+
+    handler = dialog.connect("notify::parent", detached)
 
 
 UNDO_ACTION = "undo"
