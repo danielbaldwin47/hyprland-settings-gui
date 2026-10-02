@@ -12,6 +12,7 @@ the Manifest records, and the next release check replaces every one of these rec
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
@@ -20,9 +21,20 @@ from typing import Any
 from .infer import build_option
 from .resolve import Schema, available_versions, resolve_option, version_key
 from .sources import SourceFacts
-from .types import ResolvedOption, Supplement, SupplementKind
+from .types import OptionType, ResolvedOption, Supplement, SupplementKind
 
 _PLUGIN_PREFIX = "plugin:"
+
+_HEX8 = re.compile(r"[0-9a-fA-F]{8}")
+_COLOUR_HINT = "For example: rgba(33ccffee)"
+"""The subtitle hint on a text entry whose default is printed as a colour (#213).
+
+A supplemented colour types as STRING: its `descriptions` record has the same four keys as a
+string's, and only the C++ source tells them apart. Its default prints as bare `aarrggbb`,
+which Hyprland 0.56.2's Lua rejects (`invalid color "ee33ccff"`), while the string
+`"rgba(33ccffee)"` loads and reads back. The hint shows the form that works. It is a hint and
+not a colour control because a string whose default merely looks like a colour would be
+written as a number by one; the read-back half is `values.ColourText`."""
 
 
 def newer_than_shipped(version: str, directory: Path | None = None) -> bool:
@@ -69,6 +81,9 @@ def supplement(
         order += 1
         if kind is SupplementKind.NEWER_VERSION:
             generated = replace(generated, added_in=version)
+        if generated.type is OptionType.STRING and _HEX8.fullmatch(str(record["default"])):
+            hinted = f"{generated.description.strip()} {_COLOUR_HINT}".strip()
+            generated = replace(generated, description=hinted)
         resolved = resolve_option(generated, None, schema.sections.get(generated.section))
         added.append(replace(resolved, supplement=flag))
 

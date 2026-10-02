@@ -16,6 +16,8 @@ from typing import Any
 import pytest
 from _support import synthetic_schema_dir
 
+from hyprtweaker.engine.model import ConfigModel
+from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import (
     GeneratedOption,
     GeneratedSchema,
@@ -31,6 +33,7 @@ from hyprtweaker.engine.schema import (
     newer_than_shipped,
     supplement,
 )
+from hyprtweaker.engine.writer import Writer
 
 
 def option(name: str, order: int) -> GeneratedOption:
@@ -88,6 +91,15 @@ FLOAT = {
 }
 STRING = {"name": "misc:new_text", "description": "some text", "default": "hello"}
 COLOR = {"name": "group:new_color", "description": "a colour", "default": "ffffffff"}
+
+RECORDED_COLOR = {
+    "current": "ff111111",
+    "default": "ff111111",
+    "description": "change the background color.",
+    "name": "misc:background_color",
+}
+"""Verbatim from `hyprctl -j descriptions` on a nested 0.56.2 (#213's probe). A colour's
+record carries the same four keys as a string's: no type field tells them apart."""
 
 
 # --- what is added ---------------------------------------------------------------------
@@ -149,6 +161,30 @@ def test_each_shape_gets_the_widget_its_record_alone_supports(
     added = supplement(shipped(), (record,), version="0.58.0")[str(record["name"])]
 
     assert (added.type, added.widget) == (option_type, widget)
+
+
+def test_a_supplemented_colour_is_a_text_entry_hinting_the_form_hyprland_reads(
+    tmp_path: Path,
+) -> None:
+    """#213's probe: Hyprland 0.56.2's Lua takes a colour as the string `"rgba(33ccffee)"`,
+    and rejects the bare `"ee33ccff"` its own `descriptions` default is printed in. So the
+    entry stays, and its subtitle shows the form that works."""
+    schema = supplement(shipped(), (RECORDED_COLOR,), version="0.58.0")
+    added = schema["misc:background_color"]
+    model = ConfigModel(schema)
+    model.set("misc:background_color", "rgba(33ccffee)")
+
+    module = Writer(ConfigPaths.rooted_at(tmp_path), "0.0.0-test").render_modules(model)
+
+    assert (added.type, added.widget) == (OptionType.STRING, Widget.STRING)
+    assert added.description == "change the background color. For example: rgba(33ccffee)"
+    assert '    background_color = "rgba(33ccffee)",' in module["options/misc.lua"].splitlines()
+
+
+def test_a_text_default_gets_no_colour_hint() -> None:
+    added = supplement(shipped(), (STRING,), version="0.58.0")["misc:new_text"]
+
+    assert added.description == "some text"
 
 
 def test_an_added_option_is_titled_from_its_key_and_written_under_its_lua_key() -> None:
