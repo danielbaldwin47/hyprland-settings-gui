@@ -785,6 +785,75 @@ def test_reserved_area_commits_on_the_instant_lane() -> None:
     assert recorder.breaking == []
 
 
+def live_page(rules: list[Any]) -> tuple[Any, FakeSession]:
+    """A page wired as the window wires it: an edit lands in the rules, then the page
+    rebuilds from them."""
+    from gi.repository import Adw
+
+    from hyprtweaker.ui.pages.monitors import MonitorActions, MonitorsPage, ProfileActions
+
+    Adw.init()
+    session = FakeSession(rules)
+    built: list[Any] = []
+
+    def apply(output: str, fields: Any) -> None:
+        held = next((r for r in session.monitor_rules if r.output == output), None)
+        merged = {**(held.fields if held is not None else {}), **fields}
+        others = [r for r in session.monitor_rules if r.output != output]
+        session.monitor_rules = [*others, monitor_rule(output, **merged)]
+        built[0].refresh()
+
+    def nothing(*_: Any) -> None:
+        return None
+
+    page = MonitorsPage(
+        session,  # type: ignore[arg-type]
+        actions=MonitorActions(
+            apply_breaking=apply, apply_benign=apply, rename=nothing, remove=nothing
+        ),
+        profiles=ProfileActions(
+            save=nothing, activate=nothing, update=nothing, detach=nothing, delete=nothing
+        ),
+    )
+    built.append(page)
+    return page, session
+
+
+def test_a_rebuild_keeps_open_displays_advanced_colour_and_focus() -> None:
+    from gi.repository import Gtk
+
+    page, session = live_page([monitor_rule("DP-9", mode="1920x1080@60")])
+    page.set_connected((MONITORS[0], DOCK))
+    window = Gtk.Window(child=page.page)
+    window.present()
+    page.connected_rows[1].set_expanded(True)
+    page.disconnected_rows[0].set_expanded(True)
+    row_titled(page.connected_rows[1], "Advanced colour").emit("activated")
+
+    def reserved() -> Any:
+        return suffix_of(row_titled(page.connected_rows[1], "Reserved area"), _gap_field_type())
+
+    reserved().uniform_toggle.set_active(False)  # a commit: the page rebuilds
+    for side, number in (("top", 8), ("right", 4)):  # never re-expanding in between
+        spin = reserved().sides[side]
+        spin.grab_focus()
+        spin.set_value(number)
+        spin.emit("activate")
+
+    dock = page.connected_rows[1]
+    assert session.monitor_rules[-1].output == "desc:Dell U2720Q"
+    assert session.monitor_rules[-1].fields == {
+        "reserved": {"top": 8, "right": 4, "bottom": 0, "left": 0}
+    }
+    assert dock.get_expanded()
+    assert not page.connected_rows[0].get_expanded()
+    assert page.disconnected_rows[0].get_expanded()
+    assert not page.catch_all_row.get_expanded()
+    assert row_titled(dock, "Colour preset").get_visible()
+    assert window.get_focus().is_ancestor(reserved().sides["right"])
+    window.destroy()
+
+
 def _gap_field_type() -> type:
     from hyprtweaker.ui.rows.gap_field import GapField
 

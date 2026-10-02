@@ -362,85 +362,94 @@ _LUMINANCE: tuple[_Luminance, ...] = (
 _ON_OFF: tuple[tuple[Any, str], ...] = ((1, "On"), (0, "Off"))
 
 
-def colour_rows(
-    fields: Mapping[str, Any], apply: Apply, *, editable: bool
-) -> tuple[Adw.PreferencesRow, ...]:
-    """ADR-0008's Advanced colour group, collapsed: most displays need none of it.
+class ColourRows:
+    """ADR-0008's Advanced colour group, collapsed unless `shown`: most displays need none
+    of it.
 
     A header row that shows and hides the settings below it, rather than an expander
     nested in the display's expander: libadwaita draws a nested expander's arrow as open
     whenever its parent is open (seen in a widget probe), so a collapsed group would
-    look expanded.
+    look expanded. `shown` is read before a rebuild and handed to the next build, so an
+    edit inside the group does not close it.
     """
-    header = Adw.ActionRow(
-        title="Advanced colour",
-        subtitle="Colour management and HDR. Most displays need none of this.",
-        activatable=True,
-    )
-    arrow = Gtk.Image(icon_name="pan-down-symbolic")
-    header.add_suffix(arrow)
-    eotf = fields.get("sdr_eotf")
-    rows = [
-        _choice_row(
-            "Colour preset",
-            "The colour space the display is driven in.",
-            "cm",
-            CM_PRESETS,
-            fields.get("cm"),
-            apply,
-        ),
-        _choice_row(
-            "SDR transfer function",
-            "How SDR content's brightness curve is read.",
-            "sdr_eotf",
-            SDR_EOTF_NAMES,
-            None if eotf is None else sdr_eotf_name(eotf),
-            apply,
-        ),
-        _number_row(
-            "SDR brightness",
-            "SDR content's brightness in HDR mode; 1 leaves it unchanged.",
-            "sdrbrightness",
-            fields.get("sdrbrightness"),
-            apply,
-        ),
-        _number_row(
-            "SDR saturation",
-            "SDR content's saturation in HDR mode; 1 leaves it unchanged.",
-            "sdrsaturation",
-            fields.get("sdrsaturation"),
-            apply,
-        ),
-        _choice_row(
-            "Wide colour support",
-            "Override whether the display reports wide colour.",
-            "supports_wide_color",
-            _ON_OFF,
-            _tri_state(fields.get("supports_wide_color")),
-            apply,
-        ),
-        _choice_row(
-            "HDR support",
-            "Override whether the display reports HDR.",
-            "supports_hdr",
-            _ON_OFF,
-            _tri_state(fields.get("supports_hdr")),
-            apply,
-        ),
-        *(_luminance_row(spec, fields.get(spec.key), apply) for spec in _LUMINANCE),
-    ]
-    for row in rows:
-        row.set_sensitive(editable)
-        row.set_visible(False)
 
-    def toggle(_header: Adw.ActionRow) -> None:
-        shown = not rows[0].get_visible()
-        for row in rows:
+    def __init__(
+        self, fields: Mapping[str, Any], apply: Apply, *, editable: bool, shown: bool = False
+    ) -> None:
+        self._header = Adw.ActionRow(
+            title="Advanced colour",
+            subtitle="Colour management and HDR. Most displays need none of this.",
+            activatable=True,
+        )
+        self._arrow = Gtk.Image()
+        self._header.add_suffix(self._arrow)
+        eotf = fields.get("sdr_eotf")
+        self._settings: tuple[Adw.PreferencesRow, ...] = (
+            _choice_row(
+                "Colour preset",
+                "The colour space the display is driven in.",
+                "cm",
+                CM_PRESETS,
+                fields.get("cm"),
+                apply,
+            ),
+            _choice_row(
+                "SDR transfer function",
+                "How SDR content's brightness curve is read.",
+                "sdr_eotf",
+                SDR_EOTF_NAMES,
+                None if eotf is None else sdr_eotf_name(eotf),
+                apply,
+            ),
+            _number_row(
+                "SDR brightness",
+                "SDR content's brightness in HDR mode; 1 leaves it unchanged.",
+                "sdrbrightness",
+                fields.get("sdrbrightness"),
+                apply,
+            ),
+            _number_row(
+                "SDR saturation",
+                "SDR content's saturation in HDR mode; 1 leaves it unchanged.",
+                "sdrsaturation",
+                fields.get("sdrsaturation"),
+                apply,
+            ),
+            _choice_row(
+                "Wide colour support",
+                "Override whether the display reports wide colour.",
+                "supports_wide_color",
+                _ON_OFF,
+                _tri_state(fields.get("supports_wide_color")),
+                apply,
+            ),
+            _choice_row(
+                "HDR support",
+                "Override whether the display reports HDR.",
+                "supports_hdr",
+                _ON_OFF,
+                _tri_state(fields.get("supports_hdr")),
+                apply,
+            ),
+            *(_luminance_row(spec, fields.get(spec.key), apply) for spec in _LUMINANCE),
+        )
+        for row in self._settings:
+            row.set_sensitive(editable)
+        self._show(shown)
+        self._header.connect("activated", lambda _header: self._show(not self.shown))
+
+    @property
+    def rows(self) -> tuple[Adw.PreferencesRow, ...]:
+        return (self._header, *self._settings)
+
+    @property
+    def shown(self) -> bool:
+        return self._settings[0].get_visible()
+
+    def _show(self, shown: bool) -> None:
+        for row in self._settings:
             row.set_visible(shown)
-        arrow.set_from_icon_name("pan-up-symbolic" if shown else "pan-down-symbolic")
-
-    header.connect("activated", toggle)
-    return (header, *rows)
+        self._arrow.set_from_icon_name("pan-up-symbolic" if shown else "pan-down-symbolic")
 
 
 def _choice_row(
