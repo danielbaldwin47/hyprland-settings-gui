@@ -1515,11 +1515,12 @@ class MainWindow(Adw.ApplicationWindow):
 
         Then a failure toast, but only for a failure the Banner has nothing to say about.
         ADR-0016 keeps toasts for transient events, "never a persistent unhealthy state, which
-        is the Banner's", and both kinds of failure the Banner *does* carry are excluded here: a config error,
-        which belongs to the Banner and its dialog because they can offer to fix it, and a
-        read-back mismatch, which raises the Banner and badges its Row. What is left for a
-        toast is the handful of failures that never reached the compositor at all -- a
-        refused write, a full disk -- which would otherwise happen in silence.
+        is the Banner's", and both kinds of failure the Banner *does* carry are excluded
+        here: a config error, which belongs to the Banner and its dialog because they can
+        offer to fix it, and a read-back mismatch, which raises the Banner and badges its
+        Row. What is left for a toast is the handful of failures that never reached the
+        compositor at all -- a refused write, a full disk -- which would otherwise happen in
+        silence.
 
         A *successful* transaction gets no toast: instant apply's whole promise is that the
         change is the feedback (ADR-0003), and the offer to undo it arrives separately through
