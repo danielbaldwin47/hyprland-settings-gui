@@ -2178,7 +2178,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_errors(self) -> Adw.AlertDialog:
         """Open the one error dialog over the current problems. Returned for the UI tier."""
-        return error_dialog(self, self._session.recovery, on_action=self._on_recovery_action)
+        return error_dialog(
+            self,
+            self._session.recovery,
+            on_action=self._on_recovery_action,
+            restorable=self._session.restorable,
+        )
 
     def _on_recovery_action(self, action: Action, problem: Problem) -> None:
         """Perform one of the dialog's per-class actions.
@@ -2191,11 +2196,50 @@ class MainWindow(Adw.ApplicationWindow):
         if action is Action.OPEN_FILE:
             self._open_file(problem)
         elif action is Action.RESTORE_LAST_GOOD and problem.module is not None:
-            self._session.restore_last_good(problem.module)
+            self._confirm_restore(problem.module)
         elif action is Action.REGENERATE:
             self._session.regenerate_entrypoint()
         elif action is Action.QUARANTINE:
             self._confirm_quarantine(problem)
+
+    def _confirm_restore(self, module: str) -> Adw.AlertDialog:
+        """Ask before putting a file back, then say how it went (#148 hand-test 17).
+
+        It overwrites the file as it is now -- usually somebody's hand edit -- so it asks,
+        keeps a copy, and reports the outcome rather than closing on silence.
+        """
+        name = module.rsplit("/", 1)[-1]
+        dialog = Adw.AlertDialog(
+            heading=f"Restore {name}?",
+            body=(
+                f"{name} goes back to the last version this app wrote and Hyprland "
+                f"accepted. A copy of the file as it is now is kept in "
+                f"{self._session.edited_copies_shown}."
+            ),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("restore", "Restore")
+        dialog.set_response_appearance("restore", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def answered(_dialog: Adw.AlertDialog, response: str) -> None:
+            if response != "restore":
+                return
+
+            def done(ok: bool) -> None:
+                self._toast(
+                    f"{name} is back to the last version Hyprland accepted."
+                    if ok
+                    else f"{name} could not be restored. The Banner says what is wrong."
+                )
+
+            if not self._session.restore_last_good(module, done=done):
+                self._toast(f"{name} could not be restored: there is no earlier version.")
+
+        dialog.connect("response", answered)
+        dialog.present(self)
+        return dialog
 
     def _confirm_quarantine(self, problem: Problem) -> None:
         """Ask before disabling somebody else's file (ADR-0016 §Quarantine).

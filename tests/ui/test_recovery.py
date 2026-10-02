@@ -57,8 +57,15 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
         def health(self) -> Any:
             return Health(recovery=recovery, **health)
 
-        def restore_last_good(self, *modules: str) -> bool:
+        can_restore = True
+
+        def restorable(self, module: str) -> bool:
+            return self.can_restore
+
+        def restore_last_good(self, *modules: str, done: Any = None) -> bool:
             self.calls.append(("restore", modules[0]))
+            if done is not None:
+                done(True)
             return True
 
         def regenerate_entrypoint(self) -> bool:
@@ -295,8 +302,12 @@ def test_restore_reaches_the_session(tmp_path: Path) -> None:
     dialog = window.show_errors()
 
     _click(dialog, "Restore last good")
+    confirm = window.get_visible_dialog()
+    assert confirm.get_heading() == "Restore general.lua?"
+    confirm.emit("response", "restore")
 
     assert session.calls == [("restore", "options/general.lua")]
+    assert window._toast_log[-1] == "general.lua is back to the last version Hyprland accepted."
 
 
 def test_regenerate_reaches_the_session(tmp_path: Path) -> None:
@@ -446,3 +457,29 @@ def _all(widget: Any) -> list[Any]:
             stack.append(child)
             child = child.get_next_sibling()
     return found
+
+
+def test_restore_is_not_offered_without_a_restore_point(tmp_path: Path) -> None:
+    """#148 hand-test 17: offered for a Module with no confirmed write, it closed the
+    dialog and did nothing. Without one the card says so and offers Open file."""
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    session.can_restore = False
+
+    dialog = window.show_errors()
+
+    labels = {button.get_label() for button in buttons(dialog.get_extra_child())}
+    assert labels == {"Open file"}
+    assert (
+        "This app has no earlier version of general.lua that Hyprland accepted, so there is "
+        "nothing to restore. Open the file to fix the error."
+    ) in _labels(dialog.get_extra_child())
+
+
+def test_cancelling_the_restore_confirm_restores_nothing(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    dialog = window.show_errors()
+
+    _click(dialog, "Restore last good")
+    window.get_visible_dialog().emit("response", "cancel")
+
+    assert session.calls == []

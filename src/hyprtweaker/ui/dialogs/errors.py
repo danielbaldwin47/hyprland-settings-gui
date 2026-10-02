@@ -62,6 +62,7 @@ def error_dialog(
     *,
     on_action: ActionHandler | None = None,
     body: str = "",
+    restorable: Callable[[str], bool] | None = None,
 ) -> Adw.AlertDialog:
     """Show `recovery` over `parent` and return the dialog, so a caller can assert on it.
 
@@ -72,7 +73,7 @@ def error_dialog(
     # Wide where the window allows: an error line is a path, a line number and a reason,
     # and the narrow layout cut it at "user.lua:2: s" (#148 hand-test 14).
     dialog.set_prefer_wide_layout(True)
-    dialog.set_extra_child(_problem_list(recovery, dialog, on_action))
+    dialog.set_extra_child(_problem_list(recovery, dialog, on_action, restorable))
     dialog.add_response("close", "Close")
     dialog.set_default_response("close")
     dialog.set_close_response("close")
@@ -81,11 +82,14 @@ def error_dialog(
 
 
 def _problem_list(
-    recovery: Recovery, dialog: Adw.AlertDialog, on_action: ActionHandler | None
+    recovery: Recovery,
+    dialog: Adw.AlertDialog,
+    on_action: ActionHandler | None,
+    restorable: Callable[[str], bool] | None,
 ) -> Gtk.Widget:
     body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
     for problem in recovery.problems:
-        body.append(_problem_card(problem, dialog, on_action))
+        body.append(_problem_card(problem, dialog, on_action, restorable))
     return Gtk.ScrolledWindow(
         child=body,
         propagate_natural_height=True,
@@ -98,7 +102,10 @@ def _problem_list(
 
 
 def _problem_card(
-    problem: Problem, dialog: Adw.AlertDialog, on_action: ActionHandler | None
+    problem: Problem,
+    dialog: Adw.AlertDialog,
+    on_action: ActionHandler | None,
+    restorable: Callable[[str], bool] | None,
 ) -> Gtk.Widget:
     card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     card.append(
@@ -117,14 +124,40 @@ def _problem_card(
         )
     )
 
-    buttons = _buttons(problem, dialog, on_action)
+    unrestorable = (
+        on_action is not None
+        and Action.RESTORE_LAST_GOOD in problem.actions
+        and problem.module is not None
+        and restorable is not None
+        and not restorable(problem.module)
+    )
+    if unrestorable:
+        # Offered with no restore point, it closed the dialog and did nothing (#148
+        # hand-test 17): say why, and leave the way that works.
+        name = problem.module.rsplit("/", 1)[-1] if problem.module else ""
+        card.append(
+            Gtk.Label(
+                label=(
+                    f"This app has no earlier version of {name} that Hyprland accepted, so "
+                    "there is nothing to restore. Open the file to fix the error."
+                ),
+                xalign=0.0,
+                wrap=True,
+                css_classes=["dim-label"],
+            )
+        )
+    skip = {Action.RESTORE_LAST_GOOD} if unrestorable else set()
+    buttons = _buttons(problem, dialog, on_action, skip)
     if buttons is not None:
         card.append(buttons)
     return card
 
 
 def _buttons(
-    problem: Problem, dialog: Adw.AlertDialog, on_action: ActionHandler | None
+    problem: Problem,
+    dialog: Adw.AlertDialog,
+    on_action: ActionHandler | None,
+    skip: set[Action],
 ) -> Gtk.Widget | None:
     if on_action is None:
         return None
@@ -133,7 +166,7 @@ def _buttons(
     offered = 0
     for action in problem.actions:
         label = ACTION_LABELS.get(action)
-        if label is None:
+        if label is None or action in skip:
             continue
         button = Gtk.Button(label=label)
         # Closing first: every action ends in a reload, and a dialog left open over it would

@@ -4163,7 +4163,13 @@ class Session:
         """
         return self._journal.last_known_good(module)
 
-    def restore_last_good(self, *modules: str) -> bool:
+    def restorable(self, module: str) -> bool:
+        """Whether `module` has a restore point: a version a confirmed write left."""
+        return self._journal.last_known_good(module) is not None
+
+    def restore_last_good(
+        self, *modules: str, done: Callable[[bool], None] | None = None
+    ) -> bool:
         """Put `modules` back to their newest confirmed bytes. `False` if nothing can be.
 
         ADR-0016's Restore last good, for both the classes that offer it: the hand-edited app
@@ -4183,12 +4189,19 @@ class Session:
             _log.warning("nothing to restore: no confirmed write to %s", ", ".join(modules))
             return False
 
-        self._spawn(self._restore_transaction(restores))
+        for good in restores:
+            # The bytes being replaced, where the user can find them (#148 hand-test 17).
+            self._keep_edited_copy(good.module)
+        self._spawn(self._restore_transaction(restores, done))
         return True
 
-    async def _restore_transaction(self, restores: Sequence[LastKnownGood]) -> None:
+    async def _restore_transaction(
+        self, restores: Sequence[LastKnownGood], done: Callable[[bool], None] | None = None
+    ) -> None:
         applier = self._applier
         if applier is None:
+            if done is not None:
+                done(False)
             return
 
         self._restoring = True
@@ -4201,6 +4214,8 @@ class Session:
             # restore, which would otherwise inherit this one's notice.
             self._pending_rescue = ()
             self._changed()
+            if done is not None:
+                done(False)
             return
         finally:
             self._restoring = False
@@ -4228,6 +4243,8 @@ class Session:
         self._rescued, self._pending_rescue = self._pending_rescue, ()
         self._report(result)
         self._changed()
+        if done is not None:
+            done(result.ok)
 
     def quarantine(self, require: str) -> bool:
         """Regenerate the Entrypoint without `require`, and reload (ADR-0016 §Quarantine).
