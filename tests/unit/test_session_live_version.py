@@ -18,6 +18,7 @@ from _support import (
     SAMPLE_APP_VERSION,
     Runner,
     sample_schema,
+    section_conversation,
     session_for,
     synthetic_schema_dir,
 )
@@ -141,6 +142,75 @@ def test_below_lua_hyprland_the_session_stays_read_only_and_never_connects(
         assert session.schema.hyprland_version == "0.56.2"
 
     run_with_fake(scenario, running("0.55.0"))
+
+
+NEW_SIZE = {
+    "name": "general:new_size",
+    "description": "a size this Hyprland added",
+    "default": 3,
+    "current": 3,
+    "min": 0,
+    "max": 20,
+    "map": None,
+}
+SNAP_NEW = {"name": "general:snap_new", "description": "snap new windows", "default": False}
+
+
+def _described_with_extras(version: str) -> LiveHyprland:
+    """Every shipped 0.56.2 option, plus two this Hyprland added and one plugin's."""
+    plugin = {"name": "plugin:hyprbars:bar_height", "description": "x", "default": 15}
+    shipped = tuple({"name": option.name} for option in sample_schema())
+    return LiveHyprland(version, (*shipped, NEW_SIZE, SNAP_NEW, plugin))
+
+
+def test_a_newer_hyprland_adds_its_new_options_and_keeps_the_shipped_schema_version(
+    tmp_path: Path,
+) -> None:
+    """ADR-0012 §Pinning: newer than every shipped schema (0.58.0 here), so the options
+    0.59.0 describes beyond the loaded schema join it, settable and written like any other;
+    the Manifest still names the shipped schema, because the supplement is not one."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        live = _described_with_extras("0.59.0")
+        session = session_for(fake, tmp_path, runner, live_hyprland=live)
+        session.start()
+        await runner.settle()
+
+        assert {option.name for option in session.schema} - {
+            option.name for option in sample_schema()
+        } == {"general:new_size", "general:snap_new"}
+        session.set_option("general:new_size", 7)
+        await session.aclose()
+
+        module = tmp_path / "hypr" / "hyprtweaker" / "options" / "general.lua"
+        assert "new_size = 7" in module.read_text()
+        paths = ConfigPaths.rooted_at(tmp_path)
+        assert json.loads(paths.manifest.read_text())["schema_version"] == "0.56.2"
+
+    reply = {"option": "general:new_size", "set": True, "int": 7}
+    run_with_fake(
+        scenario,
+        FakeHyprland(
+            {
+                **section_conversation("general"),
+                "j/getoption general:new_size": json.dumps(reply),
+            },
+            reload_emits_event=True,
+        ),
+    )
+
+
+@pytest.mark.parametrize("version", ["0.58.0", "0.57.1"])
+def test_at_or_below_the_newest_shipped_schema_nothing_is_added(
+    tmp_path: Path, version: str
+) -> None:
+    session = session_for(
+        FakeHyprland(), tmp_path, Runner(), live_hyprland=_described_with_extras(version)
+    )
+
+    assert "general:new_size" not in session.schema
+    assert len(session.schema) == len(sample_schema())
 
 
 def _described_without(missing: str) -> LiveHyprland:

@@ -114,6 +114,8 @@ from hyprtweaker.engine.schema import (
     Schema,
     below_lua_floor,
     load_schema,
+    newer_than_shipped,
+    supplement,
 )
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
@@ -342,6 +344,11 @@ class Session:
             # and a read-only session only displays it.
             wanted = MINIMUM_HYPRLAND if self._unsupported_reason else live_version
             schema = load_schema(wanted)
+        live = self._live_hyprland
+        if live is not None and newer_than_shipped(live.version):
+            # ADR-0012 §Pinning: what a newer compositor added beyond every shipped schema
+            # still gets a Row, inferred from its own description and flagged as such.
+            schema = supplement(schema, live.descriptions, version=live.version)
         self._schema = schema
         self._paths = paths if paths is not None else ConfigPaths.default()
         self._app_version = app_version
