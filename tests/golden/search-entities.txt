@@ -1,0 +1,45 @@
+# search index -- the Rules & entities group
+
+## query: super (8 hits)
+field | match | kind | title | subtitle | badge
+title | prefix | bind | SUPER + Q | Close the window | -
+title | prefix | bind | SUPER + Return | kitty | -
+title | prefix | bind | SUPER + notakey | firefox | Unknown key "notakey"
+title | prefix | bind | SUPER + A&B | rofi -show drun | Multi-key: Hyprland can't load it
+title | prefix | bind | SUPER + E | nautilus | Disabled
+title | prefix | bind | SUPER + F | Runs a Lua function | Defined by a Lua function in user.lua
+title | prefix | bind | SUPER + R | Switch to a submap (resize) | Submap has no binds
+title | prefix | bind | SUPER + key code 10 | kitty --class scratch | -
+
+## query: kitty (3 hits)
+field | match | kind | title | subtitle | badge
+title | word-prefix | window_rule | class kitty → opacity 0.9 |  | -
+description | prefix | bind | SUPER + Return | kitty | -
+description | prefix | bind | SUPER + key code 10 | kitty --class scratch | -
+
+## query: class (3 hits)
+field | match | kind | title | subtitle | badge
+title | prefix | window_rule | class kitty → opacity 0.9 |  | -
+key | prefix | window_rule | Float pavucontrol | class pavucontrol → float | Disabled
+description | word-prefix | bind | SUPER + key code 10 | kitty --class scratch | -
+
+## query: display (1 hits)
+field | match | kind | title | subtitle | badge
+title | word-prefix | monitor_rule | Any other display | mode preferred | -
+
+## query: d (10 hits)
+field | match | kind | title | subtitle | badge
+title | prefix | monitor_rule | DP-1 | mode 2560x1440@144 | -
+title | prefix | monitor_rule | desc:Dell Inc. DELL U2720Q | scale 1.5 | -
+title | prefix | monitor_profile | Desk | 1 display rule | -
+title | word-prefix | monitor_rule | Any other display | mode preferred | -
+title | substring | bind | SUPER + key code 10 | kitty --class scratch | -
+key | substring | bind | SUPER + Q | Close the window | -
+key | substring | bind | SUPER + Return | kitty | -
+key | substring | bind | SUPER + notakey | firefox | Unknown key "notakey"
+key | substring | bind | SUPER + A&B | rofi -show drun | Multi-key: Hyprland can't load it
+key | substring | bind | SUPER + E | nautilus | Disabled
+
+## query: desk (1 hits)
+field | match | kind | title | subtitle | badge
+title | prefix | monitor_profile | Desk | 1 display rule | -

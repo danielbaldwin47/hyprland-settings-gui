@@ -18,6 +18,7 @@ from enum import Enum
 from hyprtweaker.engine.binds_analysis import submap_target
 from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup
 from hyprtweaker.engine.model.entities import Bind, LayerRule, MonitorRule, WindowRule
+from hyprtweaker.engine.profiles import MonitorProfile
 from hyprtweaker.engine.rule_filter import value_text
 from hyprtweaker.engine.rules_catalog import is_negated, strip_negation
 from hyprtweaker.engine.triggers import (
@@ -263,3 +264,13 @@ def rule_summary(rule: MonitorRule) -> str:
         else:
             parts.append(f"{key} {value}")
     return " · ".join(parts) or "no fields yet"
+
+
+def profile_summary(profile: MonitorProfile) -> str:
+    """A Monitor profile's row subtitle: `2 display rules · 1 workspace pin`."""
+    rules = len(profile.monitors)
+    pins = sum(1 for pin in profile.pins.values() if pin is not None)
+    summary = f"{rules} display {'rule' if rules == 1 else 'rules'}"
+    if pins:
+        summary += f" · {pins} workspace {'pin' if pins == 1 else 'pins'}"
+    return summary

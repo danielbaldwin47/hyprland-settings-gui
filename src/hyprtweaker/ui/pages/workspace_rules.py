@@ -26,6 +26,7 @@ from gi.repository import Adw, Gtk  # noqa: E402
 from hyprtweaker.engine.model.entities import WorkspaceRule  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -166,6 +167,7 @@ class WorkspaceRulesPage:
         """Rebuild the list from the model."""
         for widget in self._listed:
             self._group.remove(widget)
+            release(widget)
         self._listed = []
         self._rows = []
         if self._empty_row is not None:

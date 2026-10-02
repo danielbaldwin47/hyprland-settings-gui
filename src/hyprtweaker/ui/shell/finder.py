@@ -38,21 +38,19 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.ui.pages.config import escaped  # noqa: E402
-from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
+from hyprtweaker.ui.search import EntityHit, Hit, OptionHit, SearchIndex  # noqa: E402
 
 RESULT_LIMIT = 50
-"""How many hits the sidebar lists.
+"""How many hits the sidebar lists in each group.
 
 Not a ranking decision -- the index ranks the whole corpus and this takes the head of it.
 A cap exists because a two-letter query matches most of the Schema, and a sidebar rebuilding
 300 rows per keystroke is a stutter the user reads as the app thinking. Fifty is well past
-where anyone scrolls: someone who has not found it by then types another letter."""
+where anyone scrolls: someone who has not found it by then types another letter. Per group
+rather than overall, so a two-letter query naming fifty Options still lists its binds."""
 
 NAV_MODE = "nav"
 RESULTS_MODE = "results"
-
-SETTINGS_GROUP = "Settings"
-"""ADR-0017's first result group. The second -- "Rules & entities" -- is #75."""
 
 
 class Finder:
@@ -99,7 +97,14 @@ class Finder:
 
         self.results = Gtk.ListBox(css_classes=["navigation-sidebar"])
         self.results.connect("row-activated", self._on_row_activated)
-        self.results.set_header_func(_result_header)
+        self._groups: list[str] = []
+        """Each listed hit's group, kept in step with `_hits` for the header function.
+
+        Handed to GTK as the function's data rather than read off `self`: a bound method as
+        the header function is a reference from the C side of the ListBox back to this
+        Finder, a cycle the collector cannot see through, and the closed window it reaches
+        through `on_activate` would never be released (#219's lifetime test)."""
+        self.results.set_header_func(_result_header, self._groups)
 
         self.button = Gtk.ToggleButton(
             icon_name="system-search-symbolic",
@@ -162,6 +167,20 @@ class Finder:
         self.entry.set_text(text)
         self._refresh()
 
+    def requery(self) -> None:
+        """Re-run the open query against the index as it is now -- after the model moved.
+
+        The window calls this from `sync`, so a foreign reload, an undo or an edit made on
+        a Page refreshes a result list that is showing, rather than leaving rows that open
+        something that is no longer there (settled S2b). A no-op while the nav list shows, and
+        while the answer is unchanged -- the common case, and the one where rebuilding the
+        rows would only cost the list its scroll position.
+        """
+        if self.mode != RESULTS_MODE:
+            return
+        if self._index.query(self.entry.get_text(), limit=RESULT_LIMIT) != self._hits:
+            self._refresh()
+
     def activate_selected(self) -> None:
         """Enter in the entry opens the highlighted hit -- the no-mouse path."""
         row = self.results.get_selected_row()
@@ -189,7 +208,14 @@ class Finder:
         because silently reverting to the nav list would read as the search having been
         forgotten rather than answered.
         """
+        selected = self.results.get_selected_row()
+        previous = (
+            self._hits[selected.get_index()]
+            if selected is not None and 0 <= selected.get_index() < len(self._hits)
+            else None
+        )
         self._hits = self._index.query(self.entry.get_text(), limit=RESULT_LIMIT)
+        self._groups[:] = [hit.group for hit in self._hits]
         self.results.remove_all()
 
         if self.mode == RESULTS_MODE:
@@ -197,9 +223,12 @@ class Finder:
                 self.results.append(_result_row(hit))
             if not self._hits:
                 self.results.append(_no_matches_row())
-            first = self.results.get_row_at_index(0)
-            if first is not None and self._hits:
-                self.results.select_row(first)
+            # A re-run keeps the highlight on the hit it was on, so a `sync` arriving while
+            # the user walks the list with the arrows does not throw them back to the top.
+            keep = self._hits.index(previous) if previous in self._hits else 0
+            row = self.results.get_row_at_index(keep)
+            if row is not None and self._hits:
+                self.results.select_row(row)
 
         self._on_mode_changed(self.mode)
 
@@ -222,7 +251,14 @@ class Finder:
 
 
 def _result_row(hit: Hit) -> Gtk.ListBoxRow:
-    """One search hit: what the Row is called, and the key that addresses it.
+    """One search hit, an Option's or an Entity's."""
+    if isinstance(hit, EntityHit):
+        return _entity_row(hit)
+    return _option_row(hit)
+
+
+def _option_row(hit: OptionHit) -> Gtk.ListBoxRow:
+    """One Option hit: what the Row is called, and the key that addresses it.
 
     The dotted key as subtitle, which is the one place outside the Help popover it belongs
     (ADR-0013 §1) -- in a result list it is what disambiguates the four Options all titled
@@ -244,6 +280,28 @@ def _result_row(hit: Hit) -> Gtk.ListBoxRow:
     return row
 
 
+def _entity_row(hit: EntityHit) -> Gtk.ListBoxRow:
+    """One Entity hit: its row's title, then what kind it is and what its row says.
+
+    The kind's noun leads the subtitle because the group mixes kinds, and "SUPER + Q" or
+    "DP-1" alone does not say which Page opening it lands on. The badge comes next, in the
+    row's own words (#139), since a bind Hyprland cannot load is the salient fact about it;
+    then the row's detail line. The title may take three lines where an Option's takes one:
+    an unlabelled rule's title is its whole summary, and six pavucontrol rules cut at one line
+    all read "class ^(pavucontrol)$ → ..." -- the effect that tells them apart is at the end
+    (probed over end-4). Plain text, as the Pages' rows are: Triggers, commands and
+    Match patterns are user text, and as Pango markup `A&B` renders blank.
+    """
+    subtitle = " · ".join(part for part in (hit.kind.noun, hit.badge, hit.subtitle) if part)
+    # `use_markup` first and the texts after: given together to the constructor, the texts
+    # are parsed as markup before the flag lands, and GTK warns over every `&&` command.
+    row = Adw.ActionRow(use_markup=False, title_lines=3, subtitle_lines=2)
+    row.set_title(hit.title)
+    row.set_subtitle(subtitle)
+    row.set_activatable(True)
+    return row
+
+
 def _no_matches_row() -> Gtk.ListBoxRow:
     row = Adw.ActionRow(title="No matches", css_classes=["dim-label"])
     row.set_activatable(False)
@@ -251,20 +309,23 @@ def _no_matches_row() -> Gtk.ListBoxRow:
     return row
 
 
-def _result_header(row: Gtk.ListBoxRow, before: Gtk.ListBoxRow | None) -> None:
-    """The group heading above the first result, and nothing above the rest.
+def _result_header(
+    row: Gtk.ListBoxRow, before: Gtk.ListBoxRow | None, groups: list[str]
+) -> None:
+    """A group heading above the first row of each group, and nothing above the rest.
 
-    One group today, because #72 indexes Options only. The second group ADR-0017 names --
-    "Rules & entities" -- arrives with #75, at which point this grows a real test of which
-    group a row belongs to; until then the honest implementation is "the first row gets the
-    one heading there is".
+    Asked of the hits' groups rather than of the rows: each hit knows its group (ADR-0017's
+    Settings, then Rules & entities), and a row only knows where it sits.
     """
-    if before is not None or not row.get_selectable():
+    index = row.get_index()
+    group = groups[index] if 0 <= index < len(groups) else None
+    above = before.get_index() if before is not None else -1
+    if group is None or (0 <= above < len(groups) and groups[above] == group):
         row.set_header(None)
         return
     row.set_header(
         Gtk.Label(
-            label=SETTINGS_GROUP,
+            label=group,
             xalign=0.0,
             css_classes=["heading", "dim-label"],
             margin_start=12,
