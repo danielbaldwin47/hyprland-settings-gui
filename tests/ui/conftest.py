@@ -42,6 +42,7 @@ import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
+import log_gate
 import main_loop
 import pytest
 from private_display import (
@@ -129,13 +130,15 @@ def ui_unavailable() -> str | None:
     # first widget, after this returns, and restored it put every test widget on the
     # desktop's accessibility bus. Nor the bus and the GSettings backend: GIO reads them
     # at the first portal, settings or GApplication call, long after the display opens,
-    # and a restored bus address sent those to the owner's session bus.
+    # and a restored bus address sent those to the owner's session bus. Nor GDK_DISABLE: it
+    # must still hold when the first window picks its renderer.
     kept = (
         "DISPLAY",
         "GTK_A11Y",
         "DBUS_SESSION_BUS_ADDRESS",
         "GSETTINGS_BACKEND",
         "ADW_DISABLE_PORTAL",
+        "GDK_DISABLE",
     )
     saved = {name: os.environ.get(name) for name in PINNED if name not in kept}
     pin_environment(os.environ, display, bus.address)
@@ -167,6 +170,33 @@ _UI_SKIP_REASON = pytest.StashKey[str | None]()
 
 def pytest_configure(config: pytest.Config) -> None:
     config.stash[_UI_SKIP_REASON] = ui_unavailable()
+    if config.stash[_UI_SKIP_REASON] is None:
+        log_gate.install()
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    # What importing the toolkit and the Pages logged belongs to no test.
+    log_gate.take()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> pytest.TestReport:
+    """Fail the phase during which the toolkit logged or a callback raised (`log_gate.py`)."""
+    report: pytest.TestReport = yield
+    logged = log_gate.take()
+    if not logged:
+        return report
+    text = "\n".join(
+        [f"GTK, libadwaita or GLib complained during {call.when} ({len(logged)}):", *logged]
+    )
+    if report.failed:
+        report.sections.append(("log gate", text))
+    else:
+        report.outcome = "failed"
+        report.longrepr = text
+    return report
 
 
 # trylast: pytest applies -k/-m deselection in its own copy of this hook, so

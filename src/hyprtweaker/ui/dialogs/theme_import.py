@@ -34,6 +34,7 @@ from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 from ...engine.presets import (  # noqa: E402
     PresetApplied,
     PresetApplyResult,
+    PresetColorConflict,
     PresetImported,
     PresetNotImported,
     PresetPreview,
@@ -134,11 +135,19 @@ class ThemeImportDialog(Adw.Dialog):
         if live:
             applied = self._apply(imported.slug)
             if not isinstance(applied, PresetApplied):
+                # A conflict applied nothing: until the choice is in this dialog (#171),
+                # the Presets list is where it is asked (#170).
+                reason = (
+                    "Its colors and the ones your wallpaper sets would compete, so apply it "
+                    "from your presets to choose which win."
+                    if isinstance(applied, PresetColorConflict)
+                    else applied.reason
+                )
                 self._finish(imported)
                 self._view.push(
                     self._stopped_page(
                         "Added, but not applied",
-                        f"{imported.preset.name} is in your presets. {applied.reason}",
+                        f"{imported.preset.name} is in your presets. {reason}",
                     )
                 )
                 return

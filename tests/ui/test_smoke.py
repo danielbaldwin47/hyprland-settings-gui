@@ -13,16 +13,17 @@ produce. `tests/ui/conftest.py` owns the gate itself.
 
 from __future__ import annotations
 
+from started_app import started_application
+
 
 def test_window_constructs() -> None:
     from gi.repository import Adw
 
-    from hyprtweaker import APP_ID
     from hyprtweaker.session import Session
     from hyprtweaker.ui.shell.window import MainWindow
 
     Adw.init()
-    app = Adw.Application(application_id=APP_ID)
+    app = started_application()
     session = Session(spawn=lambda coro: coro.close(), app_version="0.0.0-test")
     window = MainWindow(session, application=app)
 

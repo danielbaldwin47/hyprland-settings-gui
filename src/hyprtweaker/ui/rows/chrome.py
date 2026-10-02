@@ -86,6 +86,7 @@ class RowChrome:
     ) -> None:
         self._option = option
         self._context = context
+        self._row = row
         self._control = control
         self._on_reset = on_reset
         self._navigate = navigate
@@ -193,15 +194,20 @@ class RowChrome:
     def refresh(self) -> None:
         """Recompute the whole strip. Cheap enough to run on every Row that could have moved.
 
-        Control sensitivity is set here rather than by the Page, because two independent
-        things decide it -- the session being live and the dependency being met -- and a
-        second writer would race the first back to the wrong answer.
+        Control sensitivity is set here rather than by the Page, because three independent
+        things decide it -- the session being live, the dependency being met, and the
+        running Hyprland taking the Option (#215) -- and a second writer would race the first
+        back to the wrong answer. The subtitle is set here for the same reason: it says why
+        the control is read-only, and that changes while the Row is shown.
         """
         state = row_state(self._option, self._context)
         self._state = state
 
         self._set_pills(state)
         self._set_summary(state)
+        # The factory turned markup off before the title went in (#228): a description or a
+        # kept value with `&` or `<` in it is text, never markup.
+        self._row.set_subtitle(state.subtitle)
 
         badge = state.dependency
         self._dependency.set_visible(badge is not None)

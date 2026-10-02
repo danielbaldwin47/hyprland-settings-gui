@@ -20,11 +20,10 @@ from typing import Any
 
 import main_loop
 import pytest
+from started_app import started_application
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
-
-APP_ID = "io.github.danielbaldwin47.Hyprtweaker.Test"
 
 
 def png(width: int = 4, height: int = 3) -> bytes:
@@ -58,7 +57,7 @@ def build(tmp_path: Path, *, wallpaper: bool = True, **options: Any):  # type: i
     from hyprtweaker.ui.shell.window import MainWindow
 
     Adw.init()
-    app = Adw.Application(application_id=APP_ID)
+    app = started_application()
 
     def no_compositor():  # type: ignore[no-untyped-def]
         raise NoInstance("no compositor in the test tier")
@@ -204,6 +203,39 @@ def test_confirming_while_live_imports_then_applies_through_the_given_apply(
     main_loop.settle("the dialog")
 
     assert applied == ["nord"]
+    assert [slug for slug, _ in session.presets()] == ["nord"]
+
+
+def test_a_colour_conflict_adds_the_preset_and_says_where_to_choose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Until #171 puts the choice in this dialog, a conflict applies nothing (#170)."""
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.bridge import Wallpaper
+    from hyprtweaker.engine.presets import PresetColorConflict
+    from hyprtweaker.session import Session
+    from hyprtweaker.ui.dialogs.theme_import import ThemeImportDialog
+
+    window, session, archive = build(tmp_path)
+    monkeypatch.setattr(Session, "live", property(lambda _self: True))
+    dialog = ThemeImportDialog(
+        session, archive, apply=lambda _slug: PresetColorConflict(Wallpaper("matugen"))
+    )
+    dialog.present(window)
+
+    button(dialog, "Import and Apply").emit("clicked")
+    main_loop.settle("the dialog")
+
+    [group] = [
+        w
+        for w in walk(dialog)
+        if isinstance(w, Adw.PreferencesGroup) and w.get_title() == "Added, but not applied"
+    ]
+    assert group.get_description() == (
+        "Nord is in your presets. Its colors and the ones your wallpaper sets would "
+        "compete, so apply it from your presets to choose which win."
+    )
     assert [slug for slug, _ in session.presets()] == ["nord"]
 
 

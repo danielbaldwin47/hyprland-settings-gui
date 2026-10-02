@@ -313,11 +313,11 @@ class BindEditor(Adw.Dialog):
         if current is not None:
             entry.set_text(_field_text(current))
         row = Adw.ActionRow(
-            title=spec.title(),
-            subtitle=spec.placeholder or None,
             subtitle_lines=0,
             use_markup=False,
         )
+        row.set_title(spec.title())
+        row.set_subtitle(spec.placeholder)
         row.add_suffix(entry)
         row.set_activatable_widget(entry)
         self._arg_entries[spec.name] = entry
@@ -376,10 +376,10 @@ class BindEditor(Adw.Dialog):
         group = Adw.PreferencesGroup(title=KEPT_TITLE, description=KEPT_NOTE)
         for key, value in self._kept.items():
             row = Adw.ActionRow(
-                title=f"{table_key(key)}{lua_value(value)}",
                 use_markup=False,
                 css_classes=["monospace"],
             )
+            row.set_title(f"{table_key(key)}{lua_value(value)}")
             group.add(row)
         return group
 

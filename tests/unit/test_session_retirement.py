@@ -390,3 +390,49 @@ class TestRow:
             assert session.retired_in(SCHEMA[GAPS_IN]) is None
 
         run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+    def test_the_kept_value_is_typed_for_its_row(self, tmp_path: Path) -> None:
+        """#215: the Row shows the value the Manifest kept, as its own control would."""
+
+        async def scenario(fake: FakeHyprland) -> None:
+            await first_start(fake, tmp_path)
+            for name in (RESIZE, GAPS_IN):
+                fake.conversation[f"j/getoption {name}"] = NO_SUCH_OPTION
+            session, _ = await start(fake, tmp_path, live("0.57.0", without=(RESIZE, GAPS_IN)))
+
+            assert session.kept_value(RESIZE) is True
+            assert session.kept_value(GAPS_IN) == CssGaps(12, 12, 12, 12)
+            assert session.kept_value("general:border_size") is UNSET
+
+        run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+class TestReadOnly:
+    """#215: a Retired Option is not edited, by its Row or by any other caller."""
+
+    def test_no_edit_or_reset_reaches_a_retired_option(self, tmp_path: Path) -> None:
+        async def scenario(fake: FakeHyprland) -> None:
+            await first_start(fake, tmp_path)
+            fake.conversation[f"j/getoption {RESIZE}"] = NO_SUCH_OPTION
+            gone = live("0.57.0", without=(RESIZE,))
+            await start(fake, tmp_path, gone)
+
+            runner = Runner()
+            session = session_for(fake, tmp_path, runner, live_hyprland=gone)
+            session.start()
+            await runner.settle()
+            session.set_option(RESIZE, False)
+            session.touch_option(RESIZE, False)
+            session.preview_option(RESIZE, False)
+            session.unset_option(RESIZE)
+            session.set_option(GAPS_IN, 4)
+            await runner.settle()
+            await session.aclose()
+
+            assert session.model.get(RESIZE) is UNSET
+            assert session.model.get(GAPS_IN) == CssGaps(4, 4, 4, 4), "the rest still edits"
+            assert "resize_on_border" not in module(tmp_path)
+            assert manifest(tmp_path).retired == {RESIZE: RetiredValue("0.57.0", True)}
+            assert session.kept_value(RESIZE) is True
+
+        run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))

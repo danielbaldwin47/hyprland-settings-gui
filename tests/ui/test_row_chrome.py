@@ -48,6 +48,8 @@ class FakeSession:
         """What `unknown_to_version` answers: the Session's own rule is tested on a real
         Session (`test_session_live_version.py`), so the fake holds the answer."""
         self.retired: dict[str, str] = {}
+        self.kept: dict[str, Any] = {}
+        """What `kept_value` answers; the real one is tested in `test_session_retirement.py`."""
         self.model = ConfigModel(SCHEMA)
         self.applied: list[str] = []
 
@@ -56,6 +58,9 @@ class FakeSession:
 
     def retired_in(self, option: ResolvedOption) -> str | None:
         return self.retired.get(option.name)
+
+    def kept_value(self, name: str) -> OptionValue:
+        return self.kept.get(name, UNSET)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         return self.model.get(option.name)
@@ -327,21 +332,64 @@ def test_a_row_overridden_at_launch_wears_the_pill_before_any_edit() -> None:
     assert row.chrome.pill_labels == ()
 
 
-def test_a_row_the_running_hyprland_lacks_says_so_and_still_writes() -> None:
-    """#181: the pill informs, the control stays live, and an edit is written as before."""
-    live = LiveHyprland("0.56.0", tuple({"name": o.name} for o in SCHEMA if o.name != ROUNDING))
-    session = FakeSession(live_hyprland=live)
+def _lacking(*names: str) -> LiveHyprland:
+    return LiveHyprland(
+        "0.56.0", tuple({"name": o.name} for o in SCHEMA if o.name not in names)
+    )
+
+
+def test_a_retired_row_is_read_only_and_shows_the_value_it_keeps() -> None:
+    """#215: the control shows the kept 8, not the default, and nothing on the Row edits."""
+    session = FakeSession(live_hyprland=_lacking(ROUNDING))
+    session.retired = {ROUNDING: "0.57.0"}
+    session.kept = {ROUNDING: 8}
+    row = build_row(ROUNDING, session)
+
+    assert row.chrome.pill_labels == ("Retired in 0.57.0",)
+    assert not row.control.get_sensitive()
+    assert row.control.get_value() == 8
+    assert row.widget.get_subtitle().endswith(
+        "\nYour value: 8. Hyprland 0.57.0 removed this setting; it is kept for when the "
+        "setting returns."
+    )
+    assert not row.chrome.reset.get_visible() and not row.chrome.reset.get_sensitive()
+    assert row.chrome.help.get_sensitive(), "the ⓘ stays reachable from the keyboard"
+
+
+def test_a_set_row_the_running_hyprland_lacks_is_read_only_and_reset_takes_it_out() -> None:
+    """#215: Reset stays on a set Not in this Hyprland Row; once unset, the Row says so."""
+    session = FakeSession(live_hyprland=_lacking(ROUNDING))
     session.unknown = frozenset({ROUNDING})
+    session.model.set(ROUNDING, 8)
     row = build_row(ROUNDING, session)
 
     assert row.chrome.pill_labels == ("Not in this Hyprland",)
-    assert row.control.get_sensitive()
+    assert not row.control.get_sensitive()
+    assert row.control.get_value() == 8
+    assert row.widget.get_subtitle().endswith(
+        "\nHyprland 0.56.0 does not have this setting. Reset removes it from your config."
+    )
+    assert row.chrome.reset.get_visible() and row.chrome.reset.get_sensitive()
 
-    row.control.set_value(9)
+    row.chrome.reset.emit("clicked")
 
     assert session.applied == [ROUNDING]
-    assert session.model.get(ROUNDING) == 9
-    assert build_row(GAPS_IN, session).chrome.pill_labels == ()
+    assert session.model.get(ROUNDING) is UNSET
+    assert not row.control.get_sensitive()
+    assert not row.chrome.reset.get_visible()
+    assert row.widget.get_subtitle().endswith(
+        "\nHyprland 0.56.0 does not have this setting, so it cannot be changed here."
+    )
+
+
+def test_an_unset_row_the_running_hyprland_lacks_is_read_only() -> None:
+    session = FakeSession(live_hyprland=_lacking(ROUNDING))
+    session.unknown = frozenset({ROUNDING})
+    row = build_row(ROUNDING, session)
+
+    assert not row.control.get_sensitive()
+    assert not row.chrome.reset.get_visible()
+    assert build_row(GAPS_IN, session).control.get_sensitive(), "only the Option it lacks"
 
 
 # --- the help popover -------------------------------------------------------------------------

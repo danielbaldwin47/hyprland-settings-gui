@@ -469,11 +469,9 @@ class ThemingPage:
 
     def _regenerate_row(self, tool: str) -> Adw.ActionRow:
         row = _row(REGENERATE, self._command_text(tool))
-        image = self._actions.current_wallpaper()
-        label = "Regenerate" if image is not None else "Regenerate…"
         row.add_suffix(
             _button(
-                "Running…" if self._running == tool else label,
+                "Running…" if self._running == tool else "Regenerate",
                 lambda: self.regenerate(tool),
                 sensitive=self._running is None,
             )
@@ -482,10 +480,12 @@ class ThemingPage:
         return row
 
     def _command_text(self, tool: str) -> str:
-        """What Regenerate runs, as the user could type it (S3: the subtitle says it)."""
+        """What Regenerate runs, as the user could type it (S3: the subtitle says it). The
+        image is found when the button is pressed: asking the daemon runs a program."""
         spec = REGISTRY[tool]
-        image = self._actions.current_wallpaper() or Path(WALLPAPER_PLACEHOLDER)
-        argv = spec.rerun_argv(Path(spec.detection.binaries[0]), image, self._values[tool])
+        argv = spec.rerun_argv(
+            Path(spec.detection.binaries[0]), Path(WALLPAPER_PLACEHOLDER), self._values[tool]
+        )
         return f"Runs {shlex.join(argv)}"
 
     def _draw_options(self, tab: Tab) -> None:
@@ -765,19 +765,11 @@ class ThemingPage:
             self._actions.toast("Patch copied.")
 
     def regenerate(self, tool: str) -> None:
-        """Run `tool` on the wallpaper: the one way this page runs a program on its own."""
-        image = self._actions.current_wallpaper()
-        if image is not None:
-            self._run(tool, image)
-        else:
+        """Run `tool` on the wallpaper: the one way this page runs a program on its own.
 
-            def chosen(path: Path | None) -> None:
-                if path is not None:
-                    self._run(tool, path)
-
-            self._actions.choose_image(self._page, chosen)
-
-    def _run(self, tool: str, image: Path) -> None:
+        The image is the one the wallpaper daemon shows (asked off the main loop: that runs
+        the daemon's client), else the one the user picks.
+        """
         spec = REGISTRY[tool]
         binary = self._actions.find(spec.detection.binaries[0])
         if binary is None:
@@ -786,9 +778,34 @@ class ThemingPage:
                 f"{spec.title} was not found, so it cannot run. Install it, then try again.",
             )
             return
-        argv = spec.rerun_argv(binary, image, self._values.get(tool, {}))
         self._running = tool
         self.refresh()
+        current = self._actions.current_wallpaper
+
+        def look() -> None:
+            GLib.idle_add(self._have_image, tool, binary, current())
+
+        threading.Thread(target=look, name=f"wallpaper-{tool}", daemon=True).start()
+
+    def _have_image(self, tool: str, binary: Path, image: Path | None) -> bool:
+        if image is not None:
+            self._run(tool, binary, image)
+            return False
+        self._running = None
+        self.refresh()
+
+        def chosen(path: Path | None) -> None:
+            if path is not None:
+                self._running = tool
+                self.refresh()
+                self._run(tool, binary, path)
+
+        self._actions.choose_image(self._page, chosen)
+        return False
+
+    def _run(self, tool: str, binary: Path, image: Path) -> None:
+        spec = REGISTRY[tool]
+        argv = spec.rerun_argv(binary, image, self._values.get(tool, {}))
         run = self._actions.run
 
         def work() -> None:

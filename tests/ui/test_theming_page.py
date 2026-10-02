@@ -19,27 +19,9 @@ from pathlib import Path
 from typing import Any
 
 import main_loop
+from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
-
-
-_app: Any = None
-
-
-def started_application() -> Any:
-    """One application per process, through `startup` before any window joins it: a window
-    added earlier logs a Gtk-CRITICAL (#228 brings the shared helper; this is its shape)."""
-    global _app
-    if _app is None:
-        from gi.repository import Adw, Gio
-
-        Adw.init()
-        _app = Adw.Application(
-            application_id="io.github.danielbaldwin47.HyprtweakerTest",
-            flags=Gio.ApplicationFlags.NON_UNIQUE,
-        )
-        _app.register(None)
-    return _app
 
 
 class EntrypointApplier:
@@ -91,14 +73,15 @@ def make_session(root: Path, *, live: bool = True) -> tuple[Any, EntrypointAppli
 
 
 def build_page(session: Any, **actions: Any) -> Any:
+    """The page alone, in a window of its own so its dialogs present as the app's do."""
     from gi.repository import Adw
 
     from hyprtweaker.ui.pages.theming import ThemingActions, ThemingPage
 
-    Adw.init()
     toasts: list[str] = []
     page = ThemingPage(session, actions=ThemingActions(toast=toasts.append, **actions))
     page.toasts = toasts  # type: ignore[attr-defined]
+    Adw.ApplicationWindow(application=started_application(), content=page.page)
     return page
 
 
@@ -454,7 +437,7 @@ def test_regenerate_runs_the_tool_once_on_the_chosen_image_and_loads_its_first_c
     assert page.rows[1][1] == "Waiting for wallust's first run"
     transactions = applier.transactions
 
-    click(page, "Regenerate…")
+    click(page, "Regenerate")
     wait_until(lambda: page.running is None, "the regenerate run")
 
     assert asked == [page.page]

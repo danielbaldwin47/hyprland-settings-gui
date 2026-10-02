@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import main_loop
+from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
 TIMES = 3
@@ -45,7 +46,7 @@ def wired_window(session: Any) -> Any:
     from hyprtweaker.ui.shell.window import MainWindow
 
     Adw.init()
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     window = MainWindow(session, application=app)
     session.on_state_changed = window.sync
     session.on_applied = window.show_result
@@ -92,6 +93,32 @@ def test_a_bind_editor_closed_on_one_window_is_released_each_time(tmp_path: Path
 
     assert window.get_visible_dialog() is None
     assert collected(refs) == [True] * TIMES
+    window.close()
+
+
+def test_a_dialog_is_released_once_its_animation_out_takes_it_out_of_the_window(
+    tmp_path: Path,
+) -> None:
+    """libadwaita emits `closed` as a dialog starts to animate out, still in the window (#228).
+
+    It takes the dialog out when the animation ends (`adw-dialog.c`: `sheet_closing_cb` emits
+    `closed`, `sheet_closed_cb` removes it). A release queued on `closed` alone ran in
+    between whenever the main loop went idle mid-animation, was refused, and the dialog
+    stayed for as long as the window did. The animation's timing is the main loop's, so the
+    test plays its two ends itself: `closed` first, the removal after the loop has settled.
+    """
+    window = wired_window(offline_session(tmp_path))
+    add_bind_button(window).emit("clicked")
+    dialog = window.get_visible_dialog()
+    ref = weakref.ref(dialog)
+
+    dialog.emit("closed")
+    main_loop.settle("what the animation's first frames leave queued")
+    assert dialog.get_parent() is not None
+    dialog.force_close()
+    del dialog
+
+    assert collected([ref]) == [True]
     window.close()
 
 
@@ -202,64 +229,6 @@ def test_a_dialog_shown_again_after_one_it_opened_closes_is_released_once(
 
     assert released == ["CaptureDialog"] * TIMES + ["BindEditor"]
     window.close()
-
-
-def test_an_alert_answered_by_its_own_button_is_released(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    """libadwaita still holds an `Adw.AlertDialog` on the window when `closed` runs after a
-    response button: the release waits until it lets go (found in #164)."""
-    from gi.repository import Adw, Gtk
-
-    from hyprtweaker.ui.release import release
-    from hyprtweaker.ui.shell import window as window_module
-
-    released: list[str] = []
-
-    def counting(widget: Any) -> None:
-        release(widget)
-        released.append(widget.get_heading())
-
-    monkeypatch.setattr(window_module, "release", counting)
-    window = wired_window(offline_session(tmp_path))
-    window.present()
-    for index in range(TIMES):
-        dialog = Adw.AlertDialog(heading=f"Alert {index}")
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("ok", "OK")
-        dialog.present(window)
-        main_loop.settle("the alert to open")
-        labelled(dialog, Gtk.Button, "OK").emit("clicked")
-        del dialog
-        wait_for(lambda count=index + 1: len(released) == count, "the alert's release")
-
-    assert released == [f"Alert {index}" for index in range(TIMES)]
-    window.close()
-
-
-def labelled(root: Any, kind: type, label: str) -> Any:
-    """The first `kind` under `root` whose label is `label`."""
-    stack = [root]
-    while stack:
-        widget = stack.pop()
-        if isinstance(widget, kind) and widget.get_label() == label:
-            return widget
-        child = widget.get_first_child()
-        while child is not None:
-            stack.append(child)
-            child = child.get_next_sibling()
-    raise AssertionError(f"no {kind.__name__} {label!r} under {root}")
-
-
-def wait_for(predicate: Any, waiting_for: str) -> None:
-    import time
-
-    deadline = time.monotonic() + 5
-    while not predicate():
-        if time.monotonic() > deadline:
-            raise AssertionError(f"timed out waiting for {waiting_for}")
-        main_loop.settle(waiting_for)
-        time.sleep(0.02)
 
 
 # --- what an open dialog removes, it lets go of (review #151, findings 14 and 15) --------

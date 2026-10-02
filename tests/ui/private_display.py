@@ -40,6 +40,7 @@ PINNED = (
     "DBUS_SESSION_BUS_ADDRESS",
     "GSETTINGS_BACKEND",
     "ADW_DISABLE_PORTAL",
+    "GDK_DISABLE",
 )
 
 _libc = ctypes.CDLL(None, use_errno=True)
@@ -283,5 +284,8 @@ def pin_environment(environ: MutableMapping[str, str], display: str, bus: str) -
     environ["DBUS_SESSION_BUS_ADDRESS"] = bus
     environ["GSETTINGS_BACKEND"] = "memory"
     environ["ADW_DISABLE_PORTAL"] = "1"
+    # An Xvfb has no GPU to share: GDK's Vulkan probe can only fail on it, and it logs a
+    # Gdk-WARNING per render node it cannot open, which the UI tier's log gate fails on.
+    environ["GDK_DISABLE"] = "vulkan"
     for name in ("WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "GDK_SCALE"):
         environ.pop(name, None)

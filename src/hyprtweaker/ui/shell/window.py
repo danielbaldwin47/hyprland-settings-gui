@@ -74,6 +74,13 @@ from hyprtweaker.engine.model.entities import (  # noqa: E402
 )
 from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking  # noqa: E402
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
+from hyprtweaker.engine.presets import (  # noqa: E402
+    ColorChoice,
+    PresetApplied,
+    PresetApplyResult,
+    PresetColorConflict,
+    PresetNotApplied,
+)
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
@@ -82,6 +89,11 @@ from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
+from hyprtweaker.ui.dialogs.colour_conflict import (  # noqa: E402
+    COLOR_CONFLICT_DIALOG,
+    ColourConflictDialog,
+    remembered_choice,
+)
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.declaration_editor import (  # noqa: E402
     DeclarationEditor,
@@ -187,10 +199,7 @@ def _discard(coro: Any) -> None:
 
 
 def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> None:
-    """Release each dialog presented on `window` once it has closed.
-
-    An idle rather than the `closed` handler itself: libadwaita is still finishing the close
-    when it emits `closed`, and every handler of it must still find the dialog whole.
+    """Release each dialog presented on `window` once it has closed and left the window.
 
     Once per dialog: a dialog becomes visible again each time one it opened (Capture over
     the bind editor) closes. The mark lives on the wrapper, which PyGObject then keeps for
@@ -199,22 +208,27 @@ def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> Non
     dialog = window.get_visible_dialog()
     if dialog is not None and not getattr(dialog, "_release_on_close", False):
         dialog._release_on_close = True
-        dialog.connect("closed", _release_once_detached)
+        dialog.connect("closed", _release_once_out)
 
 
-def _release_once_detached(dialog: Adw.Dialog) -> None:
-    """Release `dialog` once libadwaita has taken it off the window: an `Adw.AlertDialog`
-    closed by its own response button is still parented when `closed` runs, and its idle."""
+def _release_once_out(dialog: Adw.Dialog) -> None:
+    """Release a closed dialog when it is out of the window (#228).
+
+    libadwaita emits `closed` as the dialog starts to animate out and takes it out of the
+    window when the animation ends; `release` refuses a widget still in a window. An idle
+    either way, not the handler itself: every handler of `closed` and of the removal must
+    still find the dialog whole.
+    """
     if dialog.get_parent() is None:
         GLib.idle_add(release, dialog)
         return
 
-    def detached(widget: Adw.Dialog, _pspec: Any) -> None:
+    def out(widget: Adw.Dialog, _pspec: Any) -> None:
         if widget.get_parent() is None:
             widget.disconnect(handler)
             GLib.idle_add(release, widget)
 
-    handler = dialog.connect("notify::parent", detached)
+    handler = dialog.connect("notify::parent", out)
 
 
 UNDO_ACTION = "undo"
@@ -269,6 +283,9 @@ NOTICE_TOAST_SECONDS = 8
 
 A timeout rather than a toast that waits for the user: every toast queues behind the one on
 screen, and a notice nobody closed would hold back the next undo offer indefinitely."""
+
+PRESET_NOTE_SECONDS = 6
+"""What a Preset could not do (a wallpaper left as it was): long enough to read a sentence."""
 
 SHOW_ADVANCED_ACTION = "show-advanced"
 """One global switch, in the primary menu -- never per-Page (ADR-0013 §5).
@@ -431,6 +448,7 @@ class MainWindow(Adw.ApplicationWindow):
         Not in the model yet, and the Page is not refreshed meanwhile: its widgets keep the
         value the user set until the batch applies."""
         self._debounce: int | None = None
+        self._colour_conflict: ColourConflictDialog | None = None
         self._undo_toast: Adw.Toast | None = None
         """The undo offer currently on screen, so the next one replaces it.
 
@@ -454,7 +472,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._sidebar.connect("row-activated", lambda *_: self._end_one_off_reveal())
 
         self._stack = Gtk.Stack(vexpand=True)
-        self._banner = Adw.Banner(revealed=False)
+        # Plain text, set before any title: the titles carry file names, and a path holding
+        # an ampersand parsed as markup renders nothing at all.
+        self._banner = Adw.Banner(revealed=False, use_markup=False)
         self._banner.connect("button-clicked", self._on_banner_clicked)
         # The one surface a failed apply reports through. It has to exist before
         # `_build_content` wraps the body in it, and before the first `show_result`.
@@ -1141,7 +1161,10 @@ class MainWindow(Adw.ApplicationWindow):
 
         # The Theming Page (ADR-0014, #164): the Color source and the tools that make it.
         self._theming_page = ThemingPage(
-            self._session, actions=ThemingActions(toast=self._toast)
+            self._session,
+            actions=ThemingActions(
+                toast=self._toast, current_wallpaper=self._session.current_wallpaper
+            ),
         )
         theming = self._theming_page
         self._stack.add_named(_scrolled(theming.page), theming.section)
@@ -1884,7 +1907,6 @@ class MainWindow(Adw.ApplicationWindow):
             self._banner.set_title(READ_ONLY_REASON[self._offered.kind])
             self._banner.set_revealed(True)
             self._banner.set_button_label("Convert...")
-            self._banner.set_use_markup(False)
             self._banner.remove_css_class(SEVERE_BANNER_CLASS)
             return
 
@@ -1894,9 +1916,6 @@ class MainWindow(Adw.ApplicationWindow):
         # libadwaita shows the button whenever the label is non-empty, so clearing it is how
         # a Banner with nothing to open loses its button rather than keeping a dead one.
         self._banner.set_button_label(health.button or "")
-        # Off, because these titles carry file names: a path containing an ampersand is not
-        # markup, and a Banner that tried to parse it as markup would render nothing at all.
-        self._banner.set_use_markup(False)
         # ADR-0016's red Banner, for the states where the config is not doing what the user
         # believes it is: an Entrypoint refusal, no keybinds, or a recovery that gave up.
         if health.severe:
@@ -2139,6 +2158,64 @@ class MainWindow(Adw.ApplicationWindow):
     def _refresh_plugins(self) -> None:
         # `sync` refreshes the Scripting Page, its plugin list included.
         self.sync()
+
+    # --- presets ----------------------------------------------------------------------------
+
+    @property
+    def colour_conflict(self) -> ColourConflictDialog | None:
+        """The "Use <preset>'s colors?" question on screen, if one is. For the UI tier."""
+        return self._colour_conflict
+
+    def apply_preset(
+        self, slug: str, *, wallpaper: bool = False, colors: ColorChoice | None = None
+    ) -> PresetApplyResult:
+        """Apply a Preset, asking first whose colours win while a wallpaper sets them.
+
+        The Presets group's Apply. A remembered answer is used without asking; otherwise
+        the question is a dialog and the Preset applies once it is answered. `wallpaper` is
+        the group's "change / keep mine". A refusal is said as a toast; what the wallpaper
+        part could not do arrives through `show_preset_note`.
+        """
+        if colors is None:
+            colors = remembered_choice(self._prefs.remembered)
+        result = self._session.apply_preset(slug, colors=colors, wallpaper=wallpaper)
+        match result:
+            case PresetColorConflict(source):
+                name = dict(self._session.presets()).get(slug)
+                dialog = ColourConflictDialog(
+                    name.name if name is not None else slug,
+                    source,
+                    on_choice=lambda choice, remember: self._answer_colours(
+                        slug, wallpaper, choice, remember
+                    ),
+                )
+                dialog.connect("closed", self._on_colour_conflict_closed)
+                self._colour_conflict = dialog
+                dialog.present(self)
+            case PresetNotApplied(reason):
+                self._toasts.add_toast(Adw.Toast(title=reason, timeout=5))
+            case PresetApplied():
+                pass
+        return result
+
+    def _answer_colours(
+        self, slug: str, wallpaper: bool, choice: ColorChoice, remember: bool
+    ) -> None:
+        if remember:
+            self._remember(self._prefs.with_remembered(COLOR_CONFLICT_DIALOG, choice.value))
+        self.apply_preset(slug, wallpaper=wallpaper, colors=choice)
+        self.sync()
+
+    def _on_colour_conflict_closed(self, dialog: ColourConflictDialog) -> None:
+        if self._colour_conflict is dialog:
+            self._colour_conflict = None
+
+    def show_preset_note(self, text: str) -> Adw.Toast:
+        """What applying or undoing a Preset could not do, said as a toast. Returned for
+        the UI tier."""
+        toast = Adw.Toast(title=text, timeout=PRESET_NOTE_SECONDS)
+        self._toasts.add_toast(toast)
+        return toast
 
     # --- undo -------------------------------------------------------------------------------
 
