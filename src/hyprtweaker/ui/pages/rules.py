@@ -30,6 +30,7 @@ from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import LayerRule, WindowRule  # noqa: E402
 from hyprtweaker.engine.rules_catalog import is_negated, strip_negation  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -298,6 +299,7 @@ class RulesPage:
         """
         for widget in self._listed:
             self._group.remove(widget)
+            release(widget)
         self._listed = []
         self._rows = []
 

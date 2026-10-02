@@ -50,6 +50,7 @@ from hyprtweaker.ui.pages.monitor_rows import (  # noqa: E402
     colour_rows,
     reserved_row,
 )
+from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -467,6 +468,7 @@ class MonitorsPage:
         for group, widgets in self._listed.items():
             for widget in widgets:
                 group.remove(widget)
+                release(widget)
         self._listed = {}
         self._connected_rows = []
         self._disconnected_rows = []
