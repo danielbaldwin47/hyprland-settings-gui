@@ -8,12 +8,13 @@ is kept whole rather than half-imported.
 from __future__ import annotations
 
 import pytest
-from _support import SAMPLE_VERSION, SCHEMA_DIR
+from _support import SAMPLE_APP_VERSION, SAMPLE_VERSION, SCHEMA_DIR
 
 from hyprtweaker.engine.importer.keysyms import validator_available
 from hyprtweaker.engine.importer.lua import Consent, import_lua, lua_binary
 from hyprtweaker.engine.model.values import Color, CssGaps, Gradient, Vec2
 from hyprtweaker.engine.schema import load_schema
+from hyprtweaker.engine.writer import render_module
 
 pytestmark = pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter installed")
 
@@ -78,6 +79,20 @@ def test_the_complex_value_shapes_come_back_as_their_own_types(imported) -> None
     )
 
     assert result.model.get("general:gaps_in") == CssGaps(4, 8, 4, 8)
+
+
+def test_a_null_spelling_imports_as_the_explicit_null_and_writes_back_as_written(
+    imported,
+) -> None:  # type: ignore[no-untyped-def]
+    """`float_gaps = -1` is Hyprland's "same as the outer gaps" (#207). Parsed as a value it
+    became four `-1` sides, which the editor shows as four sides and the Writer re-emits as
+    a table the user never wrote."""
+    result = imported("hl.config({ general = { float_gaps = -1 } })\n")
+
+    assert result.model.is_set("general:float_gaps")
+    assert result.model.get("general:float_gaps") is None
+    general = render_module(result.model.section("general"), app_version=SAMPLE_APP_VERSION)
+    assert "  float_gaps = -1,\n" in general
 
 
 def test_a_setting_this_build_does_not_have_is_reported_not_dropped(imported) -> None:  # type: ignore[no-untyped-def]

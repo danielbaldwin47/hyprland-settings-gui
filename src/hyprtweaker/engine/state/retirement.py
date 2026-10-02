@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..importer.lua.sandbox import Consent, LuaUnavailable, evaluate
-from ..model.values import has_emittable_null, parse_lua
+from ..model.values import parse_lua
 from ..schema import ResolvedOption, Schema
 from ..schema.resolve import version_key
 from ..schema.sources import lua_key_for
@@ -185,7 +185,7 @@ def restore(
         if option is None:
             continue
         try:
-            value = _model_value(option, entry.value)
+            value = parse_lua(option, entry.value)
         except (ValueError, TypeError):
             continue
         restored.append(Restoration(name, option, value))
@@ -294,17 +294,6 @@ def unannounced(manifest: Manifest) -> tuple[RetiredNotice, ...]:
         RetiredNotice(release, tuple(sorted(names)))
         for release, names in sorted(by_release.items(), key=lambda item: version_key(item[0]))
     )
-
-
-def _model_value(option: ResolvedOption, raw: Any) -> Any:
-    """`raw` as the model holds it: explicit null when it is the Option's null spelling.
-
-    The Writer emits null as `null_value` verbatim (`lua_literal_for`), so `-1` in
-    `general:float_gaps` reads back as `-1`; parsed as a value it would become four `-1`
-    sides and re-emit as a different statement."""
-    if option.nullable and has_emittable_null(option) and raw == option.null_value:
-        return None
-    return parse_lua(option, raw)
 
 
 _ABSENT = object()
