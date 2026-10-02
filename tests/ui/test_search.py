@@ -280,7 +280,7 @@ def test_the_reveal_ends_when_the_user_navigates(window: Any) -> None:
     assert all(page.row(HIDDEN_OPTION) is None for page in window.pages)
 
 
-# --- the Keybinds, rules & displays group (#75)---------------------------------------------------
+# --- the Keybinds, rules & displays group (#75) -----------------------------------------------
 
 
 def test_startup_builds_no_entity_entries() -> None:
