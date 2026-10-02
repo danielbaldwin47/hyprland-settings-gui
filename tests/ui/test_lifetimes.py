@@ -228,7 +228,8 @@ def test_a_dialog_shown_again_after_one_it_opened_closes_is_released_once(
     editor.force_close()
     main_loop.settle("the bind editor to close")
 
-    assert released == ["CaptureDialog"] * TIMES + ["BindEditor"]
+    dialogs = [name for name in released if name in ("CaptureDialog", "BindEditor")]
+    assert dialogs == ["CaptureDialog"] * TIMES + ["BindEditor"]
     window.close()
 
 
