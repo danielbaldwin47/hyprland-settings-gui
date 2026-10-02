@@ -133,7 +133,12 @@ from hyprtweaker.engine.state.retirement import (
     UnkeptNotice,
 )
 from hyprtweaker.engine.triggers import trigger_load_problem
-from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
+from hyprtweaker.engine.writer import (
+    BeforeReplace,
+    LuaSyntaxError,
+    ModuleSet,
+    Writer,
+)
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
 from hyprtweaker.engine.writer.monitors import parse_monitors_module
@@ -2664,17 +2669,29 @@ class Session:
         which requires are quarantined, so there is nothing in it a regeneration could lose.
         """
         return self._recovery_write(
-            lambda: self._writer.regenerate_entrypoint(self._model),
+            lambda before: self._writer.regenerate_entrypoint(
+                self._model, before_replace=before
+            ),
+            self.quarantined,
             "regenerate the Entrypoint",
         )
 
     def _set_quarantine(self, requires: set[str]) -> bool:
+        ordered = sorted(requires)
         return self._recovery_write(
-            lambda: self._writer.set_quarantine(self._model, sorted(requires)),
+            lambda before: self._writer.set_quarantine(
+                self._model, ordered, before_replace=before
+            ),
+            ordered,
             "change the Quarantine",
         )
 
-    def _recovery_write(self, write: Callable[[], object], what: str) -> bool:
+    def _recovery_write(
+        self,
+        write: Callable[[BeforeReplace | None], bool],
+        quarantined: Sequence[str],
+        what: str,
+    ) -> bool:
         """Rewrite the Entrypoint out of band, then reload. `False` if it could not be done.
 
         One body for the two recoveries that work by changing which files are required, since
@@ -2682,23 +2699,30 @@ class Session:
         live session to reload into, a write that may fail without taking the app down, and a
         reload that is *not* an apply -- an apply would render the model over the App dir and
         reload with the require list it would have generated rather than the one just written.
+
+        The Entrypoint `quarantined` would produce is rendered and syntax-gated here, so a
+        recovery the gate refuses answers `False` and leaves the Banner as it is. The write
+        itself runs queued (`EntrypointTransaction`): its Journal draft stays open until the
+        reload answers, and nothing else may open one meanwhile.
         """
         if not self.live or self._applier is None:
             return False
         try:
-            write()
-        except (LuaSyntaxError, ProtectedFile, OSError, ValueError) as error:
+            self._writer.entrypoint_text(self._model, quarantined)
+        except (LuaSyntaxError, ValueError) as error:
             _log.error("could not %s: %s", what, error)
             return False
-        self._spawn(self._reload_after_recovery())
+        self._spawn(self._recover_entrypoint(write, what))
         return True
 
-    async def _reload_after_recovery(self) -> None:
-        """Make an Entrypoint rewrite take effect, and re-read what the config now says.
+    async def _recover_entrypoint(
+        self, write: Callable[[BeforeReplace | None], bool], what: str
+    ) -> None:
+        """Rewrite the Entrypoint, reload, and re-read what the config now says.
 
         A plain apply would do the wrong thing here: it renders the model over the App dir,
-        and the file that just changed is the one file the model does not describe. So this
-        restores nothing and writes nothing -- it reloads, and finds out what happened.
+        and the file that changes is the one file the model does not describe. So this
+        renders nothing -- it rewrites one file, reloads, and finds out what happened.
         """
         applier = self._applier
         if applier is None:
@@ -2708,9 +2732,15 @@ class Session:
         # without asking about all of them.
         wanted = tuple(option.name for option in self._owned())
         try:
-            result = await applier.restore_now(applier.reload_only(wanted))
+            result = await applier.restore_now(applier.recover_entrypoint(write, wanted))
         except (IpcError, RuntimeError) as error:
             _log.error("could not reload after a recovery: %s", error)
+            self._changed()
+            return
+        if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+            # No reload ran, so there is nothing new to observe about the config.
+            _log.error("could not %s: %s", what, result.detail)
+            self._report(result)
             self._changed()
             return
         self._observe(result)

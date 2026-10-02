@@ -497,7 +497,9 @@ class Writer:
         self._record_one(model, module, ModuleRecord.of(text, options))
         return changed
 
-    def regenerate_entrypoint(self, model: ConfigModel) -> bool:
+    def regenerate_entrypoint(
+        self, model: ConfigModel, *, before_replace: BeforeReplace | None = None
+    ) -> bool:
         """Rewrite `hyprland.lua` from the Module set, whatever is in it now.
 
         ADR-0016's Entrypoint recovery, and the reason that class gets a one-click Fix while
@@ -510,18 +512,34 @@ class Writer:
         is the whole point: a hand edit is exactly how the Entrypoint gets broken in the
         first place (the app syntax-gates its own writes), so a recovery that respected it
         would refuse in precisely the case it exists for.
+
+        `before_replace` is called just before the rename, as in `write`: the recovery's
+        Journal draft keeps the bytes being overwritten (ADR-0010 §Rollback).
         """
         manifest = self._manifest_for(model)
-        rendered = self.render_modules(model)
-        module_set = ModuleSet.discover(self._paths, list(rendered), manifest.quarantined)
-        text = self.render_entrypoint(module_set)
-        syntax.gate(text, ENTRYPOINT_NAME)
-
-        changed = self._write_if_changed(self._paths.entrypoint, text)
+        text = self.entrypoint_text(model, manifest.quarantined)
+        changed = self._write_if_changed(self._paths.entrypoint, text, before_replace)
         self._save(replace(manifest, entrypoint=ModuleRecord.of(text)))
         return changed
 
-    def set_quarantine(self, model: ConfigModel, requires: Sequence[str]) -> bool:
+    def entrypoint_text(self, model: ConfigModel, quarantined: Sequence[str]) -> str:
+        """The Entrypoint this model renders with `quarantined` left out, syntax-gated.
+
+        Writes nothing, so a recovery can find out it would be refused before it is queued.
+        """
+        rendered = self.render_modules(model)
+        module_set = ModuleSet.discover(self._paths, list(rendered), quarantined)
+        text = self.render_entrypoint(module_set)
+        syntax.gate(text, ENTRYPOINT_NAME)
+        return text
+
+    def set_quarantine(
+        self,
+        model: ConfigModel,
+        requires: Sequence[str],
+        *,
+        before_replace: BeforeReplace | None = None,
+    ) -> bool:
         """Record exactly `requires` as quarantined and regenerate the Entrypoint.
 
         One call for both halves, because they are one act: the Manifest is where the
@@ -533,7 +551,7 @@ class Writer:
         "one-click re-enable" one click rather than an undo path of its own.
         """
         self._save(self._manifest_for(model).with_quarantine(requires))
-        return self.regenerate_entrypoint(model)
+        return self.regenerate_entrypoint(model, before_replace=before_replace)
 
     def set_retired(self, model: ConfigModel, retired: Mapping[str, RetiredValue]) -> None:
         """Record exactly `retired` as the kept values of removed Options (ADR-0012).
