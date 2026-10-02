@@ -2770,7 +2770,7 @@ class Session:
         """
         self._load_entities()
         owned = self._owned()
-        result = await read_state(self._model, client, owned)
+        result = await self._read_model(client, owned, launch=True)
         _log.info(
             "recovered %d option(s) from %d owned; %d unreadable, %d unknown",
             len(result.adopted),
@@ -2782,6 +2782,57 @@ class Session:
         # same Banner" (ADR-0016 §Surfacing). Breakage that happened while the app was closed
         # is not a lesser kind of breakage, and the app has to open saying so.
         await self._scan(client)
+        return result
+
+    async def _read_model(
+        self, client: CommandClient, options: Sequence[ResolvedOption], *, launch: bool
+    ) -> ReRead:
+        """Bring the model into step with the config, never taking an override as the user's.
+
+        The one re-read behind launch, a foreign reload and a timed-out transaction
+        (finding 11 of the #153 review). The live value of a key is the user's own only when
+        nothing loaded after the app's Module set it, and the app cannot see that from
+        `getoption`: `user.lua` and a theming tool's Bridge module both load later. So:
+
+        - A key an app Module sets whose bytes still hash to the Manifest (`verified`) takes
+          the Module's value: the user set it here, and an override of it is the drift
+          scan's to badge, not the model's to adopt. At launch the value is read off the
+          Module; after a reload the model already holds it, since it rendered the Module.
+        - A key a loading Bridge module sets (`bridge_owners`) is never read live: the
+          answer is the tool's colour.
+        - Every other key -- one in a hand-edited Module, or one only `user.lua` names -- is
+          read live, as before, so a hand edit is adopted rather than written over.
+
+        At launch without a Lua interpreter the Modules cannot be read, so verified keys are
+        read live too, still leaving out the Bridge-owned ones.
+        """
+        manifest = self._manifest()
+        tools = owners(manifest.bridges, quarantined=manifest.quarantined)
+        if not launch:
+            pinned = overrides.verified_options(self._paths.app_dir, manifest)
+            live = [o for o in options if o.name not in pinned and o.name not in tools]
+            return await read_state(self._model, client, live)
+        try:
+            written = await asyncio.to_thread(
+                overrides.written_values, self._paths.app_dir, self._schema, manifest
+            )
+        except LuaUnavailable as error:
+            _log.warning("no Lua, so the app's Modules are read off the compositor: %s", error)
+            written = {}
+        # Every key is still asked about, so one this Hyprland no longer has stays out of
+        # the model (retirement reads it out of the Module next); then the Module's value
+        # replaces whatever the compositor answered.
+        result = await read_state(
+            self._model, client, [o for o in options if o.name not in tools]
+        )
+        wanted = {option.name for option in options}.difference(result.unknown)
+        for name, value in written.items():
+            if name not in wanted:
+                continue
+            if value is None:
+                self._model.set_null(name)
+            else:
+                self._model.set(name, value)
         return result
 
     async def _scan(self, client: CommandClient) -> None:
@@ -2931,7 +2982,7 @@ class Session:
         wanted.update(option.name for option in self._owned())
         stale = tuple(option for option in self._schema.options if option.name in wanted)
         try:
-            result = await read_state(self._model, client, stale)
+            result = await self._read_model(client, stale, launch=False)
         except IpcError as error:
             self.set_read_only(f"lost contact with Hyprland: {error}")
             return
@@ -3867,7 +3918,10 @@ class Session:
         # Every owned Option, not a narrow set: quarantining `user.lua` changes the value of
         # everything that file was overriding, and the app cannot know which those were
         # without asking about all of them.
-        wanted = tuple(option.name for option in self._owned() if option.name not in exclude)
+        # Not the keys a verified Module sets: the model rendered them and holds them, and
+        # what the compositor answers for one may be `user.lua`'s or a tool's (finding 11).
+        kept = {*exclude, *overrides.verified_options(self._paths.app_dir, self._manifest())}
+        wanted = tuple(option.name for option in self._owned() if option.name not in kept)
         try:
             result = await applier.restore_now(applier.recover_entrypoint(write, wanted))
         except (IpcError, RuntimeError) as error:

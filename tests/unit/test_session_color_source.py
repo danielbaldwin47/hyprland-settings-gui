@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from _fake_hyprland import FakeHyprland, option_reply, run_with_fake
 from _support import Runner, drain_events, sample_schema, section_conversation, session_for
 
@@ -182,6 +183,60 @@ def test_the_users_own_colour_survives_a_wallpaper_source_and_comes_back(
 
     run_with_fake(
         scenario, FakeHyprland(conversation(**{INACTIVE: MINE}), reload_emits_event=True)
+    )
+
+
+MY_LINE = 'inactive_border = { colors = { "rgba(5959aa59)" }, angle = 0 },'
+"""`MINE` as the app's Module writes it."""
+
+
+def general_module(root: Path) -> str:
+    return (paths_of(root).app_dir / "options/general.lua").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("relaunch", [False, True])
+def test_a_tools_colour_read_after_a_reload_or_a_relaunch_is_never_taken_as_the_users(
+    tmp_path: Path, relaunch: bool
+) -> None:
+    """Finding 11 of the #153 review: after a foreign reload (one matugen run) or a relaunch,
+    the re-read put matugen's colour in the model, the next write put it in the app's own
+    Module, and Manual brought back the tool's colour instead of the user's."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        put(tmp_path, "hyprtweaker/bridge/matugen.lua")
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(INACTIVE, MINE)
+        await settle(session, runner)
+        mine = session.model.get(INACTIVE)
+        wire(session, MATUGEN)
+        assert session.set_color_source(Wallpaper("matugen"))
+        await settle(session, runner)
+
+        set_live(fake, INACTIVE, MATUGENS)
+        if relaunch:
+            await session.aclose()
+            runner = Runner()
+            session = await live_session(fake, tmp_path, runner)
+        else:
+            await fake.emit("configreloaded")
+            await drain_events(runner)
+            await settle(session, runner)
+        assert session.model.get(INACTIVE) == mine
+
+        session.set_option(BORDER_SIZE, 4)
+        await settle(session, runner)
+        assert MY_LINE in general_module(tmp_path)
+
+        set_live(fake, INACTIVE, MINE)
+        assert session.set_color_source(ManualColors())
+        await settle(session, runner)
+        assert session.model.get(INACTIVE) == mine
+        assert MY_LINE in general_module(tmp_path)
+
+    run_with_fake(
+        scenario,
+        FakeHyprland(conversation(**{INACTIVE: MINE, BORDER_SIZE: 4}), reload_emits_event=True),
     )
 
 

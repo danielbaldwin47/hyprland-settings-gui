@@ -130,6 +130,36 @@ def test_a_timed_out_bind_is_undone_first_and_the_step_beneath_survives(tmp_path
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
 
 
+def test_a_timed_out_edit_keeps_the_users_value_in_the_model_and_the_file(
+    tmp_path: Path,
+) -> None:
+    """Finding 11 of the #153 review: the timeout's re-read took the old live value into the
+    model while the file held the new one, so the next write in that Section silently put
+    the old value back over the user's edit."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 5)
+        await settle(session, runner)
+
+        fake.reload_emits_event = False
+        session.set_option(BORDER_SIZE, 10)
+        await settle(session, runner)
+
+        assert session.model.get(BORDER_SIZE) == 10
+        assert b"border_size = 10" in module_bytes(tmp_path, GENERAL_MODULE)
+        assert session.can_undo
+        fake.reload_emits_event = True
+        assert session.undo()
+        await settle(session, runner)
+        assert session.model.get(BORDER_SIZE) == 5
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 5}), reload_emits_event=True)
+    )
+
+
 def test_a_timed_out_bind_whose_file_the_re_read_changed_keeps_no_step(tmp_path: Path) -> None:
     """The re-read is the check: a `binds.lua` changed by hand while the reload was unanswered
     is adopted, and a step over the list it replaced would write the old list over it."""

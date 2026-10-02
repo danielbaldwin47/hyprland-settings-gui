@@ -342,3 +342,28 @@ def test_a_read_back_that_lands_during_a_scan_keeps_its_newer_answer(tmp_path: P
         assert session.overridden == frozenset()
 
     run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_an_override_is_never_adopted_as_the_users_own_value(tmp_path: Path) -> None:
+    """Finding 11 of the #153 review: the launch and foreign-reload re-reads copied the
+    value `user.lua` set into the model, so the next write put it in the app's own Module
+    and the pill's "a value you set here is kept" was false after a relaunch."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        live_says(fake, GAPS_IN, OVERRIDE)
+        session, runner = await launch(fake, tmp_path)
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+        live_says(fake, "general:border_size", 3)
+        await edit(session, runner, "general:border_size", 3)
+
+        module = tmp_path / "hypr" / "hyprtweaker" / "options" / "general.lua"
+        assert session.model.get(GAPS_IN) == WRITTEN
+        assert "gaps_in = { top = 5, right = 5, bottom = 5, left = 5 }," in module.read_text()
+        await foreign_reload(fake, session, runner)
+        assert session.model.get(GAPS_IN) == WRITTEN
+        assert session.overridden == {GAPS_IN}
+
+    run_with_fake(scenario, compositor())
