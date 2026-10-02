@@ -29,6 +29,7 @@ package_sources = {
     'scripting.py',
     'tools.py',
     'triggers.py',
+    'wallpaper.py',
     'workspace_catalog.py',
     'workspace_selector.py',
   ],
