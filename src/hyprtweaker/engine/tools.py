@@ -66,8 +66,17 @@ def detached_environment(environ: Mapping[str, str] = os.environ) -> dict[str, s
 def _search_dirs(environ: Mapping[str, str]) -> list[str]:
     raw = environ[TOOL_PATH_ENV] if TOOL_PATH_ENV in environ else environ.get("PATH", "")
     # An empty or relative entry is read against the working directory, which is no
-    # place anyone put a tool on purpose.
-    return [entry for entry in raw.split(os.pathsep) if os.path.isabs(entry)]
+    # place anyone put a tool on purpose. A leading `~` is the home of `environ` -- the
+    # mapping given, never the process's own -- as a shell profile writes `~/.cargo/bin`
+    # (ruling A8 of the #148 review).
+    home = environ.get("HOME", "")
+    dirs = []
+    for entry in raw.split(os.pathsep):
+        if home and (entry == "~" or entry.startswith("~/")):
+            entry = home + entry[1:]
+        if os.path.isabs(entry):
+            dirs.append(entry)
+    return dirs
 
 
 def tool_search_path(environ: Mapping[str, str]) -> str:

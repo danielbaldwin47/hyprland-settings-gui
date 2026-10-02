@@ -205,3 +205,17 @@ def test_only_the_end_of_a_long_output_is_kept(stub_tool: Callable[[str, str], P
 
     assert len(ran.stdout.encode()) == OUTPUT_LIMIT
     assert ran.stdout.endswith("\nlast line\n")
+
+
+def test_a_home_relative_path_entry_finds_its_tool(tmp_path: Path) -> None:
+    """Ruling A8 of the #148 review: `~/.cargo/bin` on PATH (a cargo-installed matugen) was
+    dropped as not absolute, and Theming said the tool was not installed."""
+    home = tmp_path / "home"
+    stub = home / "bin" / "matugen"
+    stub.parent.mkdir(parents=True)
+    stub.write_text("#!/bin/sh\n")
+    stub.chmod(0o755)
+    environ = {"HOME": str(home), "PATH": "~/bin:/nonexistent"}
+
+    assert find_tool("matugen", environ) == stub
+    assert tool_search_path(environ) == f"{home / 'bin'}:/nonexistent"
