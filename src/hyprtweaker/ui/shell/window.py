@@ -784,6 +784,9 @@ class MainWindow(Adw.ApplicationWindow):
             start, self.on_import_kept = self.on_import_kept, None
             if start is not None:
                 start()
+            else:
+                # A menu Import into a running session (F5 of the #148 review).
+                self._session.adopt_import()
         self.sync()
 
     def route_first_run(self) -> Detection:

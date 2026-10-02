@@ -3120,6 +3120,37 @@ class Session:
         self._open_gestures.clear()
         self._spawn(self._reread_after_foreign_reload())
 
+    def adopt_import(self) -> None:
+        """A kept Import into a running session: the App dir is the wizard's now (ADR-0009).
+
+        The wizard writes every Module with its own Writer and records them in the Manifest,
+        so the hash-gated re-read of a foreign reload finds nothing to adopt and the model
+        keeps the config from before the import -- which the next edit would write back
+        over it (F5 of the #148 review). So the model is read again as at launch, every
+        Module whole, and the undo stack goes: its steps are over a config that is gone.
+        A session that never went live has nothing to re-read; its start reads the files.
+        """
+        if self._client is None or self._applier is None:
+            return
+        self._spawn(self._adopt_import(self._client))
+
+    async def _adopt_import(self, client: CommandClient) -> None:
+        self._model.clear()
+        self._undo = UndoStack()
+        self._open_gestures.clear()
+        self._pending_entities = []
+        self._undo_group = None
+        self._undo_waits_for = None
+        self._held_back.clear()
+        try:
+            await self._recover(client)
+        except IpcError as error:
+            self.set_read_only(f"lost contact with Hyprland: {error}")
+            return
+        await self._scan_drift(client)
+        self.load_waiting_bridges()
+        self._changed()
+
     async def _reread_after_foreign_reload(self, keep: Collection[str] = ()) -> None:
         """`keep`: keys whose drift marks this re-read's scan leaves alone -- a timed-out
         transaction's, which read "Not confirmed" until a later reading covers them."""

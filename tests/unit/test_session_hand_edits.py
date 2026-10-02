@@ -169,3 +169,39 @@ def test_a_bind_added_into_a_hand_edited_binds_module_is_held_back(tmp_path: Pat
         )
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_kept_import_into_a_live_session_is_what_the_next_edit_builds_on(
+    tmp_path: Path,
+) -> None:
+    """F5 of the #148 review: the wizard writes the App dir with its own Writer, so every
+    Module matches the Manifest and the hash-gated re-read skipped them all. The next edit
+    then wrote the session's old binds over the imported ones."""
+    from hyprtweaker.engine.model import ConfigModel
+    from hyprtweaker.engine.writer import Writer
+
+    def bind(keys: str) -> Bind:
+        return Bind(keys=keys, dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.add_bind(bind("SUPER + A"))
+        await settle(session, runner)
+
+        imported = ConfigModel(session.schema)
+        imported.entities.binds.append(bind("SUPER + Z"))
+        imported.mark_entities_loaded()
+        Writer(session.paths, app_version=session.app_version).write(imported)
+
+        session.adopt_import()
+        await settle(session, runner)
+        assert [b.keys for b in session.model.entities.binds] == ["SUPER + Z"]
+        assert session.last_gesture is None, "an undo step from before the import survived"
+
+        session.add_bind(bind("SUPER + B"))
+        await settle(session, runner)
+        text = module(tmp_path, "binds.lua").read_text()
+        assert "SUPER + Z" in text and "SUPER + B" in text and "SUPER + A" not in text
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
