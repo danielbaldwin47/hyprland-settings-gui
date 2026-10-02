@@ -186,10 +186,7 @@ def _discard(coro: Any) -> None:
 
 
 def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> None:
-    """Release each dialog presented on `window` once it has closed.
-
-    An idle rather than the `closed` handler itself: libadwaita is still finishing the close
-    when it emits `closed`, and every handler of it must still find the dialog whole.
+    """Release each dialog presented on `window` once it has closed and left the window.
 
     Once per dialog: a dialog becomes visible again each time one it opened (Capture over
     the bind editor) closes. The mark lives on the wrapper, which PyGObject then keeps for
@@ -198,7 +195,27 @@ def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> Non
     dialog = window.get_visible_dialog()
     if dialog is not None and not getattr(dialog, "_release_on_close", False):
         dialog._release_on_close = True
-        dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
+        dialog.connect("closed", _release_once_out)
+
+
+def _release_once_out(dialog: Adw.Dialog) -> None:
+    """Release a closed dialog when it is out of the window (#228).
+
+    libadwaita emits `closed` as the dialog starts to animate out and takes it out of the
+    window when the animation ends; `release` refuses a widget still in a window. An idle
+    either way, not the handler itself: every handler of `closed` and of the removal must
+    still find the dialog whole.
+    """
+    if dialog.get_parent() is None:
+        GLib.idle_add(release, dialog)
+        return
+
+    def out(widget: Adw.Dialog, _pspec: Any) -> None:
+        if widget.get_parent() is None:
+            widget.disconnect(handler)
+            GLib.idle_add(release, widget)
+
+    handler = dialog.connect("notify::parent", out)
 
 
 UNDO_ACTION = "undo"
@@ -437,7 +454,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._sidebar.connect("row-activated", lambda *_: self._end_one_off_reveal())
 
         self._stack = Gtk.Stack(vexpand=True)
-        self._banner = Adw.Banner(revealed=False)
+        # Plain text, set before any title: the titles carry file names, and a path holding
+        # an ampersand parsed as markup renders nothing at all.
+        self._banner = Adw.Banner(revealed=False, use_markup=False)
         self._banner.connect("button-clicked", self._on_banner_clicked)
         # The one surface a failed apply reports through. It has to exist before
         # `_build_content` wraps the body in it, and before the first `show_result`.
@@ -1849,7 +1868,6 @@ class MainWindow(Adw.ApplicationWindow):
             self._banner.set_title(READ_ONLY_REASON[self._offered.kind])
             self._banner.set_revealed(True)
             self._banner.set_button_label("Convert...")
-            self._banner.set_use_markup(False)
             self._banner.remove_css_class(SEVERE_BANNER_CLASS)
             return
 
@@ -1859,9 +1877,6 @@ class MainWindow(Adw.ApplicationWindow):
         # libadwaita shows the button whenever the label is non-empty, so clearing it is how
         # a Banner with nothing to open loses its button rather than keeping a dead one.
         self._banner.set_button_label(health.button or "")
-        # Off, because these titles carry file names: a path containing an ampersand is not
-        # markup, and a Banner that tried to parse it as markup would render nothing at all.
-        self._banner.set_use_markup(False)
         # ADR-0016's red Banner, for the states where the config is not doing what the user
         # believes it is: an Entrypoint refusal, no keybinds, or a recovery that gave up.
         if health.severe:
