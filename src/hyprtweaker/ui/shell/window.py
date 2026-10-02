@@ -133,6 +133,7 @@ from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
     WorkspaceRuleActions,
     WorkspaceRulesPage,
 )
+from hyprtweaker.ui.release import release  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
 from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
@@ -161,6 +162,17 @@ def _discard(coro: Any) -> None:
     close = getattr(coro, "close", None)
     if close is not None:
         close()
+
+
+def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> None:
+    """Release each dialog presented on `window` once it has closed.
+
+    An idle rather than the `closed` handler itself: libadwaita is still finishing the close
+    when it emits `closed`, and every handler of it must still find the dialog whole.
+    """
+    dialog = window.get_visible_dialog()
+    if dialog is not None:
+        dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
 
 
 UNDO_ACTION = "undo"
@@ -384,6 +396,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.rebuild()
 
         self.connect("close-request", self._on_close_request)
+        self.connect("notify::visible-dialog", _release_dialogs_on_close)
 
     # --- construction -----------------------------------------------------------------------
 
@@ -884,8 +897,15 @@ class MainWindow(Adw.ApplicationWindow):
         self._section_titles = {}
         self._built = []
         self._sidebar.remove_all()
+        # The window holds its focus widget. A focused Row of an old Page outlives `release`,
+        # and its chrome then keeps the Page and the window (#219). Whether GTK lets go of it
+        # on removal depends on whether the window is active, so it is dropped here first.
+        focus = self.get_focus()
+        if focus is not None and focus.is_ancestor(self._stack):
+            self.set_focus(None)
         while (child := self._stack.get_first_child()) is not None:
             self._stack.remove(child)
+            release(child)
 
         self._categories, option_plans = self._plan_view()
 
@@ -2221,8 +2241,12 @@ class MainWindow(Adw.ApplicationWindow):
             dialog = self._countdown.dialog
             dialog.emit("response", "revert")
             dialog.force_close()
-        self._session.close(self.destroy)
+        self._session.close(self._destroy_and_release)
         return True
+
+    def _destroy_and_release(self) -> None:
+        self.destroy()
+        release(self)
 
     # --- helpers ------------------------------------------------------------------------
 

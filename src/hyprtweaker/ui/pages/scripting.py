@@ -41,6 +41,7 @@ from hyprtweaker.engine.scripting import (  # noqa: E402
 )
 from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 
 _log = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ class ScriptingPage:
         """Read the files again and rebuild the inventory groups in place."""
         for group in self._inventory:
             self._page.remove(group)
+            release(group)
         self._inventory = []
         self._listed = []
 
