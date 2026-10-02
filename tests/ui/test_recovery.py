@@ -397,3 +397,52 @@ def _labels(widget: Any) -> set[str]:
             stack.append(child)
             child = child.get_next_sibling()
     return found
+
+
+LONG_USER_ERROR = (
+    "/home/alex/.config/hypr/user.lua:2: syntax error near 'is' while loading the user "
+    "module required last by hyprland.lua"
+)
+
+
+def test_the_error_and_its_buttons_fit_inside_the_dialog(tmp_path: Path) -> None:
+    """Hand-test 14 of #148: the error was one unwrapped line in a sideways-scrolling box,
+    cut at "user.lua:2: s", and "Disable until fixed" sat past the dialog's right edge."""
+    import main_loop
+    from gi.repository import Gtk
+
+    _session, window = build_window(tmp_path, (LONG_USER_ERROR,))
+    window.set_default_size(1090, 800)
+    window.present()
+    dialog = window.show_errors()
+    main_loop.settle("the error dialog to lay out")
+
+    viewport = dialog.get_extra_child()  # what the dialog shows of the errors
+    width = viewport.get_width()
+    assert width > 0
+    shown = [*buttons(dialog.get_extra_child())]
+    shown += [
+        label
+        for label in _all(dialog.get_extra_child())
+        if isinstance(label, Gtk.Label) and label.get_label() == LONG_USER_ERROR
+    ]
+    assert len(shown) == 3
+    for widget in shown:
+        ok, bounds = widget.compute_bounds(viewport)
+        assert ok
+        assert bounds.origin.x >= 0, widget
+        assert bounds.origin.x + bounds.size.width <= width, (widget, bounds.size.width, width)
+
+
+def _all(widget: Any) -> list[Any]:
+    """Every widget under `widget`, in tree order."""
+    found = []
+    stack = [widget]
+    while stack:
+        current = stack.pop()
+        found.append(current)
+        child = current.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    return found

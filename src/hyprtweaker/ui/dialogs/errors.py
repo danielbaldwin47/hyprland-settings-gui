@@ -29,7 +29,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, Gtk, Pango  # noqa: E402
 
 from hyprtweaker.engine.apply import Action, Problem, Recovery  # noqa: E402
 
@@ -69,6 +69,9 @@ def error_dialog(
     is a function whose entire effect is invisible from a test.
     """
     dialog = Adw.AlertDialog(heading=_HEADING, body=body)
+    # Wide where the window allows: an error line is a path, a line number and a reason,
+    # and the narrow layout cut it at "user.lua:2: s" (#148 hand-test 14).
+    dialog.set_prefer_wide_layout(True)
     dialog.set_extra_child(_problem_list(recovery, dialog, on_action))
     dialog.add_response("close", "Close")
     dialog.set_default_response("close")
@@ -87,7 +90,9 @@ def _problem_list(
         child=body,
         propagate_natural_height=True,
         max_content_height=_MAX_HEIGHT,
-        hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+        # Never sideways: a sideways scroll hid the end of each error and the buttons past
+        # the dialog's edge. The text wraps instead, and the buttons wrap into lines.
+        hscrollbar_policy=Gtk.PolicyType.NEVER,
         vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
     )
 
@@ -101,7 +106,13 @@ def _problem_card(
             label="\n".join(problem.lines),
             xalign=0.0,
             selectable=True,
-            wrap=False,
+            # WORD_CHAR: a path has no spaces to break at, and must still break.
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            # Asks for a typical error line's width, so the wide layout can give it room;
+            # it wraps below that.
+            width_chars=40,
+            max_width_chars=72,
             css_classes=["monospace"],
         )
     )
@@ -118,7 +129,7 @@ def _buttons(
     if on_action is None:
         return None
 
-    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, halign=Gtk.Align.END)
+    row = Adw.WrapBox(child_spacing=6, line_spacing=6, halign=Gtk.Align.END)
     offered = 0
     for action in problem.actions:
         label = ACTION_LABELS.get(action)
