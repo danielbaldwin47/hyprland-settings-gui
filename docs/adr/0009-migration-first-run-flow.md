@@ -111,8 +111,11 @@ Requires a live session; without an IPC socket the wizard runs Detect/Preview on
    - **Bind count** is hard. The expected count is what the Writer emits (`live_bind_count`: a
      disabled bind is a comment and a function-valued one is never written), and the check
      is `live >= expected`, because `legacy.lua` and preserved scripts can register more. It
-     is hard only because a Harness run over every `tests/corpus/` rice showed no false
-     rollback; a config that loads with no keybinds is ADR-0016's emergency.
+     is hard only because a Harness run over the `tests/corpus/` rices showed no false
+     rollback; a config that loads with no keybinds is ADR-0016's emergency. That run covers
+     six of the seven: ml4w stages one file and no Entities until #206. Two of the six, hyde
+     and jakoolit, still roll back on `configerrors` the importer itself generates; the run
+     pins those errors per rice until #205 removes them.
    - **Workspace-rule count** and **monitor arrangement** are soft: reported on the Keep or
      roll back page under "What this could not confirm", never a rollback, because each
      compares against what Hyprland *did* with a request (merged a selector, picked the
