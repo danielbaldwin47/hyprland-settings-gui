@@ -17,6 +17,7 @@ package_sources = {
     'binds_analysis.py',
     'dispatchers.py',
     'entities_catalog.py',
+    'files.py',
     'monitors_catalog.py',
     'paths.py',
     'prefs.py',

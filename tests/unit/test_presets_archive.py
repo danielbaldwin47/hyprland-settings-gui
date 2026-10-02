@@ -22,6 +22,7 @@ import pytest
 
 from hyprtweaker.engine.presets import CaptureScope, Preset, PresetStore
 from hyprtweaker.engine.presets_archive import (
+    ArchiveImage,
     ArchiveNotWritten,
     ArchiveRefused,
     ArchiveWritten,
@@ -30,7 +31,6 @@ from hyprtweaker.engine.presets_archive import (
     CodecError,
     StdlibZstd,
     ThemeArchive,
-    Wallpaper,
     export_archive,
     find_codec,
     read_archive,
@@ -132,7 +132,7 @@ def test_an_archive_round_trips_a_preset_and_its_wallpaper_byte_for_byte(
             archive = read_archive(dest, find=lambda r=reader: r)
             assert archive == ThemeArchive(
                 preset=nord(wallpaper=None),
-                wallpaper=Wallpaper("png", png(4, 3)),
+                wallpaper=ArchiveImage("png", png(4, 3)),
                 newer_format=False,
                 dropped=(),
             )
@@ -289,7 +289,7 @@ def test_the_archives_own_wallpaper_path_is_never_kept(tmp_path: Path) -> None:
 
     assert isinstance(archive, ThemeArchive)
     assert archive.preset.wallpaper is None
-    assert archive.wallpaper == Wallpaper("jpeg", JPEG)
+    assert archive.wallpaper == ArchiveImage("jpeg", JPEG)
 
 
 # --- hostile archives: refused with a sentence, nothing written anywhere --------------------

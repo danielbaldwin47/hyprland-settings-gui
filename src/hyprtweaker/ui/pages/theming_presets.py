@@ -58,7 +58,7 @@ from hyprtweaker.ui.dialogs.colour_conflict import (  # noqa: E402
     ColourConflictChoice,
     remembered_sentence,
 )
-from hyprtweaker.ui.dialogs.migration import _pick_file  # noqa: E402
+from hyprtweaker.ui.dialogs.migration import pick_file  # noqa: E402
 from hyprtweaker.ui.dialogs.preset_apply import (  # noqa: E402
     ApplyPresetDialog,
     changes_text,
@@ -114,7 +114,7 @@ class PresetActions:
 
 def choose_export_file(parent: Gtk.Widget, name: str, done: Callable[[Path], None]) -> None:
     """Ask where to write a Theme archive."""
-    _pick_file(
+    pick_file(
         parent,
         Gtk.FileDialog(title="Export preset", initial_name=name),
         saving=True,
@@ -132,7 +132,7 @@ def choose_theme_file(parent: Gtk.Widget, done: Callable[[Path], None]) -> None:
     filters.append(themes)
     filters.append(everything)
     dialog = Gtk.FileDialog(title="Import theme", filters=filters, default_filter=themes)
-    _pick_file(parent, dialog, saving=False, on_chosen=done)
+    pick_file(parent, dialog, saving=False, on_chosen=done)
 
 
 def _icon_button(icon: str, label: str, on_click: Callable[[], None]) -> Gtk.Button:

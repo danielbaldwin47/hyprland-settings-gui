@@ -702,14 +702,14 @@ def test_a_setup_that_cannot_write_says_why_and_leaves_nothing_set_up(
     stub_tool("wallust")
     session, _ = make_session(tmp_path)
     page = build_page(session)
-    real_write = wiring._write_atomic
+    real_write = wiring.write_atomic
 
     def denied(path: Path, content: Any) -> None:
         if path.name == "wallust.toml":
             raise PermissionError(13, "Permission denied", str(path))
         real_write(path, content)
 
-    monkeypatch.setattr(wiring, "_write_atomic", denied)
+    monkeypatch.setattr(wiring, "write_atomic", denied)
     ask(page, "Switch to wallust")
     answer(page.dialog, "agree")
 

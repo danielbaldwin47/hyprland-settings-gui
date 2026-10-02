@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from .bridge import Several, Wallpaper
+from .files import write_atomic
 from .model.values import display_text
 from .profiles import slugify
 from .schema import OptionType, ResolvedOption, Schema
@@ -192,11 +193,7 @@ class PresetStore:
         """
         self._dir.mkdir(parents=True, exist_ok=True)
         path = self._dir / f"{slug}.json"
-        scratch = path.with_name(f".{path.name}.tmp")
-        scratch.write_text(
-            json.dumps(preset_to_json(preset), indent=2) + "\n", encoding="utf-8"
-        )
-        scratch.replace(path)
+        write_atomic(path, json.dumps(preset_to_json(preset), indent=2) + "\n")
         self._revision += 1
 
     def delete(self, slug: str) -> None:
@@ -241,10 +238,7 @@ class PresetStore:
         if wallpaper is not None:
             extension, data = wallpaper
             image = self.wallpaper_dir / f"{slug}.{extension}"
-            image.parent.mkdir(parents=True, exist_ok=True)
-            scratch = image.with_name(f".{image.name}.tmp")
-            scratch.write_bytes(data)
-            scratch.replace(image)
+            write_atomic(image, data)
         added = replace(preset, name=name, wallpaper=None if image is None else str(image))
         try:
             self.write(slug, added)

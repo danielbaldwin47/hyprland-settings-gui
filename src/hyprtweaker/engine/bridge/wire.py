@@ -35,7 +35,6 @@ import json
 import os
 import re
 import shutil
-import tempfile
 import tomllib
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -43,6 +42,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..files import write_atomic
 from ..paths import ConfigPaths
 from ..state.manifest import Manifest
 from ..tools import find_tool
@@ -560,7 +560,7 @@ def wire(
     written: list[tuple[FileEdit, Path]] = []
     for edit, target in targets:
         try:
-            _write_atomic(target, edit.after)
+            write_atomic(target, edit.after)
         except OSError as error:
             put_back = _put_back(written, made)
             with contextlib.suppress(OSError):
@@ -592,7 +592,7 @@ def _put_back(written: list[tuple[FileEdit, Path]], made: Iterable[Path]) -> boo
             if edit.before is None:
                 target.unlink(missing_ok=True)
             else:
-                _write_atomic(target, edit.before)
+                write_atomic(target, edit.before)
         except OSError:
             whole = False
     _remove_empty(made)
@@ -656,7 +656,7 @@ def unwire(
                 each.path.unlink(missing_ok=True)
                 removed.append(_ref(each.path, paths))
             else:
-                _write_atomic(each.path, (record.directory / each.copy).read_bytes())
+                write_atomic(each.path, (record.directory / each.copy).read_bytes())
                 restored.append(_ref(each.path, paths))
     except OSError as error:
         return NotDone(
@@ -857,7 +857,7 @@ class _Record:
             "dirs": [str(each) for each in self.dirs],
         }
         self.directory.mkdir(parents=True, exist_ok=True)
-        _write_atomic(self.directory / RECORD_NAME, json.dumps(payload, indent=2) + "\n")
+        write_atomic(self.directory / RECORD_NAME, json.dumps(payload, indent=2) + "\n")
 
     def close(self) -> None:
         """Mark it undone; the copies stay as history."""
@@ -914,27 +914,6 @@ def _read(path: Path, paths: ConfigPaths) -> str | None:
             f"{shown(path, paths)} could not be read: it is not a text file, or this app may "
             "not open it. Fix it, then try again."
         ) from error
-
-
-def _write_atomic(path: Path, content: str | bytes) -> None:
-    """Temp file in the same directory, then a rename: the old file or the new, never half.
-    Keeps the file's permissions; the bytes reach the disk before the rename."""
-    data = content.encode("utf-8") if isinstance(content, str) else content
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    temporary = Path(name)
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            with contextlib.suppress(OSError):
-                os.fsync(stream.fileno())
-        with contextlib.suppress(OSError):
-            shutil.copymode(path, temporary)
-        os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
 
 
 def _writable(path: Path) -> bool:

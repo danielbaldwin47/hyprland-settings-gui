@@ -370,14 +370,14 @@ class TestConsentIsTheOnlyWayIn:
         """Finding 2 of the #153 review, on the wizard's path: the same "wire, else
         unregister" as the Theming page, so the template already written goes again."""
         before = tool_files(two_tools)
-        real_write = wiring._write_atomic
+        real_write = wiring.write_atomic
 
         def denied(path: Path, content: str | bytes) -> None:
             if path.name == "config.toml":
                 raise PermissionError(13, "Permission denied", str(path))
             real_write(path, content)
 
-        monkeypatch.setattr(wiring, "_write_atomic", denied)
+        monkeypatch.setattr(wiring, "write_atomic", denied)
         flow = flow_for(two_tools, FakeClient())
         flow.consent(WireConsent(offer(flow, "matugen").plan))
 

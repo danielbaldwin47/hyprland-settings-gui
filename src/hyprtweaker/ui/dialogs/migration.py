@@ -862,7 +862,7 @@ def migration_dialog(
     return dialog
 
 
-def _pick_file(
+def pick_file(
     parent: Gtk.Widget,
     dialog: Gtk.FileDialog,
     *,
@@ -893,7 +893,7 @@ def _pick_file(
 
 def export_dialog(parent: Gtk.Widget, on_chosen: Callable[[Path], None]) -> Gtk.FileDialog:
     """Ask where to write a flattened export, then hand the path back."""
-    return _pick_file(
+    return pick_file(
         parent,
         Gtk.FileDialog(title="Export configuration", initial_name="hyprland.lua"),
         saving=True,
@@ -903,7 +903,7 @@ def export_dialog(parent: Gtk.Widget, on_chosen: Callable[[Path], None]) -> Gtk.
 
 def import_dialog(parent: Gtk.Widget, on_chosen: Callable[[Path], None]) -> Gtk.FileDialog:
     """Ask which `hyprland.lua` or `hyprland.conf` to import, then hand the path back."""
-    return _pick_file(
+    return pick_file(
         parent,
         Gtk.FileDialog(title="Import configuration", filters=_config_filters()),
         saving=False,

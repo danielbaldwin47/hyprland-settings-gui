@@ -644,14 +644,14 @@ def test_a_file_that_cannot_be_written_puts_back_the_rest_and_the_entry(
     original = home_tree(paths)
     registrar = Registrar(paths)
     config = paths.config_home / "matugen/config.toml"
-    real_write = wiring._write_atomic
+    real_write = wiring.write_atomic
 
     def full_disk(path: Path, content: str | bytes) -> None:
         if path == config:
             raise OSError(28, "No space left on device", str(path))
         real_write(path, content)
 
-    monkeypatch.setattr(wiring, "_write_atomic", full_disk)
+    monkeypatch.setattr(wiring, "write_atomic", full_disk)
     plan = planned(paths, "matugen")
 
     result = wire(plan, WireConsent(plan), register=registrar.add, unregister=registrar.remove)
@@ -786,7 +786,7 @@ def test_a_crash_at_any_step_converges_on_a_second_wire_or_an_unwire(
     original = home_tree(paths)
     registrar = Registrar(paths)
     writes = {"record": 0, "template": 1, "config": 2}
-    real_write = wiring._write_atomic
+    real_write = wiring.write_atomic
     calls: list[Path] = []
 
     def failing_write(path: Path, content: str | bytes) -> None:
@@ -799,7 +799,7 @@ def test_a_crash_at_any_step_converges_on_a_second_wire_or_an_unwire(
         registrar.add(tool)
         raise Crash(tool)
 
-    monkeypatch.setattr(wiring, "_write_atomic", failing_write)
+    monkeypatch.setattr(wiring, "write_atomic", failing_write)
     plan = planned(paths, "matugen")
     with pytest.raises(Crash):
         wire(
@@ -808,7 +808,7 @@ def test_a_crash_at_any_step_converges_on_a_second_wire_or_an_unwire(
             register=failing_register if step == "register" else registrar.add,
             unregister=registrar.remove,
         )
-    monkeypatch.setattr(wiring, "_write_atomic", real_write)
+    monkeypatch.setattr(wiring, "write_atomic", real_write)
 
     # A second wire converges on what one clean wire leaves.
     plan = planned(paths, "matugen")
@@ -834,7 +834,7 @@ def test_an_unwire_after_a_crash_restores_the_original(
     original = home_tree(paths)
     registrar = Registrar(paths)
     writes = {"record": 0, "template": 1, "config": 2}
-    real_write = wiring._write_atomic
+    real_write = wiring.write_atomic
     calls: list[Path] = []
 
     def failing_write(path: Path, content: str | bytes) -> None:
@@ -847,7 +847,7 @@ def test_an_unwire_after_a_crash_restores_the_original(
         registrar.add(tool)
         raise Crash(tool)
 
-    monkeypatch.setattr(wiring, "_write_atomic", failing_write)
+    monkeypatch.setattr(wiring, "write_atomic", failing_write)
     plan = planned(paths, "matugen")
     with pytest.raises(Crash):
         wire(
@@ -856,7 +856,7 @@ def test_an_unwire_after_a_crash_restores_the_original(
             register=failing_register if step == "register" else registrar.add,
             unregister=registrar.remove,
         )
-    monkeypatch.setattr(wiring, "_write_atomic", real_write)
+    monkeypatch.setattr(wiring, "write_atomic", real_write)
 
     result = unwire(
         "matugen", paths=paths, manifest=registrar.manifest(), unregister=registrar.remove

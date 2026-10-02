@@ -46,7 +46,7 @@ from ..monitors_catalog import arrangement_mismatches
 from ..paths import ConfigPaths
 from ..schema import Schema
 from ..state.manifest import Manifest
-from ..tools import find_tool
+from ..tools import detached_environment, find_tool
 from ..writer import Writer, load_manifest
 from ..writer.binds import live_bind_count
 from ..writer.lua import table_key
@@ -933,11 +933,7 @@ def _verify_config(entrypoint: Path, runtime_dir: Path) -> subprocess.CompletedP
     `HYPRLAND_INSTANCE_SIGNATURE` could reach the session the user is sitting in -- the
     static test tier hit exactly this (prototype #30).
     """
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY")
-    }
+    environment = detached_environment()
     environment["XDG_RUNTIME_DIR"] = str(runtime_dir)
     return subprocess.run(
         ["Hyprland", "--verify-config", "-c", str(entrypoint)],

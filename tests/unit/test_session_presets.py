@@ -41,7 +41,7 @@ from hyprtweaker.engine.presets import (
     PresetSaveResult,
     scoped_options,
 )
-from hyprtweaker.engine.presets_archive import ThemeArchive, Wallpaper
+from hyprtweaker.engine.presets_archive import ArchiveImage, ThemeArchive
 from hyprtweaker.session import Session
 
 BORDER_SIZE = "general:border_size"
@@ -436,7 +436,7 @@ def archived(name: str = "Nord", **options: Any) -> ThemeArchive:
             app_version="0.1.0",
             hyprland_version="0.56.2",
         ),
-        wallpaper=Wallpaper("png", b"\x89PNG\r\n\x1a\n not decoded here"),
+        wallpaper=ArchiveImage("png", b"\x89PNG\r\n\x1a\n not decoded here"),
         newer_format=False,
         dropped=(),
     )

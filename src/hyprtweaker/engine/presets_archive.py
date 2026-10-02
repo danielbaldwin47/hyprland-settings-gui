@@ -37,7 +37,6 @@ from __future__ import annotations
 import importlib
 import io
 import json
-import os
 import shutil
 import subprocess
 import tarfile
@@ -49,12 +48,14 @@ from pathlib import Path
 from types import ModuleType
 from typing import IO, Any, Final, Protocol
 
+from .files import write_atomic
 from .presets import (
     WALLPAPER_EXTENSIONS,
     Preset,
     parse_preset,
     preset_to_json,
 )
+from .tools import detached_environment
 
 ARCHIVE_SUFFIX: Final = ".hyprtweaker-theme"
 PRESET_MEMBER: Final = "preset.json"
@@ -87,7 +88,7 @@ def archive_name(slug: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class Wallpaper:
+class ArchiveImage:
     """The image an archive carried: its type, from its magic bytes, and its bytes."""
 
     extension: str
@@ -105,7 +106,7 @@ class ThemeArchive:
     """
 
     preset: Preset
-    wallpaper: Wallpaper | None
+    wallpaper: ArchiveImage | None
     newer_format: bool
     dropped: tuple[str, ...]
 
@@ -197,7 +198,7 @@ class BinaryZstd:
                 [self.executable, "-q", "-c"],
                 input=data,
                 capture_output=True,
-                env=_tool_environment(),
+                env=detached_environment(),
                 check=False,
                 timeout=ZSTD_TIMEOUT,
             )
@@ -217,7 +218,7 @@ class BinaryZstd:
                 stdin=source,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                env=_tool_environment(),
+                env=detached_environment(),
             )
         except OSError as error:
             raise CodecError(error.strerror or str(error)) from error
@@ -252,16 +253,6 @@ def find_codec(
         pass
     executable = which("zstd")
     return BinaryZstd(executable) if executable is not None else None
-
-
-def _tool_environment() -> dict[str, str]:
-    """The app's environment without the session's compositor and displays, as every spawn
-    in the Engine is given (`migration/flow.py`)."""
-    return {
-        key: value
-        for key, value in os.environ.items()
-        if key not in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY")
-    }
 
 
 class _Translated:
@@ -353,13 +344,11 @@ def export_archive(
             "The theme file could not be written: zstd failed. Check there is free space, "
             "then try again."
         )
-    scratch = dest.with_name(f".{dest.name}.tmp")
     try:
-        scratch.write_bytes(compressed)
-        scratch.replace(dest)
+        write_atomic(dest, compressed)
     except OSError as error:
-        scratch.unlink(missing_ok=True)
-        return ArchiveNotWritten(f"The theme could not be saved: {error.strerror or error}.")
+        why = (error.strerror or str(error)).lower()
+        return ArchiveNotWritten(f"The theme file could not be saved ({why}).")
     return ArchiveWritten(dest, left_out)
 
 
@@ -369,7 +358,7 @@ def _add(tar: tarfile.TarFile, name: str, data: bytes, mtime: float) -> None:
     tar.addfile(info, io.BytesIO(data))
 
 
-def _exported_wallpaper(path: str | None) -> tuple[Wallpaper | None, str | None]:
+def _exported_wallpaper(path: str | None) -> tuple[ArchiveImage | None, str | None]:
     if path is None:
         return None, None
     name = Path(path).name
@@ -392,7 +381,7 @@ def _exported_wallpaper(path: str | None) -> tuple[Wallpaper | None, str | None]
     suffix = Path(path).suffix.lower().lstrip(".")
     if suffix in WALLPAPER_EXTENSIONS and _sniffed_type(data, suffix) == suffix:
         extension = suffix  # keep the user's `jpg` or `jpeg`
-    return Wallpaper(extension, data), None
+    return ArchiveImage(extension, data), None
 
 
 def _wallpaper_member(extension: str) -> str:
@@ -519,7 +508,7 @@ def _theme(members: dict[str, bytes]) -> ArchiveRead:
     raw = members.get(PRESET_MEMBER)
     if raw is None:
         return ArchiveRefused("This theme file holds no preset, so there is nothing to import.")
-    image: Wallpaper | None = None
+    image: ArchiveImage | None = None
     for name, data in members.items():
         if name != PRESET_MEMBER:
             image_or_refusal = _wallpaper(name.rpartition(".")[2], data)
@@ -554,7 +543,7 @@ def _not_json(constant: str) -> Any:
 _TYPE_NAMES = {"png": "PNG", "jpg": "JPEG", "jpeg": "JPEG", "webp": "WebP"}
 
 
-def _wallpaper(extension: str, data: bytes) -> Wallpaper | ArchiveRefused:
+def _wallpaper(extension: str, data: bytes) -> ArchiveImage | ArchiveRefused:
     if _sniffed_type(data, extension) != extension:
         return ArchiveRefused(
             f"Its wallpaper is not the {_TYPE_NAMES[extension]} image its name says, so "
@@ -572,7 +561,7 @@ def _wallpaper(extension: str, data: bytes) -> Wallpaper | ArchiveRefused:
             f"Its wallpaper is {width} by {height} pixels, larger than this app opens, so "
             "nothing was imported."
         )
-    return Wallpaper(extension, data)
+    return ArchiveImage(extension, data)
 
 
 def _sniffed_type(data: bytes, extension: str | None = None) -> str | None:

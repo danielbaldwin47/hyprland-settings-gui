@@ -52,6 +52,17 @@ class ToolTimedOut(Exception):
         self.timeout = timeout
 
 
+def detached_environment(environ: Mapping[str, str] = os.environ) -> dict[str, str]:
+    """`environ` without the session's compositor and displays: what an engine program that
+    is not a theming tool (zstd, `Hyprland --verify-config`) runs with, so nothing it does
+    can address the running session."""
+    return {
+        key: value
+        for key, value in environ.items()
+        if key not in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DISPLAY")
+    }
+
+
 def _search_dirs(environ: Mapping[str, str]) -> list[str]:
     raw = environ[TOOL_PATH_ENV] if TOOL_PATH_ENV in environ else environ.get("PATH", "")
     # An empty or relative entry is read against the working directory, which is no
