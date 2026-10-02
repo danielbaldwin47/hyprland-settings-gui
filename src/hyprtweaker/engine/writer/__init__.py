@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from .lua import LuaTree, insert, render_table, render_table_inline, table_key
 from .modules import (
+    BridgeRequire,
     is_option_module,
     module_relpath,
     module_stem,
@@ -33,10 +34,18 @@ from .modules import (
     render_module,
 )
 from .syntax import LuaSyntaxError, gate, gate_available
-from .writer import BeforeReplace, ModuleSet, ProtectedFile, Writer, WriteResult
+from .writer import (
+    BeforeReplace,
+    ModuleSet,
+    ProtectedFile,
+    Writer,
+    WriteResult,
+    load_manifest,
+)
 
 __all__ = [
     "BeforeReplace",
+    "BridgeRequire",
     "LuaSyntaxError",
     "LuaTree",
     "ModuleSet",
@@ -47,6 +56,7 @@ __all__ = [
     "gate_available",
     "insert",
     "is_option_module",
+    "load_manifest",
     "module_relpath",
     "module_stem",
     "render_entrypoint",

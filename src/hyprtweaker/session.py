@@ -62,6 +62,16 @@ from hyprtweaker.engine.apply import (
     read_state,
 )
 from hyprtweaker.engine.apply.result import UNREADABLE, live_value
+from hyprtweaker.engine.bridge import (
+    BridgeEntry,
+    ChosenSource,
+    ColorSource,
+    ManualColors,
+    bridge_states_for,
+    color_source_of,
+    owners,
+    with_presence,
+)
 from hyprtweaker.engine.entities_catalog import (
     IDENTITY_FIELD,
     device_field_bounds,
@@ -104,6 +114,7 @@ from hyprtweaker.engine.paths import (
     AUTOSTART_MODULE,
     BINDS_MODULE,
     DEVICES_MODULE,
+    ENTRYPOINT_NAME,
     ENV_MODULE,
     GESTURES_MODULE,
     LAYER_RULES_MODULE,
@@ -161,6 +172,7 @@ from hyprtweaker.engine.writer import (
     LuaSyntaxError,
     ModuleSet,
     Writer,
+    load_manifest,
 )
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
@@ -300,7 +312,7 @@ class Health:
         if self.unapplied:
             return f"{self._unapplied_summary} was written but did not take effect."
         if self.quarantined:
-            disabled = ", ".join(f"{name}.lua" for name in self.quarantined)
+            disabled = ", ".join(f"{name.replace('.', '/')}.lua" for name in self.quarantined)
             return f"{disabled} is disabled until you fix it."
         return ""
 
@@ -564,6 +576,9 @@ class Session:
         """A rescue announced only once its own restore has been observed -- see
         `_emergency_restore`, which explains why it cannot be announced any earlier."""
 
+        self._bridge_owners: dict[str, str] | None = None
+        """`bridge_owners`, read off the Manifest once per state change rather than per Row."""
+
         self._repolled = False
         """Whether the current timeout has already been re-polled once (ADR-0016 §Timeout).
 
@@ -657,6 +672,118 @@ class Session:
         that has since applied perfectly well.
         """
         return frozenset(self._overridden)
+
+    @property
+    def bridge_owners(self) -> Mapping[str, str]:
+        """Option name to the theming tool whose Bridge module sets it ("Set by <tool>").
+
+        Shaped like `overridden`, for `RowContext`. From the registry's static key lists of
+        the entries that load and are not quarantined (ADR-0006, ADR-0018: the app never
+        evaluates tool Lua). Read once per state change, so a Row asking costs no I/O.
+        """
+        if self._bridge_owners is None:
+            manifest = self._manifest()
+            self._bridge_owners = owners(manifest.bridges, quarantined=manifest.quarantined)
+        return self._bridge_owners
+
+    def color_source(self) -> ColorSource:
+        """The Color source in force: read off the Entrypoint on disk, never stored (ADR-0014).
+
+        The file rather than the Manifest because the file is what Hyprland loads, so a hand
+        edit that enables both backends reads as `Several` rather than as the app's last
+        choice. No Entrypoint is Manual: nothing overrides the colours.
+        """
+        try:
+            text = self._paths.entrypoint.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return ManualColors()
+        return color_source_of(text)
+
+    @property
+    def color_source_blocked(self) -> str | None:
+        """Why the Color source cannot change right now, as a sentence, or `None` if it can."""
+        if self._offline_reason is not None:
+            return self._offline_reason
+        if ENTRYPOINT_NAME in self._manifest().hand_edited(self._paths):
+            return (
+                "hyprland.lua was edited outside hyprtweaker. "
+                "Regenerate it before changing where colors come from."
+            )
+        return None
+
+    def set_color_source(self, source: ChosenSource) -> bool:
+        """Make `source` the Color source: one Entrypoint rewrite, one reload (ADR-0014).
+
+        Rides the Apply queue as an `EntrypointTransaction`, like Quarantine (S6): one
+        Journal draft, one Entrypoint write, one reload, then a re-read. `False` when the
+        session is read-only, the Entrypoint was hand-edited (`color_source_blocked` says
+        so; its bytes are never written over), a Wallpaper backend is not set up, or the
+        syntax gate refuses. The caller re-reads `color_source()` rather than keeping a copy.
+
+        The re-read leaves out the Options a loading bridge sets: adopting a tool's colours
+        into the model would write them into the app's own Module, and a switch back to
+        Manual would then bring back the tool's colours instead of the user's.
+        """
+        if self.color_source_blocked is not None:
+            return False
+        manifest = self._manifest()
+        try:
+            entries = bridge_states_for(
+                source, manifest.bridges, present=self._bridge_files_present(manifest.bridges)
+            )
+        except ValueError as error:
+            _log.error("could not change the Color source: %s", error)
+            return False
+        return self._set_bridges(
+            lambda current: bridge_states_for(
+                source, current, present=self._bridge_files_present(current)
+            ),
+            manifest.with_bridges(entries),
+            "change the Color source",
+        )
+
+    def load_waiting_bridges(self) -> bool:
+        """Load every Bridge module whose tool has now written its file (S4's "Load now").
+
+        A file a tool creates is not watched until something requires it, so nothing else
+        would notice. Called at launch and after every foreign reload, and by the Theming
+        page after a run or on "Load now". A module whose file is gone goes back to waiting,
+        so a reload never requires a missing file. Gated entries stay gated. `False` when
+        nothing changed or the change cannot be written now.
+        """
+        manifest = self._manifest()
+        entries = with_presence(
+            manifest.bridges, present=self._bridge_files_present(manifest.bridges)
+        )
+        if entries == manifest.bridges or self.color_source_blocked is not None:
+            return False
+        return self._set_bridges(
+            lambda current: with_presence(current, present=self._bridge_files_present(current)),
+            manifest.with_bridges(entries),
+            "load a theming tool's colors",
+        )
+
+    def _set_bridges(
+        self,
+        change: Callable[[Sequence[BridgeEntry]], Sequence[BridgeEntry]],
+        prospective: Manifest,
+        what: str,
+    ) -> bool:
+        """Rewrite the Entrypoint with `change` applied to the Manifest's entries as they are
+        when the queued write runs, so a change landing in between is built on, not lost."""
+        return self._recovery_write(
+            lambda before: self._writer.set_bridges(
+                self._model, change(self._manifest().bridges), before_replace=before
+            ),
+            prospective,
+            what,
+            exclude=tuple(owners(prospective.bridges, quarantined=prospective.quarantined)),
+        )
+
+    def _bridge_files_present(self, entries: Sequence[BridgeEntry]) -> frozenset[str]:
+        return frozenset(
+            entry.file for entry in entries if (self._paths.hypr_dir / entry.file).is_file()
+        )
 
     @property
     def paths(self) -> ConfigPaths:
@@ -2114,6 +2241,8 @@ class Session:
         self._applier.start()
         self._retire_and_restore(self._applier)
         self._offline_reason = None
+        # A tool that ran while the app was closed may have written its file (S4).
+        self.load_waiting_bridges()
         self._changed()
 
     def _retire_and_restore(self, applier: Applier) -> None:
@@ -2164,8 +2293,8 @@ class Session:
             )
 
     def _manifest(self) -> Manifest:
-        return Manifest.load(
-            self._paths.manifest,
+        return load_manifest(
+            self._paths,
             app_version=self._app_version,
             schema_version=self._schema.hyprland_version,
         )
@@ -2338,6 +2467,8 @@ class Session:
         # The other half ADR-0016 asks for: somebody else's reload can break the config just
         # as thoroughly as the app's own, and it surfaces identically.
         await self._scan(client)
+        # A tool run from the user's own script may have written its first file (S4).
+        self.load_waiting_bridges()
         self._changed()
 
     def _reread_binds(self) -> None:
@@ -2954,7 +3085,12 @@ class Session:
         parse and nothing older, so a Banner assembled from anything but the newest reload
         would name a file the user has since fixed.
         """
-        self._recovery = plan(errors, written=written, binds=binds)
+        self._recovery = plan(
+            errors,
+            written=written,
+            binds=binds,
+            bridges=[entry.file for entry in self._manifest().bridges],
+        )
         self._unapplied = tuple(mismatch.name for mismatch in mismatches if mismatch.unapplied)
         # The other half of the same Read-back, and ADR-0005's drift badge: a key the live
         # config sets to something else is one `user.lua` or a Bridge won on purpose.
@@ -3127,7 +3263,10 @@ class Session:
         """
         if not problem.offers(Action.QUARANTINE) or not problem.path:
             return None
-        return ModuleSet.discover(self._paths, []).require_for(problem.path)
+        manifest = self._manifest()
+        return ModuleSet.discover(self._paths, [], bridges=manifest.bridges).require_for(
+            problem.path
+        )
 
     def regenerate_entrypoint(self) -> bool:
         """Rewrite `hyprland.lua` and reload -- ADR-0016's Entrypoint Fix.
@@ -3140,7 +3279,7 @@ class Session:
             lambda before: self._writer.regenerate_entrypoint(
                 self._model, before_replace=before
             ),
-            self.quarantined,
+            self._manifest(),
             "regenerate the Entrypoint",
         )
 
@@ -3150,15 +3289,16 @@ class Session:
             lambda before: self._writer.set_quarantine(
                 self._model, ordered, before_replace=before
             ),
-            ordered,
+            self._manifest().with_quarantine(ordered),
             "change the Quarantine",
         )
 
     def _recovery_write(
         self,
         write: Callable[[BeforeReplace | None], bool],
-        quarantined: Sequence[str],
+        prospective: Manifest,
         what: str,
+        exclude: Sequence[str] = (),
     ) -> bool:
         """Rewrite the Entrypoint out of band, then reload. `False` if it could not be done.
 
@@ -3168,23 +3308,27 @@ class Session:
         reload that is *not* an apply -- an apply would render the model over the App dir and
         reload with the require list it would have generated rather than the one just written.
 
-        The Entrypoint `quarantined` would produce is rendered and syntax-gated here, so a
-        recovery the gate refuses answers `False` and leaves the Banner as it is. The write
+        The Entrypoint the `prospective` Manifest would produce is rendered and syntax-gated
+        here, so a recovery the gate refuses answers `False` and leaves the Banner as it is.
+        `exclude` names owned Options the re-read leaves alone. The write
         itself runs queued (`EntrypointTransaction`): its Journal draft stays open until the
         reload answers, and nothing else may open one meanwhile.
         """
         if not self.live or self._applier is None:
             return False
         try:
-            self._writer.entrypoint_text(self._model, quarantined)
+            self._writer.entrypoint_text(self._model, prospective)
         except (LuaSyntaxError, ValueError) as error:
             _log.error("could not %s: %s", what, error)
             return False
-        self._spawn(self._recover_entrypoint(write, what))
+        self._spawn(self._recover_entrypoint(write, what, exclude))
         return True
 
     async def _recover_entrypoint(
-        self, write: Callable[[BeforeReplace | None], bool], what: str
+        self,
+        write: Callable[[BeforeReplace | None], bool],
+        what: str,
+        exclude: Sequence[str] = (),
     ) -> None:
         """Rewrite the Entrypoint, reload, and re-read what the config now says.
 
@@ -3198,7 +3342,7 @@ class Session:
         # Every owned Option, not a narrow set: quarantining `user.lua` changes the value of
         # everything that file was overriding, and the app cannot know which those were
         # without asking about all of them.
-        wanted = tuple(option.name for option in self._owned())
+        wanted = tuple(option.name for option in self._owned() if option.name not in exclude)
         try:
             result = await applier.restore_now(applier.recover_entrypoint(write, wanted))
         except (IpcError, RuntimeError) as error:
@@ -3335,5 +3479,6 @@ class Session:
         self._offline_reason = reason
 
     def _changed(self) -> None:
+        self._bridge_owners = None
         if self.on_state_changed is not None:
             self.on_state_changed()

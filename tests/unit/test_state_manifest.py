@@ -335,3 +335,65 @@ class TestHandEditDetection:
         manifest = Manifest(**VERSIONS, unverified=("a.lua",))
 
         assert manifest.hand_edited(paths) == ()
+
+
+class TestBridges:
+    """ADR-0006 §Placement: one entry per Bridge module, added without a format bump (#163)."""
+
+    def test_wiring_records_each_module_and_survives_a_round_trip(self, tmp_path: Path) -> None:
+        from hyprtweaker.engine.bridge import ACTIVE, DMS, SHELL_SWITCH, WAITING
+
+        path = tmp_path / "manifest.json"
+        manifest = (
+            Manifest(**VERSIONS)
+            .add_bridge(SHELL_SWITCH, present={"shell-switcher-binds.lua"})
+            .add_bridge(DMS, present={"dms/colors.lua"})
+        )
+        path.write_text(manifest.render(), encoding="utf-8")
+
+        loaded = Manifest.load(path, **VERSIONS)
+
+        assert [(entry.module, entry.file, entry.state) for entry in loaded.bridges] == [
+            ("dms.colors", "dms/colors.lua", ACTIVE),
+            ("shell-switcher-startup", "shell-switcher-startup.lua", WAITING),
+            ("shell-switcher-binds", "shell-switcher-binds.lua", ACTIVE),
+        ]
+        assert loaded.modules == {}, "a Bridge module is never one of the app's own"
+
+    def test_state_changes_and_removal_are_per_tool(self) -> None:
+        from hyprtweaker.engine.bridge import DMS, MATUGEN, WAITING, Off, PresetColors
+
+        manifest = (
+            Manifest(**VERSIONS)
+            .add_bridge(MATUGEN, present=())
+            .add_bridge(DMS, present=())
+            .set_bridge_state("dms.colors", Off(PresetColors()))
+        )
+        assert [(entry.tool, entry.state) for entry in manifest.bridges] == [
+            ("dms", Off(PresetColors())),
+            ("matugen", WAITING),
+        ]
+        assert [entry.tool for entry in manifest.remove_bridge("dms").bridges] == ["matugen"]
+        assert manifest.remove_bridge("dms").remove_bridge("dms") == manifest.remove_bridge(
+            "dms"
+        )
+
+    def test_a_manifest_written_before_bridges_reads_with_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "manifest.json"
+        path.write_text(f'{{"format_version": {FORMAT_VERSION}, "modules": {{}}}}')
+
+        assert not is_damaged(path)
+        assert Manifest.load(path, **VERSIONS).bridges == ()
+
+    def test_a_malformed_entry_is_dropped_not_fatal(self, tmp_path: Path) -> None:
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            f'{{"format_version": {FORMAT_VERSION}, "bridges": ['
+            '{"tool": "dms"}, 7, '
+            '{"tool": "dms", "module": "dms.colors", "line": "require(\\"dms.colors\\")", '
+            '"file": "dms/colors.lua", "mechanism": "adopt", "state": "active"}]}'
+        )
+
+        assert [entry.module for entry in Manifest.load(path, **VERSIONS).bridges] == [
+            "dms.colors"
+        ]
