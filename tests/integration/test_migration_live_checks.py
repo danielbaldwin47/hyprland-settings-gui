@@ -145,22 +145,16 @@ def test_a_missing_bind_is_caught_live(harness_home: Path, artifacts: Path) -> N
     assert binds.detail == "Only 1 of the 2 keybinds in the new configuration are active."
 
 
-KNOWN_CONFIG_ERRORS: dict[str, int] = {"hyde": 1, "jakoolit": 2}
-"""Config errors the app's own import still generates for these rices, so a real migration
-of them rolls back: hyde's block-form `ignore_alpha = "true"`, jakoolit's speed over the
-maximum and string-typed device fields (#205). Pinned rather than excluded, so a third
-error turns this red, and so does the fix: #205 empties and deletes this table."""
-
-
 @pytest.mark.parametrize("rice", [candidate.name for candidate in rices()])
 def test_no_corpus_rice_is_rolled_back_by_a_bind_count_that_is_not_the_switchs_fault(
     rice: str, tmp_path: Path, artifacts: Path
 ) -> None:
     """The proof the bind check may be hard: every pinned rice, imported, written and booted.
 
-    A hard check that fails here for a rice that loaded cleanly would roll back a real
-    user's migration over a count, so the assertion is exactly "no hard failure among the
-    entity checks". The soft checks are written to the artifacts for reading.
+    A hard check that fails here would roll back a real user's migration, so the assertion
+    is exactly "no hard failure", `configerrors` included: an error in a Module the app
+    wrote is the app's fault, never the rice's (#205). The soft checks are written to the
+    artifacts for reading.
     """
     staged = stage(find_rice(rice), tmp_path / "home")
     schema = load_schema(SCHEMA_VERSION, SCHEMA_DIR)
@@ -186,12 +180,5 @@ def test_no_corpus_rice_is_rolled_back_by_a_bind_count_that_is_not_the_switchs_f
     (artifacts / f"{rice}-checks.txt").write_text(report + "\n")
     print(f"\n[{rice}]\n{report}")
 
-    entity_failures = [
-        check
-        for check in checks
-        if check.hard and not check.ok and check.name != "configerrors"
-    ]
-    assert not entity_failures, f"{rice}: {entity_failures}"
-    errors = next(check for check in checks if check.name == "configerrors")
-    found = 0 if errors.ok else len(errors.detail.splitlines())
-    assert found == KNOWN_CONFIG_ERRORS.get(rice, 0), f"{rice}: {errors.detail}"
+    hard_failures = [check for check in checks if check.hard and not check.ok]
+    assert not hard_failures, f"{rice}: {hard_failures}"

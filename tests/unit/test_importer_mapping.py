@@ -31,7 +31,10 @@ from hyprtweaker.engine.importer.binds import _KEY_RENAMES
 from hyprtweaker.engine.importer.dispatchers import LEGACY_DISPATCHERS, MAX_SCRIPT_BYTES
 from hyprtweaker.engine.importer.keysyms import known_keysym, validator_available
 from hyprtweaker.engine.schema import load_schema
+from hyprtweaker.engine.writer.animations import render_animation
 from hyprtweaker.engine.writer.binds import DISABLED_PREFIX, render_bind
+from hyprtweaker.engine.writer.inputs import render_device
+from hyprtweaker.engine.writer.rules import render_layer_rule
 
 SCHEMA_VERSION = "0.56.2"
 
@@ -655,6 +658,46 @@ class TestLayerRules:
         map_layer_rule("above_lock 5, match:namespace w", origin="x:1", report=report)
         assert report.of_class(LossClass.BREAKAGE)
 
+    def test_a_true_ignore_alpha_is_written_as_the_number_zero(self, schema, tmp_path) -> None:
+        """hyde's block form (#205): Lua's `ignore_alpha` is a float, and `true` meant what
+        `ignorezero` meant -- ignore fully transparent pixels."""
+        result = _map(
+            "layerrule {\n  name = glass\n  match:namespace = waybar\n"
+            "  ignore_alpha = true\n}\n",
+            schema,
+            tmp_path,
+        )
+        rule = result.entities.layer_rules[0]
+        assert render_layer_rule(rule) == (
+            'hl.layer_rule({ name = "glass", match = { namespace = "waybar" }, '
+            "ignore_alpha = 0 })"
+        )
+        [item] = [i for i in result.loss if "ignore_alpha" in i.message]
+        assert item.severity is LossClass.INFO
+        assert item.replacement == "ignore_alpha = 0"
+
+    def test_a_false_ignore_alpha_leaves_the_effect_out(self, schema, tmp_path) -> None:
+        result = _map(
+            "layerrule {\n  match:namespace = waybar\n  ignore_alpha = false\n}\n",
+            schema,
+            tmp_path,
+        )
+        rule = result.entities.layer_rules[0]
+        assert render_layer_rule(rule) == 'hl.layer_rule({ match = { namespace = "waybar" } })'
+
+    def test_an_ignore_alpha_that_is_no_number_is_dropped_and_named(
+        self, report: LossReport
+    ) -> None:
+        rule = map_layer_rule(
+            "ignore_alpha lots, match:namespace waybar", origin="x:1", report=report
+        )
+        assert rule is not None
+        assert rule.effects == {}
+        [item] = report.of_class(LossClass.BREAKAGE)
+        assert item.message == (
+            "ignore_alpha = lots is not a number Hyprland accepts, so the effect was left out"
+        )
+
 
 class TestWorkspaceRules:
     def test_border_shadow_and_rounding_invert(self, report: LossReport) -> None:
@@ -793,9 +836,40 @@ class TestAnimationsAndCurves:
         fields = result.entities.animations[0].fields
         assert fields == {"enabled": True, "speed": 4.0, "bezier": "ease", "style": "popin 80%"}
 
-    def test_speed_above_one_hundred_is_breakage(self, schema, tmp_path) -> None:
-        result = _map("animation = windows, 1, 500, ease\n", schema, tmp_path)
-        assert result.loss.of_class(LossClass.BREAKAGE)
+    def test_a_speed_above_the_limit_is_clamped_to_it_and_said_so(
+        self, schema, tmp_path
+    ) -> None:
+        """jakoolit's rainbow border (#205): Lua refuses a speed over 100, so the nearest
+        legal value is written and the report names both."""
+        result = _map("animation = borderangle, 1, 180, liner, loop\n", schema, tmp_path)
+        assert render_animation(result.entities.animations[0]) == (
+            'hl.animation({ leaf = "borderangle", enabled = true, speed = 100, '
+            'bezier = "liner", style = "loop" })'
+        )
+        [item] = [i for i in result.loss if i.code is LossCode.ANIMATION_RANGE]
+        assert item.severity is LossClass.NEEDS_REVIEW
+        assert item.message == (
+            "borderangle animation speed 180 is above Hyprland's limit of 100; it was set "
+            "to 100, so it runs faster."
+        )
+        assert item.replacement == "speed = 100"
+
+    @pytest.mark.parametrize("speed", ["0", "-2", "fast"])
+    def test_an_animation_with_no_usable_speed_is_left_to_the_default(
+        self, speed: str, schema, tmp_path
+    ) -> None:
+        """Lua requires a speed above 0, and hyprlang refused the line too, so the leaf
+        kept its default; writing it without a speed would fail the whole Module."""
+        result = _map(f"animation = windows, 1, {speed}, ease\n", schema, tmp_path)
+        assert result.entities.animations == []
+        [item] = result.loss.of_class(LossClass.BREAKAGE)
+        assert item.message == (
+            f"windows animation speed {speed} is not above 0, so Hyprland's default "
+            "animation is kept"
+            if speed != "fast"
+            else "windows animation speed fast is not a number, so Hyprland's default "
+            "animation is kept"
+        )
 
     def test_the_last_animation_for_a_leaf_wins(self, schema, tmp_path) -> None:
         result = _map(
@@ -857,7 +931,36 @@ class TestDevicesEnvAndPermissions:
         )
         device = result.entities.devices[0]
         assert device.name == "my-mouse"
-        assert device.fields == {"tap_to_click": "1", "sensitivity": "0.5"}
+        assert device.fields == {"tap_to_click": True, "sensitivity": 0.5}
+
+    def test_a_device_field_is_written_as_its_lua_type(self, schema, tmp_path) -> None:
+        """jakoolit's touchpad (#205): `hl.device` refuses a string where it wants a bool."""
+        result = _map(
+            "$TOUCHPAD_ENABLED = true\n"
+            "device {\n  name = touchpad\n  enabled = $TOUCHPAD_ENABLED\n"
+            "  repeat_rate = 25\n  region_size = 100 200\n  kb_layout = us\n}\n",
+            schema,
+            tmp_path,
+        )
+        assert render_device(result.entities.devices[0]) == (
+            'hl.device({ name = "touchpad", enabled = true, kb_layout = "us", '
+            "region_size = { 100, 200 }, repeat_rate = 25 })"
+        )
+
+    def test_a_device_value_that_does_not_convert_is_dropped_and_named(
+        self, schema, tmp_path
+    ) -> None:
+        result = _map(
+            "device {\n  name = pad\n  enabled = maybe\n  repeat_rate = 25.5\n}\n",
+            schema,
+            tmp_path,
+        )
+        assert result.entities.devices[0].fields == {}
+        messages = [item.message for item in result.loss.of_class(LossClass.BREAKAGE)]
+        assert messages == [
+            "device pad: enabled = maybe is not true or false, so it was left out",
+            "device pad: repeat_rate = 25.5 is not a whole number, so it was left out",
+        ]
 
     def test_tablet_only_fields_are_breakage(self, schema, tmp_path) -> None:
         result = _map(
