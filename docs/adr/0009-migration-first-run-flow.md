@@ -99,6 +99,10 @@ switching anything — interop, not lock-in.
 - `.conf` path: the conf tree stays in place untouched. `.lua` path: the foreign file is
   renamed `hyprland.lua.bak` beside itself (the filename is contested by the Entrypoint;
   a rename, never a delete).
+- A menu Import over an app-generated config renames the app's own Entrypoint the same way,
+  and an existing App dir (presets and Monitor profiles included) to `hyprtweaker.bak`:
+  Roll back moves both back and the imported App dir into the state dir's `rolled-back/`
+  (#148 review R1).
 - Bridge setup (ADR-0006) happens here: detected tools offered per-tool, each flip behind
   explicit confirmation.
 - **Static gate:** the generated tree is written and `Hyprland --verify-config` must pass;

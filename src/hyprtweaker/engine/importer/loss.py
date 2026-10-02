@@ -40,6 +40,7 @@ from typing import Any
 from ..paths import ConfigPaths
 
 __all__ = [
+    "APP_DIR_BACKUP_NAME",
     "BACKUP_NAME",
     "FORMAT_VERSION",
     "LOSS_CODES",
@@ -74,15 +75,35 @@ older config. The rescue then has to name *that* file: restoring the plain `.bak
 hand back a config two migrations old, which is not the one the user just lost (#131)."""
 
 
-def rescue_command(restore_backup: bool | None, *, backup: str = BACKUP_NAME) -> str:
+APP_DIR_BACKUP_NAME = "hyprtweaker.bak"
+"""The name the App dir a migration displaces is normally renamed to (#148 review R1).
+
+Stamped like `hyprland.lua.bak` when an earlier migration took the name."""
+
+
+def rescue_command(
+    restore_backup: bool | None,
+    *,
+    backup: str = BACKUP_NAME,
+    app_dir_backup: str | None = None,
+) -> str:
     """The bare shell command, for surfaces that show a command rather than prose.
 
     An unknown answer takes the restoring command: it is the one that cannot destroy a
-    config by being wrong.
+    config by being wrong. `app_dir_backup` names the App dir the switch moved aside: the
+    imported one is moved out of its way, never deleted, and the user's own moved back.
     """
-    if restore_backup is False:
-        return RESCUE_COMMAND_CONF
-    return f"mv ~/.config/hypr/{backup} ~/.config/hypr/hyprland.lua"
+    command = (
+        RESCUE_COMMAND_CONF
+        if restore_backup is False
+        else f"mv ~/.config/hypr/{backup} ~/.config/hypr/hyprland.lua"
+    )
+    if app_dir_backup is None:
+        return command
+    return (
+        "mv ~/.config/hypr/hyprtweaker ~/.config/hypr/hyprtweaker.imported && "
+        f"mv ~/.config/hypr/{app_dir_backup} ~/.config/hypr/hyprtweaker && {command}"
+    )
 
 
 RESCUE_COMMAND_LUA = rescue_command(True)
@@ -104,7 +125,12 @@ the two guesses are not symmetrically wrong: a needless `mv` fails harmlessly, a
 is unrecoverable."""
 
 
-def rescue_line(restore_backup: bool | None, *, backup: str = BACKUP_NAME) -> str:
+def rescue_line(
+    restore_backup: bool | None,
+    *,
+    backup: str = BACKUP_NAME,
+    app_dir_backup: str | None = None,
+) -> str:
     """The TTY escape hatch, for a migration that did or did not displace a `hyprland.lua`.
 
     `restore_backup` is *not* read off the imported file's extension, because the two do not
@@ -119,9 +145,9 @@ def rescue_line(restore_backup: bool | None, *, backup: str = BACKUP_NAME) -> st
     """
     if restore_backup is None:
         return RESCUE_LINE_UNKNOWN
-    if not restore_backup:
+    if not restore_backup and app_dir_backup is None:
         return RESCUE_LINE_CONF
-    command = rescue_command(True, backup=backup)
+    command = rescue_command(restore_backup, backup=backup, app_dir_backup=app_dir_backup)
     return f"{_RESCUE_PREFIX}run `{command}` to restore your previous config."
 
 
@@ -398,6 +424,10 @@ class LossReport:
     read and never learns what will be renamed around it. `None` until then, and an unset
     report renders the rescue that cannot destroy anything by being wrong."""
 
+    restore_app_dir: bool = False
+    """Whether that migration also moved an existing App dir aside, so the rescue moves it
+    back too (#148 review R1). Set by the wizard beside `restore_backup`."""
+
     def add(
         self,
         code: LossCode,
@@ -467,6 +497,7 @@ class LossReport:
             "created": self.created or _timestamp(),
             "source": self.source,
             "restore_backup": self.restore_backup,
+            "restore_app_dir": self.restore_app_dir,
             "counts": {str(k): v for k, v in self.counts().items()},
             "items": [item.as_json() for item in self.items],
         }
@@ -481,12 +512,16 @@ class LossReport:
             source=record.get("source", ""),
             created=record.get("created", ""),
             restore_backup=record.get("restore_backup"),
+            restore_app_dir=bool(record.get("restore_app_dir")),
         )
 
     @property
     def rescue_line(self) -> str:
         """The escape hatch for the migration this report belongs to (#131)."""
-        return rescue_line(self.restore_backup)
+        return rescue_line(
+            self.restore_backup,
+            app_dir_backup=APP_DIR_BACKUP_NAME if self.restore_app_dir else None,
+        )
 
     def render(self) -> str:
         """The Markdown copy: a summary line, the rescue line, then a section per class."""

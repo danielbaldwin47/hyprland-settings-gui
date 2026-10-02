@@ -1062,3 +1062,128 @@ class TestTheSecondOffer:
         assert marker.exists()
         assert preview.model.get("general:gaps_in") == CssGaps(5, 5, 5, 5)
         assert preview.offered == ()
+
+
+def _hypr_dir(paths: ConfigPaths) -> dict[str, str]:
+    """The hypr dir as the user has it: every file by its bytes, every symlink by target."""
+    found: dict[str, str] = {}
+    for item in sorted(paths.hypr_dir.rglob("*")):
+        relative = str(item.relative_to(paths.hypr_dir))
+        if item.is_symlink():
+            found[relative] = f"-> {item.readlink()}"
+        elif item.is_file():
+            found[relative] = hashlib.sha256(item.read_bytes()).hexdigest()
+    return found
+
+
+def _app_generated(paths: ConfigPaths, schema: Schema) -> Path:
+    """An app user's config with presets, a Monitor profile and a `user.lua`; the menu
+    Import reads another `.conf` over it (#148 review R1)."""
+    from hyprtweaker.engine.writer import Writer
+
+    model = fresh_start(paths, schema, app_version=SAMPLE_APP_VERSION)
+    model.set("general:gaps_in", CssGaps(3, 3, 3, 3))
+    Writer(paths, app_version=SAMPLE_APP_VERSION).write(model)
+    paths.presets_dir.mkdir(parents=True, exist_ok=True)
+    (paths.presets_dir / "mine.json").write_text('{"name": "Mine"}\n', encoding="utf-8")
+    paths.monitor_profiles_dir.mkdir(parents=True, exist_ok=True)
+    (paths.monitor_profiles_dir / "docked.json").write_text("{}\n", encoding="utf-8")
+    paths.user_lua.write_text("-- mine\n", encoding="utf-8")
+    other = paths.state_dir.parent / "other.conf"
+    other.write_text(CONF.replace("gaps_in = 5", "gaps_in = 9"), encoding="utf-8")
+    return other
+
+
+def _legacy(paths: ConfigPaths, _schema: Schema) -> None:
+    paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+
+
+def _foreign(paths: ConfigPaths, _schema: Schema) -> Path:
+    paths.entrypoint.write_text("-- mine, not the app's\n", encoding="utf-8")
+    other = paths.state_dir.parent / "other.conf"
+    other.write_text(CONF, encoding="utf-8")
+    return other
+
+
+def _foreign_beside_an_app_dir(paths: ConfigPaths, schema: Schema) -> Path:
+    """A `hyprland.lua` of the user's own beside an App dir it does not load."""
+    _app_generated(paths, schema)
+    return _foreign(paths, schema)
+
+
+def _answered_in_process(flow: MigrationFlow) -> None:
+    flow.roll_back()
+
+
+def _answered_by_silence(flow: MigrationFlow) -> None:
+    assert run(flow.decide(seconds=0.01, tick=0.005)) is Decision.EXPIRED
+
+
+def _answered_at_relaunch(flow: MigrationFlow) -> None:
+    relaunched = flow_for(flow.paths, flow.schema, FakeClient())
+    relaunched.roll_back(relaunched.pending_switch())
+
+
+def _answered_twice_at_relaunch(flow: MigrationFlow) -> None:
+    """Hand-test 19: the offer's close response is Roll back too."""
+    relaunched = flow_for(flow.paths, flow.schema, FakeClient())
+    pending = relaunched.pending_switch()
+    relaunched.roll_back(pending)
+    relaunched.roll_back(pending)
+
+
+class TestRollBackPutsEveryFileBack:
+    """The Roll back invariant (#148 review R1): after any Roll back, by any route, every
+    file the user had before the switch is back byte for byte, and the config detects as
+    what it was. What the switch wrote is moved out of the hypr dir, never left loaded."""
+
+    @pytest.mark.parametrize(
+        "route",
+        [
+            _answered_in_process,
+            _answered_by_silence,
+            _answered_at_relaunch,
+            _answered_twice_at_relaunch,
+        ],
+    )
+    @pytest.mark.parametrize(
+        "config", [_legacy, _foreign, _app_generated, _foreign_beside_an_app_dir]
+    )
+    def test_every_file_is_back(
+        self, paths: ConfigPaths, schema: Schema, config, route
+    ) -> None:
+        from hyprtweaker.engine.migration.detect import detect
+
+        source = config(paths, schema)
+        before = _hypr_dir(paths)
+        kind = detect(paths, app_version=SAMPLE_APP_VERSION, schema_version="x").kind
+
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        flow.back_up()
+        run(flow.switch())
+        assert _hypr_dir(paths) != before
+        route(flow)
+
+        assert _hypr_dir(paths) == before
+        assert detect(paths, app_version=SAMPLE_APP_VERSION, schema_version="x").kind is kind
+        assert not paths.sentinel.exists()
+
+    def test_the_rescue_line_puts_an_app_users_files_back_too(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """The rescue is the manual spelling of Roll back, so for an app user it moves both
+        the Entrypoint and the App dir back -- `rm hyprland.lua` left them on `hyprland.conf`
+        or Hyprland's defaults, with their own config renamed aside."""
+        source = _app_generated(paths, schema)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        preview = flow.build_preview(source)
+        flow.back_up()
+        run(flow.switch())
+
+        assert "rm " not in flow.rescue_command
+        assert "hyprtweaker.bak ~/.config/hypr/hyprtweaker" in flow.rescue_command
+        assert "hyprland.lua.bak ~/.config/hypr/hyprland.lua" in flow.rescue_command
+        assert preview.result.loss.rescue_line == flow.rescue_line

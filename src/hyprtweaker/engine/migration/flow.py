@@ -37,7 +37,14 @@ from typing import Any, Literal, Protocol
 from ..bridge import REGISTRY, BridgeEntry
 from ..bridge.wire import WireConsent
 from ..files import write_atomic
-from ..importer.loss import BACKUP_NAME, LossCode, LossReport, rescue_command, rescue_line
+from ..importer.loss import (
+    APP_DIR_BACKUP_NAME,
+    BACKUP_NAME,
+    LossCode,
+    LossReport,
+    rescue_command,
+    rescue_line,
+)
 from ..importer.lua.mapping import import_lua
 from ..importer.lua.sandbox import Consent, Policy
 from ..importer.mapping import ImportResult, import_config
@@ -71,13 +78,17 @@ BACKUP_SUFFIX = ".bak"
 def _displaces_entrypoint(detection: Detection) -> bool:
     """Whether this migration renames an existing `hyprland.lua` aside to make room.
 
+    A foreign one, and the app's own on a menu Import over an app-generated config: deleting
+    that one on Roll back left the user on `hyprland.conf` or Hyprland's defaults (#148
+    review R1).
+
     The single fact two otherwise-distant decisions both turn on: whether `back_up` makes a
     `hyprland.lua.bak`, and whether the rescue line restores one or deletes the Entrypoint.
     Keyed on the detected *kind* rather than the imported file's extension, because
     `build_preview(source=...)` replaces only the source -- importing a `.conf` while a
     foreign `hyprland.lua` is in place still displaces that file (#131).
     """
-    return detection.kind is ConfigKind.FOREIGN_LUA
+    return detection.kind in (ConfigKind.FOREIGN_LUA, ConfigKind.APP_GENERATED)
 
 
 RELOAD_SETTLE_SECONDS = 0.25
@@ -319,6 +330,8 @@ class MigrationFlow:
     _restore: Path | None = field(default=None, repr=False)
     """Where a displaced `hyprland.lua` was renamed to, once the switch has renamed it --
     the file the rescue line has to name (#131)."""
+    _restore_app_dir: Path | None = field(default=None, repr=False)
+    """Where the App dir found before the switch was renamed to, once the switch has."""
     _answer: asyncio.Event | None = field(default=None, repr=False)
     _decision: Decision | None = field(default=None, repr=False)
     _consents: dict[str, WireConsent] = field(default_factory=dict, repr=False)
@@ -391,6 +404,7 @@ class MigrationFlow:
         # around it, so the wizard stamps the answer on before the report is saved -- a
         # report read back months later still carries the rescue that fits it (#131).
         result.loss.restore_backup = _displaces_entrypoint(preview.detection)
+        result.loss.restore_app_dir = self.paths.app_dir.is_dir()
         return preview
 
     def hold(self, preview: Preview) -> None:
@@ -536,8 +550,11 @@ class MigrationFlow:
                 ),
             )
 
-        restore = self._preserve_foreign_entrypoint(preview)
+        # Read while the Manifest and Entrypoint that record them are still in place.
+        entries = self._bridge_entries()
+        restore = self._preserve_entrypoint(preview)
         self._restore = restore
+        self._restore_app_dir = self._preserve_app_dir(entries)
         consents = self.consents
         sentinels.write(
             self.paths,
@@ -545,6 +562,7 @@ class MigrationFlow:
             source=preview.detection.source,
             backup=self.backup.path if self.backup else None,
             restore=restore,
+            restore_app_dir=self._restore_app_dir,
             bridge_tools=tuple(consent.plan.tool for consent in consents),
             now=self.now(),
         )
@@ -554,7 +572,7 @@ class MigrationFlow:
         # the app would then read its own Entrypoint as hand-edited (#166 Left open). With
         # the line already there -- commented while the tool has not run (S4) -- there is no
         # window in which that can happen.
-        self._write_tree(preview, self.paths, self._bridge_entries())
+        self._write_tree(preview, self.paths, entries)
         bridges = bridge_setup.wire_consented(
             consents,
             register=self._carries_bridge,
@@ -745,13 +763,23 @@ class MigrationFlow:
         )
         restore = Path(record.restore) if record and record.restore else None
 
-        if restore and restore.is_file():
-            os.replace(restore, self.paths.entrypoint)
+        if restore is not None:
+            # Missing: an earlier call of this put it back (a second answer to the relaunch
+            # offer, #148 hand-test 19), and the Entrypoint is the user's own again -- even
+            # when it carries the app's banner, as an app user's does (#148 review R1).
+            if restore.is_file():
+                os.replace(restore, self.paths.entrypoint)
         elif _generated_by_this_app(self.paths.entrypoint):
             self.paths.entrypoint.unlink()
-        # Otherwise the Entrypoint is the user's own -- put back by an earlier call of this
-        # (a second answer to the relaunch offer, #148 hand-test 19) -- and is never deleted.
-        if not _generated_by_this_app(self.paths.entrypoint):
+
+        if record and record.restore_app_dir:
+            # The App dir the user had is moved back, the switch's own moved out of its way
+            # (#148 review R1). Missing: an earlier call already did, and both stay put.
+            kept = Path(record.restore_app_dir)
+            if kept.is_dir():
+                self._disown_app_dir()
+                os.replace(kept, self.paths.app_dir)
+        elif not _generated_by_this_app(self.paths.entrypoint):
             self._disown_app_dir()
 
         sentinels.clear(self.paths)
@@ -794,7 +822,11 @@ class MigrationFlow:
         detected kind, so an Import... of a `.conf` while a foreign `hyprland.lua` is in
         place gets the line for the file it is actually replacing (#131).
         """
-        return rescue_line(self._restores_backup(), backup=self._backup_name())
+        return rescue_line(
+            self._restores_backup(),
+            backup=self._backup_name(),
+            app_dir_backup=self._app_dir_backup_name(),
+        )
 
     @property
     def rescue_command(self) -> str:
@@ -804,7 +836,11 @@ class MigrationFlow:
         asterisks and backticks, and a rescue instruction the user has to mentally strip
         punctuation out of is one they can mistype at the worst possible moment.
         """
-        return rescue_command(self._restores_backup(), backup=self._backup_name())
+        return rescue_command(
+            self._restores_backup(),
+            backup=self._backup_name(),
+            app_dir_backup=self._app_dir_backup_name(),
+        )
 
     def _backup_name(self) -> str:
         """The file the rescue restores *from*, exact once the switch has renamed it.
@@ -816,10 +852,21 @@ class MigrationFlow:
         """
         return self._restore.name if self._restore is not None else BACKUP_NAME
 
+    def _app_dir_backup_name(self) -> str | None:
+        """The App dir the rescue moves back, or `None` when the switch displaces none."""
+        if self._restore_app_dir is not None:
+            return self._restore_app_dir.name
+        displaced = (
+            self.preview.result.loss.restore_app_dir
+            if self.preview is not None
+            else self.paths.app_dir.is_dir()
+        )
+        return APP_DIR_BACKUP_NAME if displaced else None
+
     def _restores_backup(self) -> bool | None:
         """Whether rolling back means restoring `hyprland.lua.bak` rather than deleting.
 
-        The same predicate `_preserve_foreign_entrypoint` renames by, deliberately: the
+        The same predicate `_preserve_entrypoint` renames by, deliberately: the
         rescue is the manual spelling of that rollback, so reading it off anything else --
         the imported file's extension, say -- lets the two disagree about a file the user
         only has one copy of (#131).
@@ -861,8 +908,8 @@ class MigrationFlow:
             raise RuntimeError("no preview yet: call build_preview() first")
         return self.preview
 
-    def _preserve_foreign_entrypoint(self, preview: Preview) -> Path | None:
-        """Rename a foreign `hyprland.lua` aside, since the new one contests its name.
+    def _preserve_entrypoint(self, preview: Preview) -> Path | None:
+        """Rename an existing `hyprland.lua` aside, since the new one contests its name.
 
         A rename, never a delete (ADR-0009), and it happens before the sentinel records it
         so the marker can never name a backup that was not made.
@@ -880,6 +927,32 @@ class MigrationFlow:
             # be the user's only copy of a config from before that migration.
             target = entrypoint.with_name(f"{entrypoint.name}{BACKUP_SUFFIX}.{stamp}")
         os.replace(entrypoint, target)
+        return target
+
+    def _preserve_app_dir(self, bridges: Sequence[BridgeEntry]) -> Path | None:
+        """Rename an existing App dir aside, presets and Monitor profiles in it, before the
+        switch writes the imported one: written over in place, the user's Modules had no
+        copy Roll back could put back (#148 review R1). Named like the Entrypoint's.
+
+        A wired theming tool's output is copied into the new App dir, so its colors keep
+        loading after the switch, as they did when the tree was written in place.
+        """
+        app_dir = self.paths.app_dir
+        if not app_dir.is_dir():
+            return None
+        target = app_dir.with_name(APP_DIR_BACKUP_NAME)
+        if target.exists():
+            stamp = self.now().strftime(backups.STAMP_FORMAT)
+            target = app_dir.with_name(f"{APP_DIR_BACKUP_NAME}.{stamp}")
+        os.replace(app_dir, target)
+        for entry in bridges:
+            output = self.paths.hypr_dir / entry.file
+            kept = (
+                target / output.relative_to(app_dir) if output.is_relative_to(app_dir) else None
+            )
+            if kept is not None and kept.is_file():
+                output.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(kept, output)
         return target
 
     def _write_tree(

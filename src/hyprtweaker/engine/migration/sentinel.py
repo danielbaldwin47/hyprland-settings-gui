@@ -53,6 +53,13 @@ class Sentinel:
     own (which is what keeps "delete `hyprland.lua`" a complete rollback).
     """
 
+    restore_app_dir: str | None = None
+    """The App dir the switch moved aside (`hyprtweaker.bak`), moved back on rollback.
+
+    `None` when there was no App dir before the switch. Additive, like `bridge_tools`: a
+    sentinel without the key comes from a switch that wrote over the App dir in place.
+    """
+
     bridge_tools: tuple[str, ...] = ()
     """Theming tools this switch wires (#187): Roll back unwires each.
 
@@ -74,6 +81,7 @@ def write(
     source: Path | None = None,
     backup: Path | None = None,
     restore: Path | None = None,
+    restore_app_dir: Path | None = None,
     bridge_tools: tuple[str, ...] = (),
     now: datetime | None = None,
 ) -> Sentinel:
@@ -89,6 +97,7 @@ def write(
         source=str(source) if source else None,
         backup=str(backup) if backup else None,
         restore=str(restore) if restore else None,
+        restore_app_dir=str(restore_app_dir) if restore_app_dir else None,
         bridge_tools=bridge_tools,
     )
     paths.sentinel.parent.mkdir(parents=True, exist_ok=True)
@@ -144,6 +153,7 @@ def read(paths: ConfigPaths) -> Sentinel | None:
         source=text("source"),
         backup=text("backup"),
         restore=text("restore"),
+        restore_app_dir=text("restore_app_dir"),
         bridge_tools=tuple(
             each for each in (tools if isinstance(tools, list) else []) if isinstance(each, str)
         ),
