@@ -314,7 +314,10 @@ def test_an_empty_submap_and_the_bind_entering_it_are_flagged_until_it_gets_a_bi
 ) -> None:
     from hyprtweaker.engine.model.entities import Bind, DispatcherCall, Submap
 
-    reason = "Hyprland cannot enter a submap with no binds. Add a bind to it."
+    reason = (
+        "Hyprland cannot enter a submap with no enabled keybinds. "
+        "Add or enable a keybind in it."
+    )
     session, window = build_window(tmp_path)
     session.model.entities.submaps.append(Submap(name="resize"))
     session.model.entities.binds.append(
@@ -346,7 +349,10 @@ def test_a_submap_both_empty_and_unreachable_says_the_empty_part_first(tmp_path:
     window.binds_page.refresh()
 
     description = window.binds_page.groups[1].get_description()
-    empty = "Hyprland cannot enter a submap with no binds. Add a bind to it."
+    empty = (
+        "Hyprland cannot enter a submap with no enabled keybinds. "
+        "Add or enable a keybind in it."
+    )
     assert empty in description and UNREACHABLE in description
     assert description.index(empty) < description.index(UNREACHABLE)
 
@@ -563,7 +569,7 @@ def test_alt_up_on_a_groups_first_row_moves_nothing() -> None:
 
 def test_a_drag_on_the_page_reorders_and_ctrl_z_puts_it_back(tmp_path: Path) -> None:
     """The whole loop: drop, the Session moves, the page shows the new fire order with a
-    "Binds reordered" toast, and Undo restores the old order."""
+    "Keybinds reordered" toast, and Undo restores the old order."""
     from test_undo import live_entity_window
 
     session, window, applier = live_entity_window(tmp_path)
@@ -595,7 +601,7 @@ def test_a_drag_on_the_page_reorders_and_ctrl_z_puts_it_back(tmp_path: Path) -> 
 
     assert fire_order() == [("second", "1st of 2"), ("first", "2nd of 2")]
     assert window.undo_toast is not None
-    assert window.undo_toast.get_title() == "Binds reordered"
+    assert window.undo_toast.get_title() == "Keybinds reordered"
 
     window.activate_action("win.undo", None)
 

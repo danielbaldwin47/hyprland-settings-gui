@@ -77,6 +77,7 @@ from hyprtweaker.engine.ipc import (
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.model.entities import (
+    DISPLAY_KINDS,
     Animation,
     Bind,
     Curve,
@@ -813,7 +814,9 @@ class Session:
         """
         if bind.enabled and trigger_load_problem(bind.keys) is not None:
             return False
-        return self.edit_binds(lambda binds: binds.append(bind), title="Bind added")
+        return self.edit_binds(
+            lambda binds: binds.append(bind), title=entity_title("binds", "added")
+        )
 
     def replace_bind(self, index: int, bind: Bind) -> bool:
         """Replace the Bind at `index`, keeping its position.
@@ -829,7 +832,7 @@ class Session:
             if 0 <= index < len(binds):
                 binds[index] = bind
 
-        return self.edit_binds(swap, title="Bind changed")
+        return self.edit_binds(swap, title=entity_title("binds", "changed"))
 
     def remove_bind(self, index: int) -> bool:
         """Delete the Bind at `index`."""
@@ -838,7 +841,7 @@ class Session:
             if 0 <= index < len(binds):
                 del binds[index]
 
-        return self.edit_binds(drop, title="Bind removed")
+        return self.edit_binds(drop, title=entity_title("binds", "removed"))
 
     def set_bind_enabled(self, index: int, enabled: bool) -> bool:
         """Enable or disable the Bind at `index`, in place.
@@ -859,7 +862,9 @@ class Session:
             if 0 <= index < len(binds):
                 binds[index] = replace(binds[index], enabled=enabled)
 
-        return self.edit_binds(flip, title="Bind enabled" if enabled else "Bind disabled")
+        return self.edit_binds(
+            flip, title=entity_title("binds", "enabled" if enabled else "disabled")
+        )
 
     def swap_binds(self, first: int, second: int) -> bool:
         """Exchange the positions of two Binds -- which of two duplicates fires first.
@@ -873,7 +878,7 @@ class Session:
             if 0 <= first < len(binds) and 0 <= second < len(binds) and first != second:
                 binds[first], binds[second] = binds[second], binds[first]
 
-        return self.edit_binds(exchange, title="Binds reordered")
+        return self.edit_binds(exchange, title=entity_title("binds", "reordered", plural=True))
 
     def move_bind(self, index: int, to: int) -> bool:
         """Move the Bind at `index` to position `to` -- the Binds page's drag reorder.
@@ -896,7 +901,7 @@ class Session:
         def shift(binds: list[Bind]) -> None:
             binds.insert(to, binds.pop(index))
 
-        return self.edit_binds(shift, title="Binds reordered")
+        return self.edit_binds(shift, title=entity_title("binds", "reordered", plural=True))
 
     def save_submap(self, *, original: str | None, name: str, reset_target: str) -> bool:
         """Create a Submap, or rename one and retune its reset target (#66).
@@ -910,7 +915,7 @@ class Session:
             lambda: binds_analysis.save_submap(
                 self._model.entities, original=original, name=name, reset_target=reset_target
             ),
-            title="Submap added" if original is None else "Submap changed",
+            title=entity_title("submaps", "added" if original is None else "changed"),
         )
 
     def rules(self, kind: str) -> list[WindowRule] | list[LayerRule]:
@@ -1007,7 +1012,7 @@ class Session:
         `mutate` and the ones that moved become one `EntityStep` -- all of them, so a
         cascade such as a submap rename rewriting binds is one step over both lists. The
         step waits for its transaction's verdict (`_pending_entities`); an edit that moved
-        nothing records nothing. `title` is the undo toast's ("Bind removed"); without one
+        nothing records nothing. `title` is the undo toast's ("Keybind removed"); without one
         the step is "<Kinds> changed" after the first list it moved.
 
         Entities are frozen and the snapshots share them, so a step is pointer arrays. A
@@ -1070,7 +1075,9 @@ class Session:
                 MonitorRule(output=output, fields=kept), merge=False
             )
 
-        return self._commit_entity_edit("monitor rules", patch, title="Monitor rule changed")
+        return self._commit_entity_edit(
+            "monitor rules", patch, title=entity_title("monitors", "changed")
+        )
 
     def rename_monitor_rule(self, output: str, to: str) -> bool:
         """Change a rule's identity string, keeping its fields and position.
@@ -1092,7 +1099,9 @@ class Session:
         def rename() -> None:
             rules[index] = replace(rules[index], output=to)
 
-        return self._commit_entity_edit("monitor rules", rename, title="Monitor rule changed")
+        return self._commit_entity_edit(
+            "monitor rules", rename, title=entity_title("monitors", "changed")
+        )
 
     def remove_monitor_rule(self, output: str) -> bool:
         """Delete the rule whose identity is `output`."""
@@ -1101,7 +1110,9 @@ class Session:
             rules = self._model.entities.monitors
             rules[:] = [rule for rule in rules if rule.output != output]
 
-        return self._commit_entity_edit("monitor rules", drop, title="Monitor rule removed")
+        return self._commit_entity_edit(
+            "monitor rules", drop, title=entity_title("monitors", "removed")
+        )
 
     def restore_monitor_rules(self, snapshot: Sequence[MonitorRule]) -> bool:
         """Put the monitor rule list back to `snapshot`, through a normal transaction.
@@ -1117,7 +1128,7 @@ class Session:
         def put_back(rules: list[MonitorRule]) -> None:
             rules[:] = list(snapshot)
 
-        return self.edit_monitor_rules(put_back, title="Monitor rule changed")
+        return self.edit_monitor_rules(put_back, title=entity_title("monitors", "changed"))
 
     def watch_monitors(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Call `callback` on every display hotplug; returns the way to stop.
@@ -1183,7 +1194,7 @@ class Session:
                     return
             rules.append(rule)
 
-        title = "Workspace rule changed" if replacing else "Workspace rule added"
+        title = entity_title("workspace_rules", "changed" if replacing else "added")
         return self._commit_entity_edit("workspace rules", save, title=title)
 
     def remove_workspace_rule(self, selector: str) -> bool:
@@ -1193,7 +1204,9 @@ class Session:
             rules = self._model.entities.workspace_rules
             rules[:] = [rule for rule in rules if rule.workspace != selector]
 
-        return self._commit_entity_edit("workspace rules", drop, title="Workspace rule removed")
+        return self._commit_entity_edit(
+            "workspace rules", drop, title=entity_title("workspace_rules", "removed")
+        )
 
     # --- declarative entities (#70) -----------------------------------------------------
 
@@ -1400,7 +1413,7 @@ class Session:
             return False
         self._model.entities.monitors[:] = list(monitors)
         self._model.entities.workspace_rules[:] = list(workspaces)
-        self._forget_entities(("monitors", "workspace_rules"))
+        self._forget_entities(DISPLAY_KINDS)
         self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
         self._profile_store.set_active(active)
         return True
