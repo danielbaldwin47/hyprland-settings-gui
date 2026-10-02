@@ -286,8 +286,9 @@ _SCHEMES = {
 FORGET_REMEMBERED_ACTION = "forget-remembered"
 """Clear every "remember my choice" answer (ADR-0014), so each such dialog asks again.
 
-Without it, a remembered answer is a one-way door (UX critique 4, #79). Insensitive while
-nothing is remembered, so the item never promises an effect it cannot have."""
+Without it, a remembered answer is a one-way door (UX critique 4, #79). Hidden while
+nothing is remembered: the action is disabled then, and the menu item hides with it
+(`hidden-when`), since a greyed item cannot say why it is grey."""
 
 
 class MainWindow(Adw.ApplicationWindow):
@@ -549,7 +550,11 @@ class MainWindow(Adw.ApplicationWindow):
         # Its own unlabelled section right below Theme rather than inside it: forgetting a
         # dialog answer is not a colour, and under the "Theme" heading it would read as one.
         remembered = Gio.Menu()
-        remembered.append("Forget remembered choices", f"win.{FORGET_REMEMBERED_ACTION}")
+        forget = Gio.MenuItem.new(
+            "Forget remembered choices", f"win.{FORGET_REMEMBERED_ACTION}"
+        )
+        forget.set_attribute_value("hidden-when", GLib.Variant.new_string("action-disabled"))
+        remembered.append_item(forget)
         menu.append_section(None, remembered)
 
         interop = Gio.Menu()
