@@ -59,6 +59,16 @@ Five steps, each an `Adw.NavigationView` subpage in one dialog (prototyped in #7
   `hl.plugin` logic) are extracted by source range into `legacy.lua`. Conditionals and loops
   *execute* — their result is baked, reported exactly like `# hyprlang if`. This importer is
   a new risky piece and gets its own prototype before the spec.
+
+  Reading a `.lua` runs it, so the wizard asks first, on a page before Preview: "Reading your
+  hyprland.lua means running it once in a sandbox: no commands run, no files change." with
+  "Read it" and "Not now" (the default; it closes the wizard having read nothing). The read
+  is blocked (`Policy.BLOCK`): the config's commands and writes are faked. When that blocked
+  read comes back empty (no Option, no Entity) or erroring *and* it tried `os.execute` or
+  `io.popen`, a second page lists those commands verbatim and offers to run them for real
+  (`Policy.PASSTHROUGH`); its safe exit is the default, and the run-for-real button is never
+  default or suggested. Neither consent is remembered: every wizard run asks again. Import…
+  of any `.lua` opens on the consent page. (Decided on inbox #79, 2026-10-01; #190.)
 - Either way, every key present in the source is marked **set** (ADR-0005 tri-state), and
   import provenance (date, source hash) lands in the Manifest.
 
