@@ -94,19 +94,25 @@ class DeclarationRow:
             )
             self.widget.add_suffix(badge)
 
-        if editable and not self.scripted:
+        # Shown greyed on a read-only session, as the Binds, Rules and Workspaces Pages do
+        # (owner call 7 of #159; F21 of the #148 review): a hidden button says nothing.
+        self.edit_button: Gtk.Button | None = None
+        if not self.scripted:
             edit = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER)
             edit.add_css_class("flat")
             edit.set_tooltip_text("Edit")
+            edit.set_sensitive(editable)
             edit.connect("clicked", lambda _button: actions.edit(index))
             self.widget.add_suffix(edit)
+            self.edit_button = edit
 
-        if editable:
-            remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
-            remove.add_css_class("flat")
-            remove.set_tooltip_text("Remove")
-            remove.connect("clicked", lambda _button: actions.remove(index))
-            self.widget.add_suffix(remove)
+        remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
+        remove.add_css_class("flat")
+        remove.set_tooltip_text("Remove")
+        remove.set_sensitive(editable)
+        remove.connect("clicked", lambda _button: actions.remove(index))
+        self.widget.add_suffix(remove)
+        self.remove_button = remove
 
 
 class DeclarationsPage:

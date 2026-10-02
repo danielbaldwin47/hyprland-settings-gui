@@ -860,3 +860,19 @@ def test_two_gestures_with_one_trigger_badge_only_the_later_row(tmp_path: Path) 
 
     assert page.rows[0].findings == ()
     assert page.rows[1].findings
+
+
+def test_a_read_only_session_greys_edit_and_remove_rather_than_hiding_them(
+    tmp_path: Path,
+) -> None:
+    """F21 of the #148 review: Binds, Rules and Workspaces grey them; these hid them."""
+    from hyprtweaker.engine.model.entities import EnvVar
+
+    session, window = build_window(tmp_path)
+    session.model.entities.env.append(EnvVar(name="XCURSOR_SIZE", value="24"))
+    page = window.declaration_page("env")
+    page.refresh()
+    row = page.rows[0]
+
+    assert row.edit_button is not None and not row.edit_button.get_sensitive()
+    assert not row.remove_button.get_sensitive()

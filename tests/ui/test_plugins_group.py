@@ -368,4 +368,5 @@ def test_a_read_only_session_shows_the_list_but_offers_no_edit(tmp_path: Path) -
     assert [row.widget.get_subtitle() for row in group.rows] == [BARS]
     assert not group.add_button.get_sensitive()
     assert not group.rows[0].enabled_switch.get_sensitive()
-    assert group.rows[0].remove_button is None
+    # Present and greyed, as on the other entity Pages (F21 of the #148 review).
+    assert not group.rows[0].remove_button.get_sensitive()

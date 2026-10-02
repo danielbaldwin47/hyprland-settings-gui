@@ -188,16 +188,18 @@ class PluginRow:
         self.enabled_switch.set_sensitive(actions is not None)
         self.widget.add_suffix(self.enabled_switch)
 
-        self.remove_button: Gtk.Button | None = None
-        if actions is None:
-            return
-        self.enabled_switch.connect("state-set", self._on_switch, actions)
+        # Shown greyed on a read-only session, as on the other entity Pages (F21 of the
+        # #148 review): a hidden button says nothing about why.
         remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
         remove.add_css_class("flat")
         remove.set_tooltip_text("Remove from the list")
-        remove.connect("clicked", lambda _button: actions.remove(index))
+        remove.set_sensitive(actions is not None)
         self.widget.add_suffix(remove)
-        self.remove_button = remove
+        self.remove_button: Gtk.Button = remove
+        if actions is None:
+            return
+        self.enabled_switch.connect("state-set", self._on_switch, actions)
+        remove.connect("clicked", lambda _button: actions.remove(index))
 
         self.handle.set_tooltip_text(REORDER_HINT)
         self._wire_keys(actions, count)
