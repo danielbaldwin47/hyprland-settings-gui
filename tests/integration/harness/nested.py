@@ -485,6 +485,7 @@ class NestedHyprland:
         if process is None:
             self._close_log()
             return
+        signature = self.signature
 
         if self.signature is not None:
             for expression in ("hl.dsp.exit()", "exit"):
@@ -508,6 +509,12 @@ class NestedHyprland:
             self.signature = None
             self.wayland_display = None
             self._close_log()
+            if signature is not None and process.poll() is not None:
+                # Hyprland leaves its socket directory behind; hundreds of dead ones once
+                # piled up in the developer's runtime dir.
+                runtime = os.environ.get("XDG_RUNTIME_DIR")
+                if runtime:
+                    shutil.rmtree(Path(runtime, "hypr", signature), ignore_errors=True)
 
     @staticmethod
     def _signal_group(process: subprocess.Popen[bytes], number: int) -> None:

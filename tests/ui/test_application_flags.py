@@ -12,16 +12,18 @@ import pytest
 def test_the_app_claims_its_id_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     from gi.repository import Gio
 
-    from hyprtweaker.application import NON_UNIQUE_ENV, application_flags
+    from hyprtweaker.application import NON_UNIQUE_ENV, HyprtweakerApplication
 
     monkeypatch.delenv(NON_UNIQUE_ENV, raising=False)
-    assert application_flags() == Gio.ApplicationFlags.DEFAULT_FLAGS
+    app = HyprtweakerApplication()
+    assert not app.get_flags() & Gio.ApplicationFlags.NON_UNIQUE
 
 
 def test_a_sandboxed_app_is_non_unique(monkeypatch: pytest.MonkeyPatch) -> None:
     from gi.repository import Gio
 
-    from hyprtweaker.application import NON_UNIQUE_ENV, application_flags
+    from hyprtweaker.application import NON_UNIQUE_ENV, HyprtweakerApplication
 
     monkeypatch.setenv(NON_UNIQUE_ENV, "1")
-    assert application_flags() == Gio.ApplicationFlags.NON_UNIQUE
+    app = HyprtweakerApplication()
+    assert app.get_flags() & Gio.ApplicationFlags.NON_UNIQUE

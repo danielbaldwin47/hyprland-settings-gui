@@ -111,8 +111,10 @@ def test_capture_then_activate_round_trips_on_a_live_box(
         monitors_state = witnesses()
         if not monitors_state:
             nested.hyprctl_text("output", "create", "headless")
-            time.sleep(1)
-            monitors_state = witnesses()
+            deadline = time.monotonic() + 10
+            while not monitors_state and time.monotonic() < deadline:
+                time.sleep(0.1)
+                monitors_state = witnesses()
         assert monitors_state, "no output the preamble leaves unpinned"
         scales = {float(entry.get("scale", 0)) for entry in monitors_state}
         assert scales == {2.0}, f"the catch-all scale did not apply: {monitors_state!r}"
