@@ -164,6 +164,8 @@ class MigrationDialog(Adw.Dialog):
         """The read running in a worker, if one is (#216)."""
         self._confirm: ConsentDialog | None = None
         """The last Bridge setup confirm shown (#187): what a test or probe answers."""
+        self._tool_rows: dict[str, tuple[Offer, Adw.ActionRow, Gtk.Button]] = {}
+        """Each offered tool's row, so confirming one wallpaper color tool redraws the other."""
         self.connect("closed", lambda _dialog: self._stop_read())
 
         self._view = Adw.NavigationView()
@@ -471,6 +473,7 @@ class MigrationDialog(Adw.Dialog):
         group = Adw.PreferencesGroup(
             title="Theming tools on this computer", description=TOOLS_TEXT
         )
+        self._tool_rows.clear()
         for offer in offers:
             group.add(self._tool_row(offer))
         page.get_child().set_content(_scrolled(_column(group)))
@@ -491,6 +494,7 @@ class MigrationDialog(Adw.Dialog):
                 button = Gtk.Button(valign=Gtk.Align.CENTER)
                 row = _row(offer.title, "", suffix=button)
                 button.connect("clicked", lambda _button: self._toggle_tool(offer, row, button))
+                self._tool_rows[offer.tool] = (offer, row, button)
                 self._show_tool(offer, row, button)
                 return row
 
@@ -510,8 +514,10 @@ class MigrationDialog(Adw.Dialog):
             return
 
         def agree() -> None:
+            # Confirming one wallpaper color tool withdraws the other: every row says so.
             self._flow.consent(WireConsent(offer.plan))
-            self._show_tool(offer, row, button)
+            for shown in self._tool_rows.values():
+                self._show_tool(*shown)
 
         title = offer.title
         self._confirm = ConsentDialog(

@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..bridge import REGISTRY, BridgeEntry, ToolSpec
+from ..bridge import REGISTRY, BridgeEntry, ToolSpec, Wallpaper, bridge_states_for
 from ..bridge.wire import (
     IfChanged,
     NeedsChoice,
@@ -108,10 +108,18 @@ def with_consented(
     (settled S4): a tool that has not run yet gets its line commented, never a require of a
     missing file.
     """
+    backend: str | None = None
     for consent in consents:
         spec = REGISTRY[consent.plan.tool]
         manifest = manifest.add_bridge(spec, present=_present(spec, hypr_dir))
-    return manifest.bridges
+        if spec.color_source:
+            backend = spec.tool
+    if backend is None:
+        return manifest.bridges
+    # The confirmed wallpaper color tool is the Color source: one already set up is gated
+    # off for it rather than loading beside it.
+    present = {entry.file for entry in manifest.bridges if (hypr_dir / entry.file).is_file()}
+    return bridge_states_for(Wallpaper(backend), manifest.bridges, present=present)
 
 
 def wire_consented(

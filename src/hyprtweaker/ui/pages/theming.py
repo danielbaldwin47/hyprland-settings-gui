@@ -442,6 +442,19 @@ class ThemingPage:
         title = spec.title
         blocked = self._state.blocked is not None
         match tab.state:
+            case TabState.IN_USE if isinstance(self._state.source, Several):
+                # Two backends load (a hand edit, or a setup from before): the way out is
+                # choosing one, from either tab (finding 18 of the #153 review).
+                status = _row(
+                    "In use, with another tool", source_detail(self._state.source, ())
+                )
+                status.add_suffix(
+                    _button(
+                        f"Switch to {title}",
+                        lambda: self.switch(tab.tool),
+                        sensitive=not blocked,
+                    )
+                )
             case TabState.IN_USE:
                 status = _row("In use", source_detail(Wallpaper(tab.tool), ()))
             case TabState.WAITING:

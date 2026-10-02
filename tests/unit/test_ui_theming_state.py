@@ -71,7 +71,7 @@ def test_the_color_source_line_reads_as_adr_0014_names_it() -> None:
     assert source_line(ManualColors()) == "Manual"
     assert (
         source_line(Several(("matugen", "wallust")))
-        == "matugen and wallust both load; the last one wins"
+        == "matugen and wallust both set your colors; wallust wins"
     )
 
 

@@ -250,6 +250,46 @@ class TestConsentIsTheOnlyWayIn:
             "matugen is set up. Its colors load from matugen's next run.",
         )
 
+    def test_one_wallpaper_color_tool_per_switch(self, two_tools: ConfigPaths) -> None:
+        """Finding 18 of the #153 review: confirming both left two backends loading, which
+        the Theming page could only call "Several" with no way out."""
+        from hyprtweaker.engine.bridge import Wallpaper, color_source_of
+
+        flow = flow_for(two_tools, FakeClient())
+        flow.consent(WireConsent(offer(flow, "matugen").plan))
+        flow.consent(WireConsent(offer(flow, "wallust").plan))
+
+        assert [consent.plan.tool for consent in flow.consents] == ["wallust"]
+        run(flow.switch())
+        text = two_tools.entrypoint.read_text(encoding="utf-8")
+        assert color_source_of(text) == Wallpaper("wallust")
+        assert (two_tools.config_home / "matugen/config.toml").read_text() == MATUGEN_CONFIG
+
+    def test_a_backend_set_up_before_is_gated_off_for_the_one_confirmed(
+        self, two_tools: ConfigPaths
+    ) -> None:
+        from hyprtweaker.engine.bridge import MATUGEN, Off, Wallpaper, color_source_of
+
+        manifest = Manifest.load(two_tools.manifest, app_version="x", schema_version="y")
+        two_tools.manifest.parent.mkdir(parents=True, exist_ok=True)
+        two_tools.manifest.write_text(
+            manifest.add_bridge(MATUGEN, present=()).render(), encoding="utf-8"
+        )
+        flow = flow_for(two_tools, FakeClient())
+        flow.consent(WireConsent(offer(flow, "wallust").plan))
+
+        run(flow.switch())
+
+        text = two_tools.entrypoint.read_text(encoding="utf-8")
+        assert color_source_of(text) == Wallpaper("wallust")
+        states = {
+            entry.tool: entry.state
+            for entry in Manifest.load(
+                two_tools.manifest, app_version="x", schema_version="y"
+            ).bridges
+        }
+        assert states["matugen"] == Off(Wallpaper("wallust"))
+
     def test_skipping_every_tool_leaves_every_tool_config_byte_identical(
         self, two_tools: ConfigPaths
     ) -> None:

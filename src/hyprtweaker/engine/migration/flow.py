@@ -34,7 +34,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from ..bridge import BridgeEntry
+from ..bridge import REGISTRY, BridgeEntry
 from ..bridge.wire import WireConsent
 from ..importer.loss import BACKUP_NAME, LossCode, LossReport, rescue_command, rescue_line
 from ..importer.lua.mapping import import_lua
@@ -426,7 +426,15 @@ class MigrationFlow:
         return bridge_setup.offers(self.paths, self._manifest(), find=self.find)
 
     def consent(self, consent: WireConsent) -> None:
-        """The user confirmed this tool's plan: it is wired at Switch, and only then."""
+        """The user confirmed this tool's plan: it is wired at Switch, and only then.
+
+        One wallpaper color tool at a time (finding 18 of the #153 review): confirming
+        matugen withdraws wallust, and the switched tree makes the confirmed one the Color
+        source, so the switch never ends with two backends loading at once."""
+        spec = REGISTRY.get(consent.plan.tool)
+        if spec is not None and spec.color_source:
+            for tool in [t for t in self._consents if REGISTRY[t].color_source]:
+                self._consents.pop(tool)
         self._consents[consent.plan.tool] = consent
 
     def withdraw(self, tool: str) -> None:

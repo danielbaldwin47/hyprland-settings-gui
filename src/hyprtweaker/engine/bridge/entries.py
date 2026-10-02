@@ -53,7 +53,7 @@ class Several:
     """More than one Wallpaper backend loads; the last required wins.
 
     Reachable only through a hand edit or a hand-placed Bridge module: the app never writes
-    it. The Theming page says so ("matugen and wallust both load; the last one wins").
+    it. The Theming page says so ("matugen and wallust both set your colors; wallust wins").
     """
 
     tools: tuple[str, ...]

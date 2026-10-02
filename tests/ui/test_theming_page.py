@@ -286,6 +286,34 @@ def test_switching_to_a_tool_not_set_up_shows_its_files_first_then_sets_it_up_in
     assert page.rows[1][:2] == ("Wallpaper colors", "Waiting for wallust's first run")
 
 
+def test_two_backends_loading_offer_a_switch_to_either(tmp_path: Path, stub_tool: Any) -> None:
+    """Finding 18 of the #153 review: "Switch to one of them" with no Switch button."""
+    from hyprtweaker.engine.bridge import Wallpaper
+
+    stub_tool("matugen")
+    stub_tool("wallust")
+    put(tmp_path / MATUGEN_BRIDGE)
+    put(tmp_path / WALLUST_BRIDGE)
+    session, _ = make_session(tmp_path)
+    wired(session, "matugen", "wallust")
+    from hyprtweaker.engine.writer import Writer
+
+    Writer(session.paths, app_version=session.app_version).set_bridges(
+        session.model, session.manifest().bridges
+    )  # both load, as a setup from before this fix could leave them
+    page = build_page(session)
+
+    assert page.color_source_text == "matugen and wallust both set your colors; wallust wins"
+    assert page.button("Switch to matugen") is not None
+    page.reveal_backend("wallust")
+    assert page.button("Switch to wallust") is not None
+    page.reveal_backend("matugen")
+    click(page, "Switch to matugen")
+    answer(page.dialog, "agree")
+
+    assert session.color_source() == Wallpaper("matugen")
+
+
 def test_a_refused_switch_leaves_the_old_source_on_screen(
     tmp_path: Path, stub_tool: Any
 ) -> None:

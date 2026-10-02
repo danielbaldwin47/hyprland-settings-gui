@@ -43,7 +43,9 @@ def source_line(source: ColorSource) -> str:
         case Wallpaper():
             return f"Wallpaper ({source_name(source)})"
         case Several(tools):
-            return f"{_and(_title(tool) for tool in tools)} both load; the last one wins"
+            return f"{_and(_title(tool) for tool in tools)} both set your colors; " + (
+                f"{_title(tools[-1])} wins"
+            )
         case _:
             return source_name(source)
 
