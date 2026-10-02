@@ -557,6 +557,18 @@ def has_emittable_null(option: ResolvedOption) -> bool:
     return True
 
 
+def is_null_spelling(option: ResolvedOption, raw: Any) -> bool:
+    """Whether a value read from a config is this Option's "no value", not a value.
+
+    `raw` as the Lua importer decodes it (`-1`, `""`) or as hyprlang text (`"-1"`). Only
+    an emittable null counts: the colour fallbacks' `-1` is no Lua value at all, so a
+    config spelling it was never loaded and reads as the value it says.
+    """
+    if not (option.nullable and has_emittable_null(option)):
+        return False
+    return bool(raw == option.null_value or raw == str(option.null_value))
+
+
 def lua_literal_for(option: ResolvedOption, value: Any) -> str:
     """The Lua literal for one Option's model value, explicit null included.
 
@@ -613,7 +625,16 @@ def parse_lua(option: ResolvedOption, raw: Any) -> Any:
 
     Falls back to the display-text parser for scalars and for anyone who wrote a complex
     value as the string form, which the engine also accepts.
+
+    The Option's null spelling comes back as `None`, explicit null, because that is what
+    the Writer emits for it (`lua_literal_for`): `general:float_gaps = -1` is Hyprland's
+    "same as the outer gaps", and parsed as a value it would become four `-1` sides that
+    re-emit as a table the user never wrote (#207). Hyprland 0.56.2 reads both forms the
+    same way, any negative side meaning `gaps_out` (`src/layout/space/Space.cpp`), but only
+    the null shows the user what it means.
     """
+    if is_null_spelling(option, raw):
+        return None
     if option.type is OptionType.GRADIENT and isinstance(raw, dict):
         colors = raw.get("colors")
         entries = colors if isinstance(colors, list) else []

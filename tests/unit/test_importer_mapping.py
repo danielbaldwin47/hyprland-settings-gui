@@ -1013,6 +1013,18 @@ class TestOptions:
         result = _map("general {\n  border_size = 3\n}\n", schema, tmp_path)
         assert result.model.get("general:border_size") == 3
 
+    def test_a_null_spelling_is_the_explicit_null(self, schema, tmp_path) -> None:
+        """`float_gaps = -1` is "same as the outer gaps", not four sides of -1 (#207); an
+        empty `kb_variant` is its "None". The Lua importer reads both the same way."""
+        result = _map(
+            "general {\n  float_gaps = -1\n}\ninput {\n  kb_variant =\n}\n", schema, tmp_path
+        )
+        assert result.model.is_set("general:float_gaps")
+        assert result.model.get("general:float_gaps") is None
+        assert result.model.is_set("input:kb_variant")
+        assert result.model.get("input:kb_variant") is None
+        assert result.loss.clean
+
     def test_bool_words_are_normalised_and_reported(self, schema, tmp_path) -> None:
         result = _map("general:allow_tearing = yes\n", schema, tmp_path)
         assert result.model.get("general:allow_tearing") is True

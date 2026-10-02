@@ -42,7 +42,7 @@ from ..model.entities import (
     entity_summary,
 )
 from ..model.options import ConfigModel, UnknownOption
-from ..model.values import display_text
+from ..model.values import display_text, is_null_spelling
 from ..schema.resolve import Schema
 from ..schema.types import OptionType
 from .binds import map_bind, map_submap, map_unbind
@@ -320,7 +320,8 @@ class _Mapper:
             )
             return
         try:
-            self.model.set(key, keyword.value)
+            null = is_null_spelling(self.model.option(key), keyword.value)
+            self.model.set(key, None if null else keyword.value)
         except UnknownOption:
             self.report.add(
                 LossCode.REMOVED_OPTION,
