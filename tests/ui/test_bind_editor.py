@@ -581,6 +581,38 @@ def test_an_invalid_flag_combination_is_refused_in_plain_words_and_not_saved(
     assert saved == []
 
 
+def test_a_flag_conflict_shows_as_the_switch_flips_and_clears_when_resolved() -> None:
+    """#151 review, finding 41 (owner call 10 overturned): the refusal shows where the
+    user acts, not only once Save is pressed."""
+    editor, saved = open_editor(term_bind())
+    editor._flag_switches["click"].set_active(True)
+    assert refusal(editor) == ""
+
+    editor._flag_switches["repeating"].set_active(True)
+    assert refusal(editor) == "Click fires on release, so it can't repeat."
+
+    editor._flag_switches["repeating"].set_active(False)
+    assert not editor._error.get_visible()
+    assert saved == []
+
+
+def test_an_imported_conflict_shows_as_the_editor_opens() -> None:
+    editor, _ = open_editor(term_bind(long_press=True, repeating=True))
+
+    assert refusal(editor) == "Long press can't repeat."
+
+
+def test_flipping_a_flag_leaves_a_save_refusal_about_something_else() -> None:
+    editor, _ = open_editor(term_bind())
+    editor._trigger.set_text("")
+    editor._save()
+    assert refusal(editor) == "A keybind needs a trigger."
+
+    editor._flag_switches["locked"].set_active(True)
+
+    assert refusal(editor) == "A keybind needs a trigger."
+
+
 def test_an_imported_click_bind_that_repeats_is_refused_naming_click_not_release() -> None:
     editor, saved = saved_options(term_bind(click=True, release=True), "repeating")
 
