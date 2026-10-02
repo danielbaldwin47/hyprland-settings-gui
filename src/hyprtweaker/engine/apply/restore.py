@@ -213,7 +213,13 @@ class RestoreTransaction:
             changed = [
                 good.module
                 for good in self._restores
-                if self._writer.restore(self._model, good.module, good.data, good.options)
+                if self._writer.restore(
+                    self._model,
+                    good.module,
+                    good.data,
+                    good.options,
+                    before_replace=draft.preserve if draft is not None else None,
+                )
             ]
         except (LuaSyntaxError, ProtectedFile, ValueError) as error:
             # A Snapshot that will not parse, or one aimed at a file the app must not write.
