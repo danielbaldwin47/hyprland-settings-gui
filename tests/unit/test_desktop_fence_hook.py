@@ -331,6 +331,8 @@ ALLOWED = [
     "pgrep -f Xvfb || echo none",
     "pgrep -f foot | wc -l",
     "pids=$(pgrep -f Xvfb); echo $pids",
+    "pids=$(pgrep -f Xvfb); kill -0 $pids && echo alive",
+    "kill -s 0 $(pidof foot)",
     "pgrep -af Xvfb; kill 1234",
     "fuser /tmp/.X11-unix/X0",
     # review #151, 5: the variable as data, cleared, or empty

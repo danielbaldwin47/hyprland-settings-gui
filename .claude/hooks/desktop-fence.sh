@@ -542,8 +542,11 @@ judge_kill() {
             opts=0
             case "$text" in
                 --) ;;
-                -s | -n | --signal) j=$((j + 1)) ;;
-                -l | -L | --list | --table) return 0 ;;
+                -s | -n | --signal)
+                    j=$((j + 1))
+                    [ "${args[j]:-L}" = L0 ] && return 0 # signal 0 only asks whether it lives
+                    ;;
+                -l | -L | --list | --table | -0) return 0 ;;
                 -*) ;; # the signal
                 *) continue ;;
             esac
