@@ -875,7 +875,47 @@ class MainWindow(Adw.ApplicationWindow):
         import_dialog(self, self.show_migration)
 
     def _on_export(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
-        export_dialog(self, self._write_export)
+        self.export()
+
+    def export(self) -> Gtk.FileDialog | Adw.AlertDialog:
+        """Export, or say why there is nothing of the user's to export yet (F6, #148 review).
+
+        The export is rendered from the model, which is the user's config only once it has
+        been read: never while an import is still offered, and not offline without Lua.
+        Exporting then wrote an empty hyprland.lua and called it done. Returned for tests.
+        """
+        if self._offered is not None:
+            dialog = Adw.AlertDialog(
+                heading="Convert your config first",
+                body=(
+                    "Export writes the settings this app manages as one hyprland.lua, and "
+                    "your config has not been converted yet, so none of it would be in the "
+                    "file. Convert it, then export."
+                ),
+            )
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("convert", "Convert...")
+            dialog.set_response_appearance("convert", Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response("convert")
+            dialog.set_close_response("cancel")
+            dialog.connect(
+                "response",
+                lambda _d, response: self.show_migration() if response == "convert" else None,
+            )
+            dialog.present(self)
+            return dialog
+        if not self._session.model_read:
+            dialog = Adw.AlertDialog(
+                heading="Nothing to export yet",
+                body=(
+                    "Export writes your settings as one hyprland.lua, and this app has not "
+                    f"been able to read them. {self._session.offline_sentence or ''}".rstrip()
+                ),
+            )
+            dialog.add_response("close", "Close")
+            dialog.present(self)
+            return dialog
+        return export_dialog(self, self._write_export)
 
     def _on_report(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         """The last import's Loss report, reachable long after the wizard closed (ADR-0009).

@@ -138,6 +138,34 @@ class TestFirstRunRouting:
         assert started == [True]
         assert window._banner.get_title() == "Connecting to Hyprland… — settings are read-only."
 
+    def test_export_before_converting_offers_convert_and_writes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """F6 of the #148 review: with only a hyprland.conf, Export wrote an empty
+        hyprland.lua and said "Exported to hyprland.lua"."""
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+        window, _session = build_window(tmp_path)
+        window.route_first_run()
+
+        dialog = window.export()
+
+        assert dialog.get_heading() == "Convert your config first"
+        assert dialog.get_response_label("convert") == "Convert..."
+        dialog.close()
+
+    def test_export_with_settings_unread_says_so(self, tmp_path: Path) -> None:
+        window, session = build_window(tmp_path)
+        assert not session.model_read
+
+        dialog = window.export()
+
+        assert dialog.get_heading() == "Nothing to export yet"
+        dialog.close()
+
     def test_routing_never_writes_over_a_foreign_lua(self, tmp_path: Path) -> None:
         """The outcome ADR-0009 forbids outright, asserted at the level that could do it."""
         from hyprtweaker.engine.paths import ConfigPaths
