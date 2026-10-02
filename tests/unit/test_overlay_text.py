@@ -22,7 +22,6 @@ OVERLAY = (SCHEMA_DIR / "overlay.json").read_text(encoding="utf-8")
 
 HAND_WRAPPED = frozenset(
     {
-        "general:layout",
         "binds:hide_special_on_workspace_change",
         "opengl:nvidia_anti_flicker",
         "render:non_shader_cm",

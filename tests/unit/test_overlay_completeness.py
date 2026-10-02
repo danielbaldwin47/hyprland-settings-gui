@@ -12,11 +12,35 @@ the missing facts live in wiki prose and human judgement. So the Generated schem
 `CurationFlag` wherever it knows it is ignorant, and this test refuses to let a flag go
 unanswered. The same prototype hand-curated 126 options and still missed two titles until
 a script counted them -- which is exactly why this is a test and not a review checklist.
+
+**Groups** (#157, #158). Every Option of a Section outside `UNGROUPED_SECTIONS` sits in a
+Group its Section declares, so no Page renders as one flat list of unrelated Rows. The
+Groups are written in `tools/overlay_groups.toml` and applied by `tools/curate_overlay.py`,
+never by hand. A table row follows these conventions; the mechanical ones are tests below:
+
+- A Section of one to four Options gets a single titled Group.
+- A Group usually holds 3 to 12 Options. Split above about 12 where there is a natural seam.
+- A title is one to three words in sentence case and names what the user adjusts. It never
+  repeats its Section's title, never says "Group" or "Groups", is unique within its
+  Section, and reads well as "<Section> · <title>" on a Tasks Page spanning several
+  Sections ("Groups · Tab bar", "Miscellaneous · Swallowing").
+- A description is optional: one sentence of at most 120 characters, saying "setting",
+  "Hyprland" and "this version", never "schema", "overlay", "option" or "config variable"
+  (the one exception is "XKB option", the term the user types). Omit it when the title
+  says it all.
+- Groups run in the order a person works down the Page, most-used first; a Group whose
+  members are all advanced goes last.
+- Stub-tree sub-prefixes are not Groups. A Group is what a person adjusts together:
+  "Scrolling" spans `input:*` and `input:touchpad:*`.
+- Two Rows in one Group never share a title: a cross-cutting Group retitles its members
+  where they would ("Mouse scroll speed", "Touchpad scroll speed").
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -31,6 +55,8 @@ from hyprtweaker.engine.schema import (
 from hyprtweaker.engine.schema import generated as generated_module
 from hyprtweaker.engine.schema import overlay as overlay_module
 from hyprtweaker.engine.schema.resolve import available_versions
+from hyprtweaker.ui.pages.plan import Disclosure, plan_config_view
+from hyprtweaker.ui.pages.tasks import load_tasks_mapping, plan_tasks_view
 
 SCHEMA_DIR = Path(__file__).resolve().parents[2] / "data" / "schema"
 
@@ -274,3 +300,225 @@ def test_labelled_string_values_are_known_values(schema: Schema) -> None:
             failures.append(f"{option.name}: labels for unknown values {sorted(unknown)}")
 
     assert not failures, "\n  ".join(failures)
+
+
+# --- Groups (#157) --------------------------------------------------------------------------
+
+UNGROUPED_SECTIONS = frozenset(
+    {
+        "animations",
+        "binds",
+        "cursor",
+        "debug",
+        "dwindle",
+        "ecosystem",
+        "experimental",
+        "gestures",
+        "input-capture",
+        "layout",
+        "master",
+        "opengl",
+        "quirks",
+        "render",
+        "scrolling",
+        "xwayland",
+    }
+)
+"""Sections not curated into Groups yet: #158 curates them and deletes this."""
+
+HYPRLAND_SECTION_ORDER = (
+    "general",
+    "decoration",
+    "animations",
+    "input",
+    "gestures",
+    "group",
+    "misc",
+    "binds",
+    "xwayland",
+    "opengl",
+    "render",
+    "cursor",
+    "ecosystem",
+    "debug",
+    "layout",
+    "dwindle",
+    "master",
+    "scrolling",
+    "experimental",
+    "input-capture",
+    "quirks",
+)
+"""The order Hyprland declares its Sections in, which the sidebar keeps (ADR-0013)."""
+
+BANNED_WORDS = re.compile(r"\b(schema|overlay|options?|config variables?)\b", re.IGNORECASE)
+"""Words a Group's title or description never uses (spec #154 S6): the user sees settings,
+not the app's data model. "XKB option" is the one allowed use, the term the user types."""
+
+GROUP_WORD = re.compile(r"\bgroups?\b", re.IGNORECASE)
+"""A title saying "Group" names the widget rather than what it holds; on the `group`
+Section's Page it reads "Groups · Group ..." on the Tasks view."""
+
+
+def ungrouped(schema: Schema) -> list[str]:
+    """Options of a curated Section with no Group their Section declares.
+
+    Exempt: an Option this schema's own release added (`added_in` is its version) and no
+    curation has placed yet. ADR-0012 lets placement lag the release check, and it shows in
+    a `New in <version>` Group meanwhile; stamps carry forward, so the next release's schema
+    no longer exempts it and the lag is one release at most.
+    """
+    return [
+        option.name
+        for option in schema
+        if option.section not in UNGROUPED_SECTIONS
+        and option.group not in {group.title for group in schema.section_groups(option.section)}
+        and not (option.group is None and option.added_in == schema.hyprland_version)
+    ]
+
+
+def test_every_option_of_a_curated_section_sits_in_a_group_it_declares(schema: Schema) -> None:
+    missing = ungrouped(schema)
+
+    assert not missing, (
+        f"{len(missing)} option(s) of curated Sections have no Group: {missing[:10]}. Place "
+        "them in tools/overlay_groups.toml, then run tools/curate_overlay.py"
+    )
+
+
+def release(schema: Schema, name: str, *, added_in: str) -> Schema:
+    """`schema` as though `name` were added by Hyprland `added_in` and not yet curated."""
+    return Schema(
+        hyprland_version=schema.hyprland_version,
+        options=tuple(
+            replace(option, added_in=added_in, group=None, group_order=None)
+            if option.name == name
+            else option
+            for option in schema
+        ),
+        sections=schema.sections,
+    )
+
+
+def test_an_option_this_release_added_may_wait_for_its_group(schema: Schema) -> None:
+    added = release(schema, "input:kb_layout", added_in=schema.hyprland_version)
+
+    assert ungrouped(added) == []
+
+
+def test_an_option_an_earlier_release_added_may_not(schema: Schema) -> None:
+    added = release(schema, "input:kb_layout", added_in="0.1.0")
+
+    assert ungrouped(added) == ["input:kb_layout"]
+
+
+def test_an_option_with_no_stamp_may_not(schema: Schema) -> None:
+    unstamped = release(schema, "input:kb_layout", added_in="0.1.0")
+    unstamped = Schema(
+        hyprland_version=unstamped.hyprland_version,
+        options=tuple(replace(option, added_in=None) for option in unstamped),
+        sections=unstamped.sections,
+    )
+
+    assert ungrouped(unstamped) == ["input:kb_layout"]
+
+
+def test_every_declared_group_has_an_option(schema: Schema) -> None:
+    empty = [
+        (section, group.title)
+        for section in schema.section_names
+        for group in schema.section_groups(section)
+        if not any(option.group == group.title for option in schema.section(section))
+    ]
+
+    assert not empty, f"declared Groups no Option names: {empty}"
+
+
+def test_an_ungrouped_section_declares_no_groups(schema: Schema) -> None:
+    """Keeps `UNGROUPED_SECTIONS` honest: a Section #158 curates leaves the set with it."""
+    assert [s for s in sorted(UNGROUPED_SECTIONS) if schema.section_groups(s)] == []
+
+
+def curated_groups(schema: Schema) -> list[tuple[str, str, str | None]]:
+    return [
+        (section, group.title, group.description)
+        for section in schema.section_names
+        for group in schema.section_groups(section)
+    ]
+
+
+def test_group_titles_are_short_and_never_repeat_their_page(schema: Schema) -> None:
+    bad = [
+        (section, title)
+        for section, title, _ in curated_groups(schema)
+        if not 1 <= len(title.split()) <= 3
+        or title != title[0].upper() + title[1:]
+        or title.casefold() == schema.section_title(section).casefold()
+        or BANNED_WORDS.search(title)
+        or GROUP_WORD.search(title)
+    ]
+
+    assert not bad, f"Group titles breaking the conventions in this module's docstring: {bad}"
+
+
+def test_group_descriptions_are_one_short_sentence_in_the_apps_voice(schema: Schema) -> None:
+    bad = [
+        (section, title, description)
+        for section, title, description in curated_groups(schema)
+        if description is not None
+        and (
+            len(description) > 120
+            or not description.endswith(".")
+            or ". " in description
+            or BANNED_WORDS.search(description.replace("XKB option", ""))
+        )
+    ]
+
+    assert not bad, f"Group descriptions breaking the conventions: {bad}"
+
+
+def test_no_two_rows_in_a_group_share_a_title(schema: Schema) -> None:
+    """Two "Natural scrolling" Rows under "Scrolling" leave the user guessing which is which."""
+    seen: dict[tuple[str, str, str], str] = {}
+    clashes = []
+    for option in schema:
+        if option.group is None:
+            continue
+        key = (option.section, option.group, option.title)
+        if key in seen:
+            clashes.append((seen[key], option.name))
+        seen[key] = option.name
+
+    assert not clashes, f"Rows sharing a title within one Group: {clashes}"
+
+
+def test_sections_keep_hyprlands_declaration_order(schema: Schema) -> None:
+    """Curating a Page's Groups never reorders the sidebar (`order` is within a Group)."""
+    assert schema.section_names == HYPRLAND_SECTION_ORDER
+    assert tuple(page.section for page in plan_config_view(schema)) == HYPRLAND_SECTION_ORDER
+
+
+def test_every_option_lands_in_exactly_one_group_in_both_views(schema: Schema) -> None:
+    """Curated Groups reshape a Page and never drop or repeat a Row (#123's double render).
+
+    The Config view shows every Option; the Tasks view every one but the hidden tier, which
+    has no curated home (ADR-0013 §5)."""
+    shown = Disclosure(show_advanced=True)
+    config = [
+        option.name
+        for page in plan_config_view(schema, shown)
+        for group in page.groups
+        for option in group.options
+    ]
+    tasks = [
+        option.name
+        for category in plan_tasks_view(schema, load_tasks_mapping(SCHEMA_DIR), shown)
+        for page in category.option_pages
+        for group in page.groups
+        for option in group.options
+    ]
+
+    assert sorted(config) == sorted(option.name for option in schema)
+    assert sorted(tasks) == sorted(
+        option.name for option in schema if option.visibility is not Visibility.HIDDEN
+    )

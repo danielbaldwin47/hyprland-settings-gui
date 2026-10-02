@@ -86,8 +86,8 @@ input:scroll_points | string | float-list | null | None | advanced | input:accel
 input:scroll_method | string | enum-string | null | Device default | default | - | - | 2fg=Two fingers/edge=Edge/on_button_down=While button held/no_scroll=Disabled | - | Scroll method
 input:scroll_button | int | int-range | - | - | advanced | - | min=0,max=300 | - | - | Scroll button
 input:scroll_button_lock | bool | toggle | - | - | default | - | - | - | - | Scroll button lock
-input:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Scroll speed
-input:natural_scroll | bool | toggle | - | - | default | - | - | - | - | Natural scrolling
+input:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Mouse scroll speed
+input:natural_scroll | bool | toggle | - | - | default | - | - | - | - | Mouse natural scrolling
 input:follow_mouse | int | enum-map | - | - | default | - | min=0,max=3 | - | - | Focus follows mouse
 input:follow_mouse_threshold | float | free-float | - | - | default | - | - | - | px | Focus follows mouse threshold
 input:focus_on_close | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Focus after closing a window
@@ -98,8 +98,8 @@ input:off_window_axis_events | int | enum-map | - | - | default | - | min=0,max=
 input:emulate_discrete_scroll | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Emulate discrete scrolling
 input:follow_mouse_shrink | int | int-range | - | - | default | - | min=0,max=300 | - | px | Shrink focus hitboxes by
 input:touchpad:disable_while_typing | bool | toggle | - | - | default | - | - | - | - | Disable while typing
-input:touchpad:natural_scroll | bool | toggle | - | - | default | - | - | - | - | Natural scrolling
-input:touchpad:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Scroll speed
+input:touchpad:natural_scroll | bool | toggle | - | - | default | - | - | - | - | Touchpad natural scrolling
+input:touchpad:scroll_factor | float | float-range | - | - | default | - | min=0,max=2 | - | - | Touchpad scroll speed
 input:touchpad:middle_button_emulation | bool | toggle | - | - | default | - | - | - | - | Middle button emulation
 input:touchpad:tap_button_map | string | enum-string | null | Device default | default | - | - | lrm=Left, right, middle/lmr=Left, middle, right | - | Tap button mapping
 input:touchpad:clickfinger_behavior | bool | toggle | - | - | default | - | - | - | - | Clickfinger behaviour

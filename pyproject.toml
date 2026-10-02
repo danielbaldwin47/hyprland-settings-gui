@@ -36,6 +36,8 @@ files = [
     "src/hyprtweaker/ui/rows/gesture.py",
     "src/hyprtweaker/ui/rows/state.py",
     "src/hyprtweaker/ui/search.py",
+    "tools/curate_overlay.py",
+    "tools/overlay_text.py",
     "tools/release_watch.py",
 ]
 mypy_path = "src"

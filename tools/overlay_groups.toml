@@ -1,0 +1,439 @@
+# The curated Groups of each Section's Page, in display order (#157, #158).
+#
+# One `[[<section>]]` row per Group: `title`, an optional one-sentence `description`, and
+# `options`, its member settings in display order. Every setting of a curated Section sits
+# in exactly one row. The conventions a row follows (size, titles, descriptions, order) are
+# in the docstring of tests/unit/test_overlay_completeness.py.
+#
+# After editing, write the rows into data/schema/overlay.json:
+#     .venv/bin/python tools/curate_overlay.py
+# Never edit `group` or `order` in overlay.json by hand: tests/unit/test_curate_overlay.py
+# fails while the two disagree.
+
+# --- general ---------------------------------------------------------------------------------
+
+[[general]]
+title = "Layout and gaps"
+options = [
+  "general:layout",
+  "general:gaps_in",
+  "general:gaps_out",
+  "general:gaps_workspaces",
+  "general:float_gaps",
+]
+
+[[general]]
+title = "Borders"
+options = [
+  "general:border_size",
+  "general:col.active_border",
+  "general:col.inactive_border",
+  "general:col.nogroup_border_active",
+  "general:col.nogroup_border",
+]
+
+[[general]]
+title = "Resizing"
+description = "Dragging a window's border with the mouse to resize it."
+options = [
+  "general:resize_on_border",
+  "general:extend_border_grab_area",
+  "general:hover_icon_on_border",
+  "general:resize_corner",
+]
+
+[[general]]
+title = "Snapping"
+description = "Floating windows snap to nearby windows and monitor edges as you drag them."
+options = [
+  "general:snap:enabled",
+  "general:snap:window_gap",
+  "general:snap:monitor_gap",
+  "general:snap:border_overlap",
+  "general:snap:respect_gaps",
+]
+
+[[general]]
+title = "Behaviour"
+options = [
+  "general:no_focus_fallback",
+  "general:modal_parent_blocking",
+  "general:allow_tearing",
+  "general:locale",
+]
+
+# --- decoration ------------------------------------------------------------------------------
+
+[[decoration]]
+title = "Corners and opacity"
+options = [
+  "decoration:rounding",
+  "decoration:rounding_power",
+  "decoration:active_opacity",
+  "decoration:inactive_opacity",
+  "decoration:fullscreen_opacity",
+  "decoration:border_part_of_window",
+]
+
+[[decoration]]
+title = "Blur"
+description = "Frosted glass behind see-through windows."
+options = [
+  "decoration:blur:enabled",
+  "decoration:blur:size",
+  "decoration:blur:passes",
+  "decoration:blur:noise",
+  "decoration:blur:contrast",
+  "decoration:blur:brightness",
+  "decoration:blur:vibrancy",
+  "decoration:blur:vibrancy_darkness",
+  "decoration:blur:ignore_opacity",
+  "decoration:blur:xray",
+  "decoration:blur:new_optimizations",
+]
+
+[[decoration]]
+title = "Blurred surfaces"
+description = "What else gets blurred besides windows: popups, input methods and the special workspace."
+options = [
+  "decoration:blur:popups",
+  "decoration:blur:popups_ignorealpha",
+  "decoration:blur:input_methods",
+  "decoration:blur:input_methods_ignorealpha",
+  "decoration:blur:special",
+]
+
+[[decoration]]
+title = "Shadow"
+options = [
+  "decoration:shadow:enabled",
+  "decoration:shadow:range",
+  "decoration:shadow:render_power",
+  "decoration:shadow:sharp",
+  "decoration:shadow:color",
+  "decoration:shadow:color_inactive",
+  "decoration:shadow:offset",
+  "decoration:shadow:scale",
+]
+
+[[decoration]]
+title = "Glow"
+description = "A soft light just inside each window's edge."
+options = [
+  "decoration:glow:enabled",
+  "decoration:glow:range",
+  "decoration:glow:render_power",
+  "decoration:glow:color",
+  "decoration:glow:color_inactive",
+]
+
+[[decoration]]
+title = "Dimming"
+options = [
+  "decoration:dim_inactive",
+  "decoration:dim_strength",
+  "decoration:dim_special",
+  "decoration:dim_around",
+  "decoration:dim_modal",
+]
+
+[[decoration]]
+title = "Screen effects"
+options = [
+  "decoration:screen_shader",
+  "decoration:motion_blur:enabled",
+  "decoration:motion_blur:samples",
+]
+
+# --- input -----------------------------------------------------------------------------------
+
+[[input]]
+title = "Keyboard layout"
+options = [
+  "input:kb_layout",
+  "input:kb_variant",
+  "input:kb_model",
+  "input:kb_options",
+  "input:kb_rules",
+  "input:kb_file",
+]
+
+[[input]]
+title = "Typing"
+options = [
+  "input:repeat_rate",
+  "input:repeat_delay",
+  "input:numlock_by_default",
+  "input:resolve_binds_by_sym",
+]
+
+[[input]]
+title = "Pointer"
+options = [
+  "input:sensitivity",
+  "input:accel_profile",
+  "input:force_no_accel",
+  "input:scroll_points",
+  "input:left_handed",
+  "input:rotation",
+]
+
+[[input]]
+title = "Scrolling"
+description = "Mice and touchpads each take their own direction and speed."
+options = [
+  "input:natural_scroll",
+  "input:scroll_factor",
+  "input:touchpad:natural_scroll",
+  "input:touchpad:scroll_factor",
+  "input:scroll_method",
+  "input:scroll_button",
+  "input:scroll_button_lock",
+  "input:emulate_discrete_scroll",
+  "input:off_window_axis_events",
+]
+
+[[input]]
+title = "Focus"
+description = "How the window under the mouse takes keyboard focus."
+options = [
+  "input:follow_mouse",
+  "input:follow_mouse_threshold",
+  "input:follow_mouse_shrink",
+  "input:mouse_refocus",
+  "input:focus_on_close",
+  "input:float_switch_override_focus",
+  "input:special_fallthrough",
+]
+
+[[input]]
+title = "Touchpad"
+options = [
+  "input:touchpad:tap-to-click",
+  "input:touchpad:disable_while_typing",
+  "input:touchpad:clickfinger_behavior",
+  "input:touchpad:tap_button_map",
+  "input:touchpad:tap-and-drag",
+  "input:touchpad:drag_lock",
+  "input:touchpad:drag_3fg",
+  "input:touchpad:middle_button_emulation",
+  "input:touchpad:flip_x",
+  "input:touchpad:flip_y",
+]
+
+[[input]]
+title = "Touchscreen"
+options = [
+  "input:touchdevice:enabled",
+  "input:touchdevice:output",
+  "input:touchdevice:transform",
+]
+
+[[input]]
+title = "Drawing tablet"
+options = [
+  "input:tablet:output",
+  "input:tablet:transform",
+  "input:tablet:left_handed",
+  "input:tablet:relative_input",
+  "input:tablettool:pressure_range_min",
+  "input:tablettool:pressure_range_max",
+  "input:tablettool:eraser_button_mode",
+  "input:tablettool:eraser_button_override",
+]
+
+[[input]]
+title = "Tablet area"
+description = "Which part of the screen the tablet maps to, and which part of the tablet responds."
+options = [
+  "input:tablet:region_position",
+  "input:tablet:absolute_region_position",
+  "input:tablet:region_size",
+  "input:tablet:active_area_position",
+  "input:tablet:active_area_size",
+]
+
+[[input]]
+title = "Virtual keyboards"
+description = "On-screen and remote keyboards that apps create."
+options = [
+  "input:virtualkeyboard:share_states",
+  "input:virtualkeyboard:release_pressed_on_close",
+]
+
+# --- group -----------------------------------------------------------------------------------
+# The Page is titled "Groups", and on the Tasks view these read "Groups · <title>".
+
+[[group]]
+title = "Behaviour"
+options = [
+  "group:auto_group",
+  "group:insert_after_current",
+  "group:focus_removed_window",
+  "group:group_on_movetoworkspace",
+]
+
+[[group]]
+title = "Dragging"
+description = "What happens when you drag a window onto a group or its tab bar."
+options = [
+  "group:drag_into_group",
+  "group:merge_groups_on_drag",
+  "group:merge_groups_on_groupbar",
+  "group:merge_floated_into_tiled_on_groupbar",
+]
+
+[[group]]
+title = "Border colours"
+options = [
+  "group:col.border_active",
+  "group:col.border_inactive",
+  "group:col.border_locked_active",
+  "group:col.border_locked_inactive",
+]
+
+[[group]]
+title = "Tab bar"
+description = "The row of window tabs drawn above a group, which Hyprland calls the group bar."
+options = [
+  "group:groupbar:enabled",
+  "group:groupbar:disable_when_only",
+  "group:groupbar:render_titles",
+  "group:groupbar:stacked",
+  "group:groupbar:scrolling",
+  "group:groupbar:middle_click_close",
+  "group:groupbar:priority",
+]
+
+[[group]]
+title = "Tab titles"
+options = [
+  "group:groupbar:font_family",
+  "group:groupbar:font_size",
+  "group:groupbar:font_weight_active",
+  "group:groupbar:font_weight_inactive",
+  "group:groupbar:text_color",
+  "group:groupbar:text_color_inactive",
+  "group:groupbar:text_color_locked_active",
+  "group:groupbar:text_color_locked_inactive",
+]
+
+[[group]]
+title = "Tab backgrounds"
+options = [
+  "group:groupbar:col.active",
+  "group:groupbar:col.inactive",
+  "group:groupbar:col.locked_active",
+  "group:groupbar:col.locked_inactive",
+  "group:groupbar:gradients",
+  "group:groupbar:blur",
+]
+
+[[group]]
+title = "Tab spacing"
+options = [
+  "group:groupbar:height",
+  "group:groupbar:indicator_height",
+  "group:groupbar:indicator_gap",
+  "group:groupbar:gaps_in",
+  "group:groupbar:gaps_out",
+  "group:groupbar:keep_upper_gap",
+  "group:groupbar:text_offset",
+  "group:groupbar:text_padding",
+]
+
+[[group]]
+title = "Tab corners"
+options = [
+  "group:groupbar:rounding",
+  "group:groupbar:rounding_power",
+  "group:groupbar:round_only_edges",
+  "group:groupbar:gradient_rounding",
+  "group:groupbar:gradient_rounding_power",
+  "group:groupbar:gradient_round_only_edges",
+]
+
+# --- misc ------------------------------------------------------------------------------------
+# On the Tasks view these read "Miscellaneous · <title>".
+
+[[misc]]
+title = "Wallpaper and splash"
+description = "What Hyprland draws when no wallpaper app is running, and the font it uses for its own text."
+options = [
+  "misc:force_default_wallpaper",
+  "misc:background_color",
+  "misc:disable_hyprland_logo",
+  "misc:disable_splash_rendering",
+  "misc:splash_font_family",
+  "misc:col.splash",
+  "misc:font_family",
+]
+
+[[misc]]
+title = "Focus and placement"
+options = [
+  "misc:focus_on_activate",
+  "misc:mouse_move_focuses_monitor",
+  "misc:on_focus_under_fullscreen",
+  "misc:layers_hog_keyboard_focus",
+  "misc:always_follow_on_dnd",
+  "misc:initial_workspace_tracking",
+  "misc:initial_workspace_token_timeout",
+]
+
+[[misc]]
+title = "Window handling"
+options = [
+  "misc:exit_window_retains_fullscreen",
+  "misc:close_special_on_empty",
+  "misc:size_limits_tiled",
+  "misc:animate_manual_resizes",
+  "misc:animate_mouse_windowdragging",
+]
+
+[[misc]]
+title = "Swallowing"
+description = "A terminal hides while an app it launched is open, and comes back when the app closes."
+options = [
+  "misc:enable_swallow",
+  "misc:swallow_regex",
+  "misc:swallow_exception_regex",
+]
+
+[[misc]]
+title = "Displays and power"
+options = [
+  "misc:vrr",
+  "misc:mouse_move_enables_dpms",
+  "misc:key_press_enables_dpms",
+  "misc:render_unfocused_fps",
+  "misc:screencopy_force_8b",
+]
+
+[[misc]]
+title = "Input"
+options = [
+  "misc:middle_click_paste",
+  "misc:name_vk_after_proc",
+]
+
+[[misc]]
+title = "Session lock"
+options = [
+  "misc:allow_session_lock_restore",
+  "misc:session_lock_blur",
+  "misc:session_lock_xray",
+  "misc:lockdead_screen_delay",
+]
+
+[[misc]]
+title = "Reloads and warnings"
+options = [
+  "misc:disable_autoreload",
+  "misc:enable_anr_dialog",
+  "misc:anr_missed_pings",
+  "misc:disable_scale_notification",
+  "misc:disable_watchdog_warning",
+  "misc:disable_xdg_env_checks",
+  "misc:disable_hyprland_guiutils_check",
+]

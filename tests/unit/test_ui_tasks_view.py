@@ -245,9 +245,18 @@ def test_the_fallback_group_says_why_it_exists() -> None:
     assert fallback.groups[0].description == NEW_IN_GROUP_DESCRIPTION
 
 
-def test_an_ordinary_curated_group_carries_no_description() -> None:
-    """The flag has to mean something, so it may not appear on Groups that are fine."""
-    assert all(group.description == "" for group in page_named("look.general").groups)
+def test_an_ordinary_curated_group_never_carries_the_new_in_flag() -> None:
+    """The flag has to mean something, so it may not appear on Groups that are fine. Their
+    description is the one the Overlay curates for the Group, if any (#157)."""
+    descriptions = {
+        group.title: group.description for group in page_named("look.general").groups
+    }
+
+    assert NEW_IN_GROUP_DESCRIPTION not in descriptions.values()
+    assert descriptions["Borders"] == ""
+    assert descriptions["Snapping"] == (
+        "Floating windows snap to nearby windows and monitor edges as you drag them."
+    )
 
 
 def test_the_fallback_page_joins_the_system_category() -> None:
