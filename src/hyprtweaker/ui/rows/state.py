@@ -554,7 +554,9 @@ def _plugin_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     if flag is None or flag.kind is not SupplementKind.PLUGIN:
         return None
     return Pill(
-        PLUGIN_PILL, "Added by a loaded plugin; the app shows it with a generic control."
+        PLUGIN_PILL,
+        "Added by a loaded plugin. The app knows only its name and type, so it gets a "
+        "basic control.",
     )
 
 

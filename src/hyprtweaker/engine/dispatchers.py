@@ -261,7 +261,7 @@ CATALOG: tuple[Dispatcher, ...] = (
     # join, `enable, enable, disable, disable` read back refused, refused, joined, joined (a
     # toggle would alternate). `window` fired too, and `lock_active` locked the active window's
     # group whichever window it named, `group.lock` locks every group: no effect, no row.
-    Dispatcher(path="group.lock", label="Lock the groups", args=(ACTION,)),
+    Dispatcher(path="group.lock", label="Lock all groups", args=(ACTION,)),
     Dispatcher(path="group.lock_active", label="Lock the active group", args=(ACTION,)),
     Dispatcher(path="group.next", label="Focus the next window in the group", args=(WINDOW,)),
     Dispatcher(
@@ -278,7 +278,7 @@ CATALOG: tuple[Dispatcher, ...] = (
     # effect, no row.
     Dispatcher(
         path="group.move_window",
-        label="Move the window along its group",
+        label="Move the window forwards or back in its group",
         args=(ArgSpec(name="forward", type="bool", label="Forwards"),),
     ),
     # --- window -----------------------------------------------------------------------
@@ -294,7 +294,7 @@ CATALOG: tuple[Dispatcher, ...] = (
     # to join read back refused, refused, joined, joined. `window` fired too (`class:pc` from a
     # member): the member was still the one denied, so no effect, no row.
     Dispatcher(
-        path="window.deny_from_group", label="Deny the window from groups", args=(ACTION,)
+        path="window.deny_from_group", label="Keep the window out of groups", args=(ACTION,)
     ),
     # `layout_aware` fired on 0.56.2 (#211) at a grouped and a free window, in both modes, with
     # `true`, `false` and left out: every client's fullscreen state, position and size came out

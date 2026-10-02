@@ -68,6 +68,18 @@ class TestAction:
         bind = Bind(keys="A", dispatcher=DispatcherCall(path="window.close"))
         assert action_text(bind) == "Close the window"
 
+    @pytest.mark.parametrize(
+        ("path", "shown"),
+        [
+            ("group.lock", "Lock all groups"),
+            ("window.deny_from_group", "Keep the window out of groups"),
+            ("group.move_window", "Move the window forwards or back in its group"),
+        ],
+    )
+    def test_the_group_dispatchers_read_in_plain_words(self, path: str, shown: str) -> None:
+        """Spec #152 review finding 16: "Deny the window from groups" and the like."""
+        assert action_text(Bind(keys="A", dispatcher=DispatcherCall(path=path))) == shown
+
     def test_arguments_are_appended(self) -> None:
         bind = Bind(keys="A", dispatcher=DispatcherCall(path="window.tag", args={"tag": "x"}))
         assert action_text(bind) == "Tag the window (tag: x)"

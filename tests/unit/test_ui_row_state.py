@@ -445,7 +445,11 @@ def test_a_plugins_setting_wears_a_plugin_option_pill_and_stays_editable() -> No
     state = row_state(option, FakeContext(schema=schema))
 
     assert [(pill.label, pill.tooltip) for pill in state.pills] == [
-        ("Plugin option", "Added by a loaded plugin; the app shows it with a generic control.")
+        (
+            "Plugin option",
+            "Added by a loaded plugin. The app knows only its name and type, so it gets a "
+            "basic control.",
+        )
     ]
     assert state.editable
 
