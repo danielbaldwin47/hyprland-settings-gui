@@ -262,7 +262,7 @@ jobs:
         run: |
           docker run --rm --privileged -v /dev:/dev -v /sys:/sys -v "$PWD:/repo" -w /repo \
             -e HARNESS_DRM_CARD -e CI archlinux:latest bash -euo pipefail -c '
-              pacman -Syu --noconfirm --needed hyprland grim bubblewrap mesa ttf-dejavu \
+              pacman -Syu --noconfirm --needed hyprland grim bubblewrap mesa ttf-dejavu foot wtype \
                 python python-pytest python-gobject gtk4 python-numpy python-pillow \
                 >/tmp/pacman.log || { tail -40 /tmp/pacman.log; exit 1; }
               pacman -Q hyprland mesa python

@@ -116,7 +116,11 @@ def fired(nested: NestedHyprland, marks: Path, modifier: str, marker: str) -> bo
 @pytest.fixture(scope="module")
 def observed(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Observed]:
     if shutil.which("wtype") is None:
-        pytest.skip("wtype is not installed, so no bind can be fired")
+        reason = "wtype is not installed, so no bind can be fired"
+        if os.environ.get(REQUIRE_VARIABLE) == "1":
+            # The nightly job installs it: a skip there is the install regressing (F2).
+            pytest.fail(f"{REQUIRE_VARIABLE}=1 but {reason}")
+        pytest.skip(reason)
     scratch = tmp_path_factory.mktemp("universal-probe")
     home = make_home(scratch / "home")
     marks = scratch / "marks"
