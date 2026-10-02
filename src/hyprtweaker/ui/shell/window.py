@@ -42,8 +42,10 @@ from hyprtweaker.engine.apply import (  # noqa: E402
     Action,
     ApplyOutcome,
     ApplyResult,
+    EntityStep,
     Problem,
-    UndoStep,
+    Step,
+    UndoGroup,
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
@@ -1292,18 +1294,28 @@ class MainWindow(Adw.ApplicationWindow):
         The snapshot is taken *before* the patch, so revert restores what the user was
         looking at when they made the change -- silence, Esc, or the countdown expiring
         all put it back; only the Keep button makes the new state stand.
+
+        The edit and its revert run inside an undo group (#189): kept, the change is one
+        undo step; reverted, it never stood, and the stack shows nothing for it.
         """
         snapshot = self._session.monitor_snapshot()
+        group = self._session.begin_undo_group(frozenset({"monitors", "workspace_rules"}))
         if not self._session.patch_monitor_rule(output, fields):
+            self._session.end_undo_group(group, title="Monitor rule changed")
             return
         self._refresh_monitors()
         ConfirmRevertDialog(
-            on_keep=self._refresh_monitors,
-            on_revert=lambda: self._revert_monitors(snapshot),
+            on_keep=lambda: self._keep_monitors(group),
+            on_revert=lambda: self._revert_monitors(snapshot, group),
         ).present(self)
 
-    def _revert_monitors(self, snapshot: tuple[MonitorRule, ...]) -> None:
+    def _keep_monitors(self, group: UndoGroup) -> None:
+        self._session.end_undo_group(group, title="Display settings changed")
+        self._refresh_monitors()
+
+    def _revert_monitors(self, snapshot: tuple[MonitorRule, ...], group: UndoGroup) -> None:
         self._session.restore_monitor_rules(snapshot)
+        self._session.end_undo_group(group, title="Monitor rule changed")
         self._refresh_monitors()
 
     def _apply_monitor_benign(self, output: str, fields: Mapping[str, Any]) -> None:
@@ -1685,7 +1697,7 @@ class MainWindow(Adw.ApplicationWindow):
         """
         return self._undo_toast
 
-    def offer_undo(self, step: UndoStep) -> None:
+    def offer_undo(self, step: Step) -> None:
         """Offer to take back the gesture that just landed.
 
         Told which gesture rather than reading the stack top, and the difference is visible:
@@ -1714,24 +1726,50 @@ class MainWindow(Adw.ApplicationWindow):
     def _undo(self) -> None:
         """Take back the last gesture. The session decides whether there is one."""
         self._dismiss_undo()
+        offered = self._session.can_undo
+        step = self._session.last_gesture
         if self._session.undo():
             # `sync` runs on the session's own `on_state_changed` too, but the undo has
             # already moved the model and the Rows should not wait for the compositor to
             # confirm what the app is about to write.
             self.sync()
+            if isinstance(step, EntityStep):
+                # `sync` refreshes the Option Pages only; the lists just put back are shown
+                # by Entity Pages, which otherwise go on showing the undone edit.
+                self._refresh_entity_pages(step.kinds)
+        elif offered:
+            # An entity step whose list changed since -- a hand edit was adopted. The session
+            # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead.
+            self._toasts.add_toast(Adw.Toast(title="Can't undo that change any more"))
         self._undo_action.set_enabled(self._session.can_undo)
+
+    def _refresh_entity_pages(self, kinds: frozenset[str]) -> None:
+        """Re-render the Pages that show the Entity lists `kinds`."""
+        if kinds & {"binds", "unbinds", "submaps"}:
+            self._refresh_binds()
+        for kind in ("window", "layer"):
+            if f"{kind}_rules" in kinds:
+                self._refresh_rules(kind)
+        if kinds & {"monitors", "workspace_rules"}:
+            self._refresh_monitors()
+        for kind in kinds & self._declaration_pages.keys():
+            self._refresh_declarations(kind)
 
     def _on_undo(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         self._undo()
 
-    def _gesture_title(self, step: UndoStep) -> str:
+    def _gesture_title(self, step: Step) -> str:
         """What the undo toast calls the gesture it is offering to reverse.
 
         The Option's own title, because that is the word on the Row the user just changed --
         never the dotted key, which lives in the Help popover and the search index (ADR-0013).
         A gesture spanning several Options is counted rather than listed: the css-gaps editor
         writes four sides at once, and "Gaps in, Gaps in, Gaps in, Gaps in" is not a sentence.
+        An Entity step carries its own title ("Bind removed"): only the session knew which
+        of add, remove or reorder the gesture was.
         """
+        if isinstance(step, EntityStep):
+            return step.title
         titles = [self._session.schema[name].title for name in step.names]
         if len(titles) == 1:
             return f"{titles[0]} changed"

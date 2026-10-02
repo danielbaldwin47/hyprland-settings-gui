@@ -225,3 +225,133 @@ def _label_text(widget: Any) -> str | None:
             return found
         child = child.get_next_sibling()
     return None
+
+
+# --- entity steps (#189) ----------------------------------------------------------------------
+
+
+def live_entity_window(tmp_path: Path) -> Any:
+    """A real Session made live by an applier that reports entity commits on `settle()`.
+
+    The UI tier has no compositor, so the applier stands where `_go_live` puts the real one,
+    and `settle()` hands the session the verdict the queue would have -- which is where an
+    entity step is recorded and the toast is raised.
+    """
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+    from hyprtweaker.engine.ipc import Instance, NoInstance
+    from hyprtweaker.engine.paths import ConfigPaths
+    from hyprtweaker.session import Session
+    from hyprtweaker.ui.shell.window import MainWindow
+
+    def no_compositor() -> Instance:
+        raise NoInstance("no compositor in the UI smoke tier")
+
+    class SettlingApplier:
+        serial = 0
+        reported = 0
+
+        def commit_entities(self) -> int:
+            self.serial += 1
+            return self.serial
+
+        def settle(self) -> None:
+            if self.serial > self.reported:
+                self.reported = self.serial
+                session._applied(ApplyResult(ApplyOutcome.OK, entities=self.serial))
+
+    Adw.init()
+    session = Session(
+        spawn=lambda coro: coro.close(),
+        paths=ConfigPaths.rooted_at(tmp_path),
+        app_version=APP_VERSION,
+        connect=no_compositor,
+    )
+    applier = SettlingApplier()
+    session._applier = applier
+    session._offline_reason = None
+    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    window = MainWindow(session, application=app)
+    session.on_recorded = window.offer_undo
+    return session, window, applier
+
+
+def exec_bind(keys: str) -> Any:
+    from hyprtweaker.engine.model.entities import Bind, DispatcherCall
+
+    return Bind(keys=keys, dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
+
+
+def test_removing_a_bind_offers_bind_removed_and_undo_restores_it(tmp_path: Path) -> None:
+    """#189 AC 5: the toast names the gesture, and its button puts the bind back in place."""
+    session, window, applier = live_entity_window(tmp_path)
+    for keys in ("SUPER + A", "SUPER + B", "SUPER + C"):
+        session.add_bind(exec_bind(keys))
+    applier.settle()
+
+    window._remove_bind(1)
+    applier.settle()
+
+    toast = window.undo_toast
+    assert toast is not None
+    assert toast.get_title() == "Bind removed"
+    assert toast.get_button_label() == "Undo"
+
+    page = window.binds_page
+    assert page is not None
+    assert len(page.rows) == 2
+
+    toast.emit("button-clicked")
+
+    assert [bind.keys for bind in session.model.entities.binds] == [
+        "SUPER + A",
+        "SUPER + B",
+        "SUPER + C",
+    ]
+    assert len(page.rows) == 3, "the Binds page still shows the list from before the undo"
+
+
+def test_a_reverted_display_change_leaves_nothing_to_undo(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """#189 AC 4: the edit never stood, so neither the stack nor a toast mentions it."""
+    from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog
+
+    session, window, applier = live_entity_window(tmp_path)
+    shown: list[Any] = []
+    monkeypatch.setattr(
+        ConfirmRevertDialog, "present", lambda self, _parent=None: shown.append(self)
+    )
+
+    window._apply_monitor_breaking("eDP-1", {"mode": "1920x1080@144"})
+    applier.settle()
+    (dialog,) = shown
+    dialog._on_response(dialog, "revert")
+    applier.settle()
+
+    assert session.monitor_rules == []
+    assert session.last_gesture is None
+    assert window.undo_toast is None
+
+
+def test_a_kept_display_change_is_one_step(tmp_path: Path, monkeypatch: Any) -> None:
+    from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog
+
+    session, window, applier = live_entity_window(tmp_path)
+    shown: list[Any] = []
+    monkeypatch.setattr(
+        ConfirmRevertDialog, "present", lambda self, _parent=None: shown.append(self)
+    )
+
+    window._apply_monitor_breaking("eDP-1", {"mode": "1920x1080@144"})
+    applier.settle()
+    assert window.undo_toast is None, "a held step raised a toast mid-countdown"
+    (dialog,) = shown
+    dialog._on_response(dialog, "keep")
+
+    toast = window.undo_toast
+    assert toast is not None
+    assert toast.get_title() == "Display settings changed"
+    toast.emit("button-clicked")
+    assert session.monitor_rules == []

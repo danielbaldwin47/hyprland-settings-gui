@@ -49,7 +49,7 @@ Before each write, the transaction snapshots the previous bytes of every dirty M
 
 ### Undo
 
-One **Undo step** = one user gesture (a whole slider drag is one step: value-at-press → value-at-release). Steps are model-level deltas (option/entity old → new), held in a single global linear in-memory stack, replayed through the normal Apply pipeline. The stack dies with the session; the Journal remains the durable history but is not walkable as undo. Byte-level file undo is rejected as the way to undo a model delta — it fights the tri-state model. Restore-last-good is a different operation, not an undo step: it lays down Snapshot bytes and then brings the model into step by re-read (§Rollback mechanism), so the model is never left stale and the file never becomes a second source of truth.
+One **Undo step** = one user gesture (a whole slider drag is one step: value-at-press → value-at-release). Steps are model-level deltas (option/entity old → new), held in a single global linear in-memory stack, replayed through the normal Apply pipeline. An Entity step holds whole lists; a step whose list changed off the stack (a foreign reload adopted a hand edit, a profile was activated) is dropped, because replaying it would overwrite that change (amended during #189). The stack dies with the session; the Journal remains the durable history but is not walkable as undo. Byte-level file undo is rejected as the way to undo a model delta — it fights the tri-state model. Restore-last-good is a different operation, not an undo step: it lays down Snapshot bytes and then brings the model into step by re-read (§Rollback mechanism), so the model is never left stale and the file never becomes a second source of truth.
 
 ### Restart-flagged options
 

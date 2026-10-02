@@ -17,7 +17,8 @@ Four modules, in dependency order:
 - `reread.py` -- `read_state`, the full state re-read that answers a foreign reload and
   recovers the model at startup;
 - `ownership.py` -- `attribute`, whose file a `configerrors` line blames (ADR-0016);
-- `undo.py` -- `UndoStack`, one gesture per step, replayed through the pipeline above;
+- `undo.py` -- `UndoStack`, one Option or Entity gesture per step, replayed through the
+  pipeline above;
 - `applier.py` -- `Applier`, the three wired together, which is what the app holds.
 
 Two of those are inputs to recovery rather than to applying, and the split is deliberate.
@@ -61,7 +62,16 @@ from .transaction import (
     Reloader,
     ReloadReport,
 )
-from .undo import UNDO_MAX_DEPTH, Edit, UndoStack, UndoStep
+from .undo import (
+    UNDO_MAX_DEPTH,
+    Edit,
+    EntityEdit,
+    EntityStep,
+    Step,
+    UndoGroup,
+    UndoStack,
+    UndoStep,
+)
 
 __all__ = [
     "DEBOUNCE_SECONDS",
@@ -77,6 +87,8 @@ __all__ = [
     "ApplyTransaction",
     "ConfigError",
     "Edit",
+    "EntityEdit",
+    "EntityStep",
     "EvalPreview",
     "ForeignReloadWatch",
     "Mismatch",
@@ -87,7 +99,9 @@ __all__ = [
     "ReloadReport",
     "Reloader",
     "RestoreTransaction",
+    "Step",
     "Transaction",
+    "UndoGroup",
     "UndoStack",
     "UndoStep",
     "app_owned_options",

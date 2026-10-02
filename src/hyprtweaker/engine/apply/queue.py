@@ -36,7 +36,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import Protocol
 
@@ -97,6 +97,8 @@ class ApplyQueue:
 
         self._dirty: set[str] = set()
         self._entities_dirty = False
+        self._entity_serial = 0
+        """The newest `commit_entities` serial, stamped on the result that carries it."""
         self._waiters: list[asyncio.Future[ApplyResult]] = []
         self._priority: list[_Priority] = []
         self._immediate = False
@@ -170,7 +172,7 @@ class ApplyQueue:
         """
         self._mark(names, immediate=True)
 
-    def commit_entities(self) -> None:
+    def commit_entities(self) -> int:
         """An Entity changed -- a Bind added, edited, reordered or removed (ADR-0007).
 
         Carries no keys, and that is not an omission. A transaction renders the *whole*
@@ -182,9 +184,16 @@ class ApplyQueue:
         Hence the separate flag rather than an empty `commit()`: the worker drops a batch
         with nothing dirty in it, and without this an edit to a bind would be silently
         swallowed by the queue instead of reaching disk.
+
+        Returns a serial, increasing per call, that the result of the transaction carrying
+        this commit reports as `ApplyResult.entities` (or exceeds, when later commits joined
+        the same batch). It is how a caller learns the verdict on *its* edit: entity commits
+        carry no keys for `ApplyResult.keys` to name.
         """
         self._entities_dirty = True
+        self._entity_serial += 1
         self._mark((), immediate=True)
+        return self._entity_serial
 
     async def apply(self, *names: str) -> ApplyResult:
         """Commit `names` and return the result of the transaction that carries them.
@@ -295,7 +304,7 @@ class ApplyQueue:
 
             keys = tuple(sorted(self._dirty))
             waiters = self._waiters
-            entities = self._entities_dirty
+            entities = self._entity_serial if self._entities_dirty else None
             self._dirty.clear()
             self._entities_dirty = False
             self._waiters = []
@@ -303,11 +312,11 @@ class ApplyQueue:
             self._commit_now.clear()
             self._work_available.clear()
 
-            if not keys and not entities:
+            if not keys and entities is None:
                 self._settle()
                 continue
 
-            await self._run_once(keys, waiters)
+            await self._run_once(keys, waiters, entities=entities)
 
     async def _debounced(self) -> None:
         """Wait out the quiet period, or return at once if a commit gesture arrived.
@@ -346,10 +355,13 @@ class ApplyQueue:
         waiters: list[asyncio.Future[ApplyResult]],
         *,
         operation: Transaction | None = None,
+        entities: int | None = None,
     ) -> None:
         self._busy = True
         try:
             result = await (operation or self._transaction).run(keys)
+            if entities is not None:
+                result = replace(result, entities=entities)
         except asyncio.CancelledError:
             for waiter in waiters:
                 if not waiter.done():
