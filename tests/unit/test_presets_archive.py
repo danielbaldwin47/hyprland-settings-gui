@@ -175,7 +175,9 @@ def test_a_failed_export_leaves_the_file_that_was_there(tmp_path: Path) -> None:
 
     written = export_archive(nord(), dest, find=lambda: Broken())
 
-    assert written == ArchiveNotWritten("The theme could not be compressed: disk on fire.")
+    assert written == ArchiveNotWritten(
+        "The theme file could not be written: zstd failed. Check there is free space, then try again."
+    )
     assert tree(tmp_path) == before
 
 
@@ -292,11 +294,10 @@ def test_the_archives_own_wallpaper_path_is_never_kept(tmp_path: Path) -> None:
 # --- hostile archives: refused with a sentence, nothing written anywhere --------------------
 
 TOO_BIG = (
-    "This theme archive holds more than 64 MiB, more than any theme needs, "
-    "so it was not opened."
+    "This theme file holds more than 64 MiB, more than any theme needs, so it was not opened."
 )
 NOTHING = ", so nothing was imported."
-DAMAGED = "This theme archive is damaged or incomplete, so nothing was imported."
+DAMAGED = "This theme file is damaged or incomplete, so nothing was imported."
 
 
 def hostile_cases(tmp_path: Path) -> dict[str, tuple[bytes, str]]:
@@ -314,7 +315,7 @@ def hostile_cases(tmp_path: Path) -> dict[str, tuple[bytes, str]]:
     whole = theme_bytes([good])
 
     def held(what: str) -> str:
-        return f"This theme archive holds {what}, which a theme never contains{NOTHING}"
+        return f"This theme file holds {what}, which a theme never contains{NOTHING}"
 
     return {
         "traversal": (
@@ -353,11 +354,11 @@ def hostile_cases(tmp_path: Path) -> dict[str, tuple[bytes, str]]:
         ),
         "duplicate": (
             theme_bytes([good, good]),
-            "This theme archive holds preset.json twice, so nothing was imported.",
+            "This theme file holds preset.json twice, so nothing was imported.",
         ),
         "two images": (
             theme_bytes([good, entry("wallpaper.png", png()), entry("wallpaper.jpg", JPEG)]),
-            "This theme archive holds more than a preset and one wallpaper" + NOTHING,
+            "This theme file holds more than a preset and one wallpaper" + NOTHING,
         ),
         "image lies": (
             theme_bytes([good, entry("wallpaper.png", JPEG)]),
@@ -371,35 +372,35 @@ def hostile_cases(tmp_path: Path) -> dict[str, tuple[bytes, str]]:
         "stream over the cap": (theme_bytes([good], trailing=bytes(65 * MiB)), TOO_BIG),
         "preset.json over 1 MiB": (
             theme_bytes([entry("preset.json", preset_json(name="x" * MiB))]),
-            "Its preset.json is larger than 1 MiB, more than any preset needs" + NOTHING,
+            "Its settings are larger than 1 MiB, more than any preset needs" + NOTHING,
         ),
         "truncated": (whole[: len(whole) // 2], DAMAGED),
         "not tar": (codecs()[-1].compress(b"just some words, not a tar " * 40), DAMAGED),
-        "not zstd": (b"PK\x03\x04 a zip file pretending", "This file is not a theme archive."),
-        "empty": (b"", "This file is not a theme archive."),
+        "not zstd": (b"PK\x03\x04 a zip file pretending", "This file is not a theme file."),
+        "empty": (b"", "This file is not a theme file."),
         "no preset.json": (
             theme_bytes([entry("wallpaper.png", png())]),
-            "This theme archive has no preset.json, so there is nothing to import.",
+            "This theme file holds no preset, so there is nothing to import.",
         ),
         "not json": (
             theme_bytes([entry("preset.json", b"{nope")]),
-            "Its preset.json is not valid JSON, so nothing was imported.",
+            "This theme file's settings are damaged, so nothing was imported.",
         ),
         "nan": (
             theme_bytes([entry("preset.json", b'{"format": 1, "x": NaN}')]),
-            "Its preset.json is not valid JSON, so nothing was imported.",
+            "This theme file's settings are damaged, so nothing was imported.",
         ),
         "not an object": (
             theme_bytes([entry("preset.json", b"[1, 2]")]),
-            "Its preset.json does not describe a preset, so nothing was imported.",
+            "This theme file's settings are damaged, so nothing was imported.",
         ),
         "no format": (
             theme_bytes([entry("preset.json", preset_json(format=None))]),
-            "Its preset.json does not describe a preset, so nothing was imported.",
+            "This theme file's settings are damaged, so nothing was imported.",
         ),
         "no name": (
             theme_bytes([entry("preset.json", preset_json(name=""))]),
-            "Its preset.json is missing the preset's name, date or settings" + NOTHING,
+            "This theme file's settings are damaged, so nothing was imported.",
         ),
     }
 

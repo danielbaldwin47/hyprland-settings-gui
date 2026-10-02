@@ -17,6 +17,7 @@ from hyprtweaker.engine.bridge import (
     REGISTRY,
     Active,
     BridgeEntry,
+    ChosenSource,
     ColorSource,
     ManualColors,
     Off,
@@ -59,7 +60,7 @@ def source_detail(source: ColorSource, entries: Sequence[BridgeEntry]) -> str:
         case Several():
             return "Switch to one of them to choose which sets your colors."
         case PresetColors():
-            lead = "The colors of the Preset you applied"
+            lead = "The colors of the preset you applied"
         case ManualColors():
             lead = "Your own color settings apply"
     setters = _color_setters(entries)
@@ -199,26 +200,37 @@ def other_tool(
         return ToolState(tool, title, "Not set up", setup=True)
     for entry in own:
         if isinstance(entry.state, Off):
-            return ToolState(
-                tool,
-                title,
-                f"Off while the Color source is {source_name(entry.state.source)}",
-                remove=True,
-            )
+            return ToolState(tool, title, _off_while(entry.state.source), remove=True)
     waiting = [entry for entry in own if isinstance(entry.state, Waiting)]
     if waiting and all(entry.file in present for entry in waiting):
         return ToolState(tool, title, "Its files are ready to load", remove=True, load=True)
     if waiting:
+        what = "Its colors load" if spec.sets_colors else "It loads"
         return ToolState(
             tool,
             title,
-            f"Waiting for {title}'s first run",
+            f"Waiting for {title}'s first run. {what} the next time {title} runs.",
             remove=True,
             patch=bool(spec.template_pack and spec.template_pack.patch),
         )
     if spec.sets_colors:
         return ToolState(tool, title, "On: sets your border and group colors", remove=True)
     return ToolState(tool, title, "On", remove=True)
+
+
+def _off_while(source: ChosenSource) -> str:
+    match source:
+        case Wallpaper(tool):
+            return f"Off while {_title(tool)} sets your colors"
+        case PresetColors():
+            return "Off while a preset sets your colors"
+        case _:
+            return "Off while your own color settings apply"
+
+
+def choice_label(value: str) -> str:
+    """A Regenerate option's value as words: "scheme-tonal-spot" reads "Tonal spot"."""
+    return value.removeprefix("scheme-").replace("-", " ").capitalize()
 
 
 def changed_since_setup(title: str, files: Sequence[ChangedFile]) -> str:
@@ -261,6 +273,7 @@ __all__ = [
     "ToolState",
     "backend_tab",
     "changed_since_setup",
+    "choice_label",
     "has_backend",
     "other_tool",
     "resume_target",

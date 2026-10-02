@@ -96,8 +96,13 @@ class Daemon:
             reply = self.run([str(self.binary), *args], timeout=TIMEOUT)
         except ToolTimedOut:
             raise WallpaperError(f"{self.name} did not answer in time.") from None
-        except (ToolRefused, OSError) as error:
-            raise WallpaperError(f"{self.name} could not be run: {error}") from None
+        except ToolRefused:
+            raise WallpaperError(
+                f"{self.name} could not be run: it is not where this app looks for it."
+            ) from None
+        except OSError as error:
+            why = (error.strerror or str(error)).lower()
+            raise WallpaperError(f"{self.name} could not be run ({why}).") from None
         if reply.returncode != 0:
             said = next((line for line in reply.stderr.splitlines() if line.strip()), "")
             raise WallpaperError(

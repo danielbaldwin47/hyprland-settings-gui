@@ -69,7 +69,10 @@ Register = Callable[[str], bool]
 """Adds (or removes) the tool's Bridge entries and regenerates the Entrypoint; `False` when
 that cannot be done now. Takes the tool id."""
 
-_NOT_REGISTERED = "hyprland.lua could not be updated right now, so nothing was changed."
+_NOT_REGISTERED = (
+    "hyprland.lua could not be updated right now, so nothing was changed. Try again; if it "
+    "fails again, the banner at the top of the window says why."
+)
 
 
 # --- what callers see -------------------------------------------------------------------------
@@ -450,7 +453,7 @@ def _plan_noctalia(spec: ToolSpec, paths: ConfigPaths) -> list[FileEdit]:
             return []
         raise _Refuse(
             f"noctalia's own settings ({shown(settings, paths)}) choose its templates, so a "
-            "file from hyprtweaker would be ignored. Turn on noctalia's Hyprland template "
+            "file from this app would be ignored. Turn on noctalia's Hyprland template "
             "there, then set noctalia up here."
         )
     ids: list[str] = []
@@ -489,7 +492,7 @@ _PLANNERS: Mapping[str, Callable[[ToolSpec, ConfigPaths], list[FileEdit]]] = {
 
 def _cannot_edit(spec: ToolSpec, config: Path, paths: ConfigPaths) -> str:
     return (
-        f"{spec.title}'s config ({shown(config, paths)}) is laid out in a way hyprtweaker "
+        f"{spec.title}'s config ({shown(config, paths)}) is laid out in a way this app "
         "cannot add to without changing something else, so it was left alone."
     )
 
@@ -907,7 +910,10 @@ def _read(path: Path, paths: ConfigPaths) -> str | None:
         data = _read_bytes(_target(path))
         return None if data is None else data.decode("utf-8")
     except (OSError, UnicodeDecodeError) as error:
-        raise _Refuse(f"{shown(path, paths)} could not be read ({error}).") from error
+        raise _Refuse(
+            f"{shown(path, paths)} could not be read: it is not a text file, or this app may "
+            "not open it. Fix it, then try again."
+        ) from error
 
 
 def _write_atomic(path: Path, content: str | bytes) -> None:

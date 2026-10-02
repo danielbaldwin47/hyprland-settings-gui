@@ -87,7 +87,7 @@ def test_manual_does_not_hide_a_shell_that_still_sets_colors() -> None:
         "matugen sets your border and group colors from your wallpaper."
     )
     assert source_detail(PresetColors(), ()) == (
-        "The colors of the Preset you applied. No theming tool overrides them."
+        "The colors of the preset you applied. No theming tool overrides them."
     )
 
 
@@ -151,13 +151,13 @@ def test_other_tools_read_from_detection_and_their_entries() -> None:
     ) == ToolState("noctalia", "noctalia", "On: sets your border and group colors", remove=True)
     assert other_tool(
         found("dms", wired=True), entries(DMS, Off(PresetColors())), present=frozenset()
-    ) == ToolState("dms", "DMS", "Off while the Color source is Preset", remove=True)
+    ) == ToolState("dms", "DMS", "Off while a preset sets your colors", remove=True)
     assert other_tool(
         found("shell-switch", wired=True), entries(SHELL_SWITCH, WAITING), present=frozenset()
     ) == ToolState(
         "shell-switch",
         "shell-switch",
-        "Waiting for shell-switch's first run",
+        "Waiting for shell-switch's first run. It loads the next time shell-switch runs.",
         remove=True,
         patch=True,
     )

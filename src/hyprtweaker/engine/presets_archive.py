@@ -41,6 +41,7 @@ import os
 import shutil
 import subprocess
 import tarfile
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, replace
@@ -70,11 +71,11 @@ MAX_WALLPAPER_PIXELS: Final = 1 << 26
 ZSTD_MAGIC: Final = b"\x28\xb5\x2f\xfd"
 
 INSTALL_ZSTD: Final = "Theme archives need zstd. Install the zstd package, then try again."
-NOT_AN_ARCHIVE: Final = "This file is not a theme archive."
-DAMAGED: Final = "This theme archive is damaged or incomplete, so nothing was imported."
+NOT_AN_ARCHIVE: Final = "This file is not a theme file."
+DAMAGED: Final = "This theme file is damaged or incomplete, so nothing was imported."
+DAMAGED_SETTINGS: Final = "This theme file's settings are damaged, so nothing was imported."
 TOO_BIG: Final = (
-    "This theme archive holds more than 64 MiB, more than any theme needs, so it was not "
-    "opened."
+    "This theme file holds more than 64 MiB, more than any theme needs, so it was not opened."
 )
 
 
@@ -181,6 +182,10 @@ class StdlibZstd:
             yield _Translated(stream, errors)
 
 
+ZSTD_TIMEOUT: Final = 60.0
+"""Seconds the zstd binary gets for one archive: 64 MiB takes well under one."""
+
+
 @dataclass(frozen=True, slots=True)
 class BinaryZstd:
     """The `zstd` binary, over pipes: never a shell, never a path of the user's argv-split."""
@@ -195,7 +200,10 @@ class BinaryZstd:
                 capture_output=True,
                 env=_tool_environment(),
                 check=False,
+                timeout=ZSTD_TIMEOUT,
             )
+        except subprocess.TimeoutExpired:
+            raise CodecError("zstd did not finish") from None
         except OSError as error:
             raise CodecError(error.strerror or str(error)) from error
         if done.returncode != 0:
@@ -214,9 +222,15 @@ class BinaryZstd:
             )
         except OSError as error:
             raise CodecError(error.strerror or str(error)) from error
+        # A zstd that stops writing would block the read forever: it is stopped after the
+        # same time a compression gets, and the read then ends as a truncated archive.
+        watchdog = threading.Timer(ZSTD_TIMEOUT, process.kill)
+        watchdog.daemon = True
+        watchdog.start()
         try:
             yield _ProcessOutput(process)
         finally:
+            watchdog.cancel()
             # Still running when a bound stopped the read: it is told to stop, not drained.
             process.kill()
             assert process.stdout is not None
@@ -335,8 +349,11 @@ def export_archive(
             )
     try:
         compressed = codec.compress(buffer.getvalue())
-    except CodecError as error:
-        return ArchiveNotWritten(f"The theme could not be compressed: {error}.")
+    except CodecError:
+        return ArchiveNotWritten(
+            "The theme file could not be written: zstd failed. Check there is free space, "
+            "then try again."
+        )
     scratch = dest.with_name(f".{dest.name}.tmp")
     try:
         scratch.write_bytes(compressed)
@@ -437,14 +454,14 @@ def _read_members(stream: _Bounded) -> dict[str, bytes] | ArchiveRefused:
 
 
 _PRESET_TOO_BIG = (
-    "Its preset.json is larger than 1 MiB, more than any preset needs, so nothing was imported."
+    "Its settings are larger than 1 MiB, more than any preset needs, so nothing was imported."
 )
 
 
 def _refuse_member(member: tarfile.TarInfo, found: dict[str, bytes]) -> ArchiveRefused | None:
     if len(found) >= MAX_MEMBERS:
         return ArchiveRefused(
-            "This theme archive holds more than a preset and one wallpaper, so nothing was "
+            "This theme file holds more than a preset and one wallpaper, so nothing was "
             "imported."
         )
     try:
@@ -455,11 +472,11 @@ def _refuse_member(member: tarfile.TarInfo, found: dict[str, bytes]) -> ArchiveR
         return _held(member)
     if member.name in found:
         return ArchiveRefused(
-            f"This theme archive holds {member.name} twice, so nothing was imported."
+            f"This theme file holds {member.name} twice, so nothing was imported."
         )
     if member.name != PRESET_MEMBER and any(name != PRESET_MEMBER for name in found):
         return ArchiveRefused(
-            "This theme archive holds more than a preset and one wallpaper, so nothing was "
+            "This theme file holds more than a preset and one wallpaper, so nothing was "
             "imported."
         )
     return None
@@ -485,8 +502,7 @@ def _held(member: tarfile.TarInfo) -> ArchiveRefused:
     else:
         what = f"a file named “{name}”"
     return ArchiveRefused(
-        f"This theme archive holds {what}, which a theme never contains, so nothing was "
-        "imported."
+        f"This theme file holds {what}, which a theme never contains, so nothing was imported."
     )
 
 
@@ -499,9 +515,7 @@ def _shown(name: str) -> str:
 def _theme(members: dict[str, bytes]) -> ArchiveRead:
     raw = members.get(PRESET_MEMBER)
     if raw is None:
-        return ArchiveRefused(
-            "This theme archive has no preset.json, so there is nothing to import."
-        )
+        return ArchiveRefused("This theme file holds no preset, so there is nothing to import.")
     image: Wallpaper | None = None
     for name, data in members.items():
         if name != PRESET_MEMBER:
@@ -520,12 +534,10 @@ def _preset(raw: bytes) -> tuple[Preset, bool, tuple[str, ...]] | ArchiveRefused
     try:
         data = json.loads(raw.decode("utf-8"), parse_constant=_not_json)
     except (UnicodeDecodeError, ValueError, RecursionError):
-        return ArchiveRefused("Its preset.json is not valid JSON, so nothing was imported.")
+        return ArchiveRefused(DAMAGED_SETTINGS)
     fmt = data.get("format") if isinstance(data, dict) else None
     if not isinstance(fmt, int) or isinstance(fmt, bool) or fmt < 1:
-        return ArchiveRefused(
-            "Its preset.json does not describe a preset, so nothing was imported."
-        )
+        return ArchiveRefused(DAMAGED_SETTINGS)
     options = data.get("options")
     dropped: tuple[str, ...] = ()
     if isinstance(options, dict):
@@ -536,10 +548,7 @@ def _preset(raw: bytes) -> tuple[Preset, bool, tuple[str, ...]] | ArchiveRefused
     except (LookupError, ValueError, TypeError, AttributeError):
         preset = None
     if preset is None:
-        return ArchiveRefused(
-            "Its preset.json is missing the preset's name, date or settings, so nothing was "
-            "imported."
-        )
+        return ArchiveRefused(DAMAGED_SETTINGS)
     return replace(preset, wallpaper=None), fmt > FORMAT, dropped
 
 

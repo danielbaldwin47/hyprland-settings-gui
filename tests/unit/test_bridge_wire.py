@@ -452,7 +452,7 @@ def test_noctalias_own_settings_choosing_templates_is_refused_with_what_to_do(
     assert result == NotDone(
         "noctalia",
         "noctalia's own settings (~/.local/state/noctalia/settings.toml) choose its "
-        "templates, so a file from hyprtweaker would be ignored. Turn on noctalia's "
+        "templates, so a file from this app would be ignored. Turn on noctalia's "
         "Hyprland template there, then set noctalia up here.",
     )
 
@@ -487,7 +487,7 @@ def test_an_entrypoint_that_cannot_be_updated_leaves_every_file(paths: ConfigPat
     )
 
     assert result == NotDone(
-        "matugen", "hyprland.lua could not be updated right now, so nothing was changed."
+        "matugen", "hyprland.lua could not be updated right now, so nothing was changed. Try again; if it fails again, the banner at the top of the window says why."
     )
     assert tree(paths.config_home.parent) == before
 

@@ -615,7 +615,11 @@ def test_other_tools_offer_set_up_or_say_why_they_cannot(
     assert page.dialog.get_heading() == "Set up noctalia?"
     assert f"{tmp_path}/noctalia/hyprtweaker.toml (new)" in page.dialog.lines
     answer(page.dialog, "agree")
-    assert ("Other tools", "noctalia", "Waiting for noctalia's first run") in page.rows
+    assert (
+        "Other tools",
+        "noctalia",
+        "Waiting for noctalia's first run. Its colors load the next time noctalia runs.",
+    ) in page.rows
 
 
 def test_remove_names_every_file_it_puts_back_or_deletes_and_cancel_keeps_them(

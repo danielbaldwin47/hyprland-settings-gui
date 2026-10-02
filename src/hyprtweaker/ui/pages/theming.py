@@ -88,6 +88,7 @@ from hyprtweaker.ui.pages.theming_state import (  # noqa: E402
     TabState,
     backend_tab,
     changed_since_setup,
+    choice_label,
     has_backend,
     other_tool,
     resume_target,
@@ -115,7 +116,10 @@ RUN_TIMEOUT = 120.0
 """Seconds a Regenerate may run: matugen and wallust take about one on a large image."""
 
 WALLPAPER_PLACEHOLDER = "<your wallpaper>"
-NOT_UPDATED = "hyprland.lua could not be updated right now, so nothing was changed."
+NOT_UPDATED = (
+    "hyprland.lua could not be updated right now, so nothing was changed. Try again; if it "
+    "fails again, the banner at the top of the window says why."
+)
 
 Find = Callable[[str], Path | None]
 Run = Callable[..., ToolRun]
@@ -129,7 +133,7 @@ def choose_image(parent: Gtk.Widget, done: Callable[[Path | None], None]) -> Non
     images.add_mime_type("image/*")
     filters = Gio.ListStore.new(Gtk.FileFilter)
     filters.append(images)
-    dialog = Gtk.FileDialog(title="Choose your wallpaper", filters=filters)
+    dialog = Gtk.FileDialog(title="Which image should colors come from?", filters=filters)
     root = parent.get_root()
 
     def answered(chooser: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
@@ -556,7 +560,8 @@ class ThemingPage:
         # refresh logs a Gtk CRITICAL when it is finalized (its list view is already gone).
         row = _row(parameter.title)
         dropdown = Gtk.DropDown(
-            model=Gtk.StringList.new(list(parameter.choices)), valign=Gtk.Align.CENTER
+            model=Gtk.StringList.new([choice_label(each) for each in parameter.choices]),
+            valign=Gtk.Align.CENTER,
         )
         current = values.get(parameter.key, parameter.default)
         if current in parameter.choices:
@@ -671,7 +676,7 @@ class ThemingPage:
             f"{_source_words(self._state.source)}."
         )
         if plan is None:
-            body += " Nothing outside hyprtweaker's own files changes."
+            body += " Nothing outside this app's own files changes."
         elif not plan.files:
             body += f" No file of {title}'s needs to change."
         has_run = (self._session.paths.hypr_dir / REGISTRY[tool].modules[0].file).is_file()
@@ -757,7 +762,7 @@ class ThemingPage:
         elif done.written:
             self._actions.toast(f"{title} is set up. Copies of the files it changed are kept.")
         else:
-            self._actions.toast(f"{title} is set up.")
+            self._actions.toast(f"{title} is set up")
 
     def remove(self, tool: str) -> None:
         """ "Remove": a confirm, then `unwire`; a file changed since setup is asked about."""
@@ -870,7 +875,10 @@ class ThemingPage:
             self._page.get_clipboard().set_content(
                 Gdk.ContentProvider.new_for_value(pack.patch)
             )
-            self._actions.toast("Patch copied.")
+            self._actions.toast(
+                f"Patch copied. Paste it into your {REGISTRY[tool].title} script, then run "
+                f"{REGISTRY[tool].title}."
+            )
 
     def regenerate(self, tool: str) -> None:
         """Run `tool` on the wallpaper: the one way this page runs a program on its own.
@@ -997,7 +1005,7 @@ def _source_words(source: ColorSource) -> str:
         case Wallpaper(tool):
             return REGISTRY[tool].title if tool in REGISTRY else tool
         case PresetColors():
-            return "the Preset you applied"
+            return "the preset you applied"
         case ManualColors():
             return "your own settings"
         case Several(tools):

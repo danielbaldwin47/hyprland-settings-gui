@@ -249,7 +249,7 @@ def test_a_hostile_archive_is_a_sentence_and_nothing_to_confirm(tmp_path: Path) 
     dialog.present(window)
 
     assert rows(dialog) == []
-    assert "This file is not a theme archive." in [
+    assert "This file is not a theme file." in [
         w.get_description() for w in walk(dialog) if hasattr(w, "get_description")
     ]
     assert dialog.get_default_widget() is button(dialog, "Close")

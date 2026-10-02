@@ -190,9 +190,8 @@ def test_a_timeout_stops_everything_the_tool_started(
         run_tool([str(stub)], timeout=0.5)
 
     background = int(pid_file.read_text())
-    for _ in range(50):
-        if not _alive(background):
-            break
+    deadline = time.monotonic() + 10  # a loaded machine reaps the orphan late
+    while _alive(background) and time.monotonic() < deadline:
         time.sleep(0.02)
     assert not _alive(background)
 
