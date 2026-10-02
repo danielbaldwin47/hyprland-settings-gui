@@ -289,6 +289,65 @@ def test_a_monitor_rule_with_every_row_field_is_a_config_hyprland_accepts(
     assert "config ok" in result.stdout
 
 
+def test_workspace_rules_of_every_selector_class_with_layout_opts_are_a_config_hyprland_accepts(
+    tmp_path: Path,
+) -> None:
+    """One rule per selector class the editor writes (#160), each carrying every field kind.
+
+    Proves the writer spells selectors, css-gap tables and `layout_opts` the way Hyprland
+    loads them. It does not prove the selector *grammar*: `--verify-config` loads `x[1]`
+    and `w[tv1` as it loads `3` (checked during #160), which is why
+    `engine/workspace_selector` is the only judge of a typed selector.
+    """
+    from hyprtweaker.engine.model.entities import WorkspaceRule
+
+    fields = {
+        "monitor": "DP-1",
+        "default": True,
+        "persistent": True,
+        "gaps_in": 5,
+        "gaps_out": {"top": 10, "right": 20, "bottom": 10, "left": 20},
+        "float_gaps": 0,
+        "border_size": 2,
+        "no_border": False,
+        "no_rounding": True,
+        "no_shadow": True,
+        "decorate": False,
+        "on_created_empty": "[float] true",
+        "default_name": "main",
+        "layout": "master",
+        "animation": "slide",
+        "enabled": True,
+        "layout_opts": {"orientation": "top", "mfact": 0.6, "new_status": False},
+    }
+    selectors = [
+        "3",
+        "name:web",
+        "special:scratch",
+        "w[tv1]",
+        "r[2-4]",
+        "f[1]s[false]",
+        "r[2-4] w[t1]",
+        "m[DP-1]",
+    ]
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    model.entities.workspace_rules.extend(WorkspaceRule(s, fields) for s in selectors)
+    model.mark_entities_loaded()
+    Writer(paths, app_version="0.0.0-test").write(model)
+    assert (paths.app_dir / "workspace_rules.lua").is_file()
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    assert result.returncode == 0, (
+        f"Hyprland rejected the workspace rules:\n{result.stdout}\n{result.stderr}"
+    )
+    assert "config ok" in result.stdout
+
+
 def write_imported_conf(
     root: Path, version: str, conf: str
 ) -> tuple[ConfigPaths, ImportResult]:

@@ -339,3 +339,455 @@ def test_undoing_an_added_rule_takes_its_row_away(tmp_path: Path) -> None:
 
     assert session.workspace_rules == []
     assert window.workspace_rules_page.rows == ()
+
+
+# --- the editor's fields (#160) ----------------------------------------------------------
+
+
+def choice(combo: Any) -> str:
+    return str(combo.get_selected_item().get_string())
+
+
+def offered(dialog: Any) -> list[str]:
+    model = dialog.fields.picker.get_model()
+    return [model.get_string(i) for i in range(model.get_n_items())][1:]
+
+
+def pick(dialog: Any, title: str) -> None:
+    """Choose `title` in the "Add a setting" row, as the user does."""
+    dialog.fields.picker.set_selected(offered(dialog).index(title) + 1)
+
+
+def stored(session: Any, selector: str) -> Any:
+    return next(r for r in session.workspace_rules if r.workspace == selector)
+
+
+def commit_gap(spin: Any, number: int) -> None:
+    spin.set_value(number)
+    spin.emit("activate")
+
+
+def test_a_rules_fields_open_as_rows_of_their_own_type(tmp_path: Path) -> None:
+    from hyprtweaker.engine.model.entities import WorkspaceRule
+
+    held = WorkspaceRule(
+        "3",
+        {
+            "monitor": "DP-1",
+            "default": True,
+            "border_size": 4,
+            "layout": "master",
+            "gaps_in": 6,
+            "gaps_out": {"top": 1, "right": 2, "bottom": 3, "left": 4},
+        },
+    )
+    _session, window = build_window(tmp_path, live=True, rules=(held,))
+
+    fields = open_editor(window, "3").fields
+
+    assert fields.row("monitor").get_text() == "DP-1"
+    assert fields.row("default").get_active() is True
+    assert fields.row("border_size").get_value() == 4
+    assert choice(fields.row("layout")) == "master"
+    assert (
+        fields.gap_field("gaps_in").uniform,
+        fields.gap_field("gaps_in").all_sides.get_value(),
+    ) == (
+        True,
+        6,
+    )
+    sides = fields.gap_field("gaps_out")
+    assert not sides.uniform
+    assert [
+        int(sides.sides[side].get_value()) for side in ("top", "right", "bottom", "left")
+    ] == [
+        1,
+        2,
+        3,
+        4,
+    ]
+    assert fields.row("persistent") is None  # not held: offered, not shown
+    assert "Keep when empty" in offered(open_editor(window, "3"))
+
+
+def test_editing_one_field_leaves_every_other_value_as_the_same_object(tmp_path: Path) -> None:
+    """#133 holds through field edits, not only a rename: unknown keys, `layout_opts` and a
+    gap table with a missing side are the very objects the rule held."""
+    from hyprtweaker.engine.model.entities import WorkspaceRule
+    from hyprtweaker.engine.writer.monitors import render_workspace_rules_module
+
+    sides = {"top": 4}
+    opts = {"orientation": "top", "count": 3}
+    held = WorkspaceRule(
+        "3",
+        {"monitor": "DP-1", "frobnicate": "x y", "layout_opts": opts, "gaps_out": sides},
+    )
+    session, window = build_window(tmp_path, live=True, rules=(held,))
+
+    dialog = open_editor(window, "3")
+    dialog.fields.row("monitor").set_text("HDMI-A-1")
+    dialog.save()
+
+    fields = stored(session, "3").fields
+    assert list(fields) == ["monitor", "frobnicate", "layout_opts", "gaps_out"]
+    assert fields["monitor"] == "HDMI-A-1"
+    assert fields["layout_opts"] is opts
+    assert fields["gaps_out"] is sides
+    assert fields["frobnicate"] == "x y"
+    text = render_workspace_rules_module(session.workspace_rules, app_version=APP_VERSION)
+    assert text is not None
+    assert (
+        'hl.workspace_rule({ workspace = "3", monitor = "HDMI-A-1", frobnicate = "x y", '
+        'layout_opts = { orientation = "top", count = 3 }, gaps_out = { top = 4 } })'
+    ) in text
+
+
+def test_saving_without_touching_a_field_stores_the_rules_own_mapping(tmp_path: Path) -> None:
+    held = rule("3", monitor="DP-1", border_size=2, gaps_in=5)
+    _session, window = build_window(tmp_path, live=True, rules=(held,))
+
+    dialog = open_editor(window, "3")
+
+    assert dialog.collect_fields() is held.fields
+
+
+def test_a_field_added_from_the_picker_is_written_and_leaves_the_picker(
+    tmp_path: Path,
+) -> None:
+    session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+    dialog.value_row.set_text("7")
+
+    assert "Keep when empty" in offered(dialog)
+    pick(dialog, "Keep when empty")
+    pick(dialog, "Gaps between windows")
+    pick(dialog, "Layout")
+    dialog.save()
+
+    assert dict(stored(session, "7").fields) == {
+        "persistent": True,
+        "gaps_in": 0,
+        "layout": "dwindle",
+    }
+
+
+def test_removing_a_field_row_drops_its_key_and_offers_it_again(tmp_path: Path) -> None:
+    session, window = build_window(
+        tmp_path, live=True, rules=(rule("3", monitor="DP-1", persistent=True),)
+    )
+    dialog = open_editor(window, "3")
+    assert "Keep when empty" not in offered(dialog)
+
+    remove = dialog.fields.row("persistent").get_last_child()
+    dialog.fields.remove_row("persistent")
+    dialog.save()
+
+    assert dict(stored(session, "3").fields) == {"monitor": "DP-1"}
+    assert "Keep when empty" in offered(dialog)
+    assert remove is not None
+
+
+def test_a_text_field_left_blank_writes_no_key(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+    dialog.value_row.set_text("7")
+    pick(dialog, "Monitor")
+
+    dialog.save()
+
+    assert dict(stored(session, "7").fields) == {}
+
+
+def test_a_gap_commit_replaces_that_key_only(tmp_path: Path) -> None:
+    session, window = build_window(
+        tmp_path, live=True, rules=(rule("3", gaps_in=5, gaps_out=9),)
+    )
+    dialog = open_editor(window, "3")
+
+    commit_gap(dialog.fields.gap_field("gaps_in").all_sides, 12)
+    dialog.save()
+
+    assert dict(stored(session, "3").fields) == {"gaps_in": 12, "gaps_out": 9}
+
+
+def test_a_held_layout_the_list_lacks_joins_it_and_is_not_changed(tmp_path: Path) -> None:
+    session, window = build_window(
+        tmp_path, live=True, rules=(rule("3", layout="lua:columns", monitor="DP-1"),)
+    )
+    dialog = open_editor(window, "3")
+
+    combo = dialog.fields.row("layout")
+
+    assert choice(combo) == "lua:columns"
+    assert [
+        combo.get_model().get_string(i) for i in range(combo.get_model().get_n_items())
+    ] == [
+        "dwindle",
+        "master",
+        "scrolling",
+        "monocle",
+        "lua:columns",
+    ]
+    dialog.fields.row("monitor").set_text("DP-2")
+    dialog.save()
+    assert stored(session, "3").fields["layout"] == "lua:columns"
+
+
+def test_the_layout_choices_come_from_the_schema_without_the_lua_placeholder(
+    tmp_path: Path,
+) -> None:
+    _session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+    pick(dialog, "Layout")
+
+    combo = dialog.fields.row("layout")
+
+    assert [
+        combo.get_model().get_string(i) for i in range(combo.get_model().get_n_items())
+    ] == [
+        "dwindle",
+        "master",
+        "scrolling",
+        "monocle",
+    ]
+
+
+def test_a_value_a_typed_row_cannot_show_gets_a_raw_row_and_is_kept(tmp_path: Path) -> None:
+    held = rule("3", gaps_in="5 10", border_size="thick", float_gaps=2)
+    session, window = build_window(tmp_path, live=True, rules=(held,))
+    dialog = open_editor(window, "3")
+
+    assert dialog.fields.row("gaps_in").get_title() == "gaps_in"
+    assert dialog.fields.row("gaps_in").get_text() == "5 10"
+    dialog.fields.row("float_gaps")  # the typed row exists for the value it can show
+    commit_gap(dialog.fields.gap_field("float_gaps").all_sides, 3)
+    dialog.save()
+
+    assert dict(stored(session, "3").fields) == {
+        "gaps_in": "5 10",
+        "border_size": "thick",
+        "float_gaps": 3,
+    }
+
+
+def test_an_unknown_key_is_a_raw_row_that_keeps_its_type_when_edited(tmp_path: Path) -> None:
+    session, window = build_window(
+        tmp_path, live=True, rules=(rule("3", frobnicate=7, gapsout=40, note="a b"),)
+    )
+    dialog = open_editor(window, "3")
+
+    dialog.fields.row("frobnicate").set_text("9")
+    dialog.save()
+
+    assert dict(stored(session, "3").fields) == {"frobnicate": 9, "gapsout": 40, "note": "a b"}
+    assert type(stored(session, "3").fields["frobnicate"]) is int
+
+
+def test_an_unknown_table_value_is_shown_read_only_and_kept(tmp_path: Path) -> None:
+    table = {"a": 1}
+    session, window = build_window(
+        tmp_path, live=True, rules=(rule("3", exotic=table, monitor="DP-1"),)
+    )
+    dialog = open_editor(window, "3")
+
+    assert not dialog.fields.row("exotic").get_editable()
+    dialog.fields.row("monitor").set_text("DP-2")
+    dialog.save()
+
+    assert stored(session, "3").fields["exotic"] is table
+
+
+# --- layout_opts -------------------------------------------------------------------------
+
+
+def test_layout_opts_rows_show_the_held_table(tmp_path: Path) -> None:
+    held = rule("3", layout_opts={"orientation": "top", "count": 3, "on": True})
+    _session, window = build_window(tmp_path, live=True, rules=(held,))
+
+    fields = open_editor(window, "3").fields
+
+    assert [
+        (key, fields.option_row(key).get_text()) for key in ("orientation", "count", "on")
+    ] == [("orientation", "top"), ("count", "3"), ("on", "true")]
+
+
+def test_editing_one_option_keeps_the_others_as_held_and_this_one_as_typed(
+    tmp_path: Path,
+) -> None:
+    session, window = build_window(
+        tmp_path, live=True, rules=(rule("3", layout_opts={"orientation": "top", "count": 3}),)
+    )
+    dialog = open_editor(window, "3")
+
+    dialog.fields.option_row("orientation").set_text("left")
+    dialog.save()
+
+    opts = stored(session, "3").fields["layout_opts"]
+    assert opts == {"orientation": "left", "count": 3}
+    assert type(opts["count"]) is int  # untouched: the object it was, not the text "3"
+
+
+def test_an_option_is_added_by_name_and_empty_ones_are_not_written(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path, live=True, rules=(rule("3", monitor="DP-1"),))
+    dialog = open_editor(window, "3")
+
+    dialog.fields.option_entry.set_text("direction")
+    dialog.fields.option_entry.emit("apply")
+    dialog.fields.option_row("direction").set_text("right")
+    dialog.fields.option_entry.set_text("blank")
+    dialog.fields.option_entry.emit("apply")
+    dialog.save()
+
+    assert dialog.fields.option_entry.get_text() == ""
+    assert dict(stored(session, "3").fields) == {
+        "monitor": "DP-1",
+        "layout_opts": {"direction": "right"},
+    }
+
+
+def test_removing_every_option_drops_the_table(tmp_path: Path) -> None:
+    session, window = build_window(
+        tmp_path,
+        live=True,
+        rules=(rule("3", monitor="DP-1", layout_opts={"orientation": "top"}),),
+    )
+    dialog = open_editor(window, "3")
+
+    dialog.fields.remove_option("orientation")
+    dialog.save()
+
+    assert dict(stored(session, "3").fields) == {"monitor": "DP-1"}
+
+
+# --- selector modes ----------------------------------------------------------------------
+
+
+def modes(dialog: Any) -> tuple[bool, bool]:
+    """(advanced switch on, raw entry visible)"""
+    return dialog.mode_switch.get_active(), dialog.selector_row.get_visible()
+
+
+def test_a_selector_the_pickers_can_say_opens_in_simple_mode(tmp_path: Path) -> None:
+    _session, window = build_window(
+        tmp_path, live=True, rules=(rule("3"), rule("name:web"), rule("special:scratch"))
+    )
+
+    number = open_editor(window, "3")
+    name = open_editor(window, "name:web")
+    special = open_editor(window, "special:scratch")
+
+    assert modes(number) == (False, False)
+    assert (choice(number.kind_row), number.value_row.get_text()) == ("Number", "3")
+    assert (choice(name.kind_row), name.value_row.get_text()) == ("Name", "web")
+    assert (choice(special.kind_row), special.value_row.get_text()) == (
+        "Special workspace",
+        "scratch",
+    )
+    assert name.value_row.get_title() == "Name"
+
+
+def test_a_filter_selector_opens_in_advanced_mode_with_its_text(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path, live=True, rules=(rule("w[tv1]"),))
+
+    dialog = open_editor(window, "w[tv1]")
+
+    assert modes(dialog) == (True, True)
+    assert dialog.selector_row.get_text() == "w[tv1]"
+    assert not dialog.kind_row.get_visible()
+    assert not dialog.notice_label.get_visible()
+
+
+def test_the_pickers_compose_the_selector_that_is_saved(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+
+    dialog.kind_row.set_selected(1)
+    dialog.value_row.set_text("web")
+    dialog.save()
+
+    assert [r.workspace for r in session.workspace_rules] == ["name:web"]
+
+
+def test_switching_to_advanced_carries_the_picked_selector_across(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path, live=True, rules=(rule("name:web"),))
+    dialog = open_editor(window, "name:web")
+
+    dialog.mode_switch.set_active(True)
+
+    assert modes(dialog) == (True, True)
+    assert dialog.selector_row.get_text() == "name:web"
+    dialog.mode_switch.set_active(False)
+    assert modes(dialog) == (False, False)
+    assert dialog.value_row.get_text() == "web"
+
+
+def test_a_filter_cannot_go_back_to_the_pickers_and_says_why(tmp_path: Path) -> None:
+    _session, window = build_window(tmp_path, live=True, rules=(rule("w[tv1]"),))
+    dialog = open_editor(window, "w[tv1]")
+
+    dialog.mode_switch.set_active(False)
+
+    assert modes(dialog) == (True, True)
+    assert dialog.notice_label.get_label() == (
+        "The pickers cannot say this selector, so it stays advanced."
+    )
+
+
+def test_an_edited_selector_hyprland_cannot_read_blocks_save(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path, live=True, rules=(rule("w[tv1]", monitor="DP-1"),))
+    dialog = open_editor(window, "w[tv1]")
+
+    dialog.selector_row.set_text("x[1]")
+    dialog.save()
+
+    assert dialog.error_label.get_label() == (
+        "“x[” is not a workspace filter. Filters start with w, r, f, s, n or m."
+    )
+    assert dialog.closed == []
+    assert [r.workspace for r in session.workspace_rules] == ["w[tv1]"]
+
+
+def test_an_imported_selector_hyprland_may_not_read_never_blocks_save(tmp_path: Path) -> None:
+    """CONTEXT.md "Finding": a rule the app declines to write cannot be fixed in the app."""
+    session, window = build_window(tmp_path, live=True, rules=(rule("x[1]", monitor="DP-1"),))
+    dialog = open_editor(window, "x[1]")
+
+    assert modes(dialog) == (True, True)
+    assert dialog.notice_label.get_label() == "Hyprland may not read this selector."
+    dialog.fields.row("monitor").set_text("DP-2")
+    dialog.save()
+
+    assert [(r.workspace, dict(r.fields)) for r in session.workspace_rules] == [
+        ("x[1]", {"monitor": "DP-2"})
+    ]
+    assert dialog.closed == [True]
+
+
+def test_a_selector_that_may_not_mean_what_it_says_warns_and_still_saves(
+    tmp_path: Path,
+) -> None:
+    session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+    dialog.mode_switch.set_active(True)
+    dialog.selector_row.set_text("Web")
+
+    dialog.save()
+
+    assert (
+        dialog.notice_label.get_label()
+        == "Hyprland reads “Web” as a name. Write name:Web to say so."
+    )
+    assert [r.workspace for r in session.workspace_rules] == ["Web"]
+
+
+def test_a_number_picker_refuses_text(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+
+    dialog.value_row.set_text("web")
+    dialog.save()
+
+    assert dialog.error_label.get_label() == (
+        "A workspace number is digits only, such as 5. Pick Name for a name."
+    )
+    assert session.workspace_rules == []

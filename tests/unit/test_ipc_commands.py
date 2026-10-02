@@ -161,9 +161,13 @@ def test_clients_asks_with_the_json_flag_and_returns_the_windows() -> None:
     async def scenario(client: CommandClient, fake: FakeHyprland) -> None:
         windows = await client.clients()
         assert fake.requests == ["j/clients"]
-        assert [window["class"] for window in windows] == ["kitty", "helium"]
+        assert [window["class"] for window in windows] == [
+            "probe.tiled",
+            "probe.float",
+            "probe.fs",
+        ]
         # The camelCase spellings are the wire's, and the picker reads them as such.
-        assert windows[1]["initialClass"] == "helium"
+        assert windows[1]["initialClass"] == "probe.float"
 
     run(scenario)
 

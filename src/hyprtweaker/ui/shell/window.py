@@ -72,6 +72,7 @@ from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
+from hyprtweaker.engine.workspace_catalog import BUILTIN_LAYOUTS  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
@@ -1274,7 +1275,16 @@ class MainWindow(Adw.ApplicationWindow):
             on_show=self._reveal_workspace_rule,
             rule=rule,
             taken=[item.workspace for item in rules if item is not rule],
+            layouts=self._layout_choices(),
         )
+
+    def _layout_choices(self) -> tuple[str, ...]:
+        """The layouts the layout row offers: the schema's own, without its `lua:<name>`
+        placeholder (the compositor's Lua layouts join as #175 discovers them)."""
+        option = self._session.schema.get("general:layout")
+        known = option.known_values.values if option and option.known_values else ()
+        named = tuple(choice for choice in known if "<" not in choice)
+        return named or BUILTIN_LAYOUTS
 
     def _add_workspace_rule(self) -> None:
         self.workspace_rule_editor().present(self)
