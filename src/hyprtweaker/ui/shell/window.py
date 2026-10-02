@@ -2164,6 +2164,9 @@ class MainWindow(Adw.ApplicationWindow):
     def _on_edited_file_response(
         self, _dialog: Adw.AlertDialog, response: str, module: str, then: tuple[str, ...]
     ) -> None:
+        # Answered once: closing the dialog emits its close response again (hand-test 19),
+        # which offered the next file twice.
+        _dialog.disconnect_by_func(self._on_edited_file_response)
         name = module.rsplit("/", 1)[-1]
         if response == "open":
             self._launch_file(self._session.edited_file_path(module))

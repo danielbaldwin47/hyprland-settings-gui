@@ -109,3 +109,5 @@ def test_the_banner_offers_each_edited_file_in_turn_and_keep_lets_it_go(
     assert second.get_heading() == "general.lua was edited outside this app"
     assert session.health.edited_files == ("options/general.lua",)
     second.force_close()
+    main_loop.settle("a second offer, if the close answered again")
+    assert window.get_visible_dialog() is None
