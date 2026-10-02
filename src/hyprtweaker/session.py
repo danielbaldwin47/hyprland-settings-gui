@@ -119,6 +119,7 @@ from hyprtweaker.engine.schema import (
 )
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash, retirement
 from hyprtweaker.engine.state.retirement import RenamedNotice, Restoration, RetiredNotice
+from hyprtweaker.engine.triggers import trigger_load_problem
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
@@ -757,7 +758,12 @@ class Session:
         return True
 
     def add_bind(self, bind: Bind) -> bool:
-        """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes."""
+        """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes.
+
+        Refused when the Bind is enabled and its Trigger cannot load (`trigger_load_problem`).
+        """
+        if bind.enabled and trigger_load_problem(bind.keys) is not None:
+            return False
         return self.edit_binds(lambda binds: binds.append(bind))
 
     def replace_bind(self, index: int, bind: Bind) -> bool:
@@ -765,7 +771,10 @@ class Session:
 
         In place rather than remove-and-append: position *is* identity, so a bind that
         jumped to the end of the list would change which of two duplicates fires first.
+        Refused when the Bind is enabled and its Trigger cannot load (`trigger_load_problem`).
         """
+        if bind.enabled and trigger_load_problem(bind.keys) is not None:
+            return False
 
         def swap(binds: list[Bind]) -> None:
             if 0 <= index < len(binds):
@@ -788,7 +797,14 @@ class Session:
         The conflict surface's "disable it" (ADR-0007, #66). In place because the point of
         `enabled` over deletion is exactly that nothing moves: every other bind keeps its
         position, and re-enabling restores the world as it was.
+
+        Enabling is refused when the Bind's Trigger cannot load (`trigger_load_problem`);
+        disabling never is, so the conflict surface's "disable it" always works.
         """
+        binds = self._model.entities.binds
+        target = binds[index] if 0 <= index < len(binds) else None
+        if enabled and target is not None and trigger_load_problem(target.keys) is not None:
+            return False
 
         def flip(binds: list[Bind]) -> None:
             if 0 <= index < len(binds):
