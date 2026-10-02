@@ -111,3 +111,33 @@ def test_the_banner_offers_each_edited_file_in_turn_and_keep_lets_it_go(
     second.force_close()
     main_loop.settle("a second offer, if the close answered again")
     assert window.get_visible_dialog() is None
+
+
+def test_a_refused_undo_says_only_the_refusal_and_keeps_the_step(tmp_path: Path) -> None:
+    """#148 hand-test 31: Ctrl+Z into a hand-edited Module toasted the refusal, then "Can't
+    undo that change any more", though the step stayed and undid after Replace file."""
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+    from hyprtweaker.engine.model import Bind, DispatcherCall
+    from hyprtweaker.engine.writer import WriteResult
+
+    session, window, applier = live_entity_window(tmp_path)
+    session.on_refused = window.show_refused
+    session.add_bind(
+        Bind(keys="SUPER + B", dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
+    )
+    write = WriteResult(
+        written=(BINDS,), unchanged=(), removed=(), entrypoint_written=False, hand_edited=()
+    )
+    applier.reported = applier.serial
+    session._applied(ApplyResult(ApplyOutcome.OK, write=write, entities=applier.serial))
+    step = session.last_gesture
+    assert step is not None
+    session._edited_module = lambda modules: BINDS if BINDS in set(modules) else None
+    said: list[str] = []
+    add_toast = window._toasts.add_toast
+    window._toasts.add_toast = lambda toast: (said.append(toast.get_title()), add_toast(toast))
+
+    window._undo()
+
+    assert said == ["Undo was not saved: binds.lua was edited outside this app"]
+    assert session.last_gesture is step

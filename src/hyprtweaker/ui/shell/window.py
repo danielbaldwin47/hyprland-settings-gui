@@ -2549,10 +2549,14 @@ class MainWindow(Adw.ApplicationWindow):
             # already moved the model and the Rows should not wait for the compositor to
             # confirm what the app is about to write.
             self.sync()
-        elif offered and not self._session.undo_queued:
+        elif (
+            offered and not self._session.undo_queued and self._session.last_gesture is not step
+        ):
             # An entity step whose list changed since -- a hand edit was adopted. The session
             # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead. A
-            # queued undo is not refused: it runs when the edit in flight lands.
+            # queued undo is not refused: it runs when the edit in flight lands. Nor is one
+            # refused by an edited file (#148 hand-test 31): the step stays, and the
+            # refusal's own toast has said why.
             self._toasts.add_toast(plain_toast("Can't undo that change any more"))
         self._sync_undo_action()
 
