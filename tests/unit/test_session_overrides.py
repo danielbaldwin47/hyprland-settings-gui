@@ -397,3 +397,26 @@ def test_a_timed_out_edit_reads_not_confirmed_until_a_reload_confirms_it(
         assert session.unapplied == frozenset()
 
     run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_quarantining_user_lua_clears_the_overrides_it_made(tmp_path: Path) -> None:
+    """F4 of the #148 review: after an Entrypoint recovery the drift marks were never read
+    again, so every key `user.lua` used to override kept reading "Overridden"."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        (tmp_path / "hypr" / "user.lua").write_text("-- the user's own\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+        session, runner = await launch(fake, tmp_path)
+        assert session.overridden == {GAPS_IN}
+
+        live_says(fake, GAPS_IN, WRITTEN)
+        assert session.quarantine("user")
+        await session.drain()
+        await runner.settle()
+
+        assert session.quarantined == ("user",)
+        assert session.overridden == frozenset()
+
+    run_with_fake(scenario, compositor())

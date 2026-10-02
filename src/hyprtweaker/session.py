@@ -3596,6 +3596,9 @@ class Session:
                 files = tuple(m for m in sorted(self._held_back) if m in result.skipped)
                 self.on_held_back(tuple(held_titles), files)
 
+        if self._client is not None and any(p.source is not None for p in presets):
+            # A Preset that gated a Bridge off changed which file sets the colours (F4).
+            self._spawn(self._scan_drift(self._client))
         steps = self._preset_steps(presets, delta)
         for recorded in steps:
             self._undo.record(recorded)
@@ -4348,6 +4351,10 @@ class Session:
         if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
             _log.error("could not %s: %s", what, result.detail)
         self._observe(result)
+        if self._client is not None and result.reloaded:
+            # Which files load changed, so which keys something overrides changed with it:
+            # a quarantined user.lua, or a Bridge gated off (F4 of the #148 review).
+            await self._scan_drift(self._client)
         self._repoll_if_timed_out(result)
         self._report(result)
         self._changed()
