@@ -65,6 +65,7 @@ from hyprtweaker.engine.model.entities import (  # noqa: E402
     Bind,
     LayerRule,
     WindowRule,
+    WorkspaceRule,
 )
 from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking  # noqa: E402
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
@@ -89,6 +90,7 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
 from hyprtweaker.ui.dialogs.notices import notice_dialog, notice_title  # noqa: E402
 from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
+from hyprtweaker.ui.dialogs.workspace_rule_editor import WorkspaceRuleEditor  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
@@ -124,6 +126,10 @@ from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     TasksMapping,
     load_tasks_mapping,
     plan_tasks_view,
+)
+from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
+    WorkspaceRuleActions,
+    WorkspaceRulesPage,
 )
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
 from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
@@ -285,6 +291,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._binds_page: BindsPage | None = None
         self._window_rules_page: WindowRulesPage | None = None
         self._layer_rules_page: LayerRulesPage | None = None
+        self._workspace_rules_page: WorkspaceRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
         self._section_titles: dict[str, str] = {}
@@ -751,6 +758,11 @@ class MainWindow(Adw.ApplicationWindow):
         """The Layer rules Page, once built. The UI tier asserts against it."""
         return self._layer_rules_page
 
+    @property
+    def workspace_rules_page(self) -> WorkspaceRulesPage | None:
+        """The Workspaces Page, once built. The UI tier asserts against it."""
+        return self._workspace_rules_page
+
     def declaration_page(self, kind: str) -> DeclarationsPage | None:
         """One declarative Entity Page by kind, once built. The UI tier asserts against it.
 
@@ -905,6 +917,20 @@ class MainWindow(Adw.ApplicationWindow):
             self._stack.add_named(_scrolled(rules_page.page), rules_page.section)
             self._section_titles[rules_page.section] = rules_page.title
             self._register(rules_page.section, rules_page.title, len(rules_page.rules))
+
+        # The Workspaces Page: workspace rules, one row per selector (ADR-0008, #159).
+        self._workspace_rules_page = WorkspaceRulesPage(
+            self._session,
+            actions=WorkspaceRuleActions(
+                add=self._add_workspace_rule,
+                edit=self._edit_workspace_rule,
+                remove=self._remove_workspace_rule,
+            ),
+        )
+        workspaces = self._workspace_rules_page
+        self._stack.add_named(_scrolled(workspaces.page), workspaces.section)
+        self._section_titles[workspaces.section] = workspaces.title
+        self._register(workspaces.section, workspaces.title, len(workspaces.rules))
 
         # The Displays destination: an Entity Page over monitor rules plus the live
         # helper data the canvas draws from (ADR-0008, #68).
@@ -1073,9 +1099,10 @@ class MainWindow(Adw.ApplicationWindow):
         being solved is *only* that two binds share a trigger, and the fix is a new
         trigger for one of them.
 
-        `enable` is the error row's "Fix trigger…" (#139): a bind imported disabled for a
-        dead keysym. Capture refuses a key xkb does not know, so whatever comes back is
-        loadable, and the user asked for the bind back, so it comes back enabled.
+        `enable` is the error row's "Fix trigger…" (#139): a disabled bind whose trigger
+        Hyprland cannot load, most often a dead keysym the Importer disabled. Capture refuses
+        what would not load, so whatever comes back is loadable (the Session would refuse it
+        otherwise, #199), and the user asked for the bind back, so it comes back enabled.
         """
         if self._binds_page is None:
             return
@@ -1194,6 +1221,51 @@ class MainWindow(Adw.ApplicationWindow):
         page = self._rules_page(kind)
         if page is not None:
             page.refresh()
+        self.sync()
+
+    # --- workspace rules (#159) ---------------------------------------------------------
+
+    def workspace_rule_editor(self, selector: str | None = None) -> WorkspaceRuleEditor:
+        """The editor for a new workspace rule, or for the one whose selector is `selector`.
+
+        Wired whole -- save, refresh, "Show it" -- so the page's buttons and the UI tier
+        drive the same dialog.
+        """
+        rules = self._session.workspace_rules
+        rule = next((item for item in rules if item.workspace == selector), None)
+        original = rule.workspace if rule is not None else None
+
+        def done(saved: WorkspaceRule) -> str | None:
+            if self._session.save_workspace_rule(saved, original=original):
+                self._refresh_workspace_rules()
+                return None
+            return self._session.offline_reason or "the change was not accepted."
+
+        return WorkspaceRuleEditor(
+            on_done=done,
+            on_show=self._reveal_workspace_rule,
+            rule=rule,
+            taken=[item.workspace for item in rules if item is not rule],
+        )
+
+    def _add_workspace_rule(self) -> None:
+        self.workspace_rule_editor().present(self)
+
+    def _edit_workspace_rule(self, selector: str) -> None:
+        if any(rule.workspace == selector for rule in self._session.workspace_rules):
+            self.workspace_rule_editor(selector).present(self)
+
+    def _remove_workspace_rule(self, selector: str) -> None:
+        if self._session.remove_workspace_rule(selector):
+            self._refresh_workspace_rules()
+
+    def _reveal_workspace_rule(self, selector: str) -> None:
+        if self._workspace_rules_page is not None:
+            self._workspace_rules_page.reveal(selector)
+
+    def _refresh_workspace_rules(self) -> None:
+        if self._workspace_rules_page is not None:
+            self._workspace_rules_page.refresh()
         self.sync()
 
     # --- declarative entities (#70) -------------------------------------------------------
@@ -1543,6 +1615,10 @@ class MainWindow(Adw.ApplicationWindow):
         and `set_connected` rebuilds on either, so refreshing here first would pay for
         every edit twice.
         """
+        # A profile's activation, its revert and its undo rewrite the workspace rules too,
+        # and every one of those paths ends here.
+        if self._workspace_rules_page is not None:
+            self._workspace_rules_page.refresh()
         if self._monitors_page is None:
             return
         self._session.fetch_monitors(self._monitors_page.set_connected)

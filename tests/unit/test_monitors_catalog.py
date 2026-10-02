@@ -11,14 +11,19 @@ from hyprtweaker.engine.monitors_catalog import (
     format_mode,
     format_position,
     logical_size,
+    mode_rates,
+    mode_sizes,
     parse_mode,
     parse_position,
     preferred_identity,
     revert_breaking,
     rule_for,
     rule_matches_output,
+    sdr_eotf_name,
     snap_position,
 )
+
+AVAILABLE = ["2560x1440@59.95Hz", "1920x1080@60.00Hz", "2560x1440@143.91Hz", "foo"]
 
 
 class TestLogicalSize:
@@ -57,6 +62,20 @@ class TestModes:
         assert format_mode(1920, 1080, 60.0) == "1920x1080@60"
         assert format_mode(1920, 1080, 59.94) == "1920x1080@59.94"
         assert format_mode(1920, 1080) == "1920x1080"
+
+    def test_sizes_are_distinct_in_the_displays_order(self) -> None:
+        assert mode_sizes(AVAILABLE) == [(2560, 1440), (1920, 1080)]
+
+    def test_rates_are_the_sizes_own_highest_first(self) -> None:
+        assert mode_rates(AVAILABLE, (2560, 1440)) == [143.91, 59.95]
+        assert mode_rates(AVAILABLE, (1280, 720)) == []
+
+
+class TestColour:
+    def test_a_legacy_sdr_eotf_code_reads_as_its_name(self) -> None:
+        assert sdr_eotf_name(2) == "gamma22"
+        assert sdr_eotf_name("1") == "srgb"
+        assert sdr_eotf_name("gamma22force") == "gamma22force"
 
 
 class TestPositions:

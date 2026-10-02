@@ -35,16 +35,17 @@ from hyprtweaker.engine.binds_analysis import (  # noqa: E402
     unreachable_submaps,
 )
 from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup  # noqa: E402
-from hyprtweaker.engine.importer.binds import dead_keysyms  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind  # noqa: E402
+from hyprtweaker.engine.triggers import (  # noqa: E402
+    AmpMultiKey,
+    Blocked,
+    DeadKeys,
+    trigger_load_problem,
+)
 from hyprtweaker.ui.flash import flash  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
-
-MULTI_KEY = "&"
-"""The multi-key separator. Read-only: Hyprland 0.56 fails the whole config on an enabled
-`A&B` bind (`Unknown keysym: "A&B"`), so there is nothing valid to edit it into (#162)."""
 
 
 def trigger_text(bind: Bind) -> str:
@@ -177,9 +178,10 @@ class BadgeKind(Enum):
     read it the same way, so a bind is described alike wherever it turns up. Each kind fixes
     what the row offers and how it looks, not only what it says:
 
-    - `ERROR`: imported commented out because its Trigger names a key xkb does not know
-      (ADR-0007). Enabled as it stands, Hyprland would refuse the *whole* config, so the
-      row offers re-capture in place of Enable. Edit and Remove stay.
+    - `ERROR`: commented out with a Trigger Hyprland cannot load, most often a key xkb
+      does not know, which the Importer disables (ADR-0007). Enabled as it stands, Hyprland
+      would refuse the *whole* config and the Session refuses the enable (#199), so the row
+      offers re-capture in place of Enable. Edit and Remove stay.
     - `MULTI_KEY`: an `A&B` Trigger, which Hyprland (0.56.2, ADR-0007) cannot load.
       Nothing in the app can make it valid, so no edit and no Enable; Remove is offered.
     - `LUA_FUNCTION`: the action is a Lua function in `user.lua`, which the app does not
@@ -237,15 +239,14 @@ def bind_badge(bind: Bind) -> BindBadge | None:
     Recomputed from the Bind rather than carried on the model: the Trigger already says
     everything, and a stored flag could disagree with it after an edit.
 
-    Order matters. A function action wins first, since nothing on the row is the app's to
-    change. Multi-key goes before the dead-keysym check, because xkb reads `A&B` as one
-    unknown key: an error badge there would offer a re-capture that cannot fix a key the
-    bind never really named.
+    A function action wins first, since nothing on the row is the app's to change. The
+    rest reads `trigger_load_problem`, the one definition of a Trigger Hyprland can load,
+    which the Session enforces: a disabled bind it would refuse to enable offers re-capture.
 
-    The dead-keysym check is the same oracle the Importer used to disable the bind
-    (`dead_keysyms`). Where libxkbcommon will not load it answers nothing, so a bind reads
-    as plain disabled -- but on such a machine the Importer could not have found the dead
-    key either, so the row never claims more than the import knew.
+    The dead-keysym answer is the same oracle the Importer used to disable the bind. Where
+    libxkbcommon will not load it answers nothing, so a bind reads as plain disabled -- but
+    on such a machine the Importer could not have found the dead key either, so the row
+    never claims more than the import knew.
     """
     if bind.dispatcher is None:
         return BindBadge(
@@ -253,7 +254,8 @@ def bind_badge(bind: Bind) -> BindBadge | None:
             "Defined by a Lua function in user.lua",
             "This keybind's action is a Lua function in user.lua. Edit it there.",
         )
-    if MULTI_KEY in bind.keys:
+    problem = trigger_load_problem(bind.keys)
+    if isinstance(problem, AmpMultiKey):
         return BindBadge(
             BadgeKind.MULTI_KEY,
             "Multi-key: Hyprland can't load it",
@@ -263,21 +265,30 @@ def bind_badge(bind: Bind) -> BindBadge | None:
         )
     if bind.enabled:
         return None
-    if dead := dead_keysyms(bind.keys):
-        names = ", ".join(f'"{name}"' for name in dead)
-        noun = "key" if len(dead) == 1 else "keys"
-        return BindBadge(
-            BadgeKind.ERROR,
-            f"Unknown {noun} {names}",
-            f"Hyprland has no {noun} named {names}, so this keybind was imported commented "
-            "out: enabled, it would stop your whole config from loading. Record a new "
-            "trigger to use it.",
-        )
-    return BindBadge(
-        BadgeKind.DISABLED,
-        "Disabled",
-        "Kept in place but commented out in binds.lua; it does not fire.",
-    )
+    match problem:
+        case DeadKeys(names=dead):
+            names = ", ".join(f'"{name}"' for name in dead)
+            noun = "key" if len(dead) == 1 else "keys"
+            return BindBadge(
+                BadgeKind.ERROR,
+                f"Unknown {noun} {names}",
+                f"Hyprland has no {noun} named {names}, so this keybind was imported "
+                "commented out: enabled, it would stop your whole config from loading. "
+                "Record a new trigger to use it.",
+            )
+        case Blocked():
+            return BindBadge(
+                BadgeKind.ERROR,
+                "Trigger can't load",
+                f"{problem.message} Hyprland can't load this trigger, so this keybind stays "
+                "commented out. Record a new trigger to use it.",
+            )
+        case None:
+            return BindBadge(
+                BadgeKind.DISABLED,
+                "Disabled",
+                "Kept in place but commented out in binds.lua; it does not fire.",
+            )
 
 
 @dataclass(frozen=True, slots=True)

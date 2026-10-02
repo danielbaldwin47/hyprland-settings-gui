@@ -33,9 +33,12 @@ from hyprtweaker.engine.dispatchers import (  # noqa: E402
     lookup,
     namespaces,
 )
-from hyprtweaker.engine.importer.binds import dead_keysyms  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall  # noqa: E402
-from hyprtweaker.engine.triggers import parse_trigger, validate_trigger  # noqa: E402
+from hyprtweaker.engine.triggers import (  # noqa: E402
+    DeadKeys,
+    parse_trigger,
+    trigger_load_problem,
+)
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
 
 TRIGGER_HELP = "Modifiers and one key, joined by +. For example: SUPER + SHIFT + Q"
@@ -316,40 +319,37 @@ class BindEditor(Adw.Dialog):
 
         The Importer's disable is not the user's choice, so a working key undoes it, as
         "Fix trigger…" on the row does. A bind disabled with a working trigger (the conflict
-        surface's disable) is the user's choice and stays off. Without an xkb validator
-        `dead_keysyms` finds nothing, so nothing here enables: it fails safe.
+        surface's disable) is the user's choice and stays off. Without an xkb validator no
+        key reads as dead (`trigger_load_problem`), so nothing here enables: it fails safe.
         """
         original = self._original
-        if original is None or original.enabled or not dead_keysyms(original.keys):
+        if original is None or original.enabled:
             return False
-        trigger = self._trigger.get_text().strip()
-        if not trigger:
+        if not isinstance(trigger_load_problem(original.keys), DeadKeys):
             return False
-        problem = validate_trigger(trigger, in_submap=self._in_submap())
-        if problem is not None and problem.blocking:
-            return False
-        return not dead_keysyms(str(parse_trigger(trigger)))
+        return trigger_load_problem(str(parse_trigger(self._trigger.get_text()))) is None
 
     def _validate(self) -> str:
         trigger = self._trigger.get_text().strip()
         if not trigger:
             return "A keybind needs a trigger."
-        # Typed triggers get the same hard block Capture applies. A dead keysym reaching
-        # the writer is not a cosmetic problem: Lua fails the whole config on it, and the
-        # compositor gives no error to find it by (ADR-0007). The one exception is a
-        # disabled bind whose trigger this edit left alone, such as a dead keysym the
-        # Importer disabled (#108): the Writer keeps a disabled bind commented out, so
-        # nothing dead reaches the compositor, and blocking would mean the user cannot
-        # fix the description until they have fixed the key.
-        problem = validate_trigger(trigger, in_submap=self._in_submap())
+        # Typed triggers get the same hard block Capture applies, through the one rule the
+        # Session enforces (`trigger_load_problem`). A dead keysym reaching the writer is
+        # not a cosmetic problem: Lua fails the whole config on it, and the compositor
+        # gives no error to find it by (ADR-0007). The one exception is a disabled bind
+        # whose trigger this edit left alone, such as a dead keysym the Importer disabled
+        # (#108): the Writer keeps a disabled bind commented out, so nothing dead reaches
+        # the compositor, and blocking would mean the user cannot fix the description until
+        # they have fixed the key.
+        problem = trigger_load_problem(str(parse_trigger(trigger)))
         original = self._original
         untouched_and_disabled = (
             original is not None
             and not original.enabled
             and parse_trigger(trigger) == parse_trigger(original.keys)
         )
-        if problem is not None and problem.blocking and not untouched_and_disabled:
-            return problem.full_text()
+        if problem is not None and not untouched_and_disabled:
+            return problem.message
         for left, right in INCOMPATIBLE:
             if (
                 self._flag_switches[left].get_active()

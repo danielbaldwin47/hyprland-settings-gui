@@ -126,6 +126,7 @@ from hyprtweaker.engine.schema import (
 )
 from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash, retirement
 from hyprtweaker.engine.state.retirement import RenamedNotice, Restoration, RetiredNotice
+from hyprtweaker.engine.triggers import trigger_load_problem
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
@@ -785,7 +786,12 @@ class Session:
         )
 
     def add_bind(self, bind: Bind) -> bool:
-        """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes."""
+        """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes.
+
+        Refused when the Bind is enabled and its Trigger cannot load (`trigger_load_problem`).
+        """
+        if bind.enabled and trigger_load_problem(bind.keys) is not None:
+            return False
         return self.edit_binds(lambda binds: binds.append(bind), title="Bind added")
 
     def replace_bind(self, index: int, bind: Bind) -> bool:
@@ -793,7 +799,10 @@ class Session:
 
         In place rather than remove-and-append: position *is* identity, so a bind that
         jumped to the end of the list would change which of two duplicates fires first.
+        Refused when the Bind is enabled and its Trigger cannot load (`trigger_load_problem`).
         """
+        if bind.enabled and trigger_load_problem(bind.keys) is not None:
+            return False
 
         def swap(binds: list[Bind]) -> None:
             if 0 <= index < len(binds):
@@ -816,7 +825,14 @@ class Session:
         The conflict surface's "disable it" (ADR-0007, #66). In place because the point of
         `enabled` over deletion is exactly that nothing moves: every other bind keeps its
         position, and re-enabling restores the world as it was.
+
+        Enabling is refused when the Bind's Trigger cannot load (`trigger_load_problem`);
+        disabling never is, so the conflict surface's "disable it" always works.
         """
+        binds = self._model.entities.binds
+        target = binds[index] if 0 <= index < len(binds) else None
+        if enabled and target is not None and trigger_load_problem(target.keys) is not None:
+            return False
 
         def flip(binds: list[Bind]) -> None:
             if 0 <= index < len(binds):
@@ -994,14 +1010,23 @@ class Session:
         A merge because that is what `hl.monitor` itself does (`lua-api-surface.md` §3):
         the per-monitor rows each own one field, and a row that replaced the whole rule
         would erase every sibling's value on each toggle.
+
+        A field whose value is `UNSET` is removed after the merge: a row's "Not set" means
+        "not in my config", so the file must not gain an explicit default instead.
         """
-        return self._commit_entity_edit(
-            "monitor rules",
-            lambda: self._model.entities.add_monitor_rule(
-                MonitorRule(output=output, fields=dict(fields)), merge=True
-            ),
-            title="Monitor rule changed",
-        )
+
+        def patch() -> None:
+            rules = self._model.entities.monitors
+            existing = next((rule for rule in rules if rule.output == output), None)
+            merged = {**(existing.fields if existing is not None else {}), **fields}
+            kept = {key: value for key, value in merged.items() if value is not UNSET}
+            if existing is None and not kept:
+                return  # "not set" on a display with no rule: nothing to write
+            self._model.entities.add_monitor_rule(
+                MonitorRule(output=output, fields=kept), merge=False
+            )
+
+        return self._commit_entity_edit("monitor rules", patch, title="Monitor rule changed")
 
     def rename_monitor_rule(self, output: str, to: str) -> bool:
         """Change a rule's identity string, keeping its fields and position.

@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hyprtweaker.engine.ipc import Instance, NoInstance
+from hyprtweaker.engine.model import UNSET
 from hyprtweaker.engine.model.entities import MonitorRule, WorkspaceRule
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.session import Session
@@ -67,6 +68,23 @@ class TestMonitorRules:
         assert len(session.monitor_rules) == 1
         assert session.monitor_rules[0].fields == {"scale": 1.5, "mode": "1920x1080@60"}
         assert applier.commits == 2
+
+    def test_unset_removes_the_key_and_leaves_its_siblings(self, tmp_path: Path) -> None:
+        """A row's "Not set" means "not in my config": the key goes, no default is written."""
+        session, applier = live_session(tmp_path)
+        session.patch_monitor_rule("desc:BOE", {"supports_hdr": 1, "vrr": 2})
+
+        assert session.patch_monitor_rule("desc:BOE", {"supports_hdr": UNSET})
+
+        assert session.monitor_rules[0].fields == {"vrr": 2}
+        assert applier.commits == 2
+
+    def test_unset_on_a_display_with_no_rule_creates_none(self, tmp_path: Path) -> None:
+        session, _applier = live_session(tmp_path)
+
+        session.patch_monitor_rule("DP-9", {"max_luminance": UNSET})
+
+        assert session.monitor_rules == []
 
     def test_snapshot_is_insulated_from_later_edits(self, tmp_path: Path) -> None:
         session, _applier = live_session(tmp_path)
