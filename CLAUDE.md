@@ -38,6 +38,7 @@ Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/do
 
 ## Working in this repo
 
+- **UX is king.** Where a ticket, an open call or a review leaves a choice, take the reading that gives the end user the better experience: clear copy, visible state, safe defaults, no dead ends. Implementation convenience comes second.
 - Agent-facing docs (this file, `CONTEXT.md`, everything under `docs/agents/`): load `/mattpocock-skills:writing-for-agents` before writing or editing one.
 - Shared venv at `.venv` (system-site-packages: `gi` importable; ruff, mypy, pytest, pytest-xdist installed). Use `.venv/bin/<tool>`, from worktrees too; never create another venv. Done means the checks in `docs/agents/local-checks.md` § Done checks pass.
 - The owner's desktop compositor is their daily session (Omarchy, Lua config). Run the app with `tools/sandbox.py` (windowless: nothing of an agent's may map on the owner's desktop), and send every live probe (`hyprctl keyword`, `dispatch`, `reload`, temporary binds) to a nested Hyprland: `docs/agents/local-checks.md` § Running the app. Settle spec and behaviour disputes there with `hyprctl -j` rather than by reading docs harder.
