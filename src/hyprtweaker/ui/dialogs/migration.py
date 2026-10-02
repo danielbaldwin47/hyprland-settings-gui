@@ -25,8 +25,11 @@ gi.require_version("Gtk", "4.0")
 
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
+from ...engine.bridge.wire import WireConsent  # noqa: E402
 from ...engine.importer.loss import CLASS_ORDER, CLASS_TITLES, LossReport  # noqa: E402
 from ...engine.importer.lua.sandbox import Cancelled, Consent  # noqa: E402
+from ...engine.migration.backup import Backup  # noqa: E402
+from ...engine.migration.bridge_setup import CannotSetUp, Offer, SetUp, ToolOffer  # noqa: E402
 from ...engine.migration.detect import ConfigKind  # noqa: E402
 from ...engine.migration.flow import (  # noqa: E402
     ROLLBACK_SECONDS,
@@ -38,6 +41,7 @@ from ...engine.migration.flow import (  # noqa: E402
     asks_consent,
 )
 from ...engine.migration.omarchy import is_omarchy_source  # noqa: E402
+from .wire_consent import ConsentDialog  # noqa: E402
 
 Spawn = Callable[[Any], None]
 
@@ -55,6 +59,20 @@ READING_TITLE = "Reading"
 
 READER_THREAD = "hyprtweaker: reading a config"
 """The read worker's thread name: what a test looks for to see that none is left."""
+
+TOOLS_TITLE = "Theming tools"
+"""The back-up step's Bridge setup page (#187)."""
+
+TOOLS_TEXT = (
+    "Setting one up changes its own config so its colors keep reaching Hyprland after the "
+    "switch. Each one asks first, and nothing changes until you switch. You can also set "
+    "them up later on the Theming page."
+)
+
+NOT_SET_UP = "Not set up"
+WILL_SET_UP = "Set up when you switch"
+SET_UP_LABEL = "Set up…"
+UNDO_LABEL = "Don't set up"
 
 LONG_READ_SECONDS = 5.0
 """When the progress page adds that a read can take up to a minute (the importer's
@@ -143,6 +161,8 @@ class MigrationDialog(Adw.Dialog):
         """Each page's safe button, made the dialog's default while that page shows."""
         self._reading: _Read | None = None
         """The read running in a worker, if one is (#216)."""
+        self._confirm: ConsentDialog | None = None
+        """The last Bridge setup confirm shown (#187): what a test or probe answers."""
         self.connect("closed", lambda _dialog: self._stop_read())
 
         self._view = Adw.NavigationView()
@@ -427,7 +447,88 @@ class MigrationDialog(Adw.Dialog):
     # --- step 3: back up ------------------------------------------------------------------
 
     def _go_backup(self) -> None:
+        """Back up, then offer Bridge setup if a tool can be set up, then the static gate.
+
+        The offer sits between the two (ADR-0009 §Back up, bridge, static gate) so the gate
+        judges the tree with the chosen tools' lines in it. No page when nothing can be set
+        up: a user who only wants to migrate meets no extra step.
+        """
         backup = self._flow.back_up()
+        offers = self._flow.bridge_offers()
+        if any(isinstance(offer, Offer) for offer in offers):
+            self._view.push(self._tools_page(backup, offers))
+            return
+        self._gate(backup)
+
+    def _tools_page(self, backup: Backup, offers: tuple[ToolOffer, ...]) -> Adw.NavigationPage:
+        """One row per tool, each set up only through its own confirm (settled S3).
+
+        "Continue" is the default, and it continues with whatever was confirmed: skipping
+        every tool is the safe answer, since a tool left alone keeps working as it does now.
+        """
+        page = _page(TOOLS_TITLE)
+        group = Adw.PreferencesGroup(
+            title="Theming tools on this computer", description=TOOLS_TEXT
+        )
+        for offer in offers:
+            group.add(self._tool_row(offer))
+        page.get_child().set_content(_scrolled(_column(group)))
+
+        go_on = _suggested("Continue")
+        go_on.connect("clicked", lambda _button: self._gate(backup))
+        page.get_child().add_bottom_bar(_actions(go_on, self._close_button("Cancel")))
+        self._defaults[page] = go_on
+        return page
+
+    def _tool_row(self, offer: ToolOffer) -> Adw.ActionRow:
+        match offer:
+            case SetUp(title=title):
+                return _row(title, "Already set up. It keeps working after the switch.")
+            case CannotSetUp(title=title, reason=reason):
+                return _row(title, reason)
+            case Offer():
+                button = Gtk.Button(valign=Gtk.Align.CENTER)
+                row = _row(offer.title, "", suffix=button)
+                button.connect("clicked", lambda _button: self._toggle_tool(offer, row, button))
+                self._show_tool(offer, row, button)
+                return row
+
+    def _consented(self, tool: str) -> bool:
+        return any(consent.plan.tool == tool for consent in self._flow.consents)
+
+    def _show_tool(self, offer: Offer, row: Adw.ActionRow, button: Gtk.Button) -> None:
+        chosen = self._consented(offer.tool)
+        row.set_subtitle(WILL_SET_UP if chosen else NOT_SET_UP)
+        button.set_label(UNDO_LABEL if chosen else SET_UP_LABEL)
+
+    def _toggle_tool(self, offer: Offer, row: Adw.ActionRow, button: Gtk.Button) -> None:
+        """Set up asks first; taking a choice back before the switch needs no question."""
+        if self._consented(offer.tool):
+            self._flow.withdraw(offer.tool)
+            self._show_tool(offer, row, button)
+            return
+
+        def agree() -> None:
+            self._flow.consent(WireConsent(offer.plan))
+            self._show_tool(offer, row, button)
+
+        title = offer.title
+        self._confirm = ConsentDialog(
+            heading=f"Set up {title}?",
+            body=(
+                f"When you switch, these files change so that {title}'s output loads in "
+                "Hyprland. Nothing changes before then."
+                if offer.plan.files
+                else f"Nothing of {title}'s changes. When you switch, Hyprland loads what "
+                f"{title} writes."
+            ),
+            verb=f"Set up {title}",
+            on_agree=agree,
+            plan=offer.plan,
+        )
+        self._confirm.present(self)
+
+    def _gate(self, backup: Backup) -> None:
         gate = self._flow.stage_and_gate()
 
         if gate.blocks:
@@ -447,6 +548,9 @@ class MigrationDialog(Adw.Dialog):
         )
         group.add(_row("Backup", str(backup.path)))
         group.add(_row("Files copied", str(backup.count())))
+        chosen = [consent.plan.title for consent in self._flow.consents]
+        if chosen:
+            group.add(_row(WILL_SET_UP, ", ".join(chosen)))
         group.add(
             _row(
                 "Checked",
@@ -473,7 +577,12 @@ class MigrationDialog(Adw.Dialog):
         result = await self._flow.switch()
         if not result.ok:
             await self._flow.roll_back_live()
-            detail = "\n".join(check.detail for check in result.failures if check.detail)
+            detail = "\n".join(
+                [
+                    *(check.detail for check in result.failures if check.detail),
+                    *self._flow.rollback_notes,
+                ]
+            )
             self._view.push(
                 self._failed_page(
                     "The new configuration did not load, so it was rolled back",
@@ -525,6 +634,12 @@ class MigrationDialog(Adw.Dialog):
                 unverified.add(_row(note, ""))
             column.append(unverified)
 
+        if result.bridges:
+            tools = Adw.PreferencesGroup(title=TOOLS_TITLE)
+            for note in result.bridges:
+                tools.add(_row(note, ""))
+            column.append(tools)
+
         page.get_child().set_content(_scrolled(column))
 
         keep = _suggested("Keep")
@@ -543,12 +658,12 @@ class MigrationDialog(Adw.Dialog):
                 "Your settings are now set up here. Your old configuration is backed up.",
             )
         else:
-            self._finish(
-                "Rolled back",
+            said = (
                 "Nothing was kept. You are on the configuration you started with."
                 if decision is Decision.ROLLED_BACK
-                else "Nobody confirmed the switch, so it was rolled back automatically.",
+                else "Nobody confirmed the switch, so it was rolled back automatically."
             )
+            self._finish("Rolled back", "\n\n".join([said, *self._flow.rollback_notes]))
 
     def _tick(self, remaining: float) -> None:
         if self._countdown_label is not None:
