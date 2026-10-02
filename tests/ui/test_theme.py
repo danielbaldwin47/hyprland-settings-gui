@@ -2,9 +2,10 @@
 
 The override changes this app's own colour scheme through `Adw.StyleManager`, never the
 desktop's. "System" is asserted as the scheme the app asks for (`DEFAULT`) and the stored
-choice, not as light or dark: what System *looks* like is the platform's answer, and the
-UI tier does not read the owner's settings portal to find it out. Light and Dark are forced
-schemes, so their `dark` is asserted outright.
+choice, never as light or dark: what System *looks* like is the platform's answer (until
+#212 gives this tier a private D-Bus bus, the answer of whatever settings portal the worker
+can reach), so no assertion here depends on it. Light and Dark are forced schemes, so their
+`dark` is asserted outright, and the drawn surfaces are checked on those two grounds.
 """
 
 from __future__ import annotations
@@ -233,3 +234,125 @@ def test_remembering_a_choice_makes_forgetting_available(tmp_path: Path) -> None
 
     assert window.lookup_action("forget-remembered").get_enabled() is True
     assert dict(stored(tmp_path).remembered) == {"import-overwrite": "replace"}
+
+
+# --- swatches legible on both grounds (ADR-0019) ----------------------------------------------
+
+NEAR_BLACK = "#050505"
+NEAR_WHITE = "#fafafa"
+SEE_THROUGH = "#33ccff55"
+
+
+def luminance(pixel: tuple[int, int, int]) -> float:
+    """WCAG relative luminance of an sRGB pixel."""
+
+    def linear(channel: int) -> float:
+        c = channel / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (linear(channel) for channel in pixel)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    high, low = sorted((luminance(a), luminance(b)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+class Drawn:
+    """A widget as rendered on its window, readable pixel by pixel in widget coordinates."""
+
+    def __init__(self, widget: Any, margin: int) -> None:
+        from gi.repository import Gdk, Graphene, Gtk
+
+        native = widget.get_native()
+        found, bounds = widget.compute_bounds(native)
+        assert found
+        self.left = round(bounds.get_x()) - margin
+        self.top = round(bounds.get_y()) - margin
+        self.width = round(bounds.get_width())
+        self.height = round(bounds.get_height())
+        snapshot = Gtk.Snapshot()
+        Gtk.WidgetPaintable.new(native).snapshot(
+            snapshot, native.get_width(), native.get_height()
+        )
+        viewport = Graphene.Rect().init(
+            self.left, self.top, self.width + 2 * margin, self.height + 2 * margin
+        )
+        texture = native.get_renderer().render_texture(snapshot.to_node(), viewport)
+        downloader = Gdk.TextureDownloader.new(texture)
+        downloader.set_format(Gdk.MemoryFormat.R8G8B8A8)
+        data, self._stride = downloader.download_bytes()
+        self._data = data.get_data()
+        self._margin = margin
+
+    def at(self, x: int, y: int) -> tuple[int, int, int]:
+        """The pixel at widget coordinates (x, y); negative or past the width is the ground."""
+        offset = (y + self._margin) * self._stride + (x + self._margin) * 4
+        r, g, b, _a = self._data[offset : offset + 4]
+        return (r, g, b)
+
+
+def drawn_strip(colors: tuple[str, ...], scheme: Any) -> Drawn:
+    """A swatch strip as the Row summary shows it, on a card, under `scheme`."""
+    from gi.repository import Adw, Gtk
+    from main_loop import settle
+
+    from hyprtweaker.ui.rows.chrome import SwatchStrip
+
+    Adw.init()
+    Adw.StyleManager.get_default().set_color_scheme(scheme)
+    strip = SwatchStrip()
+    strip.set_colors(colors)
+    card = Gtk.Box(css_classes=["card"], halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+    card.append(strip.widget)
+    for side in ("start", "end", "top", "bottom"):
+        card.set_property(f"margin-{side}", 0)
+        strip.widget.set_property(f"margin-{side}", 12)
+    window = Gtk.Window(child=card, default_width=200, default_height=80)
+    window.present()
+    deadline = 200
+    while not (strip.widget.get_mapped() and strip.widget.get_width() > 0) and deadline:
+        settle("the swatch strip to map")
+        deadline -= 1
+    settle("the swatch strip to draw")
+    return Drawn(strip.widget, margin=4)
+
+
+@pytest.mark.parametrize("scheme_name", ["FORCE_DARK", "FORCE_LIGHT"])
+def test_a_swatch_the_colour_of_the_ground_still_has_a_visible_edge(scheme_name: str) -> None:
+    """A near-black stop on the dark ground, a near-white one on the light: without an edge
+    either is a hole in the strip. WCAG 1.4.11 asks 3:1 for a graphical object's boundary."""
+    from gi.repository import Adw
+
+    scheme = getattr(Adw.ColorScheme, scheme_name)
+    blend = NEAR_BLACK if scheme_name == "FORCE_DARK" else NEAR_WHITE
+    drawn = drawn_strip((blend, blend), scheme)
+    middle = drawn.height // 2
+
+    ground, edge, inside = drawn.at(-2, middle), drawn.at(0, middle), drawn.at(4, middle)
+
+    assert contrast(edge, ground) >= 3.0, (ground, edge)
+    assert contrast(edge, inside) >= 3.0, (edge, inside)
+
+
+def test_a_see_through_stop_sits_on_a_checkerboard() -> None:
+    """ADR-0019: alpha shows as alpha, not as a paler opaque colour."""
+    from gi.repository import Adw
+
+    drawn = drawn_strip((SEE_THROUGH,), Adw.ColorScheme.FORCE_DARK)
+
+    row = [drawn.at(x, 4) for x in range(2, drawn.width - 2)]
+
+    assert len(set(row)) >= 2, row
+    assert contrast(min(row, key=luminance), max(row, key=luminance)) > 1.2, row
+
+
+def test_an_opaque_stop_is_one_flat_colour() -> None:
+    from gi.repository import Adw
+
+    drawn = drawn_strip(("#33ccff",), Adw.ColorScheme.FORCE_DARK)
+
+    row = {drawn.at(x, 4) for x in range(2, drawn.width - 2)}
+
+    assert row == {(0x33, 0xCC, 0xFF)}

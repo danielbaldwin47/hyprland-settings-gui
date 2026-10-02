@@ -42,6 +42,20 @@ _SWATCH = 14.0
 """Side of one gradient swatch, in pixels. Big enough to read a colour off, small enough that
 a four-stop gradient does not start competing with the Row's title for width."""
 
+_EDGE_ALPHA = 0.6
+"""How much of the foreground colour the strip's hairline edge takes (ADR-0019).
+
+The edge is what keeps a stop the colour of the ground from vanishing into it. Measured on
+the rendered strip: 0.6 gives at least 3:1 (WCAG 1.4.11, a graphical object's boundary)
+against the Row's card on both grounds and against a near-black or near-white stop; 0.5 fell
+short on the light ground, where Adwaita's foreground is itself 80% opaque."""
+
+_CHECKER = 4
+"""Side of one checkerboard cell under a see-through stop, in pixels, and its two greys:
+the ones GTK's own colour swatch uses, so a stop reads the same here as on the colour button
+in the expanded editor."""
+_CHECKER_GREYS = (0.66, 0.33)
+
 Navigate = Callable[[str], None]
 """Show the Row for an Option name. The window's job -- the factory only knows the name."""
 
@@ -282,13 +296,44 @@ class SwatchStrip:
         self.widget.queue_draw()
 
     def _draw(self, _area: Gtk.DrawingArea, context: Any, width: int, height: int) -> None:
+        """Stops inside a hairline edge, see-through ones over a checkerboard (ADR-0019).
+
+        The edge takes the widget's foreground colour, read on every draw, so it is dark on
+        the light ground and light on the dark one; GTK redraws the strip when the colour
+        scheme changes the style, which the widget probe of #183 confirmed.
+        """
         if not self._rgba:
             return
-        span = width / len(self._rgba)
+        span = (width - 2) / len(self._rgba)
         for index, rgba in enumerate(self._rgba):
+            x = 1 + index * span
+            if rgba.alpha < 1:
+                _checkerboard(context, x, 1, span, height - 2)
             context.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
-            context.rectangle(index * span, 0, span, height)
+            context.rectangle(x, 1, span, height - 2)
             context.fill()
+        edge = self.widget.get_color()
+        context.set_source_rgba(edge.red, edge.green, edge.blue, edge.alpha * _EDGE_ALPHA)
+        context.set_line_width(1)
+        context.rectangle(0.5, 0.5, width - 1, height - 1)
+        context.stroke()
+
+
+def _checkerboard(context: Any, x: float, y: float, width: float, height: float) -> None:
+    """Paint GTK's colour-swatch checkerboard into one rectangle, so alpha reads as alpha."""
+    context.save()
+    context.rectangle(x, y, width, height)
+    context.clip()
+    light, dark = _CHECKER_GREYS
+    context.set_source_rgb(light, light, light)
+    context.paint()
+    context.set_source_rgb(dark, dark, dark)
+    for row in range(int(height // _CHECKER) + 1):
+        for column in range(int(width // _CHECKER) + 1):
+            if (row + column) % 2:
+                context.rectangle(x + column * _CHECKER, y + row * _CHECKER, _CHECKER, _CHECKER)
+    context.fill()
+    context.restore()
 
 
 _BADGE_CHARS = 20
