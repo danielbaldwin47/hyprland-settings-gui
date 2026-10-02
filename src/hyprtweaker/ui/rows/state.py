@@ -19,10 +19,11 @@ the one place that judgement is made, so no control can make it differently.
 from __future__ import annotations
 
 import enum
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
+from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import (
     UNSET,
     CssGaps,
@@ -65,6 +66,8 @@ PENDING_RESTART_PILL: Final = "Pending restart"
 UNAPPLIED_PILL: Final = "Didn't apply"
 OVERRIDDEN_PILL: Final = "Overridden"
 DEVICE_PILL: Final = "Per-device"
+NOT_IN_HYPRLAND_PILL: Final = "Not in this Hyprland"
+"""Which of these a Row shows, and in what order, is `PILL_PRECEDENCE`'s alone."""
 
 _UNLABELLED_NULL: Final = "Not set"
 """What a nullable Option with no curated `null_label` falls back to.
@@ -345,6 +348,16 @@ class RowContext(Protocol):
     @property
     def device_overrides(self) -> Mapping[str, tuple[str, ...]]: ...
 
+    @property
+    def live_hyprland(self) -> LiveHyprland | None: ...
+
+    def unknown_to_version(self, option: ResolvedOption) -> bool:
+        """Whether a running Hyprland was described and this Option is not among its own.
+
+        False with no compositor: absence of evidence badges nothing.
+        """
+        ...
+
     def value_of(self, option: ResolvedOption) -> OptionValue: ...
 
     def effective_value(self, option: ResolvedOption) -> Any: ...
@@ -424,77 +437,160 @@ def _same_value(left: Any, right: Any) -> bool:
     return bool(left == right)
 
 
-def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:
-    pills: list[Pill] = []
+# --- the pills, one builder each -------------------------------------------------------------
+#
+# A builder answers whether its pill applies to this Row and, if so, what it says. It never
+# decides order or whether another pill shows: that is `PILL_PRECEDENCE`, below.
 
-    if option.visibility is not Visibility.DEFAULT:
-        pills.append(
-            Pill(
-                ADVANCED_PILL,
-                "Shown because “Show advanced settings” is on."
-                if option.visibility is Visibility.ADVANCED
-                else "A low-level setting: shown only here, in the Config view.",
-            )
-        )
 
-    if option.name in context.unapplied:
-        # ADR-0016: "An unexplained read-back mismatch (value didn't take, no error, no
-        # override) badges the Row 'didn't apply' and joins the Banner." The one Row badge
-        # error surfacing is allowed, and only for the *unexplained* case -- a value
-        # `user.lua` overrode on purpose is the drift badge's business, and a value Hyprland
-        # complained about by name is the Banner's. This is the case with no explanation at
-        # all: the app wrote the key and the live config does not set it.
-        pills.append(
-            Pill(
-                UNAPPLIED_PILL,
-                "This was written to your config, but Hyprland is not using it.",
-            )
-        )
+def _unapplied_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    if option.name not in context.unapplied:
+        return None
+    # ADR-0016: "An unexplained read-back mismatch (value didn't take, no error, no
+    # override) badges the Row 'didn't apply' and joins the Banner." The one Row badge
+    # error surfacing is allowed, and only for the *unexplained* case -- a value
+    # `user.lua` overrode on purpose is the drift badge's business, and a value Hyprland
+    # complained about by name is the Banner's. This is the case with no explanation at
+    # all: the app wrote the key and the live config does not set it.
+    return Pill(
+        UNAPPLIED_PILL, "This was written to your config, but Hyprland is not using it."
+    )
 
-    if option.name in context.overridden:
-        # The sibling of "Didn't apply", and the reason that one is only for the
-        # *unexplained* mismatch: this value did not take either, but for a reason the app
-        # can name. `user.lua` is required last, so it wins on purpose -- that is the
-        # escape hatch working, not a fault, and the Row says so rather than badging it as
-        # a failure (ADR-0005; deferred here from #57 until there was a reader for it).
-        pills.append(
-            Pill(
-                OVERRIDDEN_PILL,
-                # Deliberately does not name `user.lua` outright: a Bridge module is loaded
-                # after the app's Modules too and wins the same way, and telling someone to
-                # go edit a file that is not the culprit is worse than saying less. Naming
-                # the file needs Ownership class, which the Banner has and a Row does not.
-                "Something loaded after the app's own settings sets this too, so its "
-                "value wins -- usually your user.lua.",
-            )
-        )
 
+def _overridden_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    if option.name not in context.overridden:
+        return None
+    # The sibling of "Didn't apply", and the reason that one is only for the
+    # *unexplained* mismatch: this value did not take either, but for a reason the app
+    # can name. `user.lua` is required last, so it wins on purpose -- that is the
+    # escape hatch working, not a fault, and the Row says so rather than badging it as
+    # a failure (ADR-0005; deferred here from #57 until there was a reader for it).
+    return Pill(
+        OVERRIDDEN_PILL,
+        # Deliberately does not name `user.lua` outright: a Bridge module is loaded
+        # after the app's Modules too and wins the same way, and telling someone to
+        # go edit a file that is not the culprit is worse than saying less. Naming
+        # the file needs Ownership class, which the Banner has and a Row does not.
+        "Something loaded after the app's own settings sets this too, so its "
+        "value wins -- usually your user.lua.",
+    )
+
+
+def _not_in_hyprland_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # The `unknown-to-this-version` Row state (CONTEXT.md, #77): the running compositor
+    # was described and this Option is not among its own, because the app degraded onto
+    # a Schema newer than it (ADR-0012). Informative only -- the control stays editable
+    # and writes are unchanged. A *set* Option a newer release removed is Retired
+    # instead (#178), whose row in `PILL_PRECEDENCE` suppresses this one.
+    live = context.live_hyprland
+    if live is None or not context.unknown_to_version(option):
+        return None
+    return Pill(
+        NOT_IN_HYPRLAND_PILL,
+        f"Hyprland {live.version} does not have this option; the app is using its "
+        f"{context.schema.hyprland_version} schema.",
+    )
+
+
+def _pending_restart_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # "Applied to file, effective after Hyprland restart" (CONTEXT.md). Claimed only
+    # once a transaction actually laid the bytes down -- `ApplyResult.pending_restart`
+    # is the record of that, and promising a restart will produce a setting that was
+    # never written is the falsehood this pill has to avoid.
+    if option.restart is None or option.name not in context.pending_restart:
+        return None
+    return Pill(
+        PENDING_RESTART_PILL, f"Saved. It takes effect {_RESTART_EFFECT[option.restart]}."
+    )
+
+
+def _restart_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    if option.restart is None:
+        return None
+    return Pill(RESTART_PILL, f"Changing this takes effect {_RESTART_EFFECT[option.restart]}.")
+
+
+def _device_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # The `device-override` Row state (ADR-0013, CONTEXT.md). Distinct from
+    # "Overridden", which is about a *file* loaded after the app's own and is therefore
+    # the same story for every Option it touches: this one is scoped to particular
+    # hardware, so the Row still holds true for every other device and the pill has to
+    # say which. Not an error and not a failure to apply -- a per-device setting
+    # winning over the global one is `hl.device` working exactly as documented.
     devices = context.device_overrides.get(option.name)
-    if devices:
-        # The `device-override` Row state (ADR-0013, CONTEXT.md). Distinct from
-        # "Overridden", which is about a *file* loaded after the app's own and is therefore
-        # the same story for every Option it touches: this one is scoped to particular
-        # hardware, so the Row still holds true for every other device and the pill has to
-        # say which. Not an error and not a failure to apply -- a per-device setting
-        # winning over the global one is `hl.device` working exactly as documented.
-        named = ", ".join(devices)
-        pills.append(
-            Pill(
-                DEVICE_PILL,
-                f"{named} has its own value for this, which wins for that device.",
-            )
-        )
+    if not devices:
+        return None
+    named = ", ".join(devices)
+    return Pill(DEVICE_PILL, f"{named} has its own value for this, which wins for that device.")
 
-    restart = option.restart
-    if restart is not None:
-        effect = _RESTART_EFFECT[restart]
-        if option.name in context.pending_restart:
-            # "Applied to file, effective after Hyprland restart" (CONTEXT.md). Claimed only
-            # once a transaction actually laid the bytes down -- `ApplyResult.pending_restart`
-            # is the record of that, and promising a restart will produce a setting that was
-            # never written is the falsehood this pill has to avoid.
-            pills.append(Pill(PENDING_RESTART_PILL, f"Saved. It takes effect {effect}."))
-        else:
-            pills.append(Pill(RESTART_PILL, f"Changing this takes effect {effect}."))
 
-    return tuple(pills)
+def _advanced_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    if option.visibility is Visibility.DEFAULT:
+        return None
+    return Pill(
+        ADVANCED_PILL,
+        "Shown because “Show advanced settings” is on."
+        if option.visibility is Visibility.ADVANCED
+        else "A low-level setting: shown only here, in the Config view.",
+    )
+
+
+# --- the precedence table --------------------------------------------------------------------
+
+
+class PillKind(enum.Enum):
+    """A row of `PILL_PRECEDENCE`, so one row can name another it suppresses."""
+
+    UNAPPLIED = enum.auto()
+    OVERRIDDEN = enum.auto()
+    NOT_IN_HYPRLAND = enum.auto()
+    PENDING_RESTART = enum.auto()
+    RESTART = enum.auto()
+    DEVICE = enum.auto()
+    ADVANCED = enum.auto()
+
+
+@dataclass(frozen=True, slots=True)
+class PillRule:
+    """One pill's row: which pill, how to build it, and the pills it makes redundant."""
+
+    kind: PillKind
+    build: Callable[[ResolvedOption, RowContext], Pill | None]
+    suppresses: frozenset[PillKind] = frozenset()
+
+
+MAX_PILLS: Final = 2
+"""A Row shows at most this many pills (inbox #79); the last one shown lists the rest."""
+
+PILL_PRECEDENCE: Final[tuple[PillRule, ...]] = (
+    PillRule(PillKind.UNAPPLIED, _unapplied_pill),
+    # `Retired in <ver>` (#178): suppresses NOT_IN_HYPRLAND.
+    # `Set by <tool>` (#165): suppresses OVERRIDDEN.
+    PillRule(PillKind.OVERRIDDEN, _overridden_pill),
+    PillRule(PillKind.NOT_IN_HYPRLAND, _not_in_hyprland_pill),
+    PillRule(PillKind.PENDING_RESTART, _pending_restart_pill, frozenset({PillKind.RESTART})),
+    PillRule(PillKind.RESTART, _restart_pill),
+    # `New in <version>` (#177).
+    # `Plugin option` (#175).
+    PillRule(PillKind.DEVICE, _device_pill),
+    PillRule(PillKind.ADVANCED, _advanced_pill),
+)
+"""The one place pill order is decided, highest rank first (ADR-0013 suffix strip).
+
+What failed first, then who owns the value, then what is unusual about the Option. A new
+pill adds a row here at its rank -- with the pills it makes redundant, if any -- and never
+compares itself with another pill anywhere else.
+"""
+
+
+def _pills(option: ResolvedOption, context: RowContext) -> tuple[Pill, ...]:
+    built = [(rule, rule.build(option, context)) for rule in PILL_PRECEDENCE]
+    applicable = [(rule, pill) for rule, pill in built if pill is not None]
+    suppressed = {kind for rule, _ in applicable for kind in rule.suppresses}
+    ranked = [pill for rule, pill in applicable if rule.kind not in suppressed]
+    if len(ranked) <= MAX_PILLS:
+        return tuple(ranked)
+
+    *shown, last = ranked[:MAX_PILLS]
+    rest = ", ".join(pill.label for pill in ranked[MAX_PILLS:])
+    return (*shown, Pill(last.label, f"{last.tooltip}\nAlso: {rest}."))

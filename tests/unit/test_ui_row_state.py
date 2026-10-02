@@ -17,6 +17,7 @@ from typing import Any
 
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
+from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import UNSET, ConfigModel, CssGaps, Gradient, OptionValue, Vec2
 from hyprtweaker.engine.schema import (
     ResolvedOption,
@@ -60,6 +61,7 @@ class FakeContext:
         unapplied: frozenset[str] = frozenset(),
         overridden: frozenset[str] = frozenset(),
         device_overrides: Mapping[str, tuple[str, ...]] | None = None,
+        live_hyprland: LiveHyprland | None = None,
     ) -> None:
         self.schema: Schema = SCHEMA
         self.live = live
@@ -67,7 +69,11 @@ class FakeContext:
         self.unapplied = unapplied
         self.overridden = overridden
         self.device_overrides: Mapping[str, tuple[str, ...]] = device_overrides or {}
+        self.live_hyprland = live_hyprland
         self.model = ConfigModel(SCHEMA)
+
+    def unknown_to_version(self, option: ResolvedOption) -> bool:
+        return self.live_hyprland is not None and option.name not in self.live_hyprland.names
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         return self.model.get(option.name)
@@ -265,10 +271,78 @@ def test_a_device_override_does_not_dim_the_row_or_block_editing() -> None:
     assert state.dependency is None
 
 
-def test_an_advanced_restart_flagged_option_wears_both_pills_in_order() -> None:
-    option = SCHEMA["debug:gl_debugging"]
+def test_two_pills_show_in_rank_order_with_their_own_tooltips() -> None:
+    """Restart outranks Advanced: what the setting does beats why the Row is visible."""
+    pills = row_state(SCHEMA["debug:gl_debugging"], FakeContext()).pills
 
-    assert _pills(option, FakeContext()) == (ADVANCED_PILL, RESTART_PILL)
+    assert [pill.label for pill in pills] == ["Restart", "Advanced"]
+    assert pills[1].tooltip == "A low-level setting: shown only here, in the Config view."
+
+
+def _live_without(*missing: str, version: str = "0.56.0") -> LiveHyprland:
+    """A running Hyprland that describes every shipped Option except `missing`."""
+    return LiveHyprland(
+        version, tuple({"name": o.name} for o in SCHEMA if o.name not in missing)
+    )
+
+
+def test_an_option_the_running_hyprland_lacks_wears_the_not_in_this_hyprland_pill() -> None:
+    """#77: an older compositor degrades onto a newer Schema with unknown-to-this-version
+    Rows, so the user can tell an option their Hyprland ignores from one it obeys."""
+    context = FakeContext(live_hyprland=_live_without("decoration:rounding"))
+
+    (pill,) = row_state(SCHEMA["decoration:rounding"], context).pills
+
+    assert pill.label == "Not in this Hyprland"
+    assert pill.tooltip == (
+        "Hyprland 0.56.0 does not have this option; the app is using its 0.56.2 schema."
+    )
+    assert _pills(SCHEMA["general:gaps_in"], context) == (), "only the option it lacks"
+
+
+def test_no_running_hyprland_means_no_option_is_unknown_to_it() -> None:
+    assert _pills(SCHEMA["decoration:rounding"], FakeContext(live_hyprland=None)) == ()
+
+
+def test_an_option_unknown_to_the_running_hyprland_stays_editable() -> None:
+    """The pill informs; it does not lock. The write path is unchanged (#181)."""
+    context = FakeContext(live_hyprland=_live_without("decoration:rounding"))
+
+    state = row_state(SCHEMA["decoration:rounding"], context)
+
+    assert state.editable
+    assert state.resettable
+
+
+def test_a_row_matching_more_than_two_pills_shows_the_top_two_and_lists_the_rest() -> None:
+    """At most two pills (inbox #79); the second's tooltip names every other one, in rank
+    order, so nothing that applies is hidden from a user who hovers."""
+    option = SCHEMA["debug:gl_debugging"]  # Advanced and Restart before anything happens
+    context = FakeContext(
+        unapplied=frozenset({option.name}),
+        overridden=frozenset({option.name}),
+        live_hyprland=_live_without(option.name),
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Overridden")
+    assert first.tooltip == "This was written to your config, but Hyprland is not using it."
+    assert second.tooltip.endswith("\nAlso: Not in this Hyprland, Restart, Advanced.")
+    assert second.tooltip.startswith("Something loaded after the app's own settings")
+
+
+def test_a_pending_restart_replaces_the_restart_pill_rather_than_joining_it() -> None:
+    """Suppression is the table's: a suppressed pill is not shown and not listed."""
+    option = SCHEMA["debug:gl_debugging"]
+    context = FakeContext(
+        pending_restart=frozenset({option.name}), live_hyprland=_live_without(option.name)
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Not in this Hyprland", "Pending restart")
+    assert second.tooltip.endswith("\nAlso: Advanced.")
 
 
 # --- dependency badges ------------------------------------------------------------------------
