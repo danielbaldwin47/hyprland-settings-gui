@@ -1333,6 +1333,11 @@ class Session:
         """Every saved profile as `(slug, profile)`, sorted by name (ADR-0015)."""
         return self._profile_store.list()
 
+    @property
+    def monitor_profiles_revision(self) -> int:
+        """Moves whenever a profile is saved, updated or deleted: the finder re-lists on it."""
+        return self._profile_store.revision
+
     def save_monitor_profile(
         self, name: str, connected: Sequence[Mapping[str, Any]] = ()
     ) -> str:

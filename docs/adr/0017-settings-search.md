@@ -39,11 +39,13 @@ A hit resolves against the **active View** first. Only when the Row has no home 
 
 One in-memory index, built at startup from the Schema (Generated + Overlay) and the model; Entity entries are rebuilt on the model-change signal. The corpus is under a thousand rows, so rebuilds are sub-millisecond. No persistence, no per-query rebuild.
 
+**Amended during #75 — Entity entries are pulled, not pushed.** No model-change signal for Entities exists: the sites that change an Entity list (the entity-edit envelope, undo, profile activation and its revert, the re-read after a foreign reload, the startup load) call no common hook, and a signal fired from each would go stale at the next new mutation site, where a missed fire lands a hit on the wrong row. Instead, Entity entries rebuild when the model's Entity lists, or the Monitor profile store's revision, differ from those they were built from, checked when the finder queries. Comparing is cheap (tuple equality short-circuits on identity, and the entities are frozen), so nothing Entity-related is built at startup: the first query builds it. Monitor profiles are files, not model state, so their store counts its own writes (`ProfileStore.revision`) and the index re-lists them only when that count moves. The window re-runs an open query on every `sync`, so a showing result list follows an undo or a reload, and re-resolves a hit when it is opened: by identity, then by equality, and when neither finds the entity it refreshes the list and says so in a toast rather than revealing by a stale position.
+
 ## Consequences
 
 - The one-off reveal path (ADR-0013) must be reachable from search navigation: scroll-to-Row, flash, and temporary visibility for advanced/hidden hits.
 - The Overlay's curated titles are index input — the CI completeness test (ADR-0011) already guarantees they exist.
-- Entity search fields come from the model, so the index subscribes to the same change signal Read-back drives (ADR-0010).
+- Entity search fields come from the model, so the index subscribes to the same change signal Read-back drives (ADR-0010). *Amended during #75:* it compares the model's Entity lists at query time instead (§Index build), so no mutation site has to fire anything.
 - The sidebar's search-results mode needs keyboard traversal (arrows + Enter) since Ctrl+F users won't reach for the mouse.
 
 ## Alternatives considered

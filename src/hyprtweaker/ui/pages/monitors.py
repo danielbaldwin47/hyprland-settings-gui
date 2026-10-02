@@ -44,7 +44,8 @@ from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     snap_position,
 )
 from hyprtweaker.engine.profiles import MonitorProfile  # noqa: E402
-from hyprtweaker.ui.pages.entity_text import rule_summary  # noqa: E402
+from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import profile_summary, rule_summary  # noqa: E402
 from hyprtweaker.ui.pages.monitor_rows import (  # noqa: E402
     ModeRows,
     ScaleRows,
@@ -353,6 +354,11 @@ class MonitorsPage:
         self._profile_rows: list[Adw.ActionRow] = []
         self._catch_all_row: Adw.ExpanderRow | None = None
         self._listed: dict[Adw.PreferencesGroup, list[Gtk.Widget]] = {}
+        self._rule_rows: dict[str, Gtk.Widget] = {}
+        """Each rule's row by its identity, the `output` string: what a search hit reveals.
+        Keyed rather than parallel to a list, because a rule's row may sit in Connected,
+        Not connected or the catch-all group depending on what is plugged in."""
+        self._profile_rows_by_slug: dict[str, Adw.ActionRow] = {}
 
         self.refresh()
 
@@ -460,6 +466,8 @@ class MonitorsPage:
         self._disconnected_rows = []
         self._profile_rows = []
         self._catch_all_row = None
+        self._rule_rows = {}
+        self._profile_rows_by_slug = {}
 
         # The canvas: live outputs at logical size, IPC geometry (ADR-0008).
         displays = []
@@ -490,6 +498,8 @@ class MonitorsPage:
                 description=str(monitor.get("description", "")),
             )
             row = self._connected_row(monitor, rule, editable=editable)
+            if rule is not None:
+                self._rule_rows[rule.output] = row
             self._connected_group.add(row)
             self._connected_rows.append(row)
             self._listed.setdefault(self._connected_group, []).append(row)
@@ -504,6 +514,7 @@ class MonitorsPage:
         leftover = disconnected_rules(rules, monitors)
         for rule in leftover:
             row = self._disconnected_row(rule, editable=editable)
+            self._rule_rows[rule.output] = row
             self._disconnected_group.add(row)
             self._disconnected_rows.append(row)
             self._listed.setdefault(self._disconnected_group, []).append(row)
@@ -518,6 +529,7 @@ class MonitorsPage:
             removable=catch_all is not None,
             breaking=True,
         )
+        self._rule_rows[CATCH_ALL_OUTPUT] = self._catch_all_row
         self._catch_all_group.add(self._catch_all_row)
         self._listed.setdefault(self._catch_all_group, []).append(self._catch_all_row)
 
@@ -535,6 +547,7 @@ class MonitorsPage:
             )
             self._profiles_group.add(row)
             self._profile_rows.append(row)
+            self._profile_rows_by_slug[slug] = row
             self._listed.setdefault(self._profiles_group, []).append(row)
         if not profiles:
             hint = Adw.ActionRow(
@@ -543,6 +556,20 @@ class MonitorsPage:
             )
             self._profiles_group.add(hint)
             self._listed.setdefault(self._profiles_group, []).append(hint)
+
+    # -- search reveals --
+
+    def reveal_rule(self, output: str) -> Gtk.Widget | None:
+        """Bring the row for the monitor rule `output` into view and flash it.
+
+        Wherever it is listed -- Connected, Not connected, or the catch-all. Navigate +
+        flash as `BindsPage.reveal`; returns the row for an explicit scroll, or `None`.
+        """
+        return _reveal(self._rule_rows.get(output))
+
+    def reveal_profile(self, slug: str) -> Gtk.Widget | None:
+        """Bring Monitor profile `slug`'s row, in the Profiles group, into view and flash it."""
+        return _reveal(self._profile_rows_by_slug.get(slug))
 
     # -- profiles --
 
@@ -555,12 +582,9 @@ class MonitorsPage:
         drifted: bool,
         editable: bool,
     ) -> Adw.ActionRow:
-        rules = len(profile.monitors)
-        pins = sum(1 for pin in profile.pins.values() if pin is not None)
-        summary = f"{rules} display {'rule' if rules == 1 else 'rules'}"
-        if pins:
-            summary += f" · {pins} workspace {'pin' if pins == 1 else 'pins'}"
-        row = Adw.ActionRow(title=profile.name, subtitle=summary, use_markup=False)
+        row = Adw.ActionRow(
+            title=profile.name, subtitle=profile_summary(profile), use_markup=False
+        )
 
         if active and drifted:
             # The drift badge (ADR-0015): reality and the capture disagree.
@@ -880,6 +904,13 @@ class MonitorsPage:
         )
         output = rule.output if rule is not None else self.identity_for(monitor)
         self._apply(output, {"position": format_position(x, y)})
+
+
+def _reveal(row: Gtk.Widget | None) -> Gtk.Widget | None:
+    if row is not None:
+        row.grab_focus()
+        flash(row)
+    return row
 
 
 def _logical(monitor: Mapping[str, Any]) -> tuple[int, int]:
