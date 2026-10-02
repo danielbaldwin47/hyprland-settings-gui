@@ -106,9 +106,17 @@ class PlanView:
             self.lines.append(edit.excerpt_after.rstrip("\n"))
             expander = Gtk.Expander(label=SHOW_CHANGES, child=changes)
             self.widget.append(expander)
-        if plan.files:
+        if any(edit.change is not Change.NEW for edit in plan.files):
             copies = f"A copy of each changed file is kept in {plan.backups_shown}."
             self._add(_label(copies, dim=True), copies)
+        elif plan.files:
+            # Only new files: there is nothing to keep a copy of (#148 hand-test 9).
+            fresh = (
+                f"Every file is new, and removing {plan.title} deletes them again."
+                if len(plan.files) > 1
+                else f"The file is new, and removing {plan.title} deletes it again."
+            )
+            self._add(_label(fresh, dim=True), fresh)
 
     def _patch(self, plan: WirePlan) -> None:
         lead = f"Then change your own {plan.title} script as below. This app never edits it."

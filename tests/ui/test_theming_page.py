@@ -272,7 +272,9 @@ def test_switching_to_a_tool_not_set_up_shows_its_files_first_then_sets_it_up_in
     assert lines[2] == "To set wallust up, these files change:"
     assert f"{tmp_path}/wallust/templates/hyprtweaker-hyprland.lua (new)" in lines
     assert f"{tmp_path}/wallust/wallust.toml (new)" in lines
-    assert any(line.startswith("A copy of each changed file is kept in ") for line in lines)
+    # Both files are new (#148 hand-test 9): no copy of a changed file is promised.
+    assert "Every file is new, and removing wallust deletes them again." in lines
+    assert not any(line.startswith("A copy of each changed file") for line in lines)
     assert not (tmp_path / "wallust").exists()
 
     answer(page.dialog, "agree")
@@ -679,6 +681,8 @@ def test_other_tools_offer_set_up_or_say_why_they_cannot(
         "noctalia",
         "Waiting for noctalia's first run. Its colors load the next time noctalia runs.",
     ) in page.rows
+    # Setup only added a file (#148 hand-test 9): nothing to keep a copy of.
+    assert page.toasts[-1] == "noctalia is set up"
 
 
 def test_remove_names_every_file_it_puts_back_or_deletes_and_cancel_keeps_them(

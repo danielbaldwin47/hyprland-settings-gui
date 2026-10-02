@@ -56,6 +56,7 @@ from hyprtweaker.engine.bridge import (  # noqa: E402
     has_run,
 )
 from hyprtweaker.engine.bridge.wire import (  # noqa: E402
+    Change,
     ChangedFile,
     IfChanged,
     NeedsChoice,
@@ -748,7 +749,7 @@ class ThemingPage:
                 register=lambda t: self._session.add_bridge(t, source=Wallpaper(t)),
                 unregister=self._session.remove_bridge,
             )
-            self._report_wired(done)
+            self._report_wired(done, plan)
             switched = isinstance(done, Wired)
         if switched and command is not None:
             # The command the confirm named, and nothing else: argv[0] is the tool found.
@@ -785,15 +786,17 @@ class ThemingPage:
                 WireConsent(plan),
                 register=self._session.add_bridge,
                 unregister=self._session.remove_bridge,
-            )
+            ),
+            plan,
         )
         self.refresh()
 
-    def _report_wired(self, done: Wired | NotDone) -> None:
+    def _report_wired(self, done: Wired | NotDone, plan: WirePlan) -> None:
         title = REGISTRY[done.tool].title
         if isinstance(done, NotDone):
             self._tell(f"{title} was not set up", done.reason)
-        elif done.written:
+        elif any(edit.change is not Change.NEW for edit in plan.files):
+            # Copies exist only of files that were there before (#148 hand-test 9).
             self._actions.toast(f"{title} is set up. Copies of the files it changed are kept.")
         else:
             self._actions.toast(f"{title} is set up")
