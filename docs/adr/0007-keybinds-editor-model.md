@@ -51,7 +51,7 @@ Conflict = same (submap, modmask, trigger) among enabled binds (`submap_universa
 
 ### Imported edge cases
 
-Dead-keysym binds arrive commented out from the Importer → disabled row, error badge, re-capture affordance. `catchall`-with-mods approximations are badged "imported approximately". Multi-key binds (`A&B`) are read-only with no editor at all (amended during #162): on Hyprland 0.56.2 an enabled `&` bind fails the whole config (`hl.bind: failed to parse key string: Unknown keysym`), so such a bind can never be enabled and an editor would serve nothing. The row wears the multi-key read-only badge that #139 builds.
+Dead-keysym binds arrive commented out from the Importer → disabled row, error badge, re-capture affordance. Both Importers do this since #131; the editor saves a description or flag edit to such a bind with its trigger untouched, since the Writer keeps a disabled bind commented out, and still blocks an edit that changes a trigger to a dead name or saves an enabled bind with one (#108). `catchall`-with-mods approximations are badged "imported approximately". Multi-key binds (`A&B`) are read-only with no editor at all (amended during #162): on Hyprland 0.56.2 an enabled `&` bind fails the whole config (`hl.bind: failed to parse key string: Unknown keysym`), so such a bind can never be enabled and an editor would serve nothing. The row wears the multi-key read-only badge that #139 builds.
 
 ### Placement
 

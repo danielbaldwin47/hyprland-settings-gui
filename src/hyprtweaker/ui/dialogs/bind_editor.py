@@ -302,9 +302,19 @@ class BindEditor(Adw.Dialog):
             return "A keybind needs a trigger."
         # Typed triggers get the same hard block Capture applies. A dead keysym reaching
         # the writer is not a cosmetic problem: Lua fails the whole config on it, and the
-        # compositor gives no error to find it by (ADR-0007).
+        # compositor gives no error to find it by (ADR-0007). The one exception is a
+        # disabled bind whose trigger this edit left alone, such as a dead keysym the
+        # Importer disabled (#108): the Writer keeps a disabled bind commented out, so
+        # nothing dead reaches the compositor, and blocking would mean the user cannot
+        # fix the description until they have fixed the key.
         problem = validate_trigger(trigger, in_submap=self._in_submap())
-        if problem is not None and problem.blocking:
+        original = self._original
+        untouched_and_disabled = (
+            original is not None
+            and not original.enabled
+            and parse_trigger(trigger) == parse_trigger(original.keys)
+        )
+        if problem is not None and problem.blocking and not untouched_and_disabled:
             return problem.full_text()
         for left, right in INCOMPATIBLE:
             if (
