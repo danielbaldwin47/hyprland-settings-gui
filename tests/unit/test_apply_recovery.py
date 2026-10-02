@@ -223,3 +223,18 @@ def test_only_foreign_files_offer_quarantine() -> None:
 def test_blank_lines_are_not_problems() -> None:
     """`configerrors` pads its array; a blank element is not a broken file."""
     assert not plan(["", "   "]).unhealthy
+
+
+def test_one_file_printed_two_ways_is_one_problem() -> None:
+    """Hyprland names user.lua once by its require and once by a path it cuts with `...`;
+    the errors dialog showed two cards with the same two buttons (found in #148's fixes)."""
+    errors = [
+        "require(\"user\"): error loading module 'user' from file "
+        "'/home/alex/.config/hypr/user.lua':",
+        "...lex/.config/hypr/user.lua:2: syntax error near 'is'",
+    ]
+
+    found = plan(errors)
+
+    assert len(found.problems) == 1
+    assert len(found.problems[0].errors) == 2

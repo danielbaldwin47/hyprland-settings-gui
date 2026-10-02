@@ -202,15 +202,16 @@ def plan(
 def _group(errors: Sequence[ConfigError]) -> tuple[Problem, ...]:
     """One `Problem` per blamed file, in the order the files were first mentioned.
 
-    Keyed by `(path, ownership)` rather than by path alone. The pair cannot normally
-    disagree for one path, and keying on it costs nothing -- but a path that somehow
-    attributed two ways would otherwise have its lines merged under whichever class was seen
-    first, silently offering one file's recovery for another file's error.
+    Keyed by the file's identity and its ownership. The identity is the App-dir Module when
+    the line names one, else the file's own name: Hyprland prints one file two ways -- a
+    `require` target (`user`) and a path it cuts short with `...` -- and two cards with the
+    same buttons for one file read as two problems. Ownership stays in the key, so a file
+    that somehow attributed two ways never has its lines merged under one class.
     """
     order: list[tuple[str, Ownership]] = []
     grouped: dict[tuple[str, Ownership], list[ConfigError]] = {}
     for error in errors:
-        key = (error.path, error.ownership)
+        key = (_identity(error), error.ownership)
         if key not in grouped:
             grouped[key] = []
             order.append(key)
@@ -218,11 +219,25 @@ def _group(errors: Sequence[ConfigError]) -> tuple[Problem, ...]:
 
     return tuple(
         Problem(
-            path=path,
-            module=grouped[(path, ownership)][0].module,
-            ownership=ownership,
-            errors=tuple(grouped[(path, ownership)]),
-            actions=_ACTIONS[ownership],
+            path=_shown_path(grouped[key]),
+            module=grouped[key][0].module,
+            ownership=key[1],
+            errors=tuple(grouped[key]),
+            actions=_ACTIONS[key[1]],
         )
-        for path, ownership in order
+        for key in order
     )
+
+
+def _identity(error: ConfigError) -> str:
+    if error.module is not None:
+        return error.module
+    name = error.path.rsplit("/", 1)[-1]
+    return name.removesuffix(".lua")
+
+
+def _shown_path(errors: Sequence[ConfigError]) -> str:
+    """The fullest path the group's lines give: not one Hyprland cut short with `...`."""
+    paths = [error.path for error in errors]
+    whole = [path for path in paths if path.startswith("/")]
+    return (whole or [path for path in paths if not path.startswith("...")] or paths)[0]
