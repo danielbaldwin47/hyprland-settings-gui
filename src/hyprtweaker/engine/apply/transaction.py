@@ -251,6 +251,15 @@ class ApplyTransaction:
         self._reloader = reloader or Reloader(
             client=client, events=events, timeout=reload_timeout
         )
+        self._overwrite: set[str] = set()
+
+    def allow_overwrite(self, *modules: str) -> None:
+        """Let the next write replace these hand-edited Modules: the user said so (ADR-0005).
+
+        One-shot, consumed by the next `run` that reaches the Writer, because the answer was
+        about the file as it is now; a later hand edit is a new question.
+        """
+        self._overwrite.update(modules)
 
     @property
     def reloader(self) -> Reloader:
@@ -281,9 +290,12 @@ class ApplyTransaction:
             return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
 
         draft = self._open_draft()
+        overwrite, self._overwrite = frozenset(self._overwrite), set()
         try:
             write = self._writer.write(
-                self._model, before_replace=draft.preserve if draft is not None else None
+                self._model,
+                overwrite=overwrite,
+                before_replace=draft.preserve if draft is not None else None,
             )
         except (LuaSyntaxError, ProtectedFile, ValueError) as error:
             # ADR-0010's guarantee: the gate runs over every rendered file before the first

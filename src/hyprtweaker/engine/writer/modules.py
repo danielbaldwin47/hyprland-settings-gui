@@ -94,6 +94,29 @@ as a set rather than inferred from "a `.lua` at the App dir root", because `lega
 """
 
 
+ENTITY_KIND_MODULES: dict[str, str] = {
+    "submaps": BINDS_MODULE,
+    "binds": BINDS_MODULE,
+    "unbinds": BINDS_MODULE,
+    "window_rules": WINDOW_RULES_MODULE,
+    "layer_rules": LAYER_RULES_MODULE,
+    "monitors": MONITORS_MODULE,
+    "workspace_rules": WORKSPACE_RULES_MODULE,
+    "curves": ANIMATIONS_MODULE,
+    "animations": ANIMATIONS_MODULE,
+    "gestures": GESTURES_MODULE,
+    "devices": DEVICES_MODULE,
+    "env": ENV_MODULE,
+    "permissions": PERMISSIONS_MODULE,
+    "startup": AUTOSTART_MODULE,
+    "plugins": PLUGINS_MODULE,
+}
+"""The Entity Module each `EntitySet` list renders into, keyed by the list's name.
+
+What the session asks to learn which file an Entity edit needed: an edit whose Module was
+hand-edited never reached disk (ADR-0005), and it must not be reported as saved."""
+
+
 def is_entity_module(relpath: str) -> bool:
     """Whether an App-dir-relative path is an Entity Module the app generates.
 

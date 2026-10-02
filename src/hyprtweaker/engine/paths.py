@@ -99,6 +99,7 @@ SNAPSHOT_DIR = "snapshots"
 REPORTS_DIR = "reports"
 BACKUPS_DIR = "backups"
 BRIDGE_BACKUPS_DIR = "bridge-backups"
+EDITED_COPIES_DIR = "edited-copies"
 JOURNAL_NAME = "journal.jsonl"
 JOURNAL_PENDING_NAME = "journal-pending.json"
 SENTINEL_NAME = "migration-pending.json"
@@ -230,6 +231,15 @@ class ConfigPaths:
         restores only a file that still holds exactly what the app wrote.
         """
         return self.state_dir / BRIDGE_BACKUPS_DIR
+
+    @property
+    def edited_copies_dir(self) -> Path:
+        """Copies of hand-edited Modules the user chose to replace, one `<timestamp>/` each.
+
+        Where "Replace file" puts the edit it overwrites, under a name the user can find:
+        the Journal keeps those bytes too, but by hash, which nobody can browse (#148).
+        """
+        return self.state_dir / EDITED_COPIES_DIR
 
     @property
     def sentinel(self) -> Path:

@@ -168,6 +168,10 @@ class Applier:
         """
         return self._queue.commit_entities()
 
+    def allow_overwrite(self, *modules: str) -> None:
+        """Let the next transaction replace these hand-edited Modules (the user agreed)."""
+        self._transaction.allow_overwrite(*modules)
+
     def force_write(self) -> None:
         """Write the model and reload although no Option or Entity changed: the Module
         itself must change, as when retirement drops a key the model cannot hold."""

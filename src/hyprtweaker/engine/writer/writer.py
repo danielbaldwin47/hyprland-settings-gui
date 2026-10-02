@@ -22,7 +22,7 @@ this; the Writer stays synchronous and ignorant of the compositor.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -397,6 +397,7 @@ class Writer:
         model: ConfigModel,
         *,
         overwrite_hand_edits: bool = False,
+        overwrite: Collection[str] = (),
         before_replace: BeforeReplace | None = None,
     ) -> WriteResult:
         """Render, gate, and land the whole Module set plus the Entrypoint.
@@ -406,7 +407,7 @@ class Writer:
         overwrite" -- and ADR-0016 spells out the recovery: a Banner offering
         restore-last-known-good or open-in-editor, never an automatic write. So the default
         reports and stands down; `overwrite_hand_edits=True` is the caller carrying the
-        user's answer back in.
+        user's answer back in for every such file, and `overwrite` for the files named.
 
         Nothing reaches disk until every rendered file has passed the syntax gate: a
         half-written Module set is worse than no write at all. `before_replace` sees each
@@ -436,7 +437,7 @@ class Writer:
 
         hand_edited = manifest.hand_edited(self._paths)
         off_limits: frozenset[str] = (
-            frozenset() if overwrite_hand_edits else frozenset(hand_edited)
+            frozenset() if overwrite_hand_edits else frozenset(hand_edited) - set(overwrite)
         )
 
         self._paths.options_dir.mkdir(parents=True, exist_ok=True)

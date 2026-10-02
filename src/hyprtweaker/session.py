@@ -193,11 +193,13 @@ from hyprtweaker.engine.state.retirement import (
 from hyprtweaker.engine.triggers import trigger_load_problem
 from hyprtweaker.engine.wallpaper import Daemon, WallpaperError, Wallpapers
 from hyprtweaker.engine.writer import (
+    ENTITY_KIND_MODULES,
     BeforeReplace,
     LuaSyntaxError,
     ModuleSet,
     Writer,
     load_manifest,
+    module_relpath,
 )
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
@@ -283,6 +285,14 @@ class Health:
     half, and it needs its own field because it is an unhealthy state with no `configerrors`
     behind it at all -- nothing in `recovery` could derive it."""
 
+    held_back: tuple[str, ...] = ()
+    """App Modules an edit was not saved into because they were edited outside the app.
+
+    The Writer leaves a hand-edited Module alone (ADR-0005), so an edit that belongs in one
+    never reaches disk. Unhealthy until the user replaces the file or it stops differing:
+    every later edit to it would be refused the same way, and saying so once in a toast
+    that times out would leave the next refusal unexplained."""
+
     rescued: tuple[str, ...] = ()
     """Modules the emergency restore overwrote without asking (ADR-0016 §Zero-binds).
 
@@ -300,6 +310,7 @@ class Health:
             or self.halted
             or self.unapplied
             or self.rescued
+            or self.held_back
         )
 
     @property
@@ -331,6 +342,14 @@ class Health:
             return "Hyprland rejected a change, and the app could not put it back."
         if self.recovery.unhealthy:
             return "Hyprland reported a problem with your config."
+        if self.held_back:
+            if len(self.held_back) == 1:
+                name = self.held_back[0].rsplit("/", 1)[-1]
+                return f"{name} was edited outside this app, so changes to it are not saved."
+            return (
+                f"{len(self.held_back)} files were edited outside this app, "
+                f"so changes to them are not saved."
+            )
         if self.rescued:
             # Ranked *below* the error line, not above it. A rescue that did not fix things
             # leaves both true at once, and in that case the live problem is what the user
@@ -363,7 +382,7 @@ class Health:
         or a session with no compositor -- gets no button rather than one opening an empty
         dialog.
         """
-        if self.recovery.unhealthy:
+        if self.recovery.unhealthy or self.held_back:
             return "Details"
         if self.quarantined:
             return "Re-enable"
@@ -394,6 +413,16 @@ Notice = RetiredNotice | UnkeptNotice | RenamedNotice
 renamed them."""
 
 _NOT_CONNECTED_YET = "Connecting to Hyprland…"
+
+
+@dataclass(slots=True)
+class _HeldBack:
+    """The edits one hand-edited Module kept off disk, so "Replace file" can still save them."""
+
+    options: dict[str, OptionValue] = field(default_factory=dict)
+    lists: dict[str, tuple[Any, ...]] = field(default_factory=dict)
+    entity_titles: list[str] = field(default_factory=list)
+    """What each held-back Entity gesture was called, in the words of the undo toast."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,6 +579,14 @@ class Session:
         retired Options they set, and once for values that moved to a renamed Option.
 
         A Retired notice keeps coming, start after start, until `notice_seen` records it."""
+
+        self.on_held_back: Callable[[tuple[str, ...], tuple[str, ...]], None] | None = None
+        """Called with the gestures a transaction could not save, and the files that stopped
+        them: Modules edited outside the app, which the Writer leaves alone (ADR-0005). The
+        model is already back to what the file holds, and no undo step was recorded."""
+
+        self._held_back: dict[str, _HeldBack] = {}
+        """Per hand-edited Module, the edits it kept off disk (`replace_edited_file`)."""
 
         self.on_recorded: Callable[[Step], None] | None = None
         """Called with the gesture a finished transaction put on the undo stack.
@@ -1028,6 +1065,7 @@ class Session:
             halted=self._recovery_halted,
             unapplied=self._unapplied,
             rescued=self._rescued,
+            held_back=tuple(sorted(self._held_back)),
         )
 
     @property
@@ -3416,6 +3454,7 @@ class Session:
             return
 
         delta = self._close(result.keys)
+        held_titles = self._hold_back_options(result, delta)
         presets = self._carried_presets(result.keys)
         for preset in reversed(presets):
             # From each Preset's own snapshot, the oldest last so its value wins: an Option
@@ -3437,6 +3476,15 @@ class Session:
                     self._put_bridges(each.source.before, each.source.after)
             self._fell(result, delta, self._lists_before(failed))
             return
+
+        entity_steps, held_steps = self._hold_back_entities(result, entity_steps)
+        held_titles += [step.title for step in held_steps]
+        if held_titles:
+            # The Rows show the model, which just went back to what the files hold.
+            self._changed()
+            if self.on_held_back is not None:
+                files = tuple(m for m in sorted(self._held_back) if m in result.skipped)
+                self.on_held_back(tuple(held_titles), files)
 
         steps = self._preset_steps(presets, delta)
         for recorded in steps:
@@ -3465,6 +3513,125 @@ class Session:
             # transaction that stands with a failure (a timeout, a `user.lua` error) has its
             # failure to say. One toast per transaction, naming the newest gesture it carried.
             self.on_recorded(newest)
+
+    def _hold_back_options(
+        self, result: ApplyResult, delta: dict[str, OptionValue]
+    ) -> list[str]:
+        """Take out of the model, and out of `delta`, every edit a hand-edited Module kept
+        off disk; remember it for `replace_edited_file`. Returns the titles of those edits.
+
+        The Writer skips a hand-edited Module rather than overwrite it (ADR-0005), so such an
+        edit never reached disk and must not stand: the Row goes back to what the file says,
+        and no undo step claims a change that did not happen (hand-test defect 13, #148).
+        Also forgets what an earlier refusal held for a Module that is no longer skipped:
+        the user replaced it, or put it back as the app wrote it.
+        """
+        if result.write is None:
+            return []
+        skipped = set(result.skipped)
+        self._held_back = {m: h for m, h in self._held_back.items() if m in skipped}
+        titles: list[str] = []
+        for name in list(delta):
+            option = self._schema.get(name)
+            if option is None or module_relpath(option) not in skipped:
+                continue
+            value = self._model.get(name)
+            before = delta.pop(name)
+            if value == before:
+                continue
+            held = self._held_back.setdefault(module_relpath(option), _HeldBack())
+            held.options[name] = value
+            titles.append(option.title)
+            self._restore({name: before})
+        return titles
+
+    def _hold_back_entities(
+        self, result: ApplyResult, steps: list[EntityStep]
+    ) -> tuple[list[EntityStep], list[EntityStep]]:
+        """`steps` split into those that reached disk and those a hand-edited Module kept
+        off it, the second taken back out of the model and remembered as `_hold_back_options`
+        does for Options. A step over several lists keeps the lists that were written."""
+        skipped = set(result.skipped)
+        if not skipped:
+            return steps, []
+        kept: list[EntityStep] = []
+        held_steps: list[EntityStep] = []
+        for step in steps:
+            blocked = [e for e in step.edits if ENTITY_KIND_MODULES.get(e.kind) in skipped]
+            if not blocked:
+                kept.append(step)
+                continue
+            for edit in blocked:
+                held = self._held_back.setdefault(ENTITY_KIND_MODULES[edit.kind], _HeldBack())
+                held.lists[edit.kind] = edit.after
+                if step.title not in held.entity_titles:
+                    held.entity_titles.append(step.title)
+            self._put_back(self._lists_before([EntityStep(tuple(blocked), step.title)]))
+            held_steps.append(step)
+            rest = EntityStep.of((e for e in step.edits if e not in blocked), step.title)
+            if rest is not None:
+                kept.append(rest)
+        return kept, held_steps
+
+    def held_back_titles(self, module: str) -> tuple[str, ...]:
+        """What the user changed that `module`, edited outside the app, kept off disk."""
+        held = self._held_back.get(module)
+        if held is None:
+            return ()
+        return (*(self._schema[name].title for name in held.options), *held.entity_titles)
+
+    @property
+    def edited_copies_shown(self) -> str:
+        """Where "Replace file" keeps the edited copy, as the user knows the path."""
+        return tilde_path(self._paths.edited_copies_dir, self._paths)
+
+    def held_back_path(self, module: str) -> Path:
+        """Where a held-back Module lives, for "Open file"."""
+        return self._paths.app_dir / module
+
+    def replace_edited_file(self, module: str) -> None:
+        """The user's answer to a held-back edit: overwrite `module` with the app's version,
+        carrying the edits it kept off disk (ADR-0005's "overwrite").
+
+        The edited bytes go to the Journal before the file is replaced, as every write's do.
+        The edits are made again as edits, so the change lands as one undo step.
+        """
+        held = self._held_back.get(module)
+        if held is None or self._refuse(module):
+            return
+        self._keep_edited_copy(module)
+        self._applier.allow_overwrite(module)  # type: ignore[union-attr]  # _refuse proved it
+        if held.lists:
+
+            def put() -> None:
+                for kind, items in held.lists.items():
+                    getattr(self._model.entities, kind)[:] = items
+
+            title = held.entity_titles[-1] if held.entity_titles else None
+            self._commit_entity_edit(module, put, title=title)
+        for name, value in held.options.items():
+            self._begin_edit(name)
+            if value is UNSET:
+                self._model.unset(name)
+            else:
+                self._model.set(name, value)
+        if held.options:
+            self._applier.commit(*held.options)  # type: ignore[union-attr]  # _refuse proved it
+        if not held.options and not held.lists:
+            self._applier.force_write()  # type: ignore[union-attr]  # _refuse proved it
+        # The Rows still show what the file held; the model now holds the user's change.
+        self._changed()
+
+    def _keep_edited_copy(self, module: str) -> None:
+        """Copy the hand-edited `module` where the user can find it, before it is replaced."""
+        source = self._paths.app_dir / module
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        target = self._paths.edited_copies_dir / stamp / module
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
+        except OSError as error:
+            _log.warning("could not keep a copy of %s: %s", source, error)
 
     def _preset_steps(
         self, presets: Sequence[_AppliedPreset], delta: Mapping[str, OptionValue]

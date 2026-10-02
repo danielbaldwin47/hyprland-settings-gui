@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from .lua import LuaTree, insert, render_table, render_table_inline, table_key
 from .modules import (
+    ENTITY_KIND_MODULES,
     BridgeRequire,
     is_option_module,
     module_relpath,
@@ -44,6 +45,7 @@ from .writer import (
 )
 
 __all__ = [
+    "ENTITY_KIND_MODULES",
     "BeforeReplace",
     "BridgeRequire",
     "LuaSyntaxError",
