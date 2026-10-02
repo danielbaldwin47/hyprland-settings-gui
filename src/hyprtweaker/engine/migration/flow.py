@@ -36,6 +36,7 @@ from typing import Any, Literal, Protocol
 
 from ..bridge import REGISTRY, BridgeEntry
 from ..bridge.wire import WireConsent
+from ..files import write_atomic
 from ..importer.loss import BACKUP_NAME, LossCode, LossReport, rescue_command, rescue_line
 from ..importer.lua.mapping import import_lua
 from ..importer.lua.sandbox import Consent, Policy
@@ -830,7 +831,7 @@ class MigrationFlow:
         carries the line is about to be deleted or replaced by the user's own."""
         if self.paths.manifest.is_file():
             stripped = self._manifest().remove_bridge(tool)
-            self.paths.manifest.write_text(stripped.render(), encoding="utf-8")
+            write_atomic(self.paths.manifest, stripped.render())
         return True
 
     def _require_preview(self) -> Preview:
@@ -876,9 +877,9 @@ class MigrationFlow:
         paths.app_dir.mkdir(parents=True, exist_ok=True)
 
         if result.variables:
-            paths.vars_lua.write_text(_render_vars(result.variables), encoding="utf-8")
+            write_atomic(paths.vars_lua, _render_vars(result.variables))
         if result.legacy:
-            paths.legacy_lua.write_text(result.legacy, encoding="utf-8")
+            write_atomic(paths.legacy_lua, result.legacy)
 
         # The Writer renders `model.entities`, and an Importer returns its Entities beside the
         # model rather than in it: without this the tree carries the Options and none of the
@@ -902,7 +903,7 @@ class MigrationFlow:
             schema_version=self.schema.hyprland_version,
         )
         stamped = replace(manifest, migration=preview.result.provenance(now=self.now()))
-        self.paths.manifest.write_text(stamped.render(), encoding="utf-8")
+        write_atomic(self.paths.manifest, stamped.render())
 
 
 def _render_vars(variables: dict[str, str]) -> str:
