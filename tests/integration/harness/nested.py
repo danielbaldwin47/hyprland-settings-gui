@@ -98,6 +98,20 @@ def hyprland_binary() -> str | None:
     return shutil.which("Hyprland")
 
 
+def hyprctl_binary() -> str:
+    """The `hyprctl` beside the Hyprland this tier runs, by path.
+
+    By path because `PATH` may start with refusing stand-ins (a widget probe's does,
+    ruling A12 of the #148 review): every spawn here talks to a nested instance only.
+    """
+    binary = hyprland_binary()
+    if binary is not None:
+        beside = Path(binary).resolve().parent / "hyprctl"
+        if beside.is_file():
+            return str(beside)
+    return "hyprctl"
+
+
 #: Opt-in: a `/dev/dri/cardN` the nested Hyprland may take over (see the module docstring).
 #: Never auto-detected: the nested instance becomes that card's DRM master, which is not
 #: something to do to a developer's GPU unasked.
@@ -250,7 +264,7 @@ def drm_wrapped(
 def live_instances(env: Mapping[str, str]) -> dict[str, dict[str, Any]]:
     """Signature -> instance record, for the instances actually answering right now."""
     result = subprocess.run(
-        ["hyprctl", "instances", "-j"],
+        [hyprctl_binary(), "instances", "-j"],
         capture_output=True,
         text=True,
         env=dict(env),
@@ -371,7 +385,24 @@ class NestedHyprland:
         environment = home_environment(self.home)
         environment["HYPRLAND_INSTANCE_SIGNATURE"] = self.signature
         environment["WAYLAND_DISPLAY"] = self.wayland_display
+        # The nested instance's own hyprctl by path, ahead of any refusing stand-in on
+        # PATH (a widget probe's refuses a bare `hyprctl`, ruling A12): one link in a
+        # directory of its own, so nothing else on PATH moves ahead of the stand-ins.
+        tools = self._tool_dir()
+        if tools is not None:
+            environment["PATH"] = os.pathsep.join([str(tools), environment.get("PATH", "")])
         return environment
+
+    def _tool_dir(self) -> Path | None:
+        real = Path(hyprctl_binary())
+        if not real.is_absolute():
+            return None
+        directory = self.home / ".nested-bin"
+        directory.mkdir(exist_ok=True)
+        link = directory / "hyprctl"
+        if not link.exists():
+            link.symlink_to(real)
+        return directory
 
     @property
     def instance(self) -> Instance:
@@ -455,7 +486,7 @@ class NestedHyprland:
         deadline = time.monotonic() + self.timeout
         while time.monotonic() < deadline:
             result = subprocess.run(
-                ["hyprctl", "-j", "monitors"],
+                [hyprctl_binary(), "-j", "monitors"],
                 capture_output=True,
                 text=True,
                 env=self.env,
@@ -587,7 +618,7 @@ class NestedHyprland:
 
     def hyprctl_text(self, *args: str, timeout: float = IPC_TIMEOUT_SECONDS) -> str:
         result = subprocess.run(
-            ["hyprctl", *args],
+            [hyprctl_binary(), *args],
             capture_output=True,
             text=True,
             env=self.env,
@@ -599,7 +630,7 @@ class NestedHyprland:
     def hyprctl(self, *args: str, timeout: float = IPC_TIMEOUT_SECONDS) -> Any:
         """`hyprctl -j`, decoded. Returns `None` when the reply is not JSON."""
         result = subprocess.run(
-            ["hyprctl", "-j", *args],
+            [hyprctl_binary(), "-j", *args],
             capture_output=True,
             text=True,
             env=self.env,
@@ -625,7 +656,7 @@ class NestedHyprland:
             part = list(names[start : start + chunk])
             batch = " ; ".join(f"getoption {name}" for name in part)
             result = subprocess.run(
-                ["hyprctl", "-j", "--batch", batch],
+                [hyprctl_binary(), "-j", "--batch", batch],
                 capture_output=True,
                 text=True,
                 env=self.env,

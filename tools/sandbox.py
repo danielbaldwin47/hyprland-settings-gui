@@ -61,10 +61,9 @@ sys.path.insert(0, str(REPO_ROOT / "tests"))
 from harness import NestedHyprland, make_home, unavailable_reason  # noqa: E402
 from harness.nested import DRM_CARD_VARIABLE, drm_card_problem  # noqa: E402
 
-from hermetic import FENCE_LOG_ENV, REFUSED_TOOLS, install_refusals  # noqa: E402
+from hermetic import FENCE_LOG_ENV, REFUSED_TOOLS, TOOL_PATH_ENV, install_refusals  # noqa: E402
 from ui.private_display import start_bus  # noqa: E402
 
-TOOL_PATH_ENV = "HYPRTWEAKER_TOOL_PATH"  # hyprtweaker.engine.tools.TOOL_PATH_ENV
 TOOL_DIR = "bin"
 REFUSED_DIR = "refused-bin"
 REFUSED_LOG = "refused.log"

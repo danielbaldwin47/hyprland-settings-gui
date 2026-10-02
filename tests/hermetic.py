@@ -82,6 +82,21 @@ REFUSED_TOOLS = (
 """Theming tools and wallpaper daemons, by the program names their docs launch them with, and
 the one program a rice's autostart uses to rewrite the session's activation environment."""
 
+SESSION_REFUSED = (
+    *REFUSED_TOOLS,
+    "hyprctl",
+    "gsettings",
+    "systemctl",
+    "waybar",
+    "hypridle",
+    "hyprlock",
+)
+"""What a widget probe's `PATH` refuses besides the tools (ruling A12 of the #148 review):
+`hyprctl` reaches the desktop's compositor by default, `gsettings` writes the owner's
+settings, `systemctl` drives their user manager, and the rest restart their session's bar,
+idle and lock. A nested instance's own `hyprctl` stays reachable through the Harness's
+environment (`NestedHyprland.env`, `harness.guarded`), which names it by path."""
+
 FIX = (
     "Find and run a tool through hyprtweaker.engine.tools (find_tool, run_tool), and in a "
     "test put a stub on the tool search path with the stub_tool fixture."

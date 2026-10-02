@@ -44,11 +44,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMAND = ".venv/bin/python tools/widget_probe.py <probe.py> [args...]"
 
 sys.path.insert(0, str(REPO_ROOT / "tests" / "ui"))
+sys.path.insert(0, str(REPO_ROOT / "tests"))
 from private_display import (  # noqa: E402
     pin_environment,
     session_display_clash,
     start_bus,
     start_xvfb,
+)
+
+from hermetic import (  # noqa: E402
+    FENCE_LOG_ENV,
+    SESSION_REFUSED,
+    TOOL_PATH_ENV,
+    install_refusals,
 )
 
 # The Xvfb this process started, set only by `main`. A probe that imports this module
@@ -218,17 +226,17 @@ def main(argv: list[str]) -> int:
         bus.stop()
 
 
-TOOL_PATH_ENV = "HYPRTWEAKER_TOOL_PATH"
-"""`hyprtweaker.engine.tools.TOOL_PATH_ENV`, spelled out: `src` is importable only in `_run`."""
-
-
-def sandbox_environment(sandbox: Path) -> dict[str, str]:
-    """The home, XDG homes and tool search path a probe and its app run with, in `sandbox`.
+def sandbox_environment(sandbox: Path, path: str) -> dict[str, str]:
+    """The home, XDG homes, tool search path and `PATH` a probe and its app run with.
 
     The tool search path, `<sandbox>/bin`, starts empty: `engine/tools.py` finds no
     theming tool or wallpaper daemon there, installed or not, until the probe writes a
-    stub script into it to show a detected one (#233).
+    stub script into it to show a detected one (#233). `PATH` starts with the test tiers'
+    refusing stand-ins (`hermetic.SESSION_REFUSED`), so a probe that runs `hyprctl`, a
+    theming tool or a wallpaper daemon by name is refused rather than reaching the
+    owner's (ruling A12 of the #148 review); what ran is logged to `<sandbox>/refused.log`.
     """
+    install_refusals(sandbox / "refuse", SESSION_REFUSED)
     return {
         "HOME": str(sandbox),
         "XDG_CONFIG_HOME": str(sandbox / "config"),
@@ -236,6 +244,8 @@ def sandbox_environment(sandbox: Path) -> dict[str, str]:
         "XDG_DATA_HOME": str(sandbox / "data"),
         "XDG_CACHE_HOME": str(sandbox / "cache"),
         TOOL_PATH_ENV: str(sandbox / "bin"),
+        "PATH": os.pathsep.join([str(sandbox / "refuse"), path]),
+        FENCE_LOG_ENV: str(sandbox / "refused.log"),
         # An app the probe runs must not claim the app id on the session bus, or it hands
         # its launch to the owner's open window (`hyprtweaker.application.NON_UNIQUE_ENV`).
         "HYPRTWEAKER_NON_UNIQUE": "1",
@@ -257,7 +267,7 @@ def _run(probe: Path, argv: list[str], display: str, bus: str) -> int:
     sys.path[0:0] = [str(probe.parent), str(REPO_ROOT / "src")]
     sys.argv = [str(probe), *argv[1:]]
     with tempfile.TemporaryDirectory(prefix="widget-probe-") as sandbox:
-        environment = sandbox_environment(Path(sandbox))
+        environment = sandbox_environment(Path(sandbox), os.environ.get("PATH", ""))
         Path(environment[TOOL_PATH_ENV]).mkdir()
         os.environ.update(environment)
         runpy.run_path(str(probe), run_name="__main__")

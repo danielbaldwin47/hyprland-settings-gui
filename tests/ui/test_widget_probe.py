@@ -515,3 +515,31 @@ def test_a_window_with_a_shadow_is_shot_at_one_to_one(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.split() == ["False", *["True"] * 120, "False"]
+
+
+REFUSAL_PROBE = """\
+import json, subprocess
+seen = {}
+for command in (["hyprctl", "version"], ["matugen", "--version"]):
+    done = subprocess.run(command, capture_output=True, text=True)
+    seen[command[0]] = [done.returncode, done.stderr.strip()]
+print(json.dumps(seen))
+"""
+
+
+def test_a_probe_that_runs_hyprctl_or_a_theming_tool_by_name_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Ruling A12 of the #148 review: the probe kept the session's PATH, so a probe that
+    ran `hyprctl` or matugen by name reached the owner's compositor or real tool."""
+    probe = tmp_path / "probe.py"
+    probe.write_text(REFUSAL_PROBE)
+
+    result = run([*ROUTE, str(probe)], tmp_path, **dead_session(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    seen = json.loads(result.stdout)
+    assert seen["hyprctl"][0] == 126
+    assert seen["hyprctl"][1].startswith("refused: tests never run a real hyprctl.")
+    assert seen["matugen"][0] == 126
+    assert seen["matugen"][1].startswith("refused: tests never run a real matugen.")
