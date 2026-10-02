@@ -63,12 +63,15 @@ from hyprtweaker.engine.apply import (
 )
 from hyprtweaker.engine.apply.result import UNREADABLE, live_value
 from hyprtweaker.engine.bridge import (
+    REGISTRY,
     BridgeEntry,
     ChosenSource,
     ColorSource,
     ManualColors,
+    ToolSpec,
     bridge_states_for,
     color_source_of,
+    entries_for,
     owners,
     with_presence,
 )
@@ -761,6 +764,48 @@ class Session:
             lambda current: with_presence(current, present=self._bridge_files_present(current)),
             manifest.with_bridges(entries),
             "load a theming tool's colors",
+        )
+
+    def add_bridge(self, tool: str) -> bool:
+        """Give `tool` its Bridge entries and the Entrypoint its lines: one transaction.
+
+        What #166's `wire` calls before it touches the tool's own files. Never gates (#163):
+        a Color source change is `set_color_source` afterwards. `False` when the session is
+        read-only or the Entrypoint was hand-edited (`color_source_blocked` says why).
+        """
+        if self.color_source_blocked is not None:
+            return False
+        spec = REGISTRY[tool]
+
+        def added(current: Sequence[BridgeEntry]) -> list[BridgeEntry]:
+            kept = [entry for entry in current if entry.tool != tool]
+            return [*kept, *entries_for(spec, present=self._module_files_present(spec))]
+
+        prospective = self._manifest().add_bridge(
+            spec, present=self._module_files_present(spec)
+        )
+        return self._set_bridges(added, prospective, f"set up {spec.title}")
+
+    def remove_bridge(self, tool: str) -> bool:
+        """Take `tool`'s Bridge entries and lines out: what #166's `unwire` calls first.
+
+        `True` with nothing done when the tool has no entry, so an `unwire` that converges
+        after a crash never costs a reload.
+        """
+        manifest = self._manifest()
+        if not any(entry.tool == tool for entry in manifest.bridges):
+            return True
+        if self.color_source_blocked is not None:
+            return False
+        return self._set_bridges(
+            lambda current: [entry for entry in current if entry.tool != tool],
+            manifest.remove_bridge(tool),
+            f"remove {REGISTRY[tool].title if tool in REGISTRY else tool}",
+        )
+
+    def _module_files_present(self, spec: ToolSpec) -> frozenset[str]:
+        return frozenset(
+            each.file for each in spec.modules if (self._paths.hypr_dir / each.file).is_file()
         )
 
     def _set_bridges(
