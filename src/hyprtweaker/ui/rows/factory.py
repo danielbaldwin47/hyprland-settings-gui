@@ -930,11 +930,20 @@ class RowFactory:
             css_classes=["error", "caption"],
             visible=False,
             justify=Gtk.Justification.RIGHT,
+            xalign=1.0,
+            # Under the controls, wrapping within their width: beside them it took the
+            # Row's width and squeezed the title to one word per line (#148 hand-test 23).
+            wrap=True,
+            max_width_chars=28,
         )
-        control = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
+        pickers = Gtk.Box(spacing=6, halign=Gtk.Align.END)
+        pickers.append(dropdown)
+        pickers.append(spin)
+        control = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=4, valign=Gtk.Align.CENTER
+        )
+        control.append(pickers)
         control.append(refusal)
-        control.append(dropdown)
-        control.append(spin)
         row, chrome = self._row(option, control)
         row.set_activatable_widget(dropdown)
 
@@ -1009,7 +1018,13 @@ class RowFactory:
             if number == last_good:
                 return  # the spinner's own echo of a restore, or no change at all
             if number not in FONT_WEIGHT_RANGE:
-                refuse(f"{number} is out of range.\nUse a weight from {low} to {high}.")
+                # 0 is what an empty or wordy entry parses to (a numeric spinner drops the
+                # letters): "0 is out of range" answered a number nobody typed (hand-test 22).
+                refuse(
+                    f"Type the weight as a number from {low} to {high}."
+                    if number == 0
+                    else f"{number} is out of range.\nUse a weight from {low} to {high}."
+                )
                 show_number(last_good)
                 return
             refuse(None)
@@ -1022,6 +1037,10 @@ class RowFactory:
             """Enter, or focus leaving: a typed weight a name matches now reads as that name,
             as the same number held in the file does. Nothing more is written."""
             spin.update()
+            if refusal.get_visible():
+                # A refused weight stays said: refreshing here cleared the caption and showed
+                # the held weight's name, as if the typed one had been taken (hand-test 24).
+                return
             held = self._typed(option, FontWeight(_NORMAL_WEIGHT))
             if spin.get_visible() and held.number in FONT_WEIGHT_NAMES.values():
                 refresh()

@@ -625,6 +625,40 @@ def test_typing_a_weight_out_of_range_is_refused_and_says_why() -> None:
     assert not refusal(row).get_visible()
 
 
+def test_a_word_typed_as_a_weight_is_refused_as_not_a_number() -> None:
+    """#148 hand-test 22: `heavy` read as 0 and the caption said "0 is out of range"."""
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 550)
+    row = build_row(WEIGHT_ACTIVE, session)
+    _dropdown, spin = weight_parts(row)
+
+    spin.set_text("heavy")
+    spin.emit("activate")  # Enter
+
+    assert session.applied == []
+    assert spin.get_value() == 550
+    assert refusal(row).get_text() == "Type the weight as a number from 100 to 1000."
+
+
+def test_tab_after_an_out_of_range_weight_keeps_the_refusal_and_custom() -> None:
+    """#148 hand-test 24: focus leaving after `1200` cleared the caption and flipped the
+    combo to "Bold" (the held 700), so the refusal went unsaid."""
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 700)
+    row = build_row(WEIGHT_ACTIVE, session)
+    dropdown, spin = weight_parts(row)
+    dropdown.set_selected(dropdown.get_model().get_n_items() - 1)  # Custom, as the user does
+
+    spin.set_text("1200")
+    spin.update()  # what focus leaving the spinner does, before the leave handler runs
+    spin.emit("activate")
+
+    assert refusal(row).get_visible()
+    assert refusal(row).get_text() == "1200 is out of range.\nUse a weight from 100 to 1000."
+    assert chosen(dropdown) == "Custom"
+    assert session.applied == []
+
+
 def test_stepping_past_the_top_weight_is_refused_and_says_why() -> None:
     from gi.repository import Gtk
 
