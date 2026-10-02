@@ -2743,11 +2743,7 @@ class Session:
             self._changed()
             return
         if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
-            # No reload ran, so there is nothing new to observe about the config.
             _log.error("could not %s: %s", what, result.detail)
-            self._report(result)
-            self._changed()
-            return
         self._observe(result)
         self._report(result)
         self._changed()
