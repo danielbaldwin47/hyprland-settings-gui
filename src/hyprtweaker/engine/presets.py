@@ -35,6 +35,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from .bridge import Several, Wallpaper
 from .model.values import display_text
 from .profiles import slugify
 from .schema import OptionType, ResolvedOption, Schema
@@ -348,7 +349,30 @@ class PresetNotApplied:
     reason: str
 
 
-PresetApplyResult = PresetApplied | PresetNotApplied
+class ColorChoice(StrEnum):
+    """What a Preset's Colors do while a wallpaper sets the colours (ADR-0014 §Color source).
+
+    The value is what "remember my choice" stores, so it never changes spelling.
+    """
+
+    USE_PRESET = "use-preset"
+    """"Use preset's colors": the Color source becomes Preset, in the same transaction."""
+    KEEP_WALLPAPER = "keep-wallpaper"
+    """"Keep wallpaper colors": everything but the Colors is applied; the source stays."""
+
+
+@dataclass(frozen=True, slots=True)
+class PresetColorConflict:
+    """Nothing was applied: the Preset carries Colors and `source` sets the colours now.
+
+    Apply again with a `ColorChoice`. `source` is a Wallpaper source, or `Several` when a
+    hand edit loads more than one.
+    """
+
+    source: Wallpaper | Several
+
+
+PresetApplyResult = PresetApplied | PresetNotApplied | PresetColorConflict
 
 
 @dataclass(frozen=True, slots=True)
