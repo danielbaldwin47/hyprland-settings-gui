@@ -72,11 +72,11 @@ def stamp_added_in(
 
     The one definition of "added" between two consecutive Generated schemas is
     `diff.added_names`: what the release check's diff classifies as added and what the
-    Tasks view groups under `New in <version>` come from the same rule. An Option the predecessor has keeps the
-    predecessor's stamp, so it stays in its `New in` group until someone curates it
-    (ADR-0012), not for one release only. No predecessor means no stamps, and the
-    provenance then names none. A predecessor that is not older is a caller's mistake:
-    every Option would read as old, silently.
+    Tasks view groups under `New in <version>` come from the same rule. An Option the
+    predecessor has keeps the predecessor's stamp, so it stays in its `New in` group until
+    someone curates it (ADR-0012), not for one release only. No predecessor means no
+    stamps, and the provenance then names none. A predecessor that is not older is a
+    caller's mistake: every Option would read as old, silently.
     """
     if predecessor is None:
         return schema
