@@ -162,7 +162,7 @@
       "groups": [
         { "title": "Hiding" },
         {
-          "title": "Theme and drawing",
+          "title": "Cursor drawing",
           "description": "Cursor theme and size come from environment variables; these settings control how the cursor is loaded and drawn."
         },
         {
@@ -299,13 +299,13 @@
       "help": "Border colour of the window with focus. Use one colour, or several with an angle for a gradient."
     },
     "general:col.nogroup_border": {
-      "title": "Ungroupable border colour",
+      "title": "Border colour for windows kept out of groups",
       "group": "Borders",
       "order": 5,
       "help": "Border colour of a window without focus that a window rule keeps out of groups."
     },
     "general:col.nogroup_border_active": {
-      "title": "Active ungroupable border colour",
+      "title": "Active border colour for windows kept out of groups",
       "group": "Borders",
       "order": 4,
       "help": "Border colour of the window with focus when a window rule keeps it out of groups."
@@ -1065,11 +1065,11 @@
       "title": "Bound monitor",
       "widget": "monitor-picker",
       "nullable": true,
-      "null_label": "Auto",
+      "null_label": "Focused monitor",
       "null_value": "",
       "group": "Touchscreen",
       "order": 2,
-      "help": "Which monitor touchscreen input maps to. With no monitor chosen, touches go to the focused monitor."
+      "help": "Which monitor touchscreen input maps to. With Focused monitor, each touch lands on the monitor that has focus."
     },
     "input:touchdevice:enabled": {
       "title": "Enable touch devices",
@@ -1111,7 +1111,7 @@
       "title": "Bound monitor",
       "widget": "monitor-picker",
       "nullable": true,
-      "null_label": "Auto",
+      "null_label": "All monitors",
       "null_value": "",
       "group": "Drawing tablet",
       "order": 1,
@@ -1703,7 +1703,8 @@
       },
       "group": "Wallpaper and splash",
       "order": 1,
-      "help": "Which built-in wallpaper Hyprland draws beneath any wallpaper app. Random picks one of the three each time Hyprland starts."
+      "help": "Which of Hyprland's three built-in wallpapers is drawn. Random picks one each time Hyprland starts.",
+      "restart": "hyprland"
     },
     "misc:vrr": {
       "title": "Variable refresh rate",
@@ -2188,9 +2189,9 @@
     },
     "cursor:no_hardware_cursors": {
       "title": "Hardware cursors",
-      "group": "Theme and drawing",
+      "group": "Cursor drawing",
       "order": 3,
-      "help": "Lets the display hardware draw the cursor instead of Hyprland drawing it into each frame. Automatic avoids it on NVIDIA with several GPUs or VRR on.",
+      "help": "Lets the display hardware draw the cursor instead of Hyprland drawing it into every frame. Automatic avoids it on NVIDIA with several GPUs or with VRR on.",
       "labels": { "0": "Use when possible", "1": "Never use", "2": "Automatic" }
     },
     "cursor:no_break_fs_vrr": {
@@ -2209,7 +2210,7 @@
     "cursor:hotspot_padding": {
       "title": "Hotspot padding",
       "unit": "px",
-      "group": "Theme and drawing",
+      "group": "Cursor drawing",
       "order": 4,
       "help": "Space kept between the screen edges and the cursor's hotspot, in pixels."
     },
@@ -2280,7 +2281,7 @@
     },
     "cursor:enable_hyprcursor": {
       "title": "Use hyprcursor",
-      "group": "Theme and drawing",
+      "group": "Cursor drawing",
       "order": 1,
       "help": "Uses hyprcursor themes for the cursor. When off, Hyprland falls back to XCursor themes."
     },
@@ -2305,13 +2306,13 @@
     "cursor:use_cpu_buffer": {
       "title": "Use a CPU buffer",
       "visibility": "advanced",
-      "group": "Theme and drawing",
+      "group": "Cursor drawing",
       "order": 5,
       "help": "Makes hardware cursors use a CPU buffer, which NVIDIA cards need for hardware cursors. Auto turns it on for NVIDIA only."
     },
     "cursor:sync_gsettings_theme": {
       "title": "Sync the cursor theme to GSettings",
-      "group": "Theme and drawing",
+      "group": "Cursor drawing",
       "order": 2,
       "help": "Shares the cursor theme with GTK apps through GSettings, so most of them use the same cursor."
     },

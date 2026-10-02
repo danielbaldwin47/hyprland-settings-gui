@@ -6,8 +6,8 @@ general:float_gaps | css_gaps | css-gaps | null | Same as outer gaps | default |
 general:gaps_workspaces | int | int-range | - | - | default | - | min=0,max=100 | - | px | Workspace gaps
 general:col.inactive_border | gradient | gradient | - | - | default | - | - | - | - | Inactive border colour
 general:col.active_border | gradient | gradient | - | - | default | - | - | - | - | Active border colour
-general:col.nogroup_border | gradient | gradient | - | - | default | - | - | - | - | Ungroupable border colour
-general:col.nogroup_border_active | gradient | gradient | - | - | default | - | - | - | - | Active ungroupable border colour
+general:col.nogroup_border | gradient | gradient | - | - | default | - | - | - | - | Border colour for windows kept out of groups
+general:col.nogroup_border_active | gradient | gradient | - | - | default | - | - | - | - | Active border colour for windows kept out of groups
 general:layout | string | enum-string | - | - | default | - | - | dwindle=Dwindle/master=Master/scrolling=Scrolling/monocle=Monocle | - | Layout
 general:no_focus_fallback | bool | toggle | - | - | default | - | - | - | - | Keep focus when no window is in that direction
 general:resize_on_border | bool | toggle | - | - | default | - | - | - | - | Resize windows by dragging their border
@@ -110,12 +110,12 @@ input:touchpad:flip_x | bool | toggle | - | - | default | - | - | - | - | Flip t
 input:touchpad:flip_y | bool | toggle | - | - | default | - | - | - | - | Flip the vertical axis
 input:touchpad:drag_3fg | int | enum-map | - | - | default | - | min=0,max=2 | 0=Off/1=Three fingers/2=Four fingers | - | Multi-finger drag
 input:touchdevice:transform | int | enum-map | - | - | default | - | min=0,max=6 | 0=None/1=90°/2=180°/3=270°/4=Flipped/5=Flipped, 90°/6=Flipped, 180° | - | Orientation
-input:touchdevice:output | string | monitor-picker | null | Auto | default | - | - | - | - | Bound monitor
+input:touchdevice:output | string | monitor-picker | null | Focused monitor | default | - | - | - | - | Bound monitor
 input:touchdevice:enabled | bool | toggle | - | - | default | - | - | - | - | Enable touch devices
 input:virtualkeyboard:share_states | int | enum-map | - | - | advanced | - | min=0,max=2 | 0=Off/1=On/2=Except input methods | - | Share virtual keyboard states
 input:virtualkeyboard:release_pressed_on_close | bool | toggle | - | - | advanced | - | - | - | - | Release pressed keys on close
 input:tablet:transform | int | enum-map | - | - | default | - | min=0,max=6 | 0=None/1=90°/2=180°/3=270°/4=Flipped/5=Flipped, 90°/6=Flipped, 180° | - | Orientation
-input:tablet:output | string | monitor-picker | null | Auto | default | - | - | - | - | Bound monitor
+input:tablet:output | string | monitor-picker | null | All monitors | default | - | - | - | - | Bound monitor
 input:tablet:region_position | vec2 | vec2 | - | - | default | - | - | - | - | Region position
 input:tablet:absolute_region_position | bool | toggle | - | - | default | - | - | - | - | Absolute region position
 input:tablet:region_size | vec2 | vec2 | - | - | default | - | - | - | - | Region size

@@ -4,12 +4,12 @@ options indexed: 353
 ## query: border (14 hits)
 field | match | tier | key | title
 title | prefix | default | general.border_size | Border size
+title | prefix | default | general.col.nogroup_border | Border colour for windows kept out of groups
 title | prefix | default | general.extend_border_grab_area | Border grab area
 title | prefix | default | decoration.border_part_of_window | Border counts as part of the window
 title | word-prefix | default | general.col.inactive_border | Inactive border colour
 title | word-prefix | default | general.col.active_border | Active border colour
-title | word-prefix | default | general.col.nogroup_border | Ungroupable border colour
-title | word-prefix | default | general.col.nogroup_border_active | Active ungroupable border colour
+title | word-prefix | default | general.col.nogroup_border_active | Active border colour for windows kept out of groups
 title | word-prefix | default | general.resize_on_border | Resize windows by dragging their border
 title | word-prefix | default | general.hover_icon_on_border | Show the resize cursor on borders
 title | word-prefix | default | general.snap.border_overlap | Overlap borders when snapping
@@ -46,6 +46,8 @@ field | match | tier | key | title
 title | prefix | default | group.auto_group | Group new windows automatically
 title | prefix | default | group.group_on_movetoworkspace | Group when moving to a workspace
 title | prefix | default | group.groupbar.enabled | Group bar
+title | word-prefix | default | general.col.nogroup_border | Border colour for windows kept out of groups
+title | word-prefix | default | general.col.nogroup_border_active | Active border colour for windows kept out of groups
 title | word-prefix | default | group.focus_removed_window | Focus a window removed from a group
 title | word-prefix | default | group.merge_groups_on_drag | Merge groups on drag
 title | word-prefix | default | group.merge_groups_on_groupbar | Merge groups dropped on a group bar
@@ -58,8 +60,6 @@ title | word-prefix | default | group.merge_floated_into_tiled_on_groupbar | Mer
 title | word-prefix | default | group.groupbar.disable_when_only | Hide when the group has one window
 title | word-prefix | default | binds.ignore_group_lock | Ignore group lock
 title | word-prefix | default | binds.movefocus_cycles_groupfirst | Move focus cycles the group first
-title | substring | default | general.col.nogroup_border | Ungroupable border colour
-title | substring | default | general.col.nogroup_border_active | Active ungroupable border colour
 key | prefix | default | group.insert_after_current | Insert after the current window
 key | prefix | default | group.groupbar.font_family | Font
 key | prefix | default | group.groupbar.font_weight_active | Active title weight

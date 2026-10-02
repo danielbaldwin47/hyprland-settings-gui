@@ -589,7 +589,7 @@ options = [
 ]
 
 [[cursor]]
-title = "Theme and drawing"
+title = "Cursor drawing"
 description = "Cursor theme and size come from environment variables; these settings control how the cursor is loaded and drawn."
 options = [
   "cursor:enable_hyprcursor",

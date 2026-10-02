@@ -784,7 +784,7 @@ help = "Rotates or flips touchscreen input so that touches line up with a rotate
 #   wiki:     The monitor to bind touch devices. The default is auto-detection. To stop auto-detection, use an empty string.
 #   candidate: short (34 chars); wiki is longer (110 chars)
 ["input:touchdevice:output"]
-help = "Which monitor touchscreen input maps to. With no monitor chosen, touches go to the focused monitor."
+help = "Which monitor touchscreen input maps to. With Focused monitor, each touch lands on the monitor that has focus."
 
 # input:touchdevice:enabled: Enable touch devices [Touchscreen] (bool, default True)
 #   upstream: Whether input is enabled for touch devices.
@@ -1354,7 +1354,7 @@ help = "The font used for the splash text. Choose one installed on this system."
 #   the combo already names its values (labels)
 #   candidate: lists values the combo shows: 0, 1, 2; wiki is longer (130 chars)
 ["misc:force_default_wallpaper"]
-help = "Which built-in wallpaper Hyprland draws beneath any wallpaper app. Random picks one of the three each time Hyprland starts."
+help = "Which of Hyprland's three built-in wallpapers is drawn. Random picks one each time Hyprland starts."
 
 # misc:vrr: Variable refresh rate [Displays and power] (int, default 0)
 #   upstream: controls the VRR (Adaptive Sync) of your monitors
@@ -1865,7 +1865,7 @@ help = "Hides the cursor everywhere."
 #   the combo already names its values (map)
 #   candidate: short (26 chars); wiki is longer (116 chars)
 ["cursor:no_hardware_cursors"]
-help = "Lets the display hardware draw the cursor instead of Hyprland drawing it into each frame. Automatic avoids it on NVIDIA with several GPUs or VRR on."
+help = "Lets the display hardware draw the cursor instead of Hyprland drawing it into every frame. Automatic avoids it on NVIDIA with several GPUs or with VRR on."
 
 # cursor:no_break_fs_vrr: Keep VRR in fullscreen [Fullscreen VRR] (int, default 2)
 #   upstream: disables scheduling new frames on cursor movement for fullscreen apps with VRR enabled.
