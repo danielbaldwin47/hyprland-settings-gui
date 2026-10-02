@@ -14,7 +14,10 @@ that names one twice is a rule fighting itself).
 shelved by category. An effect the catalog does not know -- a plugin's, or a newer
 Hyprland's -- shows as a raw custom row and passes through *unedited by identity*: its
 value object is only replaced when the user actually changes the text, so a table-valued
-effect survives an unrelated edit byte-for-byte (ADR-0008: "never dropped").
+effect survives an unrelated edit byte-for-byte (ADR-0008: "never dropped"). The string-
+grammar effects (`opacity`, `fullscreen_state`, `suppress_event`) get a helper row instead
+of a text entry (`effect_helpers`, picked by `Effect.grammar` through `EFFECT_HELPERS`),
+with the same untouched-keeps-the-original rule and an "Edit as text" toggle.
 
 **Pick a window / Pick a layer.** Prefills a Match from `hyprctl -j clients` (or the
 layer namespaces) -- helper data only, thrown away after the prefill, and the button
@@ -53,6 +56,14 @@ from hyprtweaker.engine.rules_catalog import (  # noqa: E402
     prop_title,
     strip_negation,
 )
+from hyprtweaker.ui.dialogs.effect_helpers import (  # noqa: E402
+    EffectHelper,
+    EffectHelperBuilder,
+    FullscreenStateRow,
+    OpacityRow,
+    SuppressEventRow,
+    effect_text,
+)
 
 Rule = WindowRule | LayerRule
 
@@ -77,17 +88,29 @@ _SPIN_BOUNDS: dict[str, tuple[float, float]] = {
 
 _DEFAULT_INT_BOUNDS = (0.0, 100000.0)
 
+EFFECT_HELPERS: dict[str, EffectHelperBuilder] = {
+    "opacity": OpacityRow,
+    "fullscreen_state": FullscreenStateRow,
+    "suppress_event": SuppressEventRow,
+}
+"""Helper widget per string grammar: the key is `Effect.grammar` from the catalog, the
+value builds the row from the effect's original value (`None` for a new effect). An effect
+whose grammar has no entry here falls back to a text entry. The gradient editor (#156)
+adds `"gradient"`."""
+
 
 @dataclass(frozen=True, slots=True)
 class _EffectRow:
     """One effect row's bookkeeping: the key, its typed spec (or `None` for raw), the
     editing widget, and the value it opened with -- the identity half of the unknown-
-    effect pass-through."""
+    effect pass-through. A row built by a grammar helper carries it in `helper`, and the
+    helper then owns collecting and the blank check (`widget` is the helper's row)."""
 
     name: str
     spec: Effect | None
     widget: Gtk.Widget
     original: Any
+    helper: EffectHelper | None = None
 
 
 class RuleEditor(Adw.Dialog):
@@ -314,8 +337,14 @@ class RuleEditor(Adw.Dialog):
     def _add_effect_row(self, name: str, value: Any) -> None:
         spec = find_effect(self._kind, name)
         widget: Gtk.Widget
+        helper: EffectHelper | None = None
 
-        if spec is not None and spec.type is EffectType.BOOL:
+        build = EFFECT_HELPERS.get(spec.grammar) if spec is not None and spec.grammar else None
+        if build is not None:
+            helper = build(value)
+            helper.widget.set_title(prop_title(name))
+            widget = helper.widget
+        elif spec is not None and spec.type is EffectType.BOOL:
             switch = Adw.SwitchRow(title=prop_title(name))
             switch.set_active(bool(value) if value is not None else True)
             widget = switch
@@ -338,7 +367,7 @@ class RuleEditor(Adw.Dialog):
                 title=name if spec is None else prop_title(name), use_markup=False
             )
             if value is not None:
-                entry.set_text(_effect_text(value))
+                entry.set_text(effect_text(value))
             widget = entry
 
         remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
@@ -348,7 +377,7 @@ class RuleEditor(Adw.Dialog):
         _row_add_suffix(widget, remove)
 
         self._effect_entries.append(
-            _EffectRow(name=name, spec=spec, widget=widget, original=value)
+            _EffectRow(name=name, spec=spec, widget=widget, original=value, helper=helper)
         )
         self._effects_group.add(widget)
 
@@ -509,7 +538,9 @@ class RuleEditor(Adw.Dialog):
     def _collect_effects(self) -> dict[str, Any]:
         collected: dict[str, Any] = {}
         for row in self._effect_entries:
-            if isinstance(row.widget, Adw.SwitchRow):
+            if row.helper is not None:
+                collected[row.name] = row.helper.value()
+            elif isinstance(row.widget, Adw.SwitchRow):
                 collected[row.name] = row.widget.get_active()
             elif isinstance(row.widget, Adw.SpinRow):
                 value = row.widget.get_value()
@@ -520,7 +551,7 @@ class RuleEditor(Adw.Dialog):
                 )
             elif isinstance(row.widget, Adw.EntryRow):
                 text = row.widget.get_text().strip()
-                if row.original is not None and text == _effect_text(row.original):
+                if row.original is not None and text == effect_text(row.original):
                     # Untouched: keep the original object, so a table-valued effect
                     # round-trips by identity rather than through its string.
                     collected[row.name] = row.original
@@ -545,7 +576,7 @@ class RuleEditor(Adw.Dialog):
         # screen, so "Save" quietly meaning "and also delete that one" would be a second
         # meaning nobody asked for. Deleting is what the row's remove button is for.
         for row in self._effect_entries:
-            if isinstance(row.widget, Adw.EntryRow) and not row.widget.get_text().strip():
+            if _is_blank(row):
                 return (
                     f"The {prop_title(row.name)} effect needs a value — "
                     "remove the row to drop the effect."
@@ -575,29 +606,23 @@ class RuleEditor(Adw.Dialog):
         self.close()
 
 
+def _is_blank(row: _EffectRow) -> bool:
+    """A text effect with nothing in it: a helper says so itself, an entry by its text."""
+    if row.helper is not None:
+        return row.helper.blank()
+    return isinstance(row.widget, Adw.EntryRow) and not row.widget.get_text().strip()
+
+
 def _exact(text: str) -> str:
     """A picked value as an exact, escaped regex -- the ADR-0008 prefill shape."""
     return f"^({re.escape(text)})$"
 
 
-def _effect_text(value: Any) -> str:
-    """A raw effect value as entry text, and the identity check for "untouched".
-
-    A list renders as its space-joined items because that *is* the string grammar the
-    vec2 effects accept (`move`/`size` take `"x y"` or `{x, y}`) -- so a user who edits
-    the shown text saves a value the compositor still understands, instead of a Python
-    repr. Untouched rows never reach this conversion; they keep the original object.
-    """
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (list, tuple)):
-        return " ".join(str(item) for item in value)
-    return str(value)
-
-
 def _row_add_suffix(widget: Gtk.Widget, suffix: Gtk.Widget) -> None:
     """Every Adwaita row kind spells `add_suffix` the same way; typed narrowly anyway."""
-    if isinstance(widget, (Adw.EntryRow, Adw.ActionRow, Adw.SwitchRow, Adw.SpinRow)):
+    if isinstance(
+        widget, (Adw.EntryRow, Adw.ActionRow, Adw.SwitchRow, Adw.SpinRow, Adw.ExpanderRow)
+    ):
         widget.add_suffix(suffix)
 
 

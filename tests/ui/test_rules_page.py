@@ -280,9 +280,9 @@ def test_a_blank_effect_refuses_to_save(tmp_path: Path) -> None:
     build_window(tmp_path)
     collected: list[Any] = []
 
-    original = window_rule(match={"class": "x"}, effects={"opacity": "0.9"})
+    original = window_rule(match={"class": "x"}, effects={"animation": "popin 80%"})
     editor = RuleEditor(kind="window", on_done=collected.append, rule=original)
-    row = next(entry for entry in editor._effect_entries if entry.name == "opacity")
+    row = next(entry for entry in editor._effect_entries if entry.name == "animation")
     row.widget.set_text("")
     editor._save()
 
