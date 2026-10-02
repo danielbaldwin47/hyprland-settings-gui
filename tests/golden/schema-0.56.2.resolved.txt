@@ -9,7 +9,7 @@ general:col.active_border | gradient | gradient | - | - | default | - | - | - | 
 general:col.nogroup_border | gradient | gradient | - | - | default | - | - | - | - | Ungrouped border colour
 general:col.nogroup_border_active | gradient | gradient | - | - | default | - | - | - | - | Active ungrouped border colour
 general:layout | string | enum-string | - | - | default | - | - | dwindle=Dwindle/master=Master/scrolling=Scrolling/monocle=Monocle | - | Layout
-general:no_focus_fallback | bool | toggle | - | - | default | - | - | - | - | Never refocus after closing a window
+general:no_focus_fallback | bool | toggle | - | - | default | - | - | - | - | Keep focus when no window is in that direction
 general:resize_on_border | bool | toggle | - | - | default | - | - | - | - | Resize windows by dragging their border
 general:extend_border_grab_area | int | int-range | - | - | default | general:resize_on_border=True | min=0,max=100 | - | px | Border grab area
 general:hover_icon_on_border | bool | toggle | - | - | default | general:resize_on_border=True | - | - | - | Show the resize cursor on borders
@@ -265,7 +265,7 @@ render:keep_unmodified_copy | int | enum-map | - | - | advanced | - | min=0,max=
 render:non_shader_cm_interop | int | enum-map | - | - | advanced | - | min=0,max=2 | - | - | Non-shader colour management interop
 render:fp16_sdr_tf | int | enum-map | - | - | advanced | - | min=0,max=1 | - | - | FP16 SDR transfer function
 cursor:invisible | bool | toggle | - | - | default | - | - | - | - | Hide the cursor
-cursor:no_hardware_cursors | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Hardware cursors
+cursor:no_hardware_cursors | int | enum-map | - | - | default | - | min=0,max=2 | 0=Use when possible/1=Never use/2=Automatic | - | Hardware cursors
 cursor:no_break_fs_vrr | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Keep VRR in fullscreen
 cursor:min_refresh_rate | int | int-range | - | - | default | - | min=10,max=500 | - | Hz | Minimum refresh rate
 cursor:hotspot_padding | int | int-range | - | - | default | - | min=0,max=20 | - | px | Hotspot padding
@@ -296,7 +296,7 @@ debug:disable_logs | bool | toggle | - | - | hidden | - | - | - | - | Disable lo
 debug:disable_time | bool | toggle | - | - | hidden | - | - | - | - | Omit timestamps from logs
 debug:damage_tracking | int | enum-map | - | - | hidden | - | min=0,max=2 | - | - | Damage tracking
 debug:enable_stdout_logs | bool | toggle | - | - | hidden | - | - | - | - | Log to stdout
-debug:manual_crash | int | segmented | - | - | hidden | - | min=0,max=1 | 0=Armed/1=Crash Hyprland | - | Manual crash
+debug:manual_crash | int | segmented | - | - | hidden | - | min=0,max=1 | 0=Off/1=Armed | - | Manual crash
 debug:suppress_errors | bool | toggle | - | - | hidden | - | - | - | - | Suppress errors
 debug:disable_scale_checks | bool | toggle | - | - | hidden | - | - | - | - | Disable scale checks
 debug:error_limit | int | int-range | - | - | hidden | - | min=0,max=20 | - | - | Displayed error limit

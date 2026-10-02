@@ -729,3 +729,38 @@ def test_the_suffix_strip_reads_in_the_same_order_on_both_row_types() -> None:
         assert strip.index(row.chrome.dependency_badge) < strip.index(row.chrome.reset), name
         assert strip[-1] is row.chrome.help, name
 
+
+# --- controls that read the right way round (review of spec #154, findings 16 to 18) -------
+
+
+def test_hardware_cursors_offers_choices_that_say_what_they_do() -> None:
+    """The setting is a negation (`no_hardware_cursors`): its own map names would show
+    "Disabled" for the value that keeps hardware cursors on (`Monitor.cpp:2297-2301`)."""
+    from gi.repository import Gtk
+
+    row = build_row("cursor:no_hardware_cursors", PreviewSession())
+    (dropdown,) = controls(row, Gtk.DropDown)
+
+    assert row.widget.get_title() == "Hardware cursors"
+    assert choices(dropdown) == ["Use when possible", "Never use", "Automatic"]
+    assert chosen(dropdown) == "Automatic", "the default is 2"
+
+
+def test_manual_crash_names_the_state_that_arms_it() -> None:
+    """1 arms; going back to 0 crashes (`lua/ConfigManager.cpp:832-839`), so 0 is "Off"."""
+    from gi.repository import Gtk
+
+    row = build_row("debug:manual_crash", PreviewSession())
+    (dropdown,) = controls(row, Gtk.DropDown)
+
+    assert choices(dropdown) == ["Off", "Armed"]
+    assert chosen(dropdown) == "Off", "the default is 0"
+    assert row.widget.get_subtitle() == (
+        "Choosing Armed and then Off crashes Hyprland on purpose, and you lose your session."
+    )
+
+
+def test_no_focus_fallback_is_titled_for_moving_focus_in_a_direction() -> None:
+    row = build_row("general:no_focus_fallback", PreviewSession())
+
+    assert row.widget.get_title() == "Keep focus when no window is in that direction"

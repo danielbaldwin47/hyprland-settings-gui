@@ -1865,7 +1865,7 @@ help = "Hides the cursor everywhere."
 #   the combo already names its values (map)
 #   candidate: short (26 chars); wiki is longer (116 chars)
 ["cursor:no_hardware_cursors"]
-help = "Disabled draws the cursor with display hardware when possible, Enabled never does, and Auto skips it while tearing."
+help = "Lets the display hardware draw the cursor instead of Hyprland drawing it into each frame. Automatic avoids it on NVIDIA with several GPUs or VRR on."
 
 # cursor:no_break_fs_vrr: Keep VRR in fullscreen [Fullscreen VRR] (int, default 2)
 #   upstream: disables scheduling new frames on cursor movement for fullscreen apps with VRR enabled.
@@ -2088,7 +2088,7 @@ help = "Also prints Hyprland's log to standard output."
 #   the combo already names its values (labels)
 #   candidate: lists values the combo shows: 0, 1
 ["debug:manual_crash"]
-help = "Setting this to 1 and then back to 0 crashes Hyprland on purpose, and you lose your session."
+help = "Choosing Armed and then Off crashes Hyprland on purpose, and you lose your session."
 
 # debug:suppress_errors: Suppress errors [Errors and crashes] (bool, default False)
 #   upstream: if true, do not display config file parsing errors.

@@ -322,7 +322,7 @@
       "order": 1
     },
     "general:no_focus_fallback": {
-      "title": "Never refocus after closing a window",
+      "title": "Keep focus when no window is in that direction",
       "group": "Behaviour",
       "order": 1,
       "help": "Stops focus from jumping to another window when you move it in a direction that has no window."
@@ -2175,7 +2175,8 @@
       "title": "Hardware cursors",
       "group": "Theme and drawing",
       "order": 3,
-      "help": "Disabled draws the cursor with display hardware when possible, Enabled never does, and Auto skips it while tearing."
+      "help": "Lets the display hardware draw the cursor instead of Hyprland drawing it into each frame. Automatic avoids it on NVIDIA with several GPUs or VRR on.",
+      "labels": { "0": "Use when possible", "1": "Never use", "2": "Automatic" }
     },
     "cursor:no_break_fs_vrr": {
       "title": "Keep VRR in fullscreen",
@@ -2372,10 +2373,10 @@
     "debug:manual_crash": {
       "title": "Manual crash",
       "widget": "segmented",
-      "labels": { "0": "Armed", "1": "Crash Hyprland" },
+      "labels": { "0": "Off", "1": "Armed" },
       "group": "Errors and crashes",
       "order": 4,
-      "help": "Setting this to 1 and then back to 0 crashes Hyprland on purpose, and you lose your session."
+      "help": "Choosing Armed and then Off crashes Hyprland on purpose, and you lose your session."
     },
     "debug:suppress_errors": {
       "title": "Suppress errors",
