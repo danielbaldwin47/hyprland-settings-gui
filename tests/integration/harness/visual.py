@@ -202,8 +202,10 @@ class Canvas:
         return False
 
     def prepare(self) -> str:
-        """Create the headless output, wait out the toasts, and focus it."""
-        self.nested.hyprctl_text("output", "create", "headless")
+        """Create the headless output (a windowless child already has one), and focus it."""
+        existing = [m.get("name", "") for m in self.nested.hyprctl("monitors") or []]
+        if not any(str(name).lower().startswith("headless") for name in existing):
+            self.nested.hyprctl_text("output", "create", "headless")
         time.sleep(TOAST_SETTLE_SECONDS)
 
         monitors = self.nested.hyprctl("monitors") or []

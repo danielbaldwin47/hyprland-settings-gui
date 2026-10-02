@@ -12,6 +12,8 @@ window turns into a Banner, a Toast, or a refresh (ADR-0011).
 
 from __future__ import annotations
 
+import os
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -24,14 +26,24 @@ from hyprtweaker.session import Session  # noqa: E402
 from hyprtweaker.ui.shell.runtime import MainLoopRunner  # noqa: E402
 from hyprtweaker.ui.shell.window import MainWindow  # noqa: E402
 
-__all__ = ["APP_ID", "HyprtweakerApplication"]
+__all__ = ["APP_ID", "NON_UNIQUE_ENV", "HyprtweakerApplication"]
+
+#: Set by `tools/sandbox.py`: a sandboxed copy must not claim the app id on the session bus,
+#: or a second sandbox (or an installed copy) would hand its launch to the first and exit.
+NON_UNIQUE_ENV = "HYPRTWEAKER_NON_UNIQUE"
+
+
+def application_flags() -> Gio.ApplicationFlags:
+    if os.environ.get(NON_UNIQUE_ENV) == "1":
+        return Gio.ApplicationFlags.NON_UNIQUE
+    return Gio.ApplicationFlags.DEFAULT_FLAGS
 
 
 class HyprtweakerApplication(Adw.Application):
     def __init__(self) -> None:
         super().__init__(
             application_id=APP_ID,
-            flags=Gio.ApplicationFlags.DEFAULT_FLAGS,
+            flags=application_flags(),
         )
         self._runner = MainLoopRunner()
         self._session: Session | None = None

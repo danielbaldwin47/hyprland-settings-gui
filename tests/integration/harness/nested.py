@@ -31,16 +31,20 @@ skip rather than letting the launch fail deep inside a test. The headless *outpu
 inside the nested compositor (see `visual.py`) is what makes rendering independent of the
 host's screen size -- that part needs no seat.
 
-**On 0.56.2 a nested Hyprland always shows a host window** (`WAYLAND-1`):
+**On 0.56.2 a nested Hyprland shows a host window** (`WAYLAND-1`) unless it is handed a card:
 `HYPRLAND_HEADLESS_ONLY` is gone from the binary. Its headless output allocates on the
 host's GPU, which NVIDIA cannot do (#144), so `Canvas` skips there unless
 `HARNESS_DRM_CARD=/dev/dri/cardN` hands the child a different card -- inside a `bwrap`, on a
-no-op seat. The account and the opt-in are in `docs/agents/local-checks.md` § Harness tier;
+no-op seat. With a card the child is also **windowless**: it gets no host `WAYLAND_DISPLAY`
+or `DISPLAY`, so it runs Hyprland's own DRM backend on that monitor-less card, and `start`
+creates its one headless output over IPC. Nothing maps on the developer's desktop. The
+account and the opt-in are in `docs/agents/local-checks.md` § Harness tier;
 `drm_card_problem` lists what it refuses.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
@@ -99,6 +103,9 @@ def hyprland_binary() -> str | None:
 DRM_CARD_VARIABLE = "HARNESS_DRM_CARD"
 SYS_DRM = Path("/sys/class/drm")
 
+#: How long a harness run waits for another run to release the shared card.
+CARD_LOCK_TIMEOUT_SECONDS = 600.0
+
 
 def unavailable_reason() -> str | None:
     """Why the Harness cannot run here, or `None` if it can.
@@ -113,7 +120,7 @@ def unavailable_reason() -> str | None:
         return "no hyprctl binary on this machine"
     if shutil.which("grim") is None:
         return "no grim binary on this machine (the screenshot half cannot run)"
-    if not os.environ.get("WAYLAND_DISPLAY"):
+    if not os.environ.get("WAYLAND_DISPLAY") and drm_card() is None:
         return (
             "no host Wayland session (WAYLAND_DISPLAY unset): a nested Hyprland cannot "
             "create a backend without one"
@@ -267,6 +274,7 @@ class NestedHyprland:
         self.wayland_display: str | None = None
         self._process: subprocess.Popen[bytes] | None = None
         self._log_handle: Any = None
+        self._card_lock: Any = None
 
     # ---- lifecycle ---------------------------------------------------------------
 
@@ -288,6 +296,11 @@ class NestedHyprland:
         """
         environment = home_environment(self.home)
         environment.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+        if drm_card() is not None:
+            # Windowless: with no host display to nest into, Hyprland takes the DRM backend
+            # on the handed card, which has no monitor, so nothing maps on the host.
+            environment.pop("WAYLAND_DISPLAY", None)
+            environment.pop("DISPLAY", None)
         return environment
 
     @property
@@ -332,6 +345,7 @@ class NestedHyprland:
         card = drm_card()
         if card is not None:
             command, launch_environment = drm_wrapped(command, launch_environment, card)
+            self._lock_card(card)
         before = set(live_instances(launch_environment))
 
         if self.log is not None:
@@ -347,8 +361,14 @@ class NestedHyprland:
             start_new_session=True,
         )
 
-        self._await_registration(launch_environment, before)
-        self._await_ipc()
+        try:
+            self._await_registration(launch_environment, before)
+            self._await_ipc()
+            if card is not None:
+                self._create_headless_output()
+        except BaseException:
+            self.stop()  # a child that never became usable must not outlive the failure
+            raise
 
     def _await_registration(self, environment: Mapping[str, str], before: set[str]) -> None:
         deadline = time.monotonic() + self.timeout
@@ -359,7 +379,11 @@ class NestedHyprland:
                     f"(config {self.config}){self._log_hint()}"
                 )
             current = live_instances(environment)
-            fresh = sorted(set(current) - before)
+            fresh = [
+                signature
+                for signature in sorted(set(current) - before)
+                if self._is_ours(current[signature].get("pid"))
+            ]
             if fresh:
                 self.signature = fresh[0]
                 self.wayland_display = current[self.signature]["wl_socket"]
@@ -387,6 +411,35 @@ class NestedHyprland:
                 return
             time.sleep(POLL_SECONDS)
         raise NestedHyprlandError(f"nested Hyprland never answered IPC{self._log_hint()}")
+
+    def _is_ours(self, pid: Any) -> bool:
+        """Whether an instance's pid is our child or descends from it (through `bwrap`).
+
+        Diffing `hyprctl instances` alone is not enough: two harnesses starting at once each
+        see the other's new instance, and the loser would drive a compositor it does not own.
+        """
+        if self._process is None or not isinstance(pid, int):
+            return False
+        for _ in range(4):
+            if pid == self._process.pid:
+                return True
+            try:
+                stat = Path(f"/proc/{pid}/stat").read_text()
+            except OSError:
+                return False
+            pid = int(stat.rsplit(")", 1)[1].split()[1])
+        return False
+
+    def _create_headless_output(self) -> None:
+        """The windowless child's only output; the determinism preamble then pins its mode."""
+        self.hyprctl_text("output", "create", "headless")
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            names = [monitor.get("name", "") for monitor in self.hyprctl("monitors") or []]
+            if any(name.startswith("HEADLESS") for name in names):
+                return
+            time.sleep(POLL_SECONDS)
+        raise NestedHyprlandError(f"no headless output appeared{self._log_hint()}")
 
     def _log_hint(self) -> str:
         return f"; see {self.log}" if self.log else ""
@@ -438,6 +491,35 @@ class NestedHyprland:
             with suppress(OSError):
                 self._log_handle.close()
             self._log_handle = None
+        if self._card_lock is not None:
+            with suppress(OSError):
+                self._card_lock.close()  # closing the file releases the flock
+            self._card_lock = None
+
+    def _lock_card(self, card: Path) -> None:
+        """Hold the card for this instance's lifetime: one DRM master per card.
+
+        Parallel implementers, xdist workers and windowless sandboxes all reach for the same
+        spare card; a second child would fail to take it. Queueing on a per-card `flock` in
+        `XDG_RUNTIME_DIR` turns that into a wait. The lock is released by `_close_log`, which
+        every stop path reaches.
+        """
+        path = Path(os.environ["XDG_RUNTIME_DIR"]) / f"hyprtweaker-harness-{card.name}.lock"
+        handle = path.open("w")
+        deadline = time.monotonic() + CARD_LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    handle.close()
+                    raise NestedHyprlandError(
+                        f"{card} stayed held by another harness run for "
+                        f"{CARD_LOCK_TIMEOUT_SECONDS:.0f} s ({path})"
+                    ) from None
+                time.sleep(POLL_SECONDS)
+        self._card_lock = handle
 
     # ---- IPC ---------------------------------------------------------------------
 

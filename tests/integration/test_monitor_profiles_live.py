@@ -12,10 +12,11 @@ harness's headless backend invents, so the profile's scale must show up in
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
-from harness import NestedHyprland, write_determinism_preamble
+from harness import HEADLESS_OUTPUT, NestedHyprland, write_determinism_preamble
 from harness.state import SCHEMA_DIR, SCHEMA_VERSION
 
 from hyprtweaker.engine.model import ConfigModel
@@ -99,8 +100,20 @@ def test_capture_then_activate_round_trips_on_a_live_box(
             f"the activated profile did not load cleanly: {nested.config_errors()}"
         )
 
-        monitors_state = nested.hyprctl("monitors")
-        assert isinstance(monitors_state, list) and monitors_state, monitors_state
+        # The witness is any output the preamble does not pin to scale 1. A windowed child
+        # has its host-window output; a windowless one (HARNESS_DRM_CARD) has only the
+        # pinned headless output, so it gets a second, unpinned one.
+        def witnesses() -> list[dict[str, object]]:
+            state = nested.hyprctl("monitors")
+            assert isinstance(state, list) and state, state
+            return [entry for entry in state if entry.get("name") != HEADLESS_OUTPUT]
+
+        monitors_state = witnesses()
+        if not monitors_state:
+            nested.hyprctl_text("output", "create", "headless")
+            time.sleep(1)
+            monitors_state = witnesses()
+        assert monitors_state, "no output the preamble leaves unpinned"
         scales = {float(entry.get("scale", 0)) for entry in monitors_state}
         assert scales == {2.0}, f"the catch-all scale did not apply: {monitors_state!r}"
 
