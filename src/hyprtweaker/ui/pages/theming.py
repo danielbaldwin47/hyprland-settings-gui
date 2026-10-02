@@ -916,9 +916,22 @@ class ThemingPage:
             try:
                 outcome = run(argv, timeout=RUN_TIMEOUT)
             except ToolTimedOut:
-                outcome = f"{spec.title} did not finish within {RUN_TIMEOUT:g} seconds."
-            except (ToolRefused, OSError) as error:
-                outcome = f"{spec.title} could not be started: {error}"
+                outcome = (
+                    f"{spec.title} did not finish within {RUN_TIMEOUT:g} seconds, so it was "
+                    "stopped. Try again; if it stops again, run it in a terminal to see what "
+                    "it waits for."
+                )
+            except ToolRefused:
+                outcome = (
+                    f"{spec.title} could not be started: it is not where this app looks for "
+                    "it. Check that it is installed correctly, then try again."
+                )
+            except OSError as error:
+                why = (error.strerror or str(error)).lower()
+                outcome = (
+                    f"{spec.title} could not be started ({why}). Check that it is installed "
+                    "correctly, then try again."
+                )
             GLib.idle_add(self._ran, tool, outcome)
 
         threading.Thread(target=work, name=f"regenerate-{tool}", daemon=True).start()

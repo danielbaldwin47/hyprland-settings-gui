@@ -15,12 +15,16 @@ finds, and on a developer's machine that is their own desktop.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
+import signal
 import subprocess
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO
 
 TOOL_PATH_ENV = "HYPRTWEAKER_TOOL_PATH"
 
@@ -81,8 +85,10 @@ def run_tool(
 
     `argv[0]` must be an absolute path directly inside a directory of the tool search path,
     as `find_tool` returns it; anything else raises `ToolRefused` before a process starts.
-    The environment is passed through unchanged. Raises `ToolTimedOut` after killing a tool
-    that overruns `timeout` seconds, and `OSError` when the program cannot be executed.
+    The environment is passed through unchanged. Returns once the tool itself exits, with
+    the last `OUTPUT_LIMIT` bytes of each stream; what it started in the background keeps
+    running. Raises `ToolTimedOut` after killing the tool and everything it started when it
+    overruns `timeout` seconds, and `OSError` when the program cannot be executed.
     """
     command = tuple(argv)
     if not command:
@@ -96,22 +102,37 @@ def run_tool(
             f"({TOOL_PATH_ENV} or PATH: {search}). Find the program with find_tool and run "
             "the path it returns."
         )
-    try:
-        completed = subprocess.run(
+    # Its own process group, and its output in files rather than pipes: a tool whose hook
+    # starts something in the background (matugen's `post_hook = "waybar &"`) holds a pipe
+    # open long after the tool itself exits, and waiting for that pipe's end would report a
+    # finished run as timed out. On a timeout the whole group is killed, so nothing the
+    # tool started outlives it (finding 5 of the #153 review).
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        process = subprocess.Popen(
             command,
             env=dict(environ),
             stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=timeout,
-            check=False,
+            stdout=out,
+            stderr=err,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired:
-        raise ToolTimedOut(command, timeout) from None
-    return ToolRun(
-        argv=command,
-        returncode=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
-    )
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise ToolTimedOut(command, timeout) from None
+        return ToolRun(
+            argv=command, returncode=returncode, stdout=_tail(out), stderr=_tail(err)
+        )
+
+
+OUTPUT_LIMIT = 64 * 1024
+"""Bytes of a tool's output kept, from the end: what it said last is what explains it."""
+
+
+def _tail(stream: IO[bytes]) -> str:
+    size = stream.seek(0, os.SEEK_END)
+    stream.seek(max(0, size - OUTPUT_LIMIT))
+    return stream.read().decode("utf-8", errors="replace")

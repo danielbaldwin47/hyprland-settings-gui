@@ -572,6 +572,26 @@ def test_a_failed_run_says_what_the_tool_said(tmp_path: Path, stub_tool: Any) ->
     assert page.dialog.get_body() == "It stopped with code 3. It said: cannot read image"
 
 
+def test_a_tool_that_cannot_start_says_so_in_words_with_a_next_step(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """Finding 25 of the #153 review: the dialog showed "[Errno 2] ...: '/path'"."""
+    stub = stub_tool("wallust")
+    stub.write_text("#!/nonexistent/interpreter\n", encoding="utf-8")
+    session, _ = make_session(tmp_path)
+    wired(session, "wallust", source="wallust")
+    page = build_page(session, current_wallpaper=lambda: Path("/w.png"))
+
+    click(page, "Regenerate")
+    wait_until(lambda: page.running is None, "the regenerate run")
+
+    assert page.dialog.get_heading() == "wallust did not make new colors"
+    assert page.dialog.get_body() == (
+        "wallust could not be started (no such file or directory). Check that it is "
+        "installed correctly, then try again."
+    )
+
+
 # --- other tools, Remove -------------------------------------------------------------------
 
 

@@ -148,3 +148,61 @@ def test_a_tool_that_overruns_its_timeout_is_stopped_and_named(
         run_tool([str(stub), "img"], timeout=0.2)
 
     assert timed_out.value.argv == (str(stub), "img")
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return Path(f"/proc/{pid}").exists() and "zombie" not in (
+        Path(f"/proc/{pid}/status").read_text().lower()
+    )
+
+
+def test_a_hook_left_running_in_the_background_does_not_hold_the_run(
+    stub_tool: Callable[[str, str], Path], tmp_path: Path
+) -> None:
+    """Finding 5 of the #153 review: a `post_hook = "waybar &"` kept the output pipe open,
+    so a run that had finished reported "did not finish" at the timeout."""
+    import time
+
+    pid_file = tmp_path / "background.pid"
+    stub = stub_tool("matugen", f"sleep 20 &\necho $! > '{pid_file}'\necho done")
+    started = time.monotonic()
+    try:
+        ran = run_tool([str(stub)], timeout=5)
+        assert time.monotonic() - started < 2
+        assert (ran.returncode, ran.stdout) == (0, "done\n")
+    finally:
+        os.kill(int(pid_file.read_text()), 9)
+
+
+def test_a_timeout_stops_everything_the_tool_started(
+    stub_tool: Callable[[str, str], Path], tmp_path: Path
+) -> None:
+    import time
+
+    pid_file = tmp_path / "background.pid"
+    stub = stub_tool("wallust", f"sleep 20 &\necho $! > '{pid_file}'\nsleep 30")
+
+    with pytest.raises(ToolTimedOut):
+        run_tool([str(stub)], timeout=0.5)
+
+    background = int(pid_file.read_text())
+    for _ in range(50):
+        if not _alive(background):
+            break
+        time.sleep(0.02)
+    assert not _alive(background)
+
+
+def test_only_the_end_of_a_long_output_is_kept(stub_tool: Callable[[str, str], Path]) -> None:
+    from hyprtweaker.engine.tools import OUTPUT_LIMIT
+
+    stub = stub_tool("matugen", "head -c 200000 /dev/zero | tr '\\0' a\necho; echo last line")
+
+    ran = run_tool([str(stub)], timeout=5)
+
+    assert len(ran.stdout.encode()) == OUTPUT_LIMIT
+    assert ran.stdout.endswith("\nlast line\n")
