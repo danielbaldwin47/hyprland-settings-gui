@@ -430,3 +430,183 @@ class TestManifest:
 
         payload = json.loads(paths.manifest.read_text(encoding="utf-8"))
         assert payload["migration"] == {"date": "2026-08-22", "source_sha256": "abc"}
+
+
+class TestBridgeEntries:
+    """The Manifest's Bridge entries drive the Entrypoint's bridge block (ADR-0006, #163)."""
+
+    @staticmethod
+    def wire(writer: Writer, model: ConfigModel, paths: ConfigPaths, *specs: object) -> None:
+        manifest = Manifest.load(paths.manifest, app_version="x", schema_version="y")
+        for spec in specs:
+            manifest = manifest.add_bridge(spec, present=present_files(paths))  # type: ignore[arg-type]
+        writer.record_bridges(model, manifest.bridges)
+
+    @staticmethod
+    def bridge_block(paths: ConfigPaths) -> list[str]:
+        lines = paths.entrypoint.read_text(encoding="utf-8").splitlines()
+        start = lines.index("-- External tools. Owned by the tool, not by hyprtweaker.")
+        block = [*lines[start + 1 :], ""]
+        return block[: block.index("")]
+
+    def test_a_native_path_bridge_is_required_after_the_modules_and_before_user(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        from hyprtweaker.engine.bridge import DMS, NOCTALIA
+
+        write_file(paths.hypr_dir / "noctalia.lua", "return {}\n")
+        write_file(paths.hypr_dir / "dms/colors.lua", "hl.config({})\n")
+        paths.user_lua.write_text("-- mine\n", encoding="utf-8")
+        self.wire(writer, model, paths, DMS, NOCTALIA)
+
+        writer.write(model)
+
+        lines = paths.entrypoint.read_text(encoding="utf-8").splitlines()
+        loading = [line for line in lines if line.startswith("require(")]
+        assert loading[-3:] == [
+            'require("noctalia").apply_theme()',
+            'require("dms.colors")',
+            'require("user")',
+        ]
+        assert loading.index('require("hyprtweaker/options/misc")') < len(loading) - 3
+
+    def test_every_entry_renders_a_line_and_the_ones_that_do_not_load_say_why(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        from hyprtweaker.engine.bridge import DMS, MATUGEN, WALLUST, Off, Wallpaper
+
+        write_file(paths.hypr_dir / "dms/colors.lua", "hl.config({})\n")
+        write_file(paths.bridge_dir / "matugen.lua", "return {}\n")
+        self.wire(writer, model, paths, DMS, MATUGEN, WALLUST)
+        manifest = Manifest.load(paths.manifest, app_version="x", schema_version="y")
+        writer.record_bridges(
+            model,
+            manifest.set_bridge_state(
+                "hyprtweaker/bridge/matugen", Off(Wallpaper("wallust"))
+            ).bridges,
+        )
+
+        writer.write(model)
+
+        assert self.bridge_block(paths) == [
+            'require("dms.colors")',
+            '-- require("hyprtweaker/bridge/matugen")  -- off: Color source is wallust',
+            '-- require("hyprtweaker/bridge/wallust")  -- waiting for wallust\'s first run',
+        ]
+
+    def test_a_quarantined_entry_keeps_its_line_in_the_quarantine_block(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """Commented, so noctalia's own script finds `require("noctalia")` and appends
+        nothing after `user` (#167 Cross-cutting 4)."""
+        from hyprtweaker.engine.bridge import NOCTALIA
+
+        write_file(paths.hypr_dir / "noctalia.lua", "return {}\n")
+        self.wire(writer, model, paths, NOCTALIA)
+        writer.write(model)
+
+        writer.set_quarantine(model, ["noctalia"])
+
+        text = paths.entrypoint.read_text(encoding="utf-8")
+        assert text.splitlines()[-1] == '-- require("noctalia").apply_theme()'
+        assert '\nrequire("noctalia")' not in text
+
+    def test_a_hand_placed_bridge_module_keeps_loading(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        from hyprtweaker.engine.bridge import MATUGEN
+
+        write_file(paths.bridge_dir / "matugen.lua", "return {}\n")
+        write_file(paths.bridge_dir / "pywal.lua", "return {}\n")
+        self.wire(writer, model, paths, MATUGEN)
+
+        writer.write(model)
+
+        assert self.bridge_block(paths) == [
+            'require("hyprtweaker/bridge/matugen")',
+            'require("hyprtweaker/bridge/pywal")',
+        ]
+
+    @pytest.mark.parametrize("loss", ["deleted", "truncated"])
+    def test_a_lost_manifest_keeps_every_bridge_line(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel, loss: str
+    ) -> None:
+        from hyprtweaker.engine.bridge import DMS, MATUGEN, PresetColors, bridge_states_for
+
+        write_file(paths.hypr_dir / "dms/colors.lua", "hl.config({})\n")
+        self.wire(writer, model, paths, DMS, MATUGEN)
+        manifest = Manifest.load(paths.manifest, app_version="x", schema_version="y")
+        gated = bridge_states_for(
+            PresetColors(), manifest.bridges, present=present_files(paths)
+        )
+        writer.set_bridges(model, gated)
+        writer.write(model)
+        before = self.bridge_block(paths)
+        if loss == "deleted":
+            paths.manifest.unlink()
+        else:
+            paths.manifest.write_text('{"format_ver', encoding="utf-8")
+
+        writer.regenerate_entrypoint(model)
+
+        assert (
+            self.bridge_block(paths)
+            == before
+            == [
+                '-- require("dms.colors")  -- off: Color source is Preset',
+                '-- require("hyprtweaker/bridge/matugen")  -- off: Color source is Preset',
+            ]
+        )
+        reloaded = Manifest.load(paths.manifest, app_version="x", schema_version="y")
+        assert reloaded.bridges == gated
+
+    def test_a_bridge_module_is_never_rewritten_or_hand_edit_checked(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        from hyprtweaker.engine.bridge import (
+            MATUGEN,
+            PresetColors,
+            Wallpaper,
+            bridge_states_for,
+        )
+
+        module = paths.bridge_dir / "matugen.lua"
+        write_file(module, "-- matugen's own bytes\nreturn {}\n")
+        self.wire(writer, model, paths, MATUGEN)
+        before = module.read_bytes()
+
+        first = writer.write(model)
+        manifest = Manifest.load(paths.manifest, app_version="x", schema_version="y")
+        writer.set_bridges(
+            model,
+            bridge_states_for(PresetColors(), manifest.bridges, present=present_files(paths)),
+        )
+        writer.set_bridges(
+            model,
+            bridge_states_for(
+                Wallpaper("matugen"), manifest.bridges, present=present_files(paths)
+            ),
+        )
+        model.set("general:border_size", 7)
+        second = writer.write(model)
+
+        assert module.read_bytes() == before
+        assert "hyprtweaker/bridge/matugen.lua" not in (*first.written, *second.written)
+        module.write_text("-- matugen ran again\n", encoding="utf-8")
+        assert writer.write(model).hand_edited == ()
+
+
+def write_file(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def present_files(paths: ConfigPaths) -> frozenset[str]:
+    from hyprtweaker.engine.bridge import REGISTRY
+
+    return frozenset(
+        each.file
+        for spec in REGISTRY.values()
+        for each in spec.modules
+        if (paths.hypr_dir / each.file).is_file()
+    )

@@ -91,6 +91,9 @@ confusion with ADR-0014 Presets, which are look-and-feel bundles and never monit
 App-side data rather than a Module -- nothing requires it, and the writer's prune never
 touches files the Manifest does not claim.
 """
+PRESETS_DIR = "presets"
+"""Presets, one `<slug>.json` each, in the App dir (ADR-0014). App data, like
+`monitor-profiles/`: never required, never claimed by the Manifest, never pruned."""
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"
 REPORTS_DIR = "reports"
@@ -126,6 +129,26 @@ class ConfigPaths:
         return cls(hypr_dir=root / "hypr", state_dir=root / "state")
 
     @property
+    def config_home(self) -> Path:
+        """The config home the hypr dir sits in (`$XDG_CONFIG_HOME`, `~/.config`).
+
+        Every path the app touches outside the App dir and the state dir derives from this
+        or `state_home`, never from `Path.home()` or `~`: another tool's config is
+        `config_home / "<tool>"`. So a test, the widget probe and the sandbox, which point
+        these at a directory of their own, can never reach the owner's real files
+        (`tests/unit/test_no_home_lookup.py`, #233). Under `rooted_at(root)` it is `root`.
+        """
+        return self.hypr_dir.parent
+
+    @property
+    def state_home(self) -> Path:
+        """The state home the app's state dir sits in (`$XDG_STATE_HOME`, `~/.local/state`).
+
+        The same rule as `config_home`. Under `rooted_at(root)` it is `root`.
+        """
+        return self.state_dir.parent
+
+    @property
     def app_dir(self) -> Path:
         return self.hypr_dir / APP_DIR_NAME
 
@@ -140,6 +163,10 @@ class ConfigPaths:
     @property
     def monitor_profiles_dir(self) -> Path:
         return self.app_dir / MONITOR_PROFILES_DIR
+
+    @property
+    def presets_dir(self) -> Path:
+        return self.app_dir / PRESETS_DIR
 
     @property
     def entrypoint(self) -> Path:

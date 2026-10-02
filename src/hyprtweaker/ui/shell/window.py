@@ -43,6 +43,7 @@ from hyprtweaker.engine.apply import (  # noqa: E402
     ApplyOutcome,
     ApplyResult,
     EntityStep,
+    PresetStep,
     Problem,
     Step,
     UndoGroup,
@@ -75,7 +76,7 @@ from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking 
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
-from hyprtweaker.engine.scripting import discovered_layouts  # noqa: E402
+from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
@@ -294,8 +295,9 @@ _SCHEMES = {
 FORGET_REMEMBERED_ACTION = "forget-remembered"
 """Clear every "remember my choice" answer (ADR-0014), so each such dialog asks again.
 
-Without it, a remembered answer is a one-way door (UX critique 4, #79). Insensitive while
-nothing is remembered, so the item never promises an effect it cannot have."""
+Without it, a remembered answer is a one-way door (UX critique 4, #79). Hidden while
+nothing is remembered: the action is disabled then, and the menu item hides with it
+(`hidden-when`), since a greyed item cannot say why it is grey."""
 
 
 class MainWindow(Adw.ApplicationWindow):
@@ -561,7 +563,11 @@ class MainWindow(Adw.ApplicationWindow):
         # Its own unlabelled section right below Theme rather than inside it: forgetting a
         # dialog answer is not a colour, and under the "Theme" heading it would read as one.
         remembered = Gio.Menu()
-        remembered.append("Forget remembered choices", f"win.{FORGET_REMEMBERED_ACTION}")
+        forget = Gio.MenuItem.new(
+            "Forget remembered choices", f"win.{FORGET_REMEMBERED_ACTION}"
+        )
+        forget.set_attribute_value("hidden-when", GLib.Variant.new_string("action-disabled"))
+        remembered.append_item(forget)
         menu.append_section(None, remembered)
 
         interop = Gio.Menu()
@@ -1109,7 +1115,7 @@ class MainWindow(Adw.ApplicationWindow):
         scripting = self._scripting_page
         self._stack.add_named(_scrolled(scripting.page), scripting.section)
         self._section_titles[scripting.section] = scripting.title
-        self._register(scripting.section, scripting.title, scripting.hit_count)
+        self._register(scripting.section, scripting.title, self._scripting_count())
 
         self._shown_entities = self._entity_lists()
         self._shown_live = bool(self._session.live)
@@ -1158,6 +1164,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _register(self, section: str, title: str, count: int) -> None:
         self._built.append(SidebarEntry(section=section, title=title, count=count))
+
+    def _scripting_count(self) -> int:
+        """The Scripting Page lists the calls found and the plugin load list: both count."""
+        page = self._scripting_page
+        hits = page.hit_count if page is not None else 0
+        return hits + len(self._session.declarations("plugins"))
 
     def _restored(self, selected: str | None) -> str:
         """Which Page to select after a rebuild: the one that was showing, if it still is.
@@ -1423,7 +1435,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _layout_choices(self) -> tuple[str, ...]:
         """The layouts the layout row offers: the schema's own, without its `lua:<name>`
         placeholder, then the Lua layouts the user's files register (#175)."""
-        option = self._session.schema.get("general:layout")
+        option = self._session.schema.get(LAYOUT_OPTION)
         known = option.known_values.values if option and option.known_values else ()
         return (*layout_choices(known), *discovered_layouts(self._session.paths))
 
@@ -1814,6 +1826,8 @@ class MainWindow(Adw.ApplicationWindow):
         if self._scripting_page is not None:
             self._scripting_page.refresh()
         self._draw_entity_pages(self._moved_entities())
+        # Always, not only when an Entity list moved: the Scripting count follows `user.lua`.
+        self._sync_entity_counts()
 
         self.sync_banner()
         self._sync_undo_action()
@@ -2084,6 +2098,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _move_plugin(self, index: int, to: int) -> None:
         if self._session.move_declaration("plugins", index, to):
             self._refresh_plugins()
+            if self._scripting_page is not None:
+                self._scripting_page.plugins.focus(to)
 
     def _refresh_plugins(self) -> None:
         # `sync` refreshes the Scripting Page, its plugin list included.
@@ -2240,6 +2256,8 @@ class MainWindow(Adw.ApplicationWindow):
             counts[MonitorsPage.section] = len(self._monitors_page.rules)
         for declarations in self._declaration_pages.values():
             counts[declarations.section] = len(declarations.entities)
+        if self._scripting_page is not None:
+            counts[self._scripting_page.section] = self._scripting_count()
         index = 0
         while (row := self._sidebar.get_row_at_index(index)) is not None:
             index += 1
@@ -2259,10 +2277,12 @@ class MainWindow(Adw.ApplicationWindow):
         A gesture spanning several Options is counted rather than listed: the css-gaps editor
         writes four sides at once, and "Gaps in, Gaps in, Gaps in, Gaps in" is not a sentence.
         An Entity step carries its own title ("Bind removed"): only the session knew which
-        of add, remove or reorder the gesture was.
+        of add, remove or reorder the gesture was. A Preset step names the Preset.
         """
         if isinstance(step, EntityStep):
             return step.title
+        if isinstance(step, PresetStep):
+            return f"Applied {step.name}. Press Ctrl+Z to undo."
         titles = [self._session.schema[name].title for name in step.names]
         if len(titles) == 1:
             return f"{titles[0]} changed"

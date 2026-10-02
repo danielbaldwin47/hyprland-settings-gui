@@ -81,7 +81,11 @@ def choose(window: Any, theme: str) -> None:
     window.activate_action("win.theme", GLib.Variant.new_string(theme))
 
 
-def primary_menu(window: Any) -> list[tuple[str | None, list[tuple[str, str, str | None]]]]:
+MenuItem = tuple[str, str, str | None, str | None]
+"""(label, action, target, hidden-when) of one primary-menu item."""
+
+
+def primary_menu(window: Any) -> list[tuple[str | None, list[MenuItem]]]:
     """The primary menu as the user sees it: (section heading, [(label, action, target)])."""
     from gi.repository import Gio, Gtk
 
@@ -98,18 +102,20 @@ def primary_menu(window: Any) -> list[tuple[str | None, list[tuple[str, str, str
             child = child.get_next_sibling()
         return None
 
-    def items(model: Any) -> list[tuple[str, str, str | None]]:
+    def items(model: Any) -> list[MenuItem]:
         entries = []
         for index in range(model.get_n_items()):
             label = model.get_item_attribute_value(index, Gio.MENU_ATTRIBUTE_LABEL, None)
             action = model.get_item_attribute_value(index, Gio.MENU_ATTRIBUTE_ACTION, None)
             target = model.get_item_attribute_value(index, Gio.MENU_ATTRIBUTE_TARGET, None)
+            hidden = model.get_item_attribute_value(index, "hidden-when", None)
             if action is not None:  # a section's heading is a label with no action
                 entries.append(
                     (
                         label.get_string(),
                         action.get_string(),
                         None if target is None else target.get_string(),
+                        None if hidden is None else hidden.get_string(),
                     )
                 )
         return entries
@@ -137,12 +143,17 @@ def test_the_primary_menu_offers_system_light_and_dark_then_forgetting(tmp_path:
         (
             "Theme",
             [
-                ("System", "win.theme", "system"),
-                ("Light", "win.theme", "light"),
-                ("Dark", "win.theme", "dark"),
+                ("System", "win.theme", "system", None),
+                ("Light", "win.theme", "light", None),
+                ("Dark", "win.theme", "dark", None),
             ],
         ),
-        (None, [("Forget remembered choices", "win.forget-remembered", None)]),
+        # Hidden, not greyed, while nothing is remembered: a menu item cannot say why it is
+        # grey, and #170 is what first remembers an answer.
+        (
+            None,
+            [("Forget remembered choices", "win.forget-remembered", None, "action-disabled")],
+        ),
     ]
 
 

@@ -189,7 +189,7 @@ def test_entity_index_matches_golden() -> None:
     assert_matches_golden(
         render_entities(index, ENTITY_GOLDEN_QUERIES),
         GOLDEN_DIR / "search-entities.txt",
-        "the Rules & entities group of the search index",
+        "the Keybinds, rules & displays group of the search index",
     )
 
 
@@ -202,7 +202,7 @@ by name, with its row's summary."""
 
 
 def render_entities(index: SearchIndex, queries: tuple[str, ...]) -> str:
-    lines = ["# search index -- the Rules & entities group"]
+    lines = ["# search index -- the Keybinds, rules & displays group"]
     for query in queries:
         hits = entity_hits(index, query)
         lines += ["", f"## query: {query} ({len(hits)} hits)"]

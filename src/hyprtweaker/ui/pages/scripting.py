@@ -25,7 +25,6 @@ state the Writer reads, so a failed scan costs the user this list and nothing el
 from __future__ import annotations
 
 import enum
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,12 +37,15 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import PluginLoad  # noqa: E402
+from hyprtweaker.engine.schema import SupplementKind  # noqa: E402
 from hyprtweaker.engine.scripting import (  # noqa: E402
     CallKind,
     IndirectUse,
+    LoadsFile,
     ScriptingHit,
     ScriptingScan,
     UnfinishedText,
+    UnsearchedFile,
     scan_scripting,
 )
 from hyprtweaker.session import Session  # noqa: E402
@@ -51,12 +53,10 @@ from hyprtweaker.ui.pages.rules import REORDER_HINT  # noqa: E402
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
 
-_log = logging.getLogger(__name__)
-
 LEAD_TITLE = "In your Lua files"
 CAVEAT = (
-    "Found by reading user.lua and legacy.lua. Calls built at runtime, in loops or "
-    "through other names may not appear."
+    "Found by reading user.lua and legacy.lua only, not the files they load. Calls built "
+    "at runtime, in loops or through other names may not appear."
 )
 EMPTY = "No event handlers, timers, custom layouts or plugin loads found"
 
@@ -88,6 +88,12 @@ PLUGINS_TITLE = "Plugins"
 PLUGINS_DESCRIPTION = "Loaded in this order each time Hyprland reads its config."
 PLUGINS_EMPTY = "No plugins load from this app. Add a plugin's .so file to load it at startup."
 ADD_PLUGIN = "Add plugin"
+PLUGIN_SETTINGS_FOOTER = (
+    "This version of Hyprland does not report the settings a plugin adds, so they are not "
+    "shown here. Set them in your user.lua."
+)
+"""ADR-0018: Hyprland 0.56.2's `descriptions` omits every plugin setting, so a loaded plugin
+gets no rows. Shown until a Hyprland reports one, when the sentence would be false."""
 
 
 class PluginStatus(enum.Enum):
@@ -248,7 +254,8 @@ class PluginRow:
 class PluginsGroup:
     """The `plugins.lua` list as one group: rows, the empty state, and what else is loaded.
 
-    `footer` is the slot #175 fills with how plugin settings appear; empty and hidden here.
+    `footer` says why a plugin's settings get no rows here (`PLUGIN_SETTINGS_FOOTER`), and
+    hides once the running Hyprland reports any plugin setting.
     """
 
     def __init__(self, session: Session, *, actions: PluginActions | None) -> None:
@@ -256,9 +263,13 @@ class PluginsGroup:
         self._actions = actions
         self._loaded: frozenset[str] | None = None
         self._loaded_names: tuple[str, ...] = ()
+        self._released = False
         self.rows: list[PluginRow] = []
 
         self.group = Adw.PreferencesGroup(title=PLUGINS_TITLE, description=PLUGINS_DESCRIPTION)
+        # `release` disposes the group, and disposal emits `destroy`: a `plugin list` reply
+        # still in flight then finds the group gone and leaves it alone.
+        self.group.connect("destroy", self._on_destroy)
         self.add_button = Gtk.Button(label=ADD_PLUGIN, valign=Gtk.Align.CENTER)
         self.add_button.set_tooltip_text("Choose a plugin's .so file")
         if actions is not None:
@@ -271,7 +282,10 @@ class PluginsGroup:
             subtitle="Loaded by Hyprland, but not from this list", use_markup=False
         )
         self.footer = Gtk.Label(
-            wrap=True, xalign=0, css_classes=["dim-label", "caption"], visible=False
+            label=PLUGIN_SETTINGS_FOOTER,
+            wrap=True,
+            xalign=0,
+            css_classes=["dim-label", "caption"],
         )
         self.footer.set_margin_top(12)
         self.group.add(self.footer)
@@ -281,7 +295,18 @@ class PluginsGroup:
         self._render()
         self._session.fetch_loaded_plugins(self._on_loaded)
 
+    def focus(self, index: int) -> None:
+        """Put the keyboard focus on the row for entry `index`: a move rebuilds every row,
+        and the next Alt+Up/Down must reach the one that moved without a Tab back."""
+        if 0 <= index < len(self.rows):
+            self.rows[index].widget.grab_focus()
+
+    def _on_destroy(self, _group: Adw.PreferencesGroup) -> None:
+        self._released = True
+
     def _on_loaded(self, names: tuple[str, ...] | None) -> None:
+        if self._released:
+            return
         loaded = None if names is None else frozenset(name.lower() for name in names)
         if loaded == self._loaded and (names or ()) == self._loaded_names:
             return
@@ -322,6 +347,13 @@ class PluginsGroup:
         self.also_loaded.set_visible(bool(others))
         if others:
             self.group.add(self.also_loaded)
+        self.footer.set_visible(
+            not any(
+                option.supplement is not None
+                and option.supplement.kind is SupplementKind.PLUGIN
+                for option in self._session.schema
+            )
+        )
 
 
 def _is_file(path: str) -> bool:
@@ -397,11 +429,6 @@ class ScriptingPage:
         """How many calls the last read found: the sidebar's count."""
         return self._hit_count
 
-    @property
-    def caveat(self) -> str:
-        """The best-effort sentence, on the inventory's lead group."""
-        return CAVEAT
-
     def listed_rows(self) -> tuple[tuple[str, ScriptingRow], ...]:
         """Every inventory row with its group's title, in Page order. The UI tier's view."""
         return tuple(self._listed)
@@ -417,22 +444,7 @@ class ScriptingPage:
 
         lead = Adw.PreferencesGroup(title=LEAD_TITLE, description=CAVEAT)
         self._add_group(lead)
-        try:
-            scan = scan_scripting(self._session.paths)
-        except Exception:  # a scanner bug must not break the window
-            _log.exception("scanning user.lua and legacy.lua failed")
-            self._hit_count = 0
-            self._add_row(
-                lead,
-                ScriptingRow(
-                    "Could not search your Lua files",
-                    "This list is for reading only, so your settings are not affected.",
-                    open_file=None,
-                    file="",
-                ),
-            )
-            return
-
+        scan = scan_scripting(self._session.paths)
         self._hit_count = len(scan.hits)
         self._list_problems(lead, scan)
         if not scan.hits and not scan.unreadable and not scan.gaps:
@@ -475,6 +487,21 @@ class ScriptingPage:
                         f"Stopped reading {path.name} at line {line}",
                         "A comment or string starts there and never closes, so nothing "
                         "after it is listed.",
+                        open_file=self._opener(path),
+                        file=path.name,
+                    )
+                case LoadsFile(path=path, line=line):
+                    row = ScriptingRow(
+                        "Loads another file; calls in it are not listed",
+                        self._where(path, line),
+                        open_file=self._opener(path),
+                        file=path.name,
+                    )
+                case UnsearchedFile(path=path):
+                    row = ScriptingRow(
+                        f"Could not search {path.name}",
+                        "Nothing in it is listed. This list is for reading only, so your "
+                        "settings are not affected.",
                         open_file=self._opener(path),
                         file=path.name,
                     )

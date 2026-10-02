@@ -14,7 +14,7 @@ from pathlib import Path
 
 from _fake_hyprland import FakeHyprland, run_with_fake
 from _golden import assert_matches_golden
-from _support import Runner, entity_session, section_conversation, session_for
+from _support import Runner, drain_events, entity_session, section_conversation, session_for
 
 from hyprtweaker.engine.apply import EntityStep
 from hyprtweaker.engine.model import entity_title
@@ -183,6 +183,53 @@ def test_a_broken_plugins_module_leaves_every_declarative_list_alone(tmp_path: P
 
     assert session.declarations("env") == []
     assert session.declarations("plugins") == []
+
+
+def test_a_second_configreloaded_after_an_applys_own_reload_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    """Settled for #174: Hyprland loading a plugin can reload again right after the app's
+    own reload. That event is somebody else's reload to the app, and it must leave the
+    model, the undo stack, the notices and the file as the Apply left them."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = session_for(fake, tmp_path, runner)
+        notices: list[object] = []
+        session.on_notice = notices.append
+        session.start()
+        await runner.settle()
+        assert session.add_declaration("plugins", BARS)
+        await session.drain()
+        await runner.settle()
+        step = session.last_gesture
+        written = plugins_lua(tmp_path)
+        rounding = session.model.get("decoration:rounding")
+        reads = fake.requests.count("j/configerrors")
+
+        await fake.emit("configreloaded")
+        await drain_events(runner)
+        await session.drain()
+        await runner.settle()
+
+        assert fake.requests.count("j/configerrors") > reads, "the precondition: it was read"
+
+        assert listed(session) == [(BARS.path, True)]
+        assert session.model.get("decoration:rounding") == rounding
+        assert session.last_gesture is step
+        assert plugins_lua(tmp_path) == written
+        assert notices == []
+        assert not session.health.unhealthy
+        assert session.undo()
+        await session.drain()
+        await runner.settle()
+        assert listed(session) == []
+        assert not session.can_undo
+
+    run_with_fake(
+        scenario,
+        FakeHyprland(section_conversation("general", "decoration"), reload_emits_event=True),
+    )
 
 
 # --- loaded state ---------------------------------------------------------------------------

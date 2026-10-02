@@ -22,11 +22,13 @@ Applying a color-carrying Preset while a Wallpaper source is active raises one d
 
 ### Presets
 
-A **Preset** is a named bundle of Option values, chosen at save time via a **Capture scope** checklist — Colors / Gaps & layout / Animations / Fonts & cursor / Wallpaper — as narrow or broad as wanted. Colors are frozen to the concrete values live at capture, whatever generated them.
+A **Preset** is a named bundle of Option values, chosen at save time via a **Capture scope** checklist — Colors / Gaps & layout / Animation switches / Fonts & cursor / Wallpaper — as narrow or broad as wanted. Colors are frozen to the concrete values live at capture, whatever generated them.
+
+*Amended during #168:* Presets hold Options only in v1, so the "Animations" scope is named "Animation switches" (`animations:enabled`, `animations:workspace_wraparound`); curves and animation leaves are Entities, and the scope becomes "Animations" again if they join it. Cursor theme and size are `env` Entities, so "Fonts & cursor" captures the font Options. Capture reads each scoped Option off the running compositor (the Bridge's colours included) and saves only what the config sets; offline it saves the model's set values. Applying never unsets: a Preset holds set values only.
 
 **Preset ≠ Profile.** Keybinds, rules, and monitors are excluded: they are workflow, not theme, and the carry-my-whole-setup-to-a-new-machine story is already ADR-0009's first-class Export/Import.
 
-On disk: `~/.config/hypr/hyprtweaker/presets/<slug>.json` — app data, never `require`d by Hyprland. JSON manifest: name, created, capture scope, dotted-key→value map, app + Hyprland version stamps. Applying a preset is a normal Apply transaction with a pre-write Snapshot; undo toast applies.
+On disk: `~/.config/hypr/hyprtweaker/presets/<slug>.json` — app data, never `require`d by Hyprland. JSON manifest: `format` stamp, name, created, capture scope, Option name→value map (colon-form names such as `general:border_size`; JSON-native values, the complex types as display text, read back through the Option's parser), app + Hyprland version stamps, wallpaper path (*amended during #168*). Applying a preset is a normal Apply transaction with a pre-write Snapshot; undo toast applies.
 
 ### Wallpaper
 
@@ -42,7 +44,7 @@ In scope for v1. Export writes a **Theme archive** — `<slug>.hyprtweaker-theme
 
 ## Consequences
 
-- Source switching regenerates the Entrypoint (require gating), so it rides the existing Apply pipeline — no new write path.
+- Source switching regenerates the Entrypoint (require gating), so it rides the existing Apply pipeline — no new write path: amended during #163, it is a queued Entrypoint transaction, Quarantine's (one Journal entry, one Entrypoint write, one reload), since an Apply transaction renders the model and the model does not describe the Entrypoint; a Preset applying its colours records the gate and lets its own Apply transaction carry the Entrypoint.
 - The module edits tool-owned config files outside the App dir (matugen/wallust config stanzas) — like the wizard's output-flip in ADR-0006, behind the user's explicit action.
 - Per-backend parameter UI is data (like Template packs), so a third backend later is additive.
 - Local sharing is trivially the JSON file; the archive format exists only to carry the wallpaper.

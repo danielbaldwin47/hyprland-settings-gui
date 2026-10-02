@@ -285,8 +285,8 @@ class RenamedNotice:
 
 @dataclass(frozen=True, slots=True)
 class UnkeptNotice:
-    """This start's notice for Options a release removed whose values `capture` could not
-    read (no Lua, or a Module deleted or hand-edited): the write drops them, and the user
+    """This start's notice for Options the app stopped writing whose values `capture` could
+    not read (no Lua, or a Module deleted or hand-edited): the write drops them, and the user
     is told so rather than finding them gone. Nothing records it: once the keys are gone,
     the next start detects nothing."""
 
@@ -294,12 +294,28 @@ class UnkeptNotice:
     names: tuple[str, ...]
     """Colon-form names, sorted."""
 
+    removed: bool = True
+    """Whether a release removed them (`RetireReason.REMOVED`). A quiet reason -- a plugin
+    not loaded, a startup read that missed a newer Hyprland -- removed nothing, and its
+    notice must not say a release did."""
+
     @classmethod
-    def of(cls, found: Sequence[Retirement], values: Mapping[str, Any]) -> UnkeptNotice | None:
-        """The notice for the found names `values` lacks, or `None` when every one was
-        read. One start detects under one release, so one notice covers them."""
-        lost = sorted(each.name for each in found if each.name not in values)
-        return cls(found[0].retired_in, tuple(lost)) if lost else None
+    def of(
+        cls, found: Sequence[Retirement], values: Mapping[str, Any]
+    ) -> tuple[UnkeptNotice, ...]:
+        """A notice for the removed names `values` lacks, then one for the quiet ones; none
+        when every value was read. One start detects under one release."""
+        notices: list[UnkeptNotice] = []
+        for removed in (True, False):
+            lost = [
+                each
+                for each in found
+                if each.name not in values and each.reason.announced is removed
+            ]
+            if lost:
+                names = tuple(sorted(each.name for each in lost))
+                notices.append(cls(lost[0].retired_in, names, removed=removed))
+        return tuple(notices)
 
 
 def unannounced(manifest: Manifest) -> tuple[RetiredNotice, ...]:
