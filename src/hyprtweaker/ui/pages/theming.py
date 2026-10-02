@@ -720,11 +720,11 @@ class ThemingPage:
     def _ask_changed(self, tool: str, files: tuple[str, ...]) -> None:
         title = REGISTRY[tool].title
         listed = ", ".join(files)
-        which = "these files have" if len(files) > 1 else "this file has"
+        these = "these files have" if len(files) > 1 else "this file has"
         dialog = Adw.AlertDialog()
         dialog.set_heading(f"{listed} changed since setup")
         dialog.set_body(
-            f"Since {title} was set up, {which} "
+            f"Since {title} was set up, {these} "
             "been changed. Restore the copy kept at setup (the file as it is now is kept "
             "beside it), or leave it as it is and only stop loading "
             f"{title}."
