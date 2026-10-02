@@ -18,7 +18,8 @@ license=(GPL-3.0-or-later)
 # zstd: Theme archive compression falls back to the `zstd` binary below Python 3.14.
 # lua: the app runs `lua` to read its own Modules back, and `luac` (same package) gates
 # every write's syntax.
-depends=(python 'python-gobject>=3.50' gtk4 libadwaita glib2 hicolor-icon-theme zstd lua)
+# libadwaita>=1.7: Adw.WrapBox (MINIMUM_LIBADWAITA; meson.build checks it too).
+depends=(python 'python-gobject>=3.50' gtk4 'libadwaita>=1.7' glib2 hicolor-icon-theme zstd lua)
 makedepends=(git meson)
 checkdepends=(python-pytest desktop-file-utils appstream)
 optdepends=('hyprland: the compositor being configured')

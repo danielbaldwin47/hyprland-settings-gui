@@ -30,6 +30,11 @@ MINIMUM_PYGOBJECT = "3.50"
 """The release that added `gi.events`. Only live apply depends on it; the Config view
 builds and reads correctly without it."""
 
+MINIMUM_LIBADWAITA = "1.7"
+"""The release that added `Adw.WrapBox`, which the rules filter chips are laid out in
+(`ui/pages/rules.py`); `Adw.SpinnerPaintable` (1.6) is older. `meson.build` checks it by
+capability and the PKGBUILD pins it (tests/unit/test_packaging.py keeps the three equal)."""
+
 
 class MainLoopRunner:
     """Schedules coroutines on the GTK main loop, or explains why it cannot."""

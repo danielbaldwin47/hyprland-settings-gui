@@ -544,9 +544,9 @@ class MainWindow(Adw.ApplicationWindow):
     def _build_view_switcher(self) -> Gtk.Widget:
         """The segmented control above the sidebar list (#7).
 
-        Two linked `ToggleButton`s rather than `Adw.ToggleGroup`: the group widget arrived in
-        libadwaita 1.7 and the app's floor is lower, so using it would trade a working
-        switcher on older distributions for one line less code here.
+        Two linked `ToggleButton`s rather than `Adw.ToggleGroup`, which arrived in the same
+        libadwaita 1.7 that is now the app's floor (`MINIMUM_LIBADWAITA`): a later tidy-up,
+        not a fix, since the two buttons already work.
 
         The buttons drive the window action rather than each other. A toggle handler that
         flipped its sibling directly would re-enter on that flip -- the classic segmented

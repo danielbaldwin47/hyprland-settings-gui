@@ -16,7 +16,7 @@ from configparser import ConfigParser
 from _support import ROOT
 
 from hyprtweaker import APP_ID
-from hyprtweaker.ui.shell.runtime import MINIMUM_PYGOBJECT
+from hyprtweaker.ui.shell.runtime import MINIMUM_LIBADWAITA, MINIMUM_PYGOBJECT
 
 PKGBUILD = ROOT / "packaging" / "PKGBUILD"
 TOP_MESON = ROOT / "meson.build"
@@ -46,6 +46,15 @@ def test_meson_setup_refuses_below_the_floor_the_app_checks() -> None:
     assert "'import gi.events'" in text, "meson.build no longer probes gi.events"
     errors = re.findall(r"error\(\s*'([^']*)'", text)
     assert any(f"PyGObject >= {MINIMUM_PYGOBJECT}" in message for message in errors), errors
+
+
+def test_the_pkgbuild_and_meson_pin_the_libadwaita_floor_the_app_needs() -> None:
+    """F1 of the #148 review: `Adw.WrapBox` needs 1.7, and nothing declared it."""
+    assert f"libadwaita>={MINIMUM_LIBADWAITA}" in pkgbuild_array("depends")
+    text = TOP_MESON.read_text()
+    assert '"WrapBox"' in text, "meson.build no longer probes Adw.WrapBox"
+    errors = re.findall(r"error\(\s*'([^']*)'", text)
+    assert any(f"libadwaita >= {MINIMUM_LIBADWAITA}" in message for message in errors), errors
 
 
 def test_the_pkgbuild_depends_on_zstd_for_theme_archives() -> None:

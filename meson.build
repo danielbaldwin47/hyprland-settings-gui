@@ -20,6 +20,14 @@ if run_command(python, '-c', 'import gi.events', check: false).returncode() != 0
   error('PyGObject >= 3.50 is required (`import gi.events` failed for ' + python.full_path() + '). Update python-gobject (python3-gi) and configure again.')
 endif
 
+# The libadwaita floor, by capability for the same reason: Adw.WrapBox arrived in 1.7.
+# MINIMUM_LIBADWAITA in src/hyprtweaker/ui/shell/runtime.py and the PKGBUILD say the same.
+# A typelib lookup only, so configuring never starts GTK or reaches a display.
+adw_check = 'import gi; from gi._gi import Repository; r = Repository.get_default(); r.require("Adw", "1", False); raise SystemExit(r.find_by_name("Adw", "WrapBox") is None)'
+if run_command(python, '-c', adw_check, check: false).returncode() != 0
+  error('libadwaita >= 1.7 is required (Adw.WrapBox is missing for ' + python.full_path() + '). Update libadwaita (gir1.2-adw-1) and configure again.')
+endif
+
 subdir('src')
 subdir('data')
 subdir('tests')
