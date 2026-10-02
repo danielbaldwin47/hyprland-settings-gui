@@ -26,7 +26,6 @@ from hyprtweaker.engine.entities_catalog import (
     ANIMATION_CURVE_KEYS,
     ANIMATION_FIELD_SPECS,
     ANIMATION_FIELDS,
-    ANIMATION_LEAVES,
     CURVE_TYPES,
     DEVICE_FIELDS,
     EVERY_RELOAD,
@@ -34,12 +33,14 @@ from hyprtweaker.engine.entities_catalog import (
     PERMISSION_ENFORCE_OPTION,
     PERMISSION_MODES,
     PERMISSION_TYPES,
+    SHIPPED_ANIMATION_LEAVES,
     SPRING_FIELDS,
     STARTUP_EVENTS,
     FieldSpec,
     FieldType,
     Finding,
     animation_findings,
+    animation_leaves,
     coerce,
     curve_findings,
     dangling_curve_references,
@@ -61,6 +62,7 @@ from hyprtweaker.engine.model.entities import (
     Permission,
     StartupCommand,
 )
+from hyprtweaker.engine.schema import Schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,8 +123,8 @@ class DeclarationKind:
     scripted: Callable[[Any], bool] = field(repr=False, default=lambda _: False)
     """Whether one entity is Lua the GUI lists but never edits. Only gestures can be."""
 
-    findings_for: Callable[[EntitySet], list[tuple[int, Finding]]] = field(
-        repr=False, default=lambda _entities: []
+    findings_for: Callable[[EntitySet, Schema], list[tuple[int, Finding]]] = field(
+        repr=False, default=lambda _entities, _schema: []
     )
     """Everything wrong with this kind's entities, as `(row index, finding)`.
 
@@ -131,6 +133,19 @@ class DeclarationKind:
     *pair* of lists, and a shadowed gesture is a property of the list's order. Indexed
     rather than keyed by title because gesture titles are not unique -- two rows sharing a
     trigger is exactly what `gesture_conflicts` reports, and keying by title badged both.
+
+    Takes the session's `Schema` too, because what Hyprland has is version-dependent: the
+    animation tree is read from it (`animation_leaves`).
+    """
+
+    choices_from: Callable[[Schema], Mapping[str, tuple[str, ...]]] = field(
+        repr=False, default=lambda _schema: {}
+    )
+    """Enum choices this Schema supplies, by field name, in place of the field's own.
+
+    A field's `choices` are what the app shipped with; for a field whose options move with
+    the Hyprland version (the animation `leaf`) the Schema knows the tree the user's
+    compositor has, so the editor offers that instead.
     """
 
     @property
@@ -213,7 +228,7 @@ _ANIMATION_FIELDS: tuple[FieldSpec, ...] = (
         FieldType.ENUM,
         "Animates",
         required=True,
-        choices=ANIMATION_LEAVES,
+        choices=SHIPPED_ANIMATION_LEAVES,
         help="Which part of the animation tree this entry controls.",
     ),
     *ANIMATION_FIELDS,
@@ -446,7 +461,7 @@ def _permission_subtitle(permission: Permission) -> str:
     return f"{permission.mode} {permission.kind}"
 
 
-def _animation_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+def _animation_findings(entities: EntitySet, schema: Schema) -> list[tuple[int, Finding]]:
     # The cross-entity checks carry their own row index. Resolving them by leaf instead
     # would collapse both rows' findings onto one whenever a leaf appears twice -- which
     # the write gate prevents, but a hand-edited Module read back does not.
@@ -454,12 +469,13 @@ def _animation_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
         *dangling_curve_references(entities),
         *missing_curve_references(entities),
     ]
+    leaves = animation_leaves(schema)
     for index, animation in enumerate(entities.animations):
-        found += [(index, finding) for finding in animation_findings(animation)]
+        found += [(index, finding) for finding in animation_findings(animation, leaves)]
     return found
 
 
-def _curve_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+def _curve_findings(entities: EntitySet, _schema: Schema) -> list[tuple[int, Finding]]:
     return [
         (index, finding)
         for index, curve in enumerate(entities.curves)
@@ -467,7 +483,7 @@ def _curve_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
     ]
 
 
-def _device_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+def _device_findings(entities: EntitySet, _schema: Schema) -> list[tuple[int, Finding]]:
     return [
         (index, finding)
         for index, device in enumerate(entities.devices)
@@ -475,7 +491,7 @@ def _device_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
     ]
 
 
-def _env_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+def _env_findings(entities: EntitySet, _schema: Schema) -> list[tuple[int, Finding]]:
     return [
         (index, finding)
         for index, variable in enumerate(entities.env)
@@ -483,7 +499,7 @@ def _env_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
     ]
 
 
-def _gesture_findings(entities: EntitySet) -> list[tuple[int, Finding]]:
+def _gesture_findings(entities: EntitySet, _schema: Schema) -> list[tuple[int, Finding]]:
     return list(gesture_conflicts(entities.gestures))
 
 
@@ -493,6 +509,7 @@ KINDS: tuple[DeclarationKind, ...] = (
     DeclarationKind(
         kind="animations",
         findings_for=_animation_findings,
+        choices_from=lambda schema: {"leaf": animation_leaves(schema)},
         title_of=lambda entity: entity.leaf,
         subtitle_of=_animation_subtitle,
         section="entity:animations",

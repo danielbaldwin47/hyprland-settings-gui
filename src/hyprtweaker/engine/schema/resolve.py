@@ -94,8 +94,8 @@ def stamp_added_in(
         )
         for option in schema.options
     )
-    return GeneratedSchema(
-        hyprland_version=schema.hyprland_version,
+    return replace(
+        schema,
         options=options,
         provenance={**schema.provenance, "predecessor": predecessor.hyprland_version},
     )
@@ -244,6 +244,12 @@ class Schema:
     here would leave the Config view -- one Page per Section -- with 21 raw config keys for
     headings and no way to reach the curated names sitting in the Overlay."""
 
+    animation_leaves: tuple[str, ...] | None = None
+    """The animation tree's leaves as this version's Generated schema recorded them.
+
+    `None` when the file has no block; read through `entities_catalog.animation_leaves`,
+    which supplies the shipped list for that case, rather than directly."""
+
     _by_name: dict[str, ResolvedOption] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -262,6 +268,7 @@ class Schema:
                 for option in schema.options
             ),
             sections=dict(overlay.sections),
+            animation_leaves=schema.animation_leaves,
         )
 
     def __getitem__(self, name: str) -> ResolvedOption:
