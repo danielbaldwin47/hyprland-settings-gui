@@ -16,7 +16,7 @@ An effort handed to `/implement-spec` as an issue labelled `effort` is read from
 | `fix/<n>-<slug>` (one per review) | the branch under review | its implementer | that branch |
 
 - `main` reaches a spec branch only through the orchestrator merging the effort branch into it (step 5). Shared branches are merged, never rebased.
-- The orchestrator merges each ticket branch itself, `git merge` in the spec branch's checkout, and settles conflicts and an implementer's hedges ("rename if review objects") at that merge.
+- The orchestrator merges each ticket branch itself, `git merge` in the spec branch's checkout, and settles an implementer's hedges ("rename if review objects") at that merge. A merge that conflicts goes to a **merger** subagent, which resolves it in the spec branch's checkout and returns the resolution in under ten lines (§ The orchestrator stays thin).
 - The done checks (`docs/agents/local-checks.md` § Done checks) run on the receiving branch after every merge: a semantic conflict survives a clean textual merge. A red merge is undone (`git reset --hard ORIG_HEAD`) before anything else starts, and its ticket goes back to an implementer with the failing lines.
 - A ticket worktree goes under `.claude/worktrees/` (gitignored), made by the orchestrator off the spec branch by absolute path. It needs no setup: the tools are the main checkout's `.venv/bin/<tool>` run from the worktree root, and `pythonpath = ["src"]` makes them load the worktree's code (`local-checks.md` § Worktrees).
 
@@ -26,15 +26,28 @@ A model the owner names when starting `/implement-spec` overrides this table.
 
 | Role | Model | Its brief |
 | --- | --- | --- |
+| Orchestrator | the session's own model (Fable for effort #148) | this file, § The orchestrator stays thin |
 | Orienter | Sonnet | step 2 |
 | Implementer | its ticket's `Model:` line (`docs/agents/tickets.md`); Opus for a ticket with none | `docs/agents/implementer-brief.md` |
 | Fix implementer | Opus | the findings list in place of a ticket, with the brief's Build and Done steps |
-| Reviewer | Fable | `/mattpocock-skills:code-review` |
+| Reviewer | Sonnet, coordinating; its **Standards** sub-agent on Opus and its **Spec** sub-agent on Fable | `/mattpocock-skills:code-review`; it passes `model: opus` and `model: fable` when it spawns the two axes |
+| Merger | Opus | the two branches, the conflict list and both implementers' reports |
 | Hand-tester | Opus | step 7 |
 
 The **notes directory** is `~/.cache/effort-loop/hyprtweaker/spec-<n>/notes/`, outside the repo so every subagent reads the same files: the spec's body as `spec.md`, the orientation notes, and `carry-to-review.md`. Each implementer has a scratch directory of its own under `~/.cache/effort-loop/hyprtweaker/spec-<n>/scratch/`.
 
 An implementer's prompt is its ticket, worktree, branch, the spec branch, the notes directory, its scratch directory and the brief's path. Add only what none of those hold.
+
+## The orchestrator stays thin
+
+The orchestrator lives for the whole effort, so whatever it reads it carries to the end. Call the Skill tool with `principles` and read the guard-the-context-window leaf before step 1. Its context holds pointers and states; files and GitHub hold the content.
+
+- **It reads no content it can delegate.** Orienters read tickets and code, implementers read code, reviewers read diffs, and a merger reads conflicts. The orchestrator reads the effort issue, the spec list and each subagent's capped report. It opens no source file, ticket body or diff of its own.
+- **State lives on disk.** `~/.cache/effort-loop/hyprtweaker/effort-<slug>/state.md` holds one line per ticket: number, spec, branch, status (`oriented`, `building`, `merged`, `returned`) and head commit. The orchestrator updates it after every event, and reads it, together with the native `blocked_by` edges, to find the frontier. It never recalls the frontier from earlier turns.
+- **Reports go to files, not to working memory.** Each **Found** and **Left open** item is appended to `carry-to-review.md` as it arrives. Review findings go to the fix implementer as a file path.
+- **Commands run quiet.** Done checks report counts (`ruff check . -q`, `mypy` last line, `pytest -q -n auto ... | tail -1`). On red, the failing test names go to the implementer; the orchestrator does not diagnose. `git merge` runs with `--no-edit -q`, and a conflict goes to the merger.
+- **Waits are notifications.** A background subagent notifies when it finishes, and an external wait (CI) gets one Monitor. There is no polling and no "are you done?" message.
+
 
 ## Per spec
 
@@ -44,7 +57,7 @@ An implementer's prompt is its ticket, worktree, branch, the spec branch, the no
    - **A note** opens with the commit it was read at and has five parts: **Touch** (`path:start-end`, one line on what changes there), **Read first** (the ADR and `docs/research/` section, with lines), **Tests** (files, fixtures, the command that runs only them), **Seams** (where the ticket decides an interface) and **Traps** (what looks wrong but is decided, and where the ticket's criteria and the spec disagree). It points at code and leaves the design to the implementer. A note for a UI-facing ticket names the widget properties a probe would read to prove it.
    - **Build.** One implementer per ticket of the frontier, each on `ticket/<n>` in its own worktree. A ticket that starts after others have merged gets the same prompt: its implementer reads what moved since the note from `git log` (`docs/agents/implementer-brief.md`). Done when the branch holds the ticket's commits and the implementer has reported.
 3. Merge each finished ticket branch into the spec branch. Each **Found** and **Left open** item of an implementer's report goes into `carry-to-review.md` as it arrives. Done when every ticket is merged and the done checks pass on the spec branch.
-4. Spec review: one reviewer, a fresh subagent running `/mattpocock-skills:code-review` on the spec branch against the effort branch. It also gets `carry-to-review.md`, and returns a verdict on each carried item. Its report keeps **owner calls**, what only the owner can decide, apart from its findings. The findings become one fix implementer on the spec branch, merged the same way, which reports each finding as fixed or answered. In an effort of one spec the hand-test runs beside this review, and the fix implementer starts when both lists are in (step 7). Done when the review is clear, or every finding is fixed or answered in the PR.
+4. Spec review: one reviewer, a fresh subagent running `/mattpocock-skills:code-review` on the spec branch against the effort branch, with the Standards axis on Opus and the Spec axis on Fable (§ Subagents). The Spec axis also gets `carry-to-review.md` and returns a verdict on each carried item. The reviewer writes its report to `review-<n>.md` in the notes directory and returns the path and counts. The report keeps **owner calls**, what only the owner can decide, apart from its findings. The findings become one fix implementer on the spec branch, merged the same way, which reports each finding as fixed or answered. In an effort of one spec the hand-test runs beside this review, and the fix implementer starts when both lists are in (step 7). Done when the review is clear, or every finding is fixed or answered in the PR.
 5. Merge the effort branch into the spec branch, run the done checks, merge the spec branch into the effort branch, push. The first spec in opens the draft PR, base `main` (`docs/agents/issue-tracker.md` § Open a PR); its body carries a `Closes #<n>` line for every spec and ticket in the effort, added as each spec lands. Comment on the spec issue with the merge commit.
 
 ## Per effort
