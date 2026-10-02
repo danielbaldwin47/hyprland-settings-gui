@@ -24,8 +24,8 @@ anything. That is a strong oracle for some things and silent on others:
 
 Group-only keys (`forward`, the `action` of the lock and deny dispatchers) are fired at a
 group of two or three windows and read back from the group's member order and from whether a
-fourth window can join (a locked or denying group refuses it). A key neither route confirms stays out
-of the record, and a catalog entry that names one, or omits one the record holds, is a
+fourth window can join (a locked or denying group refuses it). A key neither route confirms
+stays out of the record, and a catalog entry that names one, or omits one the record holds, is a
 disagreement (`check_entry`). The keys that were fired and did nothing (`window` on the group
 dispatchers, `layout_aware` on the fullscreen ones) are not in the record, which holds only
 what acted; `probe_unseen` fires them again and `test_the_unseen_keys_still_do_nothing` fails
