@@ -34,6 +34,7 @@ from hyprtweaker.ui.rows.state import (
     PENDING_RESTART_PILL,
     RESTART_PILL,
     UNAPPLIED_PILL,
+    Pill,
     default_label,
     help_content,
     no_value_label,
@@ -62,6 +63,7 @@ class FakeContext:
         overridden: frozenset[str] = frozenset(),
         device_overrides: Mapping[str, tuple[str, ...]] | None = None,
         live_hyprland: LiveHyprland | None = None,
+        retired: Mapping[str, str] | None = None,
     ) -> None:
         self.schema: Schema = SCHEMA
         self.live = live
@@ -70,10 +72,15 @@ class FakeContext:
         self.overridden = overridden
         self.device_overrides: Mapping[str, tuple[str, ...]] = device_overrides or {}
         self.live_hyprland = live_hyprland
+        self.retired: Mapping[str, str] = retired or {}
+        """Retired Option name -> the release that retired it."""
         self.model = ConfigModel(SCHEMA)
 
     def unknown_to_version(self, option: ResolvedOption) -> bool:
         return self.live_hyprland is not None and option.name not in self.live_hyprland.names
+
+    def retired_in(self, option: ResolvedOption) -> str | None:
+        return self.retired.get(option.name)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         return self.model.get(option.name)
@@ -298,6 +305,38 @@ def test_an_option_the_running_hyprland_lacks_wears_the_not_in_this_hyprland_pil
         "Hyprland 0.56.0 does not have this option; the app is using its 0.56.2 schema."
     )
     assert _pills(SCHEMA["general:gaps_in"], context) == (), "only the option it lacks"
+
+
+def test_a_retired_option_wears_its_release_in_place_of_not_in_this_hyprland() -> None:
+    """ADR-0012 "the Row is badged": a newer Hyprland dropped an Option the user set. Its
+    unset neighbour, equally absent, keeps #181's pill: nothing of the user's was retired."""
+    context = FakeContext(
+        live_hyprland=_live_without("decoration:rounding", "decoration:dim_strength"),
+        retired={"decoration:rounding": "0.57.0"},
+    )
+
+    assert row_state(SCHEMA["decoration:rounding"], context).pills == (
+        Pill(
+            "Retired in 0.57.0",
+            "Hyprland 0.57.0 removed this option; your value is kept and comes back if the "
+            "option returns.",
+        ),
+    )
+    assert _pills(SCHEMA["decoration:dim_strength"], context) == ("Not in this Hyprland",)
+
+
+def test_a_retired_pill_ranks_below_didn_t_apply_and_above_overridden() -> None:
+    option = SCHEMA["decoration:rounding"]
+    context = FakeContext(
+        unapplied=frozenset({option.name}),
+        overridden=frozenset({option.name}),
+        retired={option.name: "0.57.0"},
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Retired in 0.57.0")
+    assert second.tooltip.endswith("\nAlso: Overridden.")
 
 
 def test_no_running_hyprland_means_no_option_is_unknown_to_it() -> None:

@@ -67,6 +67,7 @@ UNAPPLIED_PILL: Final = "Didn't apply"
 OVERRIDDEN_PILL: Final = "Overridden"
 DEVICE_PILL: Final = "Per-device"
 NOT_IN_HYPRLAND_PILL: Final = "Not in this Hyprland"
+RETIRED_PILL: Final = "Retired in {release}"
 """Which of these a Row shows, and in what order, is `PILL_PRECEDENCE`'s alone."""
 
 _UNLABELLED_NULL: Final = "Not set"
@@ -358,6 +359,10 @@ class RowContext(Protocol):
         """
         ...
 
+    def retired_in(self, option: ResolvedOption) -> str | None:
+        """The release that retired this Option while the user set it, or `None` (ADR-0012)."""
+        ...
+
     def value_of(self, option: ResolvedOption) -> OptionValue: ...
 
     def effective_value(self, option: ResolvedOption) -> Any: ...
@@ -476,6 +481,21 @@ def _overridden_pill(option: ResolvedOption, context: RowContext) -> Pill | None
     )
 
 
+def _retired_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # ADR-0012 §Retirement: "the Row is badged". A release removed an Option the user set,
+    # so the app stopped writing it and keeps the value in the Manifest. The same Option
+    # unset is only `Not in this Hyprland`, which this row of the table suppresses: the
+    # user's value is the news, not the compositor's version.
+    release = context.retired_in(option)
+    if release is None:
+        return None
+    return Pill(
+        RETIRED_PILL.format(release=release),
+        f"Hyprland {release} removed this option; your value is kept and comes back if the "
+        "option returns.",
+    )
+
+
 def _not_in_hyprland_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     # The `unknown-to-this-version` Row state (CONTEXT.md, #77): the running compositor
     # was described and this Option is not among its own, because the app degraded onto
@@ -542,6 +562,7 @@ class PillKind(enum.Enum):
     """A row of `PILL_PRECEDENCE`, so one row can name another it suppresses."""
 
     UNAPPLIED = enum.auto()
+    RETIRED = enum.auto()
     OVERRIDDEN = enum.auto()
     NOT_IN_HYPRLAND = enum.auto()
     PENDING_RESTART = enum.auto()
@@ -564,7 +585,7 @@ MAX_PILLS: Final = 2
 
 PILL_PRECEDENCE: Final[tuple[PillRule, ...]] = (
     PillRule(PillKind.UNAPPLIED, _unapplied_pill),
-    # `Retired in <ver>` (#178): suppresses NOT_IN_HYPRLAND.
+    PillRule(PillKind.RETIRED, _retired_pill, frozenset({PillKind.NOT_IN_HYPRLAND})),
     # `Set by <tool>` (#165): suppresses OVERRIDDEN.
     PillRule(PillKind.OVERRIDDEN, _overridden_pill),
     PillRule(PillKind.NOT_IN_HYPRLAND, _not_in_hyprland_pill),

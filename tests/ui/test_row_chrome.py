@@ -44,11 +44,15 @@ class FakeSession:
         self.overridden: frozenset[str] = frozenset()
         self.device_overrides: dict[str, tuple[str, ...]] = {}
         self.live_hyprland = live_hyprland
+        self.retired: dict[str, str] = {}
         self.model = ConfigModel(SCHEMA)
         self.applied: list[str] = []
 
     def unknown_to_version(self, option: ResolvedOption) -> bool:
         return self.live_hyprland is not None and option.name not in self.live_hyprland.names
+
+    def retired_in(self, option: ResolvedOption) -> str | None:
+        return self.retired.get(option.name)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         return self.model.get(option.name)

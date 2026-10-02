@@ -50,7 +50,7 @@ When a reload ends with config errors **and zero binds** (Hyprland's emergency m
 ### Surfacing
 
 - **One persistent Banner** (`Adw.Banner` under the header bar, app-wide) for any unhealthy state: non-empty `configerrors` after the last reload, Entrypoint refusal, active Quarantine. Its button opens **one error dialog**: monospace `file:line` list with per-class action buttons. No dedicated "Problems" page — errors are rare and file-scoped.
-- **Toasts** only for transient auto-revert events.
+- **Toasts**: transient auto-revert events, and one-time Info notices (ADR-0012's per-release Retired notice, rename migrations); never a persistent unhealthy state, which is the Banner's.
 - **Per-Row badges** stay reserved for key-scoped states already decided elsewhere (drift "overridden in user.lua", Pending restart, Retired). Config errors are file-scoped and never appear on Rows. An unexplained read-back mismatch (value didn't take, no error, no override) badges the Row "didn't apply" and joins the Banner.
 - **Startup and foreign reloads** feed the same pipeline: on launch and on any uncorrelated `configreloaded`, the full re-read + drift scan (ADR-0010) attributes any errors and raises the same Banner — breakage that happened while the app was closed surfaces identically.
 - **Timeout** ApplyResult: re-poll once; if still unconfirmed, treat as a foreign-unknown state — full re-read, Banner if errors.

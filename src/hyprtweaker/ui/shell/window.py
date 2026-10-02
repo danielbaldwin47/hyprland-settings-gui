@@ -69,7 +69,7 @@ from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
-from hyprtweaker.session import AutoRevert, Session  # noqa: E402
+from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
@@ -84,6 +84,7 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     import_dialog,
     migration_dialog,
 )
+from hyprtweaker.ui.dialogs.notices import notice_dialog, notice_title  # noqa: E402
 from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
@@ -186,6 +187,12 @@ picked in."""
 
 UNDO_TOAST_SECONDS = 4
 """Long enough to notice and reach, short enough not to sit over the Row that just changed."""
+
+NOTICE_TOAST_SECONDS = 8
+"""ADR-0012's Info notices: as long as the auto-revert toast, which also offers Details.
+
+A timeout rather than a toast that waits for the user: every toast queues behind the one on
+screen, and a notice nobody closed would hold back the next undo offer indefinitely."""
 
 SHOW_ADVANCED_ACTION = "show-advanced"
 """One global switch, in the primary menu -- never per-Page (ADR-0013 §5).
@@ -1472,8 +1479,8 @@ class MainWindow(Adw.ApplicationWindow):
         exists to surface invisible in the one case the user just caused.
 
         Then a failure toast, but only for a failure the Banner has nothing to say about.
-        ADR-0016 is explicit that toasts are "only for transient auto-revert events", and
-        both kinds of failure the Banner *does* carry are excluded here: a config error,
+        ADR-0016 keeps toasts for transient events, "never a persistent unhealthy state, which
+        is the Banner's", and both kinds of failure the Banner *does* carry are excluded here: a config error,
         which belongs to the Banner and its dialog because they can offer to fix it, and a
         read-back mismatch, which raises the Banner and badges its Row. What is left for a
         toast is the handful of failures that never reached the compositor at all -- a
@@ -1517,6 +1524,26 @@ class MainWindow(Adw.ApplicationWindow):
                 "button-clicked", lambda *_: error_dialog(self, recovery_plan(revert.errors))
             )
         self._toasts.add_toast(toast)
+
+    def show_notice(self, notice: Notice) -> Adw.Toast:
+        """One of ADR-0012's one-time notices: a release removed or renamed settings.
+
+        A toast rather than the Banner: neither is a fault, and the Banner is for a state the
+        user has to act on (ADR-0016). **Details** lists the settings. The notice counts as
+        seen when the toast goes away -- timeout, button or close -- and not when it is
+        raised, so one queued behind other toasts when the app quits comes back next start.
+        Returned for the UI tier.
+        """
+        toast = Adw.Toast(title=notice_title(notice), timeout=NOTICE_TOAST_SECONDS)
+        toast.set_button_label("Details")
+        toast.connect("button-clicked", lambda *_: self.notice_details(notice))
+        toast.connect("dismissed", lambda *_: self._session.notice_seen(notice))
+        self._toasts.add_toast(toast)
+        return toast
+
+    def notice_details(self, notice: Notice) -> Adw.AlertDialog:
+        """The settings a notice is about. Returned for the UI tier."""
+        return notice_dialog(self, notice, self._session.schema)
 
     # --- recovery (ADR-0016) ------------------------------------------------------------------
 

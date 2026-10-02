@@ -120,6 +120,7 @@ package_sources = {
     'declaration_editor.py',
     'errors.py',
     'migration.py',
+    'notices.py',
     'rule_editor.py',
     'submap_editor.py',
   ],
