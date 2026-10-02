@@ -134,6 +134,7 @@ package_sources = {
     '__init__.py',
     'bind_editor.py',
     'capture.py',
+    'colour_conflict.py',
     'confirm_revert.py',
     'declaration_editor.py',
     'effect_helpers.py',

@@ -74,6 +74,13 @@ from hyprtweaker.engine.model.entities import (  # noqa: E402
 )
 from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking  # noqa: E402
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
+from hyprtweaker.engine.presets import (  # noqa: E402
+    ColorChoice,
+    PresetApplied,
+    PresetApplyResult,
+    PresetColorConflict,
+    PresetNotApplied,
+)
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
@@ -82,6 +89,11 @@ from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
+from hyprtweaker.ui.dialogs.colour_conflict import (  # noqa: E402
+    COLOR_CONFLICT_DIALOG,
+    ColourConflictDialog,
+    remembered_choice,
+)
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.declaration_editor import (  # noqa: E402
     DeclarationEditor,
@@ -254,6 +266,9 @@ NOTICE_TOAST_SECONDS = 8
 A timeout rather than a toast that waits for the user: every toast queues behind the one on
 screen, and a notice nobody closed would hold back the next undo offer indefinitely."""
 
+PRESET_NOTE_SECONDS = 6
+"""What a Preset could not do (a wallpaper left as it was): long enough to read a sentence."""
+
 SHOW_ADVANCED_ACTION = "show-advanced"
 """One global switch, in the primary menu -- never per-Page (ADR-0013 §5).
 
@@ -414,6 +429,7 @@ class MainWindow(Adw.ApplicationWindow):
         Not in the model yet, and the Page is not refreshed meanwhile: its widgets keep the
         value the user set until the batch applies."""
         self._debounce: int | None = None
+        self._colour_conflict: ColourConflictDialog | None = None
         self._undo_toast: Adw.Toast | None = None
         """The undo offer currently on screen, so the next one replaces it.
 
@@ -2104,6 +2120,64 @@ class MainWindow(Adw.ApplicationWindow):
     def _refresh_plugins(self) -> None:
         # `sync` refreshes the Scripting Page, its plugin list included.
         self.sync()
+
+    # --- presets ----------------------------------------------------------------------------
+
+    @property
+    def colour_conflict(self) -> ColourConflictDialog | None:
+        """The "Use <preset>'s colors?" question on screen, if one is. For the UI tier."""
+        return self._colour_conflict
+
+    def apply_preset(
+        self, slug: str, *, wallpaper: bool = False, colors: ColorChoice | None = None
+    ) -> PresetApplyResult:
+        """Apply a Preset, asking first whose colours win while a wallpaper sets them.
+
+        The Presets group's Apply. A remembered answer is used without asking; otherwise
+        the question is a dialog and the Preset applies once it is answered. `wallpaper` is
+        the group's "change / keep mine". A refusal is said as a toast; what the wallpaper
+        part could not do arrives through `show_preset_note`.
+        """
+        if colors is None:
+            colors = remembered_choice(self._prefs.remembered)
+        result = self._session.apply_preset(slug, colors=colors, wallpaper=wallpaper)
+        match result:
+            case PresetColorConflict(source):
+                name = dict(self._session.presets()).get(slug)
+                dialog = ColourConflictDialog(
+                    name.name if name is not None else slug,
+                    source,
+                    on_choice=lambda choice, remember: self._answer_colours(
+                        slug, wallpaper, choice, remember
+                    ),
+                )
+                dialog.connect("closed", self._on_colour_conflict_closed)
+                self._colour_conflict = dialog
+                dialog.present(self)
+            case PresetNotApplied(reason):
+                self._toasts.add_toast(Adw.Toast(title=reason, timeout=5))
+            case PresetApplied():
+                pass
+        return result
+
+    def _answer_colours(
+        self, slug: str, wallpaper: bool, choice: ColorChoice, remember: bool
+    ) -> None:
+        if remember:
+            self._remember(self._prefs.with_remembered(COLOR_CONFLICT_DIALOG, choice.value))
+        self.apply_preset(slug, wallpaper=wallpaper, colors=choice)
+        self.sync()
+
+    def _on_colour_conflict_closed(self, dialog: ColourConflictDialog) -> None:
+        if self._colour_conflict is dialog:
+            self._colour_conflict = None
+
+    def show_preset_note(self, text: str) -> Adw.Toast:
+        """What applying or undoing a Preset could not do, said as a toast. Returned for
+        the UI tier."""
+        toast = Adw.Toast(title=text, timeout=PRESET_NOTE_SECONDS)
+        self._toasts.add_toast(toast)
+        return toast
 
     # --- undo -------------------------------------------------------------------------------
 
