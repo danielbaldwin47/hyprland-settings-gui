@@ -31,7 +31,7 @@ from pathlib import Path
 from ..model import ConfigModel
 from ..paths import ConfigPaths
 from ..schema import MINIMUM_HYPRLAND
-from ..writer import ModuleSet, Writer
+from ..writer import ModuleSet, Writer, load_manifest
 
 HEADER = """\
 -- Hyprland config exported by hyprtweaker {version} on {when}.
@@ -92,6 +92,11 @@ def _chunk(require_path: str, body: str) -> str:
     )
 
 
+def _call(require: str, line: str) -> str | None:
+    """A Bridge line's work beyond requiring its module, or `None` when it only requires it."""
+    return None if line == f'require("{require}")' else line
+
+
 def render(
     model: ConfigModel,
     paths: ConfigPaths,
@@ -111,27 +116,36 @@ def render(
     by_require = {
         paths.require_path(paths.app_dir / relpath): text for relpath, text in rendered.items()
     }
-    module_set = ModuleSet.discover(paths, tuple(rendered))
+    manifest = load_manifest(
+        paths, app_version=app_version, schema_version=model.schema.hyprland_version
+    )
+    module_set = ModuleSet.discover(paths, tuple(rendered), bridges=manifest.bridges)
 
-    order: Sequence[str] = (
-        *module_set.modules,
-        *([module_set.legacy] if module_set.legacy else []),
-        *module_set.bridges,
-        *([module_set.user] if module_set.user else []),
+    # Each require with the file it reads and, for a Bridge whose line does more than
+    # require it (`require("noctalia").apply_theme()`), that line, run after its chunk.
+    order: Sequence[tuple[str, str, str | None]] = (
+        *((name, f"{name}.lua", None) for name in module_set.modules),
+        *((name, f"{name}.lua", None) for name in [module_set.legacy] if name),
+        *(
+            (bridge.require, bridge.file, _call(bridge.require, bridge.text))
+            for bridge in module_set.bridges
+            if bridge.loads
+        ),
+        *((name, f"{name}.lua", None) for name in [module_set.user] if name),
     )
 
     chunks: list[str] = []
     inlined: list[str] = []
     missing: list[str] = []
-    for require_path in order:
+    for require_path, file, call in order:
         body = by_require.get(require_path)
         if body is None:
             try:
-                body = (paths.hypr_dir / f"{require_path}.lua").read_text(encoding="utf-8")
+                body = (paths.hypr_dir / file).read_text(encoding="utf-8")
             except OSError:
                 missing.append(require_path)
                 continue
-        chunks.append(_chunk(require_path, body))
+        chunks.append(_chunk(require_path, body) + (f"{call}\n" if call else ""))
         inlined.append(require_path)
 
     when = (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M UTC")

@@ -44,6 +44,11 @@ package_sources = {
     'transaction.py',
     'undo.py',
   ],
+  'hyprtweaker/engine/bridge': [
+    '__init__.py',
+    'entries.py',
+    'registry.py',
+  ],
   'hyprtweaker/engine/importer': [
     '__init__.py',
     'binds.py',

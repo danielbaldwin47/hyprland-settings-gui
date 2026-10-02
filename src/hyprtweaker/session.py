@@ -142,6 +142,7 @@ from hyprtweaker.engine.writer import (
     LuaSyntaxError,
     ModuleSet,
     Writer,
+    load_manifest,
 )
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
@@ -1940,8 +1941,8 @@ class Session:
             )
 
     def _manifest(self) -> Manifest:
-        return Manifest.load(
-            self._paths.manifest,
+        return load_manifest(
+            self._paths,
             app_version=self._app_version,
             schema_version=self._schema.hyprland_version,
         )
@@ -2603,7 +2604,12 @@ class Session:
         parse and nothing older, so a Banner assembled from anything but the newest reload
         would name a file the user has since fixed.
         """
-        self._recovery = plan(errors, written=written, binds=binds)
+        self._recovery = plan(
+            errors,
+            written=written,
+            binds=binds,
+            bridges=[entry.file for entry in self._manifest().bridges],
+        )
         self._unapplied = tuple(mismatch.name for mismatch in mismatches if mismatch.unapplied)
         # The other half of the same Read-back, and ADR-0005's drift badge: a key the live
         # config sets to something else is one `user.lua` or a Bridge won on purpose.
@@ -2775,7 +2781,10 @@ class Session:
         """
         if not problem.offers(Action.QUARANTINE) or not problem.path:
             return None
-        return ModuleSet.discover(self._paths, []).require_for(problem.path)
+        manifest = self._manifest()
+        return ModuleSet.discover(self._paths, [], bridges=manifest.bridges).require_for(
+            problem.path
+        )
 
     def regenerate_entrypoint(self) -> bool:
         """Rewrite `hyprland.lua` and reload -- ADR-0016's Entrypoint Fix.
@@ -2788,7 +2797,7 @@ class Session:
             lambda before: self._writer.regenerate_entrypoint(
                 self._model, before_replace=before
             ),
-            self.quarantined,
+            self._manifest(),
             "regenerate the Entrypoint",
         )
 
@@ -2798,15 +2807,16 @@ class Session:
             lambda before: self._writer.set_quarantine(
                 self._model, ordered, before_replace=before
             ),
-            ordered,
+            self._manifest().with_quarantine(ordered),
             "change the Quarantine",
         )
 
     def _recovery_write(
         self,
         write: Callable[[BeforeReplace | None], bool],
-        quarantined: Sequence[str],
+        prospective: Manifest,
         what: str,
+        rereads: Sequence[str] = (),
     ) -> bool:
         """Rewrite the Entrypoint out of band, then reload. `False` if it could not be done.
 
@@ -2816,23 +2826,27 @@ class Session:
         reload that is *not* an apply -- an apply would render the model over the App dir and
         reload with the require list it would have generated rather than the one just written.
 
-        The Entrypoint `quarantined` would produce is rendered and syntax-gated here, so a
-        recovery the gate refuses answers `False` and leaves the Banner as it is. The write
+        The Entrypoint the `prospective` Manifest would produce is rendered and syntax-gated
+        here, so a recovery the gate refuses answers `False` and leaves the Banner as it is.
+        `rereads` names Options to re-read beyond the owned ones. The write
         itself runs queued (`EntrypointTransaction`): its Journal draft stays open until the
         reload answers, and nothing else may open one meanwhile.
         """
         if not self.live or self._applier is None:
             return False
         try:
-            self._writer.entrypoint_text(self._model, quarantined)
+            self._writer.entrypoint_text(self._model, prospective)
         except (LuaSyntaxError, ValueError) as error:
             _log.error("could not %s: %s", what, error)
             return False
-        self._spawn(self._recover_entrypoint(write, what))
+        self._spawn(self._recover_entrypoint(write, what, rereads))
         return True
 
     async def _recover_entrypoint(
-        self, write: Callable[[BeforeReplace | None], bool], what: str
+        self,
+        write: Callable[[BeforeReplace | None], bool],
+        what: str,
+        rereads: Sequence[str] = (),
     ) -> None:
         """Rewrite the Entrypoint, reload, and re-read what the config now says.
 
@@ -2846,7 +2860,8 @@ class Session:
         # Every owned Option, not a narrow set: quarantining `user.lua` changes the value of
         # everything that file was overriding, and the app cannot know which those were
         # without asking about all of them.
-        wanted = tuple(option.name for option in self._owned())
+        owned = [option.name for option in self._owned()]
+        wanted = (*owned, *(name for name in rereads if name not in owned))
         try:
             result = await applier.restore_now(applier.recover_entrypoint(write, wanted))
         except (IpcError, RuntimeError) as error:

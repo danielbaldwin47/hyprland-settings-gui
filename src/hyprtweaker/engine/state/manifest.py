@@ -13,6 +13,9 @@
   banner offering restore-or-adopt -- *never* a silent overwrite (ADR-0016).
 - **Where did this config come from?** Migration provenance (date, source hash) survives
   every later write, because the Importer records it once and the writer must not lose it.
+- **Which theming tools does the Entrypoint load?** `bridges` holds one entry per Bridge
+  module -- tool, line, file, mechanism, and whether it loads, waits for the tool's first
+  run, or is off for the Color source (ADR-0006 §Placement, `engine/bridge/entries.py`).
 
 The file is plain JSON with a `format_version`, read defensively: a corrupt or truncated
 Manifest never crashes the app. It does not read as "nothing was ever written" either --
@@ -29,12 +32,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from ..bridge.entries import BridgeEntry, BridgeState, entries_for, in_require_order
+from ..bridge.registry import ToolSpec
 from ..paths import ENTRYPOINT_NAME, ConfigPaths
 from ..schema.resolve import version_key
 
@@ -51,9 +56,10 @@ version 3 file cannot say which requires are quarantined, and reading it as "non
 would silently re-enable a `user.lua` the user disabled because it was breaking their
 config -- putting the error back without ever saying so.
 
-Not bumped for `retired` (#134), and not to be bumped for a key like it: a bump makes every
-existing Manifest read as damaged, so the Writer would treat every file as hand-edited and
-stop writing until each user answered the prompt. A key whose absence reads correctly as
+Not bumped for `retired` (#134) or `bridges` (#163), and not to be bumped for a key like
+them: a bump makes every existing Manifest read as damaged, so the Writer would treat
+every file as hand-edited and stop writing until each user answered the prompt. A key
+whose absence reads correctly as
 "none" is added optional and read defensively instead.
 """
 
@@ -197,6 +203,12 @@ def _reason(entry: dict[str, Any]) -> RetireReason:
     return RetireReason(reason) if reason in known else RetireReason.REMOVED
 
 
+def _bridges_from_json(payload: Any) -> tuple[BridgeEntry, ...]:
+    """The `bridges` list, entry by entry: a malformed one is dropped, never fatal."""
+    parsed = (BridgeEntry.from_json(entry) for entry in _list(payload))
+    return in_require_order(entry for entry in parsed if entry is not None)
+
+
 def _list(payload: Any) -> list[Any]:
     return payload if isinstance(payload, list) else []
 
@@ -268,6 +280,19 @@ class Manifest:
     release whose notice was shown stays shown.
     """
 
+    bridges: tuple[BridgeEntry, ...] = ()
+    """The Bridge modules the Entrypoint carries a line for, in require order (ADR-0006).
+
+    Every entry always renders one line, loading or commented with its reason, so the
+    Entrypoint alone says what each bridge is doing and the Color source can be read off it
+    (`engine/bridge/entries.py`). Kept apart from `modules`: those are the app's files,
+    hashed for hand-edit detection and pruned when unrendered; a Bridge module is the tool's
+    and is never either. Quarantine of one is still `quarantined`, by module name, and wins.
+
+    Added without a `FORMAT_VERSION` bump: a Manifest without the key has no bridges, which
+    is what every Manifest written before #163 meant.
+    """
+
     @classmethod
     def load(cls, path: Path, *, app_version: str, schema_version: str) -> Manifest:
         """Read the Manifest, or return an empty one when it is missing or unreadable.
@@ -313,6 +338,7 @@ class Manifest:
                 else ()
             ),
             retired=_retired_from_json(payload.get("retired")),
+            bridges=_bridges_from_json(payload.get("bridges")),
             retired_notices=_releases(
                 version
                 for version in _list(payload.get("retired_notices"))
@@ -333,6 +359,7 @@ class Manifest:
             "quarantined": list(self.quarantined),
             "retired": {name: entry.as_json() for name, entry in sorted(self.retired.items())},
             "retired_notices": list(self.retired_notices),
+            "bridges": [entry.as_json() for entry in self.bridges],
             "migration": self.migration,
         }
 
@@ -362,6 +389,33 @@ class Manifest:
     def with_quarantine(self, requires: Sequence[str]) -> Manifest:
         """The Manifest with exactly `requires` quarantined. Sorted, so writes are stable."""
         return replace(self, quarantined=tuple(sorted(set(requires))))
+
+    def with_bridges(self, entries: Sequence[BridgeEntry]) -> Manifest:
+        """The Manifest carrying exactly `entries`, in require order."""
+        return replace(self, bridges=in_require_order(entries))
+
+    def add_bridge(self, spec: ToolSpec, *, present: Collection[str]) -> Manifest:
+        """Record `spec`'s modules as wired, replacing any entry the tool had. Idempotent.
+
+        Each loads if its file is in `present` (hypr-dir-relative paths that exist) and
+        waits for the tool's first run otherwise. Never gated: a Color source switch is
+        `bridge_states_for`, after this. What #166's `wire` calls.
+        """
+        kept = [entry for entry in self.bridges if entry.tool != spec.tool]
+        return self.with_bridges([*kept, *entries_for(spec, present=present)])
+
+    def set_bridge_state(self, module: str, state: BridgeState) -> Manifest:
+        """The Manifest with `module`'s entry in `state`. Unknown modules are ignored."""
+        return self.with_bridges(
+            [
+                entry.with_state(state) if entry.module == module else entry
+                for entry in self.bridges
+            ]
+        )
+
+    def remove_bridge(self, tool: str) -> Manifest:
+        """The Manifest without any of `tool`'s entries. Idempotent: what `unwire` calls."""
+        return self.with_bridges([entry for entry in self.bridges if entry.tool != tool])
 
     def with_retired(self, retired: Mapping[str, RetiredValue]) -> Manifest:
         """The Manifest keeping exactly `retired` (ADR-0012; `state/retirement.py`)."""
