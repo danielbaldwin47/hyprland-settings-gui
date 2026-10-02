@@ -119,6 +119,25 @@ class TestFirstRunRouting:
         assert session.live is False
         assert not paths.entrypoint.exists()
 
+    def test_a_kept_import_starts_the_session_it_held_read_only(self, tmp_path: Path) -> None:
+        """#148 hand-test 11: after Keep the window stayed read-only behind "Your hyprland.lua
+        was not written here", with empty lists, until the app was restarted."""
+        from hyprtweaker.engine.migration.flow import Decision
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+        window, session = build_window(tmp_path)
+        window.route_first_run()
+        started: list[bool] = []
+        window.on_import_kept = lambda: (started.append(True), session.start())
+
+        window._on_migration_finished(Decision.KEPT)
+
+        assert started == [True]
+        assert window._banner.get_title() == "Connecting to Hyprland… — settings are read-only."
+
     def test_routing_never_writes_over_a_foreign_lua(self, tmp_path: Path) -> None:
         """The outcome ADR-0009 forbids outright, asserted at the level that could do it."""
         from hyprtweaker.engine.paths import ConfigPaths

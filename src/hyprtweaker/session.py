@@ -2789,6 +2789,11 @@ class Session:
         if self._unsupported_reason is not None:
             self.set_read_only(self._unsupported_reason)
             return
+        if self._applier is None and self._offline_reason != _NOT_CONNECTED_YET:
+            # A reason set before the start (a first-run offer that has since been kept) is
+            # no longer why; until `_go_live` answers, connecting is.
+            self._offline_reason = _NOT_CONNECTED_YET
+            self._changed()
         self._spawn(self._go_live())
 
     def set_read_only(self, reason: str) -> None:

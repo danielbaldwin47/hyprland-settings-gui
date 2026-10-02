@@ -458,6 +458,9 @@ class MainWindow(Adw.ApplicationWindow):
         finally reaches is the *oldest* gesture rather than the last -- an undo that takes
         back something they have since changed twice."""
         self._result_toast: Adw.Toast | None = None
+        self.on_import_kept: Callable[[], None] | None = None
+        """Starts the session a first-run import offer held back, once that import is kept.
+        Set by the application only when it deferred the start for the offer."""
         """The last failure toast `on_applied` raised, which a Preset's offer replaces."""
 
         self.set_title("Hyprtweaker")
@@ -776,6 +779,11 @@ class MainWindow(Adw.ApplicationWindow):
         """
         if decision is Decision.KEPT:
             self._offered = None
+            # The session was held read-only behind the offer and never started; the new
+            # App dir is what it goes live over, as a relaunch would (#148 hand-test 11).
+            start, self.on_import_kept = self.on_import_kept, None
+            if start is not None:
+                start()
         self.sync()
 
     def route_first_run(self) -> Detection:

@@ -84,5 +84,8 @@ class HyprtweakerApplication(Adw.Application):
             session.set_read_only(self._runner.unavailable_reason or "cannot apply changes")
         elif not detection.offers_import:
             session.start()
+        else:
+            # Read-only behind the offer; keeping the import is what starts it.
+            window.on_import_kept = session.start
 
         return window
