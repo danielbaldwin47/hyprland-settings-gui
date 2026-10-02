@@ -34,63 +34,20 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, GObject, Gtk  # noqa: E402
 
-from hyprtweaker.engine.model.entities import LayerRule, WindowRule  # noqa: E402
 from hyprtweaker.engine.rule_filter import (  # noqa: E402
     Chip,
     ChipGroup,
     chips_for,
     filter_rules,
-    value_text,
 )
-from hyprtweaker.engine.rules_catalog import is_negated, strip_negation  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import (  # noqa: E402
+    Rule,
+    rule_subtitle,
+    rule_title,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
-
-Rule = WindowRule | LayerRule
-
-
-def match_text(rule: Rule) -> str:
-    """The Match half of a row's auto-summary: `class kitty · not title ^(x)$`."""
-    parts = []
-    for name, value in rule.match.items():
-        negated = is_negated(value)
-        shown = strip_negation(value) if isinstance(value, str) else value_text(value)
-        prefix = "not " if negated else ""
-        parts.append(f"{prefix}{name} {shown}".strip())
-    return " · ".join(parts)
-
-
-def effects_text(rule: Rule) -> str:
-    """The Effects half: bools by bare name, everything else `name value`."""
-    parts = []
-    for name, value in rule.effects.items():
-        if value is True:
-            parts.append(name)
-        elif value is False:
-            parts.append(f"{name} off")
-        else:
-            parts.append(f"{name} {value_text(value)}")
-    return ", ".join(parts)
-
-
-def rule_title(rule: Rule) -> str:
-    """The row title: the Label when there is one, else the auto-summary (ADR-0008)."""
-    if rule.name:
-        return rule.name
-    match = match_text(rule) or "any"
-    effects = effects_text(rule)
-    return f"{match} → {effects}" if effects else match
-
-
-def rule_subtitle(rule: Rule) -> str:
-    """Under a Label, the summary the Label replaced; under a summary, nothing."""
-    if not rule.name:
-        return ""
-    match = match_text(rule) or "any"
-    effects = effects_text(rule)
-    return f"{match} → {effects}" if effects else match
-
 
 REORDER_HINT = "Drag to reorder, or press Alt+Up or Alt+Down"
 

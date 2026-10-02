@@ -44,6 +44,7 @@ from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     snap_position,
 )
 from hyprtweaker.engine.profiles import MonitorProfile  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import rule_summary  # noqa: E402
 from hyprtweaker.ui.pages.monitor_rows import (  # noqa: E402
     ModeRows,
     ScaleRows,
@@ -141,20 +142,6 @@ class DisplayRect:
     width: int
     height: int
     has_rule: bool
-
-
-def rule_summary(rule: MonitorRule) -> str:
-    """A rule's fields as one dim line: `mode 1920x1080@60 · position 0x0`."""
-    parts = []
-    for key, value in rule.fields.items():
-        if value is True:
-            parts.append(key)
-        elif isinstance(value, Mapping):
-            inner = " ".join(f"{k}={v}" for k, v in value.items())
-            parts.append(f"{key} {inner}")
-        else:
-            parts.append(f"{key} {value}")
-    return " · ".join(parts) or "no fields yet"
 
 
 class ArrangementCanvas(Gtk.DrawingArea):
