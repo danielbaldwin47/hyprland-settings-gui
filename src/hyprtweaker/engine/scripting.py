@@ -143,7 +143,27 @@ def discovered_layouts(paths: ConfigPaths) -> tuple[str, ...]:
         for hit in scan_scripting(paths).hits
         if hit.kind is CallKind.LAYOUT and hit.name
     }
-    return tuple(f"lua:{name}" for name in sorted(names))
+    return tuple(f"{LUA_LAYOUT}{name}" for name in sorted(names))
+
+
+LUA_LAYOUT = "lua:"
+"""The prefix Hyprland gives a layout a Lua file registers: `lua:<name>`."""
+
+LAYOUT_OPTION = "general:layout"
+"""The Option whose choices include the discovered layouts (ADR-0018 §Custom layouts)."""
+
+
+def layout_label(value: str, *, found: bool) -> str:
+    """A layout choice in words, the same in every picker that offers one (#175).
+
+    `lua:foo` reads "foo (Lua layout)" when the user's files register it, and "foo (not
+    found)" when they do not: the value is kept, but no file registers it. Any other value
+    (a built-in, or a plugin's layout) reads as itself.
+    """
+    if not value.startswith(LUA_LAYOUT):
+        return value
+    name = value.removeprefix(LUA_LAYOUT)
+    return f"{name} (Lua layout)" if found else f"{name} (not found)"
 
 
 # --- tokens -----------------------------------------------------------------------------
@@ -452,6 +472,7 @@ def _timer_text(opts: _Arg) -> str:
 
 
 __all__ = [
+    "LUA_LAYOUT",
     "CallKind",
     "IndirectUse",
     "LoadsFile",
@@ -461,5 +482,6 @@ __all__ = [
     "UnfinishedText",
     "UnsearchedFile",
     "discovered_layouts",
+    "layout_label",
     "scan_scripting",
 ]
