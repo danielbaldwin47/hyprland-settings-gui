@@ -688,3 +688,74 @@ def test_a_drag_on_the_page_reorders_and_ctrl_z_puts_it_back(tmp_path: Path) -> 
     window.activate_action("win.undo", None)
 
     assert fire_order() == [("first", "1st of 2"), ("second", "2nd of 2")]
+
+
+def test_a_foreign_reload_refreshes_the_rows_and_the_sidebar_count(tmp_path: Path) -> None:
+    """Rows are index-addressed, so a stale row's Remove would land on another bind
+    (review #151, finding 43). The re-read is the session's own; the window hears of it
+    through `on_state_changed`, as the application wires it."""
+    from _live_window import live_entity_window
+
+    from hyprtweaker.engine.model.entities import EntitySet
+    from hyprtweaker.engine.paths import BINDS_MODULE
+    from hyprtweaker.engine.writer.binds import render_binds_module
+
+    session, window, _applier = live_entity_window(tmp_path)
+    session.on_state_changed = window.sync
+    first, second, third = (
+        exec_bind("SUPER + A", "first"),
+        exec_bind("SUPER + B", "second"),
+        exec_bind("SUPER + C", "third"),
+    )
+    session.model.entities.binds.extend([first, second, third])
+    window.binds_page.refresh()
+    assert len(window.binds_page.rows) == 3
+
+    # Somebody else drops the first bind from binds.lua and reloads Hyprland.
+    hand_edit = render_binds_module(EntitySet(binds=[second, third]), app_version="hand")
+    assert hand_edit is not None
+    (session.paths.app_dir / BINDS_MODULE).parent.mkdir(parents=True, exist_ok=True)
+    (session.paths.app_dir / BINDS_MODULE).write_text(hand_edit, encoding="utf-8")
+    session._reread_binds()
+    session._changed()
+
+    rows = window.binds_page.rows
+    assert [row.widget.get_title() for row in rows] == ["SUPER + B", "SUPER + C"]
+    assert sidebar_count(window, window.binds_page.section) == "2"
+
+    rows[0].remove_button.emit("clicked")
+
+    assert [bind.keys for bind in session.model.entities.binds] == ["SUPER + C"]
+    assert [row.widget.get_title() for row in window.binds_page.rows] == ["SUPER + C"]
+    assert sidebar_count(window, window.binds_page.section) == "1"
+
+
+def test_rows_come_alive_when_the_session_does(tmp_path: Path) -> None:
+    """The window is built before the session goes live, so read-only is where every row
+    starts; the greyed controls must answer once it ends, with no list having moved."""
+    session, window = build_window(tmp_path)
+    session.on_state_changed = window.sync
+    session.model.entities.binds.append(exec_bind("SUPER + Q", "a"))
+    window.binds_page.refresh()
+    assert window.binds_page.rows[0].edit_button.get_sensitive() is False
+
+    class StubApplier:
+        def commit_entities(self) -> int:
+            return 1
+
+    session._applier = StubApplier()
+    session._offline_reason = None
+    session._changed()
+
+    (row,) = window.binds_page.rows
+    assert (row.edit_button.get_sensitive(), row.drag_handle is not None) == (True, True)
+
+
+def sidebar_count(window: Any, section: str) -> str:
+    """The count badge on `section`'s sidebar row, as drawn."""
+    index = 0
+    while (row := window._sidebar.get_row_at_index(index)) is not None:
+        if row.get_name() == section:
+            return row.get_child().get_last_child().get_label()
+        index += 1
+    raise AssertionError(f"no sidebar row for {section}")
