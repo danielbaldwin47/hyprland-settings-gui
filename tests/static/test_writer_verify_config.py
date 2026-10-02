@@ -238,6 +238,57 @@ def test_the_entity_modules_were_actually_written(tmp_path: Path) -> None:
     } <= written
 
 
+def test_a_monitor_rule_with_every_row_field_is_a_config_hyprland_accepts(
+    tmp_path: Path,
+) -> None:
+    """Every field the Monitors rows write (#193), a custom modeline `mode` among them.
+
+    A modeline is a `mode` value: Hyprland has no `modeline` key ("unknown field").
+    """
+    from hyprtweaker.engine.model.entities import MonitorRule
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    model.entities.monitors.extend(
+        [
+            MonitorRule(
+                "DP-2",
+                {
+                    "mode": "modeline 148.5 1920 2008 2052 2200 1080 1084 1089 1125 "
+                    "+hsync +vsync",
+                    "scale": 1.6,
+                    "reserved": {"top": 32, "right": 0, "bottom": 0, "left": 8},
+                    "cm": "hdredid",
+                    "sdr_eotf": "gamma22force",
+                    "sdrbrightness": 1.4,
+                    "sdrsaturation": 0.9,
+                    "supports_wide_color": 1,
+                    "supports_hdr": 0,
+                    "sdr_min_luminance": 0.005,
+                    "sdr_max_luminance": 250,
+                    "min_luminance": 0.05,
+                    "max_luminance": 1000,
+                    "max_avg_luminance": 400,
+                },
+            ),
+            MonitorRule("DP-3", {"mode": "highrr", "scale": 0.25, "reserved": 32}),
+        ]
+    )
+    model.mark_entities_loaded()
+    Writer(paths, app_version="0.0.0-test").write(model)
+    assert (paths.app_dir / "monitors.lua").is_file()
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    assert result.returncode == 0, (
+        f"Hyprland rejected the monitor rule:\n{result.stdout}\n{result.stderr}"
+    )
+    assert "config ok" in result.stdout
+
+
 def write_imported_conf(
     root: Path, version: str, conf: str
 ) -> tuple[ConfigPaths, ImportResult]:
