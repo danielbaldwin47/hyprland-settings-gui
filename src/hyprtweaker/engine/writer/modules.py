@@ -87,9 +87,9 @@ ENTITY_MODULES: frozenset[str] = frozenset(
 """The App-dir-relative names of the Entity Modules the app generates.
 
 `binds.lua` (#64), the window and layer rule Modules (#67), the monitor and workspace rule
-Modules (#68), the six declarative Modules of #70, and the plugin load list (#174). Named as a set rather than
-inferred from "a `.lua` at the App dir root", because `legacy.lua` and `user.lua` live
-there too and the app must never touch those.
+Modules (#68), the six declarative Modules of #70, and the plugin load list (#174). Named
+as a set rather than inferred from "a `.lua` at the App dir root", because `legacy.lua` and
+`user.lua` live there too and the app must never touch those.
 """
 
 

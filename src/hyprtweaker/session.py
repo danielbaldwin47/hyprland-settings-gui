@@ -35,7 +35,7 @@ from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from hyprtweaker.engine import binds_analysis
 from hyprtweaker.engine.apply import (
@@ -87,6 +87,7 @@ from hyprtweaker.engine.model.entities import (
     LayerRule,
     MonitorRule,
     Permission,
+    PluginLoad,
     StartupCommand,
     WindowRule,
     WorkspaceRule,
@@ -102,6 +103,7 @@ from hyprtweaker.engine.paths import (
     LAYER_RULES_MODULE,
     MONITORS_MODULE,
     PERMISSIONS_MODULE,
+    PLUGINS_MODULE,
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
@@ -140,6 +142,9 @@ from hyprtweaker.engine.writer.monitors import parse_monitors_module
 from hyprtweaker.engine.writer.rules import parse_rules_module
 
 _log = logging.getLogger(__name__)
+
+_Answer = TypeVar("_Answer")
+"""What one helper-data query answers: a tuple of mappings, or of names."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1203,6 +1208,7 @@ class Session:
         "env",
         "permissions",
         "startup",
+        "plugins",
     )
     """The Entity kinds the one generic list API below serves, named as `EntitySet` names.
 
@@ -1210,7 +1216,8 @@ class Session:
     `rules(kind)` gives: every caller is already parameterised by kind, because the seven
     Pages are one Page class seven times over a field catalogue. The names are `EntitySet`'s
     own attribute names so this list and that dataclass cannot drift into disagreeing about
-    what a kind is called.
+    what a kind is called. `plugins` is the eighth (#174): its editor is a group on the
+    Scripting Page rather than a Page of its own, but its list is edited the same way.
     """
 
     def declarations(self, kind: str) -> list[Any]:
@@ -1278,6 +1285,21 @@ class Session:
                 del items[index]
 
         return self.edit_declarations(kind, drop, title=entity_title(kind, "removed"))
+
+    def move_declaration(self, kind: str, index: int, to: int) -> bool:
+        """Move the entity at `index` to position `to`: the plugin list's reorder (#174).
+
+        A move, as `move_rule` is, because that is what a drag is; a move off either end
+        or onto itself changes nothing and so records nothing.
+        """
+
+        def shift(items: list[Any]) -> None:
+            if 0 <= index < len(items) and 0 <= to < len(items) and index != to:
+                items.insert(to, items.pop(index))
+
+        return self.edit_declarations(
+            kind, shift, title=entity_title(kind, "reordered", plural=True)
+        )
 
     @property
     def curves(self) -> list[Curve]:
@@ -1539,11 +1561,23 @@ class Session:
         """
         self._fetch_helper_data("switches", lambda client: client.switches(), done)
 
+    def fetch_loaded_plugins(self, done: Callable[[tuple[str, ...] | None], None]) -> None:
+        """The names of the plugins Hyprland has loaded right now, or `None` if unanswerable.
+
+        Asked every time and never cached: a reload loads and unloads plugins, so the only
+        current answer is a fresh one. `hyprctl plugin list` rather than the `eval` of
+        `hl.get_loaded_plugins()` ADR-0018 first named: on 0.56.2 `eval` answers `ok`
+        whatever the Lua prints or returns, and `eval` clears `configerrors` on entry, while
+        `plugin list` is a plain read that is safe between a reload and its read-back
+        (probed on a nested instance, #174).
+        """
+        self._fetch_helper_data("plugins", lambda client: client.loaded_plugins(), done)
+
     def _fetch_helper_data(
         self,
         what: str,
-        query: Callable[[CommandClient], Coroutine[Any, Any, tuple[Mapping[str, Any], ...]]],
-        done: Callable[[tuple[Mapping[str, Any], ...] | None], None],
+        query: Callable[[CommandClient], Coroutine[Any, Any, _Answer]],
+        done: Callable[[_Answer | None], None],
     ) -> None:
         """The shared shape of a fire-and-callback helper query, failure spelled `None`."""
         client = self._client
@@ -2226,8 +2260,9 @@ class Session:
         ENV_MODULE,
         PERMISSIONS_MODULE,
         AUTOSTART_MODULE,
+        PLUGINS_MODULE,
     )
-    """The six Modules `_load_declarations` reads, in Entrypoint order (#70)."""
+    """The seven Modules `_load_declarations` reads: the six of #70 and `plugins.lua` (#174)."""
 
     def _load_declarations(self) -> bool:
         """Read the six declarative Entity Modules into the model.
@@ -2249,6 +2284,7 @@ class Session:
         env: list[EnvVar] = []
         permissions: list[Permission] = []
         startup: list[StartupCommand] = []
+        plugins: list[PluginLoad] = []
 
         for module in self.DECLARATION_MODULES:
             path = self._paths.app_dir / module
@@ -2267,10 +2303,11 @@ class Session:
             env.extend(parsed.env)
             permissions.extend(parsed.permissions)
             startup.extend(parsed.startup)
+            plugins.extend(parsed.plugins)
 
         _log.info(
             "read %d curve(s), %d animation(s), %d gesture(s), %d device(s), "
-            "%d env var(s), %d permission(s), %d startup command(s)",
+            "%d env var(s), %d permission(s), %d startup command(s), %d plugin(s)",
             len(curves),
             len(animations),
             len(gestures),
@@ -2278,6 +2315,7 @@ class Session:
             len(env),
             len(permissions),
             len(startup),
+            len(plugins),
         )
         self._model.entities.curves[:] = curves
         self._model.entities.animations[:] = animations
@@ -2286,6 +2324,7 @@ class Session:
         self._model.entities.env[:] = env
         self._model.entities.permissions[:] = permissions
         self._model.entities.startup[:] = startup
+        self._model.entities.plugins[:] = plugins
         return True
 
     def _on_stream_lost(self) -> None:

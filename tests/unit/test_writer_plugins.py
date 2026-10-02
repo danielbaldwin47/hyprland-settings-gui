@@ -90,7 +90,7 @@ class TestReadBack:
         assert render_plugins_module(list(parsed.plugins), app_version=VERSION) == text
 
     def test_a_hand_edited_module_round_trips_without_loss(self) -> None:
-        """What a person writes: no banner, single quotes, a plain comment, a re-enabled line."""
+        """What a person writes: no banner, single quotes, plain comments, a trailing note."""
         text = (
             "-- my plugins\n"
             "hl.plugin.load('/p/libone.so')\n"
