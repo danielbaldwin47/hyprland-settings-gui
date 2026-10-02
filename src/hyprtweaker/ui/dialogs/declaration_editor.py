@@ -66,12 +66,15 @@ class DeclarationEditor(Adw.Dialog):
         curve_names: Sequence[str] = (),
         taken: Sequence[str] = (),
         bounds: Mapping[str, tuple[float | None, float | None]] | None = None,
+        choices: Mapping[str, tuple[str, ...]] | None = None,
     ) -> None:
         """`curve_names` fills the bezier and spring dropdowns, so an animation can only
         name a curve that exists -- the dangling reference prevented at the point it would
         be created rather than reported after the write. `taken` are identities other rows
         already hold; saving onto one is refused here, because the session refuses it too
-        and a silent no-op is the worst of the three possible answers."""
+        and a silent no-op is the worst of the three possible answers. `choices` replaces a
+        field's enum choices by name, for the ones the Schema knows better than the app does
+        (`DeclarationKind.choices_from`)."""
         self._descriptor: DeclarationKind = BY_KIND[kind]
         super().__init__(
             title=(
@@ -95,6 +98,7 @@ class DeclarationEditor(Adw.Dialog):
         # Options (`device_field_bounds`). Empty for every other kind, and empty when the
         # caller has no Schema to hand -- in which case the spec's own bounds still apply.
         self._bounds: Mapping[str, tuple[float | None, float | None]] = bounds or {}
+        self._choices: Mapping[str, tuple[str, ...]] = choices or {}
         self._rows: dict[str, Gtk.Widget] = {}
         # What `_rebuild_optional` last added to `_optional_group`: the keyed rows and the
         # one "Add a setting" row, which is not in `_rows`.
@@ -235,7 +239,9 @@ class DeclarationEditor(Adw.Dialog):
 
         if spec.type in (FieldType.ENUM, FieldType.CURVE_REF):
             choices = (
-                self._curve_names if spec.type is FieldType.CURVE_REF else tuple(spec.choices)
+                self._curve_names
+                if spec.type is FieldType.CURVE_REF
+                else self._choices.get(spec.name, tuple(spec.choices))
             )
             # A held value the picker does not offer joins it rather than being dropped.
             # `unset` is the case that made this necessary: deliberately absent from

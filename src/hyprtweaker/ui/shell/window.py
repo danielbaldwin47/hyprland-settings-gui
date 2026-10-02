@@ -88,6 +88,7 @@ from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
+from hyprtweaker.ui.pages.declaration_kinds import BY_KIND  # noqa: E402
 from hyprtweaker.ui.pages.declarations import (  # noqa: E402
     PAGES as DECLARATION_PAGES,
 )
@@ -1142,36 +1143,37 @@ class MainWindow(Adw.ApplicationWindow):
         """The curves an animation may name -- what makes the dropdown truthful."""
         return tuple(curve.name for curve in self._session.curves if curve.name)
 
+    def declaration_editor(
+        self, kind: str, *, on_done: Callable[[Any], None], index: int | None = None
+    ) -> DeclarationEditor:
+        """The editor for a new entity of `kind`, or for the one at `index`."""
+        entities = self._session.declarations(kind)
+        return DeclarationEditor(
+            kind=kind,
+            on_done=on_done,
+            entity=entities[index] if index is not None else None,
+            curve_names=self._curve_names(),
+            taken=taken_identities(kind, entities, skip=index),
+            bounds=self._session.device_field_bounds,
+            choices=BY_KIND[kind].choices_from(self._session.schema),
+        )
+
     def _add_declaration(self, kind: str) -> None:
         def done(entity: Any) -> None:
             if self._session.add_declaration(kind, entity):
                 self._refresh_declarations(kind)
 
-        DeclarationEditor(
-            kind=kind,
-            on_done=done,
-            curve_names=self._curve_names(),
-            taken=taken_identities(kind, self._session.declarations(kind)),
-            bounds=self._session.device_field_bounds,
-        ).present(self)
+        self.declaration_editor(kind, on_done=done).present(self)
 
     def _edit_declaration(self, kind: str, index: int) -> None:
-        entities = self._session.declarations(kind)
-        if not 0 <= index < len(entities):
+        if not 0 <= index < len(self._session.declarations(kind)):
             return
 
         def done(entity: Any) -> None:
             if self._session.replace_declaration(kind, index, entity):
                 self._refresh_declarations(kind)
 
-        DeclarationEditor(
-            kind=kind,
-            on_done=done,
-            entity=entities[index],
-            curve_names=self._curve_names(),
-            taken=taken_identities(kind, entities, skip=index),
-            bounds=self._session.device_field_bounds,
-        ).present(self)
+        self.declaration_editor(kind, on_done=done, index=index).present(self)
 
     def _remove_declaration(self, kind: str, index: int) -> None:
         """Delete one entity, warning first when other rows depend on it.
