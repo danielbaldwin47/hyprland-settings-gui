@@ -62,10 +62,13 @@ from hyprtweaker.engine.migration.flow import (  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
 from hyprtweaker.engine.model.entities import (  # noqa: E402
+    DISPLAY_KINDS,
+    KEYBIND_KINDS,
     Bind,
     LayerRule,
     WindowRule,
     WorkspaceRule,
+    entity_title,
 )
 from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking  # noqa: E402
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
@@ -214,8 +217,9 @@ BREAKING_DEBOUNCE_MS = 400
 Long enough that dragging a display on the canvas or stepping a scale spinner lands as one
 apply and one countdown, short enough that the change still reads as the click's answer."""
 
-DISPLAY_KINDS = frozenset({"monitors", "workspace_rules"})
-"""The Entity lists a display countdown holds undo steps over: a profile sets both."""
+DISPLAY_CHANGED = entity_title("monitors", "changed")
+"""A display countdown's undo step, kept or with what survived its Revert: one title for both,
+in the Displays Page's word (review of #151, finding 19)."""
 
 UNDO_TOAST_SECONDS = 4
 """Long enough to notice and reach, short enough not to sit over the Row that just changed."""
@@ -560,6 +564,8 @@ class MainWindow(Adw.ApplicationWindow):
         undo.connect("activate", self._on_undo)
         self.add_action(undo)
         self._undo_action = undo
+        # A Ctrl+Z pressed over an edit still in flight runs once the edit lands (#151 review).
+        self._session.on_undo_due = self._undo
 
         for name, handler in (
             (IMPORT_ACTION, self._on_import),
@@ -1445,6 +1451,7 @@ class MainWindow(Adw.ApplicationWindow):
         once, after it stops.
         """
         self._pending_breaking.setdefault(output, {}).update(fields)
+        self._sync_undo_action()
         if self._debounce is not None:
             GLib.source_remove(self._debounce)
         self._debounce = GLib.timeout_add(BREAKING_DEBOUNCE_MS, self._on_debounce)
@@ -1483,7 +1490,10 @@ class MainWindow(Adw.ApplicationWindow):
         opens the undo group that turns the countdown into one step or none (#189). Joining
         applies the change and gives the clock back in full: the user must get a whole
         countdown to judge the newest change by, and never a second dialog (S3 of #151). A
-        refused change leaves no countdown behind that it would have opened.
+        refused change leaves no countdown behind that it would have opened, and neither does
+        a change that, netted out, moves no display-breaking field (scale 1 to 1.25 and back
+        inside the debounce): there is nothing on screen to confirm (review of #151, 38).
+        A profile activation always counts: its countdown is its only take-back.
         """
         countdown = self._countdown
         opened = countdown is None
@@ -1495,13 +1505,20 @@ class MainWindow(Adw.ApplicationWindow):
                     on_keep=self._keep_display, on_revert=self._revert_display
                 ),
             )
-        if not change():
-            if opened:
-                self._countdown = None
-                self._session.end_undo_group(countdown.group, title="Monitor rule changed")
+        applied = change()
+        nothing_to_confirm = not profile and not breaks_display(
+            countdown.snapshot.monitors, self._session.monitor_rules
+        )
+        if opened and (not applied or nothing_to_confirm):
+            self._countdown = None
+            self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
+        if not applied:
             return False
         countdown.includes_profile |= profile
-        self._refresh_monitors()
+        self._refresh_entity_pages(DISPLAY_KINDS)
+        self._sync_undo_action()
+        if self._countdown is not countdown:
+            return True
         if opened:
             countdown.dialog.present(self)
         else:
@@ -1513,7 +1530,7 @@ class MainWindow(Adw.ApplicationWindow):
         countdown, self._countdown = self._countdown, None
         if countdown is None:
             return
-        self._session.end_undo_group(countdown.group, title="Display settings changed")
+        self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
         self._refresh_monitors()
 
     def _revert_display(self) -> None:
@@ -1536,8 +1553,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.restore_monitor_rules(
                 revert_breaking(snapshot.monitors, self._session.monitor_rules)
             )
-        self._session.end_undo_group(countdown.group, title="Monitor rule changed")
-        self._refresh_monitors()
+        self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
+        self._refresh_entity_pages(DISPLAY_KINDS)
 
     @property
     def display_confirm(self) -> ConfirmRevertDialog | None:
@@ -1673,10 +1690,6 @@ class MainWindow(Adw.ApplicationWindow):
         and `set_connected` rebuilds on either, so refreshing here first would pay for
         every edit twice.
         """
-        # A profile's activation, its revert and its undo rewrite the workspace rules too,
-        # and every one of those paths ends here.
-        if self._workspace_rules_page is not None:
-            self._workspace_rules_page.refresh()
         if self._monitors_page is None:
             return
         self._session.fetch_monitors(self._monitors_page.set_connected)
@@ -1695,7 +1708,7 @@ class MainWindow(Adw.ApplicationWindow):
             page.refresh()
 
         self.sync_banner()
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
 
     def sync_banner(self) -> None:
         """Make the one Banner agree with `Session.health`, and nothing else.
@@ -1763,7 +1776,7 @@ class MainWindow(Adw.ApplicationWindow):
         # that has since applied would be the app reporting a failure that is over.
         for name in {*result.pending_restart, *result.keys}:
             self._refresh_chrome_for(name)
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
         self.sync_banner()
 
         if not result.ok:
@@ -1923,7 +1936,7 @@ class MainWindow(Adw.ApplicationWindow):
         already on disk -- would otherwise raise an offer for whatever gesture happened to be
         underneath, naming a Row the user has not touched for a while.
         """
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
         self._dismiss_undo()
         toast = Adw.Toast(title=self._gesture_title(step), timeout=UNDO_TOAST_SECONDS)
         toast.set_button_label("Undo")
@@ -1942,8 +1955,24 @@ class MainWindow(Adw.ApplicationWindow):
             self._undo_toast = None
 
     def _undo(self) -> None:
-        """Take back the last gesture. The session decides whether there is one."""
+        """Take back the last gesture. The session decides whether there is one.
+
+        Except on the Displays: while a countdown shows, the newest gesture is the change on
+        its clock, so Ctrl+Z is its Revert -- the step beneath cannot be undone from under the
+        countdown without being lost (review of #151, finding 12 and owner call 4). A
+        breaking edit still in its debounce is the newest gesture too, and goes unapplied.
+        """
         self._dismiss_undo()
+        if self._countdown is not None:
+            # The Esc path: "revert" is the dialog's close response.
+            dialog = self._countdown.dialog
+            dialog.emit("response", "revert")
+            dialog.force_close()
+            return
+        if self._drop_pending_breaking():
+            self._refresh_monitors()
+            self._sync_undo_action()
+            return
         offered = self._session.can_undo
         step = self._session.last_gesture
         if _breaks_display(step):
@@ -1960,20 +1989,28 @@ class MainWindow(Adw.ApplicationWindow):
                 # `sync` refreshes the Option Pages only; the lists just put back are shown
                 # by Entity Pages, which otherwise go on showing the undone edit.
                 self._refresh_entity_pages(step.kinds)
-        elif offered:
+        elif offered and not self._session.undo_queued:
             # An entity step whose list changed since -- a hand edit was adopted. The session
-            # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead.
+            # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead. A
+            # queued undo is not refused: it runs when the edit in flight lands.
             self._toasts.add_toast(Adw.Toast(title="Can't undo that change any more"))
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
+
+    def _sync_undo_action(self) -> None:
+        """Ctrl+Z is live while there is a step to undo, or a display change to revert."""
+        revertible = self._countdown is not None or bool(self._pending_breaking)
+        self._undo_action.set_enabled(self._session.can_undo or revertible)
 
     def _refresh_entity_pages(self, kinds: frozenset[str]) -> None:
         """Re-render the Pages that show the Entity lists `kinds`."""
-        if kinds & {"binds", "unbinds", "submaps"}:
+        if kinds & KEYBIND_KINDS:
             self._refresh_binds()
         for kind in ("window", "layer"):
             if f"{kind}_rules" in kinds:
                 self._refresh_rules(kind)
-        if kinds & {"monitors", "workspace_rules"}:
+        if "workspace_rules" in kinds:
+            self._refresh_workspace_rules()
+        if "monitors" in kinds:
             self._refresh_monitors()
         for kind in kinds & self._declaration_pages.keys():
             self._refresh_declarations(kind)

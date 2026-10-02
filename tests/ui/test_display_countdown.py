@@ -127,7 +127,7 @@ def test_keep_leaves_one_step_and_ctrl_z_restores_the_rules_before_the_batch(
     dialog._on_response(dialog, "keep")
 
     assert window.undo_toast is not None
-    assert window.undo_toast.get_title() == "Display settings changed"
+    assert window.undo_toast.get_title() == "Display changed"
     window.activate_action("win.undo")
     applier.settle()
     assert rules(session) == [("eDP-1", {"mode": "1920x1080@60", "vrr": 0})]
@@ -136,7 +136,7 @@ def test_keep_leaves_one_step_and_ctrl_z_restores_the_rules_before_the_batch(
     assert len(shown) == 2
     shown[1]._on_response(shown[1], "keep")
     assert session.last_gesture is not None
-    assert session.last_gesture.title == "Monitor rule changed"
+    assert session.last_gesture.title == "Display changed"
 
 
 def test_reverting_an_undo_records_a_step_so_ctrl_z_can_try_again(
@@ -161,6 +161,73 @@ def test_reverting_an_undo_records_a_step_so_ctrl_z_can_try_again(
     assert len(shown) == 2
 
 
+def test_ctrl_z_while_a_countdown_shows_reverts_it_and_keeps_the_step_beneath(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Review of #151, finding 12 and owner call 4: with scale 1 to 2 kept and a countdown
+    holding 2 to 3, Ctrl+Z used to undo the kept step from under the countdown, find it
+    stale and drop it. While a countdown shows, Ctrl+Z is Revert."""
+    session, window, applier, shown = countdown_window(tmp_path, monkeypatch)
+    breaking(window, applier, "eDP-1", {"scale": 2})
+    shown[0]._on_response(shown[0], "keep")
+    kept = session.last_gesture
+    breaking(window, applier, "eDP-1", {"scale": 3})
+    assert len(shown) == 2
+
+    window.activate_action("win.undo")
+    applier.settle()
+
+    assert window.display_confirm is None
+    assert rules(session) == [("eDP-1", {"scale": 2})]
+    assert session.last_gesture is kept, "the kept step under the countdown was dropped"
+    window.activate_action("win.undo")
+    applier.settle()
+    assert len(shown) == 3, "undoing the kept scale did not go behind a countdown"
+    shown[2]._on_response(shown[2], "keep")
+    assert rules(session) == []
+
+
+def test_ctrl_z_before_the_debounce_runs_out_drops_the_held_edit_alone(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A breaking edit still in its debounce is the newest gesture: Ctrl+Z takes it back
+    unapplied, and the step beneath it stays."""
+    session, window, applier, shown = countdown_window(tmp_path, monkeypatch)
+    session.patch_monitor_rule("eDP-1", {"vrr": 1})
+    applier.settle()
+    before = session.last_gesture
+    window._apply_monitor_breaking("eDP-1", {"scale": 2})
+
+    window.activate_action("win.undo")
+    window.flush_monitor_edits()
+    applier.settle()
+
+    assert rules(session) == [("eDP-1", {"vrr": 1})]
+    assert shown == []
+    assert session.last_gesture is before
+
+
+def test_a_batch_that_nets_to_no_change_opens_no_countdown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Review of #151, finding 38: scale 1 to 1.25 and back inside the debounce changes
+    nothing on screen, so there is nothing to confirm."""
+    session, window, applier, shown = countdown_window(tmp_path, monkeypatch)
+    session.patch_monitor_rule("eDP-1", {"scale": 1})
+    applier.settle()
+    before = session.last_gesture
+
+    window._apply_monitor_breaking("eDP-1", {"scale": 1.25})
+    window._apply_monitor_breaking("eDP-1", {"scale": 1})
+    window.flush_monitor_edits()
+    applier.settle()
+
+    assert shown == []
+    assert window.display_confirm is None
+    assert rules(session) == [("eDP-1", {"scale": 1})]
+    assert session.last_gesture is before
+
+
 def test_a_benign_edit_mid_countdown_applies_at_once_and_survives_revert(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -182,7 +249,7 @@ def test_a_benign_edit_mid_countdown_applies_at_once_and_survives_revert(
 
     assert rules(session) == [("eDP-1", {"mode": "1920x1080@60", "vrr": 1})]
     assert session.last_gesture is not None
-    assert session.last_gesture.title == "Monitor rule changed"
+    assert session.last_gesture.title == "Display changed"
     window.activate_action("win.undo")
     applier.settle()
     assert rules(session) == [("eDP-1", {"mode": "1920x1080@60", "vrr": 0})]
