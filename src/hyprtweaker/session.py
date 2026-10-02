@@ -23,7 +23,9 @@ in a transaction. Four css-gaps spinners typed into in one breath become one ste
 the queue's debounce already coalesced them into one reload, and a gesture the *compositor*
 saw as one change is one change. And a gesture that fails becomes no step at all: it is never
 pushed, so ADR-0016's "drop the failed gesture from the undo stack (it never becomes a redo)"
-holds by construction rather than by remembering to pop.
+holds by construction rather than by remembering to pop. Entity edits follow the same rule
+(#189): the step is built at the edit, held against its commit's serial, and pushed only when
+the transaction that carried it comes back ok (`_commit_entity_edit`, `_settle_entities`).
 """
 
 from __future__ import annotations

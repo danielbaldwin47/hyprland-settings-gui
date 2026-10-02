@@ -370,3 +370,16 @@ def test_a_bare_list_edit_is_titled_by_its_kind(tmp_path: Path) -> None:
     applier.settle()
 
     assert entity_top(session).title == "Monitor rules changed"
+
+
+def test_every_entity_list_has_a_noun_and_declarations_use_their_pages_word() -> None:
+    """The toast's noun table and the lists it names must not drift: a list with no noun
+    would raise in the middle of an edit, and a declaration page saying "variable" while
+    its toast says something else reads as two different things."""
+    from hyprtweaker.engine.model import ENTITY_NOUNS, EntitySet
+    from hyprtweaker.ui.pages.declaration_kinds import KINDS
+
+    assert set(ENTITY_NOUNS) == {kind for kind, _items in EntitySet().kinds()}
+    assert {spec.kind: ENTITY_NOUNS[spec.kind][0] for spec in KINDS} == {
+        spec.kind: spec.singular.capitalize() for spec in KINDS
+    }
