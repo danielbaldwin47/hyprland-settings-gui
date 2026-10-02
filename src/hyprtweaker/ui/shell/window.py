@@ -1726,16 +1726,33 @@ class MainWindow(Adw.ApplicationWindow):
         """Take back the last gesture. The session decides whether there is one."""
         self._dismiss_undo()
         offered = self._session.can_undo
+        step = self._session.last_gesture
         if self._session.undo():
             # `sync` runs on the session's own `on_state_changed` too, but the undo has
             # already moved the model and the Rows should not wait for the compositor to
             # confirm what the app is about to write.
             self.sync()
+            if isinstance(step, EntityStep):
+                # `sync` refreshes the Option Pages only; the lists just put back are shown
+                # by Entity Pages, which otherwise go on showing the undone edit.
+                self._refresh_entity_pages(step.kinds)
         elif offered:
             # An entity step whose list changed since -- a hand edit was adopted. The session
             # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead.
             self._toasts.add_toast(Adw.Toast(title="Can't undo that change any more"))
         self._undo_action.set_enabled(self._session.can_undo)
+
+    def _refresh_entity_pages(self, kinds: frozenset[str]) -> None:
+        """Re-render the Pages that show the Entity lists `kinds`."""
+        if kinds & {"binds", "unbinds", "submaps"}:
+            self._refresh_binds()
+        for kind in ("window", "layer"):
+            if f"{kind}_rules" in kinds:
+                self._refresh_rules(kind)
+        if kinds & {"monitors", "workspace_rules"}:
+            self._refresh_monitors()
+        for kind in kinds & self._declaration_pages.keys():
+            self._refresh_declarations(kind)
 
     def _on_undo(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         self._undo()

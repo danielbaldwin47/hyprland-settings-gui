@@ -298,6 +298,10 @@ def test_removing_a_bind_offers_bind_removed_and_undo_restores_it(tmp_path: Path
     assert toast.get_title() == "Bind removed"
     assert toast.get_button_label() == "Undo"
 
+    page = window.binds_page
+    assert page is not None
+    assert len(page.rows) == 2
+
     toast.emit("button-clicked")
 
     assert [bind.keys for bind in session.model.entities.binds] == [
@@ -305,6 +309,7 @@ def test_removing_a_bind_offers_bind_removed_and_undo_restores_it(tmp_path: Path
         "SUPER + B",
         "SUPER + C",
     ]
+    assert len(page.rows) == 3, "the Binds page still shows the list from before the undo"
 
 
 def test_a_reverted_display_change_leaves_nothing_to_undo(
