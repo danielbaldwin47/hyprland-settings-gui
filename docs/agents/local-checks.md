@@ -35,9 +35,32 @@ It starts a nested Hyprland with a fresh sandbox `$HOME`, launches the app insid
 
 - **Windowless.** By default the nested Hyprland runs on a spare card (§ Harness tier) with no host display, so nothing maps on the owner's desktop, on any workspace. Agents never pass `--window`; it is the owner's interactive mode, a host window on the focused workspace.
 - **Fenced.** The app runs non-unique, so concurrent sandboxes never hand their launch to each other, and a copied `--config` has its top-level `hl.exec_cmd(` and `hl.env(` lines commented out, so a rice's autostart never runs against the owner's session.
-- **A widget probe** reads properties, not pixels: build the window in-process the way the UI tier does (each `tests/ui/test_*_page.py` has a `build_window(tmp_path)`), drive it, and read the widget's properties and adjustments. Probe before any screenshot loop: a scroll bug once took ten screenshot cycles that two probes settled.
 - **Live probes** of compositor behaviour (`hyprctl keyword`, `hyprctl dispatch`, temporary binds, `hyprctl reload`) go to a nested instance, never the desktop session: the sandbox or the Harness tier's `NestedHyprland`.
 - Real monitors and input devices exist only on the desktop session; a nested instance shows one virtual output and the host's forwarded keyboard and pointer. A ticket whose proof needs real hardware says so, and the effort PR lists it for the owner (`implement-spec.md` step 8).
+
+### Widget probes
+
+A **widget probe** builds part of the app in-process the way the UI tier does (each `tests/ui/test_*_page.py` has a `build_window(tmp_path)`), drives it, and reads the widget's properties and adjustments. It reaches states the sandbox cannot, such as the Config view or an uncurated mapping. Probe before any screenshot loop: a scroll bug once took ten screenshot cycles that two probes settled.
+
+`tools/widget_probe.py` is the only way to run one, and its `shoot` the only way to screenshot one:
+
+```sh
+.venv/bin/python tools/widget_probe.py <scratch>/probe.py [args...]
+```
+
+```python
+import widget_probe  # the first line: before gi and before any hyprtweaker.ui import
+
+from gi.repository import Gtk
+
+...
+widget_probe.shoot(row.widget, "<scratch>/row.png")  # a PNG cropped to that widget
+```
+
+- **Private display.** The runner starts an Xvfb of its own (the UI tier's, `tests/ui/private_display.py`) and pins GTK to it over X11, with no Wayland or Hyprland session in reach and a throwaway config dir. It puts the worktree's `src` on the path and selects Gtk 4 and Adw 1, so a probe imports them as is.
+- **The import is the fence.** In a probe the runner did not start, `import widget_probe` exits before GTK starts, with `widget_probe: refusing to start GTK: <what it found>, so this probe could map on the desktop session; run it with .venv/bin/python tools/widget_probe.py <probe.py> [args...]`. A probe without that import has only this rule for a fence.
+- **Why `xvfb-run` is no fence.** The desktop session exports `GDK_BACKEND=wayland,x11,*` and `WAYLAND_DISPLAY=wayland-1`, and `xvfb-run` changes neither, so GTK opens on the desktop's Wayland first: on 2026-10-01 a probe mapped a window on the owner's desktop that way three times (#202). Unsetting `WAYLAND_DISPLAY` as well does not fence it: the Wayland backend then tries its default socket, and the x11 fallback finds the session's `DISPLAY=:0`, which is XWayland on the desktop.
+- **Screenshots.** `shoot(widget, path)` presents the widget's window, waits until the widget is laid out, and writes the window's pixels inside the widget's bounds, background included. `settle(seconds)` runs the main loop, for after a click or a page switch.
 
 ## Harness tier
 
