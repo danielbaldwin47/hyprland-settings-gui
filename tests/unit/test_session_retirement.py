@@ -8,6 +8,7 @@ the Manifest, the notice -- never which retirement function ran.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from _support import (
     schema_renaming,
     section_conversation,
     session_for,
+    synthetic_schema_dir,
 )
 
 from hyprtweaker.engine.importer.lua import sandbox
@@ -29,7 +31,8 @@ from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import UNSET, CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
-from hyprtweaker.engine.state import Manifest, RetiredValue
+from hyprtweaker.engine.schema.resolve import SCHEMA_DIR_ENV
+from hyprtweaker.engine.state import Manifest, RetiredValue, RetireReason
 from hyprtweaker.engine.state.retirement import RenamedNotice, RetiredNotice, UnkeptNotice
 from hyprtweaker.session import Notice, Session
 
@@ -230,6 +233,148 @@ class TestNotice:
             assert manifest(tmp_path).retired_notices == ()
 
         run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+NEW_SIZE = "general:new_size"
+NEWER = "0.59.0"
+"""Newer than every schema `shipped_schemas` ships, so its extra Option is supplemented."""
+
+NEW_SIZE_RECORD = {
+    "name": NEW_SIZE,
+    "description": "a size this Hyprland added",
+    "default": 3,
+    "current": 3,
+    "min": 0,
+    "max": 20,
+    "map": None,
+}
+
+
+def newer_described() -> LiveHyprland:
+    """Hyprland 0.59.0: every sample Option, plus one no shipped schema has."""
+    return LiveHyprland(NEWER, (*({"name": o.name} for o in SCHEMA), NEW_SIZE_RECORD))
+
+
+def newer_conversation() -> dict[str, str]:
+    """That compositor's sockets, with the user's `new_size = 7` set and readable."""
+    described = newer_described()
+    return {
+        **conversation(),
+        "j/version": json.dumps({"version": NEWER, "tag": f"v{NEWER}", "flags": []}),
+        "j/descriptions": json.dumps(list(described.descriptions)),
+        f"j/getoption {NEW_SIZE}": json.dumps({"option": NEW_SIZE, "set": True, "int": 7}),
+    }
+
+
+async def newer_first_start(fake: FakeHyprland, root: Path) -> None:
+    """A start that read Hyprland 0.59.0: its extra Option gets a Row, and the user sets it."""
+    runner = Runner()
+    session = session_for(fake, root, runner, live_hyprland=newer_described())
+    session.start()
+    await runner.settle()
+    session.set_option(GAPS_IN, 12)
+    session.set_option(NEW_SIZE, 7)
+    await session.aclose()
+
+
+class TestMissedStartupRead:
+    """#214: the startup read missed, so the Schema lacks what only the supplement knew."""
+
+    @pytest.fixture(autouse=True)
+    def shipped_schemas(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        shipped = synthetic_schema_dir(tmp_path / "schema", "0.56.2", "0.58.0")
+        monkeypatch.setenv(SCHEMA_DIR_ENV, str(shipped))
+
+    def test_a_live_option_is_kept_without_a_retired_notice(self, tmp_path: Path) -> None:
+        async def scenario(fake: FakeHyprland) -> None:
+            await newer_first_start(fake, tmp_path)
+            assert "new_size = 7" in module(tmp_path)
+
+            session, notices = await start(fake, tmp_path, None)
+
+            assert notices == []
+            assert manifest(tmp_path).retired == {
+                NEW_SIZE: RetiredValue(NEWER, 7, RetireReason.NOT_IN_SCHEMA)
+            }
+            assert session.live_hyprland == newer_described()
+
+        run_with_fake(scenario, FakeHyprland(newer_conversation(), reload_emits_event=True))
+
+    def test_the_next_start_that_reads_it_restores_the_value_and_says_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        async def scenario(fake: FakeHyprland) -> None:
+            await newer_first_start(fake, tmp_path)
+            await start(fake, tmp_path, None)
+            assert "new_size" not in module(tmp_path)
+            before_restore = session_for(
+                fake, tmp_path, Runner(), live_hyprland=newer_described()
+            )
+            # Its Row exists from construction; until the restore, it is not badged Retired.
+            assert before_restore.retired_in(before_restore.schema[NEW_SIZE]) is None
+
+            session, notices = await start(fake, tmp_path, newer_described())
+
+            assert notices == []
+            assert "new_size = 7" in module(tmp_path)
+            assert session.model.get(NEW_SIZE) == 7
+            assert manifest(tmp_path).retired == {}
+            assert manifest(tmp_path).retired_notices == ()
+
+        run_with_fake(scenario, FakeHyprland(newer_conversation(), reload_emits_event=True))
+
+    def test_when_the_read_on_connect_misses_too_retirement_runs_as_before(
+        self, tmp_path: Path
+    ) -> None:
+        async def scenario(fake: FakeHyprland) -> None:
+            await newer_first_start(fake, tmp_path)
+            del fake.conversation["j/descriptions"]
+
+            session, notices = await start(fake, tmp_path, None)
+
+            assert session.live_hyprland is None
+            assert notices == [RetiredNotice("0.56.2", (NEW_SIZE,))]
+            assert manifest(tmp_path).retired == {NEW_SIZE: RetiredValue("0.56.2", 7)}
+
+        run_with_fake(scenario, FakeHyprland(newer_conversation(), reload_emits_event=True))
+
+    def test_after_a_startup_read_nothing_is_asked_again_and_removal_is_announced(
+        self, tmp_path: Path
+    ) -> None:
+        """One read: the startup one. A name the running Hyprland lacks is still REMOVED."""
+
+        async def scenario(fake: FakeHyprland) -> None:
+            await first_start(fake, tmp_path)
+            fake.conversation[f"j/getoption {RESIZE}"] = NO_SUCH_OPTION
+            reads: list[LiveHyprland] = []
+
+            def read_live() -> LiveHyprland:
+                reads.append(live("0.57.0", without=(RESIZE,)))
+                return reads[-1]
+
+            fake.requests.clear()
+            runner = Runner()
+            session = Session(
+                spawn=runner.spawn,
+                schema=SCHEMA,
+                paths=ConfigPaths.rooted_at(tmp_path),
+                app_version=SAMPLE_APP_VERSION,
+                connect=lambda: fake.instance,
+                read_live=read_live,
+            )
+            notices: list[Notice] = []
+            session.on_notice = notices.append
+            session.start()
+            await runner.settle()
+            await session.aclose()
+
+            assert len(reads) == 1
+            assert "j/version" not in fake.requests
+            assert "j/descriptions" not in fake.requests
+            assert notices == [RetiredNotice("0.57.0", (RESIZE,))]
+            assert manifest(tmp_path).retired == {RESIZE: RetiredValue("0.57.0", True)}
+
+        run_with_fake(scenario, FakeHyprland(newer_conversation(), reload_emits_event=True))
 
 
 class TestRow:

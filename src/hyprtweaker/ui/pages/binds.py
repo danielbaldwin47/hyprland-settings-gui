@@ -44,6 +44,7 @@ from hyprtweaker.ui.pages.entity_text import (  # noqa: E402
     trigger_text,
 )
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -581,6 +582,7 @@ class BindsPage:
         """
         for group in self._groups:
             self._page.remove(group)
+            release(group)
         self._groups = []
         self._rows = []
 

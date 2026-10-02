@@ -22,7 +22,7 @@ from _support import (
 from hyprtweaker.engine.model import ConfigModel
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
-from hyprtweaker.engine.state import Manifest, RetiredValue
+from hyprtweaker.engine.state import Manifest, RetiredValue, RetireReason
 from hyprtweaker.engine.state.retirement import (
     RetiredNotice,
     Retirement,
@@ -77,9 +77,24 @@ class TestDetect:
 
     def test_a_live_snapshot_names_the_release(self, paths: ConfigPaths) -> None:
         schema = schema_without("general:resize_on_border", version="0.57.0")
+        gone = live("0.57.1", without=("general:resize_on_border",))
 
-        assert detect(load(paths), schema, live("0.57.1")) == (
+        assert detect(load(paths), schema, gone) == (
             Retirement("general:resize_on_border", "options/general.lua", "0.57.1"),
+        )
+
+    def test_a_name_only_the_schema_lacks_is_retired_quietly(self, paths: ConfigPaths) -> None:
+        """#214: the running Hyprland still describes it, so it was not removed -- the
+        startup read missed, and the supplement that would hold it is not loaded."""
+        schema = schema_without("general:resize_on_border", version="0.57.0")
+
+        assert detect(load(paths), schema, live("0.59.0")) == (
+            Retirement(
+                "general:resize_on_border",
+                "options/general.lua",
+                "0.59.0",
+                RetireReason.NOT_IN_SCHEMA,
+            ),
         )
 
     def test_an_option_a_newer_hyprland_dropped_is_retired(self, paths: ConfigPaths) -> None:
@@ -299,6 +314,17 @@ class TestNotice:
         ).with_retired_notice("0.57.0")
 
         assert unannounced(manifest) == (RetiredNotice("0.58.0", ("misc:vfr",)),)
+
+    def test_a_value_kept_quietly_raises_no_notice(self) -> None:
+        manifest = kept(
+            decoration__rounding=RetiredValue("0.59.0", 10, RetireReason.NOT_IN_SCHEMA),
+            general__resize_on_border=RetiredValue("0.59.0", True),
+            misc__vfr=RetiredValue("0.59.0", False, RetireReason.PLUGIN_NOT_LOADED),
+        )
+
+        assert unannounced(manifest) == (
+            RetiredNotice("0.59.0", ("general:resize_on_border",)),
+        )
 
     def test_nothing_kept_is_nothing_to_say(self) -> None:
         assert unannounced(kept().with_retired_notice("0.57.0")) == ()

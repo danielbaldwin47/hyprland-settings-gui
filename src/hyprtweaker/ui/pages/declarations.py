@@ -40,6 +40,7 @@ from hyprtweaker.ui.pages.declaration_kinds import (  # noqa: E402
     row_subtitle,
     row_title,
 )
+from hyprtweaker.ui.release import release  # noqa: E402
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +215,7 @@ class DeclarationsPage:
         """
         for widget in self._listed:
             self._group.remove(widget)
+            release(widget)
         self._listed = []
         self._rows = []
 

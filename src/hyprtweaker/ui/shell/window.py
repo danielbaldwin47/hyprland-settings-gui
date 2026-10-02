@@ -121,6 +121,7 @@ from hyprtweaker.ui.pages.rules import (  # noqa: E402
     RulesPage,
     WindowRulesPage,
 )
+from hyprtweaker.ui.pages.scripting import ScriptingActions, ScriptingPage  # noqa: E402
 from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     ORPHAN_CATEGORY_TITLE,
     CategoryPlan,
@@ -133,6 +134,7 @@ from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
     WorkspaceRuleActions,
     WorkspaceRulesPage,
 )
+from hyprtweaker.ui.release import release  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
 from hyprtweaker.ui.search import (  # noqa: E402
     EntityHit,
@@ -171,6 +173,17 @@ def _discard(coro: Any) -> None:
     close = getattr(coro, "close", None)
     if close is not None:
         close()
+
+
+def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> None:
+    """Release each dialog presented on `window` once it has closed.
+
+    An idle rather than the `closed` handler itself: libadwaita is still finishing the close
+    when it emits `closed`, and every handler of it must still find the dialog whole.
+    """
+    dialog = window.get_visible_dialog()
+    if dialog is not None:
+        dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
 
 
 UNDO_ACTION = "undo"
@@ -306,6 +319,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._workspace_rules_page: WorkspaceRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
+        self._scripting_page: ScriptingPage | None = None
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -395,6 +409,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.rebuild()
 
         self.connect("close-request", self._on_close_request)
+        self.connect("notify::visible-dialog", _release_dialogs_on_close)
 
     # --- construction -----------------------------------------------------------------------
 
@@ -792,6 +807,11 @@ class MainWindow(Adw.ApplicationWindow):
         return tuple(self._declaration_pages.values())
 
     @property
+    def scripting_page(self) -> ScriptingPage | None:
+        """The Scripting Page, once built. The UI tier asserts against it."""
+        return self._scripting_page
+
+    @property
     def monitors_page(self) -> MonitorsPage | None:
         """The Displays Page, once built. The UI tier asserts against it."""
         return self._monitors_page
@@ -890,8 +910,15 @@ class MainWindow(Adw.ApplicationWindow):
         self._section_titles = {}
         self._built = []
         self._sidebar.remove_all()
+        # The window holds its focus widget. A focused Row of an old Page outlives `release`,
+        # and its chrome then keeps the Page and the window (#219). Whether GTK lets go of it
+        # on removal depends on whether the window is active, so it is dropped here first.
+        focus = self.get_focus()
+        if focus is not None and focus.is_ancestor(self._stack):
+            self.set_focus(None)
         while (child := self._stack.get_first_child()) is not None:
             self._stack.remove(child)
+            release(child)
 
         self._categories, option_plans = self._plan_view()
 
@@ -982,6 +1009,15 @@ class MainWindow(Adw.ApplicationWindow):
             self._stack.add_named(_scrolled(page.page), page.section)
             self._register(page.section, page.title, len(page.entities))
             self._section_titles[page.section] = page.title
+
+        # The Scripting Page: a read-only inventory of the user's Lua (ADR-0018, #173).
+        self._scripting_page = ScriptingPage(
+            self._session, actions=ScriptingActions(open_file=self._launch_file)
+        )
+        scripting = self._scripting_page
+        self._stack.add_named(_scrolled(scripting.page), scripting.section)
+        self._section_titles[scripting.section] = scripting.title
+        self._register(scripting.section, scripting.title, scripting.hit_count)
 
         self._fill_sidebar()
         self._select_section(self._restored(selected))
@@ -1686,6 +1722,10 @@ class MainWindow(Adw.ApplicationWindow):
         """
         for page in self._pages:
             page.refresh()
+        # A foreign reload lands here, and Hyprland reloads when a `require`d file such as
+        # `user.lua` changes: the Scripting inventory re-reads with it.
+        if self._scripting_page is not None:
+            self._scripting_page.refresh()
 
         self.sync_banner()
         self._undo_action.set_enabled(self._session.can_undo)
@@ -1897,6 +1937,9 @@ class MainWindow(Adw.ApplicationWindow):
         path = self._session.file_for(problem)
         if path is None:
             return
+        self._launch_file(path)
+
+    def _launch_file(self, path: Path) -> None:
         Gtk.FileLauncher(file=Gio.File.new_for_path(str(path))).launch(self, None, None)
 
     # --- undo -------------------------------------------------------------------------------
@@ -2242,6 +2285,10 @@ class MainWindow(Adw.ApplicationWindow):
         if row is None:
             return
         section = row.get_name()
+        if self._scripting_page is not None and section == self._scripting_page.section:
+            # Showing the Page re-reads the files: "open in editor, save, come back" must
+            # not need a reload or a restart to show what was just written.
+            self._scripting_page.refresh()
         self._stack.set_visible_child_name(section)
         self._content_page.set_title(self._page_title(section))
         self._split.set_show_content(True)
@@ -2279,8 +2326,12 @@ class MainWindow(Adw.ApplicationWindow):
             dialog = self._countdown.dialog
             dialog.emit("response", "revert")
             dialog.force_close()
-        self._session.close(self.destroy)
+        self._session.close(self._destroy_and_release)
         return True
+
+    def _destroy_and_release(self) -> None:
+        self.destroy()
+        release(self)
 
     # --- helpers ------------------------------------------------------------------------
 

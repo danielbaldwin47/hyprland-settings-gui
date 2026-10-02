@@ -36,6 +36,7 @@ from .manifest import (
     Manifest,
     ModuleRecord,
     RetiredValue,
+    RetireReason,
     content_hash,
     is_damaged,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "Manifest",
     "ModuleChange",
     "ModuleRecord",
+    "RetireReason",
     "RetiredValue",
     "content_hash",
     "is_damaged",

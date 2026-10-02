@@ -73,6 +73,7 @@ from hyprtweaker.engine.ipc import (
     IpcError,
     LiveHyprland,
     NoInstance,
+    fetch_live_hyprland,
     read_live_hyprland,
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
@@ -534,11 +535,15 @@ class Session:
 
     @property
     def live_hyprland(self) -> LiveHyprland | None:
-        """The running compositor's version and option descriptions, read once at startup.
+        """The running compositor's version and option descriptions, read at startup, or on
+        connect when that missed.
 
-        `None` when there was no compositor, it did not answer, or its version is not a
-        release number. Not the same fact as `live`: a compositor can be described here and
-        still refuse every edit (one too old for a Lua config, or a socket that died later).
+        `None` when there was no compositor, it did not answer either time, or its version
+        is not a release number. A read on connect does not rebuild the Schema (#217): an
+        Option only its supplement would add has no Row until the next start.
+
+        Not the same fact as `live`: a compositor can be described here and still refuse
+        every edit (one too old for a Lua config, or a socket that died later).
         The Schema it selected is `schema.hyprland_version`, which can be older (ADR-0012
         degradation).
         """
@@ -699,10 +704,12 @@ class Session:
         """The release that retired this Option while the user set it, if it is Retired.
 
         ADR-0012's "the Row is badged": the app keeps the value and has stopped writing it.
-        Only a Retired Option the loaded Schema still describes has a Row to badge.
+        Only a Retired Option the loaded Schema still describes has a Row to badge, and only
+        one a release removed: a value kept for a quiet reason belongs to an Option the
+        user's Hyprland still has.
         """
         entry = self._retired.get(option.name)
-        return entry.retired_in if entry is not None else None
+        return entry.retired_in if entry is not None and entry.reason.announced else None
 
     def notice_seen(self, notice: Notice) -> None:
         """The user has dismissed `notice`: a Retired one is not shown again (ADR-0012).
@@ -1755,6 +1762,12 @@ class Session:
             await events.aclose()
             self.set_read_only(f"{instance.command_socket} is not answering: {error}")
             return
+
+        if self._live_hyprland is None:
+            # The startup read missed (#214), so the Schema lacks what a supplement would
+            # have added. Asked before the Applier exists, so nothing writes in between, and
+            # before retirement, which tells "removed" from "not in this schema" by it.
+            self._live_hyprland = await fetch_live_hyprland(client)
 
         self._events = events
         events.subscribe(self._on_monitor_hotplug, MONITOR_ADDED, MONITOR_REMOVED)
