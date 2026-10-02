@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
-from hyprtweaker.engine.schema import Visibility, load_schema
+from hyprtweaker.engine.schema import Visibility, load_schema, supplement
 from hyprtweaker.ui.pages.plan import (
     Disclosure,
     PagePlan,
@@ -158,6 +158,46 @@ def test_option_count_is_what_the_page_actually_shows() -> None:
 
     assert plan.option_count == len(all_options(plan))
     assert plan.option_count + plan.withheld == len(SCHEMA.section("input"))
+
+
+# --- options a newer Hyprland added (#177, ADR-0012 §Pinning) ------------------------------
+
+
+NEWER = supplement(
+    SCHEMA,
+    (
+        {"name": "decoration:blur:new_noise", "description": "x", "default": 0.5},
+        {"name": "decoration:new_glow", "description": "x", "default": True},
+        {"name": "hotcorners:enabled", "description": "x", "default": True},
+    ),
+    version="0.58.0",
+)
+
+
+def test_a_newer_hyprlands_options_close_their_sections_page_in_a_new_in_group() -> None:
+    plan = plan_section(NEWER, "decoration")
+
+    *shipped, last = plan.groups
+    assert last.title == "New in 0.58.0"
+    assert [option.name for option in last.options] == [
+        "decoration:blur:new_noise",
+        "decoration:new_glow",
+    ]
+    assert last.description == (
+        "Your Hyprland has these settings and this version of the app does not know them "
+        "yet, so each gets a basic control. They are saved like any other setting."
+    )
+    assert tuple(shipped) == plan_section(SCHEMA, "decoration").groups, "the rest as before"
+
+
+def test_a_section_only_a_newer_hyprland_has_gets_a_page_of_its_new_options() -> None:
+    plans = {plan.section: plan for plan in plan_config_view(NEWER)}
+
+    page = plans["hotcorners"]
+    assert (page.title, [(group.title, len(group.options)) for group in page.groups]) == (
+        "Hotcorners",
+        [("New in 0.58.0", 1)],
+    )
 
 
 # --- the One-off reveal (ADR-0017) exempts the switch, never the View's tier rule ---------
