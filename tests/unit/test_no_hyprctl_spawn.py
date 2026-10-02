@@ -42,6 +42,11 @@ MAY_SPAWN = {
         "from its environment, because --verify-config executes the config with live "
         "bindings and would otherwise reach the session the user is sitting in"
     ),
+    "tools.py": (
+        "the one engine module that runs a theming tool or a wallpaper daemon (#233): only "
+        "a program found on the tool search path, which every test, the widget probe and "
+        "the sandbox point at an empty directory of their own"
+    ),
 }
 """Engine modules allowed to start a process, and why.
 

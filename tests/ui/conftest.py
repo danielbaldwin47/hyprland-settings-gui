@@ -56,22 +56,6 @@ UI_TESTS_DIR = Path(__file__).parent
 
 
 @pytest.fixture(autouse=True)
-def sandboxed_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point every UI test at a throwaway config dir and away from any live compositor.
-
-    Autouse and unconditional, because the machine most likely to run this tier is a
-    developer's own Hyprland box: `HyprtweakerApplication` builds a `Session` over
-    `ConfigPaths.default()` and `Instance.current()`, and a test that boots the app would
-    otherwise attach to the user's running session and their real `~/.config/hypr`.
-    Read-only today, but "the test suite cannot reach your config" should be a property of
-    the tier rather than of what the code currently happens to do.
-    """
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.delenv("HYPRLAND_INSTANCE_SIGNATURE", raising=False)
-
-
-@pytest.fixture(autouse=True)
 def released_windows() -> Iterator[None]:
     """Destroy and release every window a test opened, when the test ends (#219).
 
