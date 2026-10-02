@@ -601,6 +601,9 @@ class MigrationDialog(Adw.Dialog):
             # Nothing was switched, so there is nothing to keep or roll back. Starting a
             # countdown here would offer to undo a change that never happened.
             self._view.push(self._done_page("Written", result.detail))
+            # An ending too: the config is written, and the window has to know (hand-test 21).
+            if self._on_finished is not None:
+                self._on_finished(None)
             return
         self._view.push(self._decide_page(result))
         self._spawn(self._countdown())

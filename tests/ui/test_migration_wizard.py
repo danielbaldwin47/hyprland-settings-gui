@@ -16,6 +16,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import main_loop
 import pytest
@@ -65,6 +66,23 @@ def build_window(tmp_path: Path, live: object = None):  # type: ignore[no-untype
         read_live=lambda: live,
     )
     return MainWindow(session, application=app), session
+
+
+def leave_what_a_conversion_leaves(paths: Any, schema_version: str) -> None:
+    """The app's Entrypoint and the Manifest vouching for it: a kept or written import."""
+    from hyprtweaker.engine.state import Manifest
+    from hyprtweaker.engine.state.manifest import ModuleRecord
+
+    text = 'require("hyprtweaker/options/general")\n'
+    paths.entrypoint.write_text(text, encoding="utf-8")
+    paths.app_dir.mkdir(parents=True, exist_ok=True)
+    manifest = Manifest(
+        app_version=APP_VERSION,
+        schema_version=schema_version,
+        entrypoint=ModuleRecord.of(text, ()),
+        modules={},
+    )
+    paths.manifest.write_text(manifest.render(), encoding="utf-8")
 
 
 class TestFirstRunRouting:
@@ -132,11 +150,34 @@ class TestFirstRunRouting:
         window.route_first_run()
         started: list[bool] = []
         window.on_import_kept = lambda: (started.append(True), session.start())
+        leave_what_a_conversion_leaves(paths, session.schema.hyprland_version)
 
         window._on_migration_finished(Decision.KEPT)
 
         assert started == [True]
         assert window._banner.get_title() == "Connecting to Hyprland… — settings are read-only."
+
+    def test_a_conversion_written_for_the_next_login_retires_the_offer(
+        self, tmp_path: Path
+    ) -> None:
+        """#148 hand-test 21: with no compositor the wizard ends "Written", and the Banner
+        kept saying "You are still on hyprland.conf", its Convert... opening "Nothing to
+        import". Whatever the ending, the window asks again what the config now is."""
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+        window, session = build_window(tmp_path)
+        window.route_first_run()
+        started: list[bool] = []
+        window.on_import_kept = lambda: started.append(True)
+        leave_what_a_conversion_leaves(paths, session.schema.hyprland_version)
+
+        window._on_migration_finished(None)
+
+        assert started == [True]
+        assert window._banner.get_button_label() != "Convert..."
 
     def test_export_before_converting_offers_convert_and_writes_nothing(
         self, tmp_path: Path

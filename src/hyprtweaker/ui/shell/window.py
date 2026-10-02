@@ -767,21 +767,22 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _on_migration_finished(self, decision: Decision | None) -> None:
-        """A kept migration is the one thing that retires the "convert me" Banner.
+        """Whatever the wizard's ending, ask again what the config is now (ADR-0009).
 
-        A rollback -- or a wizard closed part-way -- leaves the offer standing, because the
-        config the app cannot write to is still the one in place.
+        Kept, or written for the next login with no compositor to switch (#148 hand-test
+        21): the config is the app's, so the offer goes and the session goes live over it,
+        as a relaunch would (hand-test 11). Rolled back or closed part-way: the offer stands.
+        A kept menu Import into a running session re-reads it (F5 of the #148 review).
         """
-        if decision is Decision.KEPT:
+        if self._offered is not None and not self._detect().offers_import:
             self._offered = None
-            # The session was held read-only behind the offer and never started; the new
-            # App dir is what it goes live over, as a relaunch would (#148 hand-test 11).
             start, self.on_import_kept = self.on_import_kept, None
             if start is not None:
                 start()
             else:
-                # A menu Import into a running session (F5 of the #148 review).
                 self._session.adopt_import()
+        elif decision is Decision.KEPT:
+            self._session.adopt_import()
         self.sync()
 
     def route_first_run(self) -> Detection:
