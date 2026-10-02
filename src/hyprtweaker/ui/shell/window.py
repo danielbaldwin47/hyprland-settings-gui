@@ -812,6 +812,7 @@ class MainWindow(Adw.ApplicationWindow):
                 remove=self._remove_bind,
                 enable=self._set_bind_enabled,
                 rebind=self._rebind_bind,
+                recapture=lambda index: self._rebind_bind(index, enable=True),
                 swap=self._swap_binds,
                 edit_submap=self._edit_submap,
             ),
@@ -998,12 +999,16 @@ class MainWindow(Adw.ApplicationWindow):
         if self._session.swap_binds(first, second):
             self._refresh_binds()
 
-    def _rebind_bind(self, index: int) -> None:
+    def _rebind_bind(self, index: int, *, enable: bool = False) -> None:
         """The conflict popover's "rebind it": Capture on the other bind, directly.
 
         Straight to Capture rather than through the full editor (ADR-0007): the problem
         being solved is *only* that two binds share a trigger, and the fix is a new
         trigger for one of them.
+
+        `enable` is the error row's "Fix trigger…" (#139): a bind imported disabled for a
+        dead keysym. Capture refuses a key xkb does not know, so whatever comes back is
+        loadable, and the user asked for the bind back, so it comes back enabled.
         """
         if self._binds_page is None:
             return
@@ -1014,7 +1019,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         def done(text: str) -> None:
             keys = str(parse_trigger(text.strip()))
-            if keys and self._session.replace_bind(index, replace(bind, keys=keys)):
+            fixed = replace(bind, keys=keys, enabled=bind.enabled or enable)
+            if keys and self._session.replace_bind(index, fixed):
                 self._refresh_binds()
 
         CaptureDialog(
