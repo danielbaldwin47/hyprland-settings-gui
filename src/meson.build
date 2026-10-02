@@ -35,6 +35,7 @@ package_sources = {
     'applier.py',
     'foreign.py',
     'ownership.py',
+    'overrides.py',
     'preview.py',
     'queue.py',
     'recovery.py',

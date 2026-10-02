@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from ..importer.lua.sandbox import Consent, LuaUnavailable, evaluate
+from ..importer.lua.sandbox import LuaUnavailable, config_values
 from ..model.values import parse_lua
 from ..schema import ResolvedOption, Schema, is_plugin_option
 from ..schema.resolve import version_key
@@ -146,12 +146,12 @@ def capture(
 
     values: dict[str, Any] = {}
     for module, names in modules.items():
-        tables = _config_tables(app_dir / module, timeout)
-        for name in names:
-            for table in tables:  # a later `hl.config` wins, as it does in Lua
-                value = _lookup(table, lua_key_for(name).split("."))
-                if value is not _ABSENT:
-                    values[name] = value
+        keys = {lua_key_for(name): name for name in names}
+        try:
+            found_values = config_values(app_dir / module, keys, timeout=timeout)
+        except LuaUnavailable:
+            continue
+        values.update({keys[key]: value for key, value in found_values.items()})
     return values
 
 
@@ -318,31 +318,3 @@ def unannounced(manifest: Manifest) -> tuple[RetiredNotice, ...]:
         RetiredNotice(release, tuple(sorted(names)))
         for release, names in sorted(by_release.items(), key=lambda item: version_key(item[0]))
     )
-
-
-_ABSENT = object()
-
-
-def _config_tables(path: Path, timeout: float) -> tuple[Mapping[str, Any], ...]:
-    if not path.is_file():
-        return ()
-    try:
-        recording = evaluate(
-            path, consent=Consent(evaluate=True), timeout=timeout, assume_plugins_loaded=True
-        )
-    except LuaUnavailable:
-        return ()
-    return tuple(
-        call.args
-        for call in recording.calls
-        if call.name == "config" and isinstance(call.args, Mapping)
-    )
-
-
-def _lookup(table: Mapping[str, Any], path: Sequence[str]) -> Any:
-    node: Any = table
-    for step in path:
-        if not isinstance(node, Mapping) or step not in node:
-            return _ABSENT
-        node = node[step]
-    return node

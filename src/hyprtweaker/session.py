@@ -30,6 +30,7 @@ the transaction that carried it comes back ok (`_commit_entity_edit`, `_settle_e
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import suppress
@@ -55,6 +56,7 @@ from hyprtweaker.engine.apply import (
     UndoStack,
     UndoStep,
     app_owned_options,
+    overrides,
     own_write_modules,
     plan,
     read_state,
@@ -64,6 +66,7 @@ from hyprtweaker.engine.entities_catalog import (
     device_field_bounds,
     overridden_options,
 )
+from hyprtweaker.engine.importer.lua.sandbox import LuaUnavailable
 from hyprtweaker.engine.ipc import (
     MONITOR_ADDED,
     MONITOR_REMOVED,
@@ -508,7 +511,7 @@ class Session:
         """Whether a Restore last good is in flight, so a second cannot start on top of it."""
 
         self._unapplied: tuple[str, ...] = ()
-        """Keys the last transaction wrote that the live config does not set.
+        """Keys the app's own Modules set that the live config does not.
 
         ADR-0016's "unexplained read-back mismatch (value didn't take, no error, no
         override)", which "joins the Banner". A quiet value disagreement is not this: that is
@@ -517,14 +520,25 @@ class Session:
         live config sets nothing, which means the Module never ran."""
 
         self._overridden: tuple[str, ...] = ()
-        """Keys whose live value disagrees with the model because something later won.
+        """Keys whose live value disagrees with what the app wrote because something later won.
 
         The quiet counterpart of `_unapplied`: the value did not take, but for a reason the
         app can name. ADR-0005 fixes the mechanism -- "after each reload the app compares
         `get_config`/`getoption` against its model and badges diverging options" -- so this
-        comes from the Read-back the transaction already does, never from reading
-        `user.lua` itself. ADR-0018 rejects that: running the user's own code to answer a
-        question about a badge is consent-and-safety weight no badge earns."""
+        comes from `getoption` alone (a transaction's Read-back, and the drift scan at launch
+        and after a foreign reload), never from reading `user.lua` itself. ADR-0018 rejects
+        that: running the user's own code to answer a question about a badge is
+        consent-and-safety weight no badge earns. Both marks change through `_mark` only."""
+
+        self._drift_watches: list[set[str]] = []
+        """One set per drift scan in flight, of the keys a transaction read back meanwhile.
+
+        A scan reads the Modules first and `getoption` after, so a transaction that lands in
+        between holds newer evidence for its keys than the scan does: the scan leaves those
+        marks alone (`_scan_drift`)."""
+
+        self._lua_missing_logged = False
+        """Whether "no Lua, so no drift scan" was logged: once per session is news enough."""
 
         self._rescued: tuple[str, ...] = ()
         """Modules the emergency restore overwrote without asking, so the Banner can say so."""
@@ -603,27 +617,30 @@ class Session:
 
     @property
     def unapplied(self) -> frozenset[str]:
-        """Keys the last transaction wrote that the live config does not set.
+        """Keys the app's own Modules set that the live config does not.
 
         The Row badge ADR-0016 carves out of "errors never appear on Rows": an unexplained
         read-back mismatch is *key*-scoped, unlike a config error, so it is the one thing
         error surfacing has to say on the Row itself as well as on the Banner.
 
-        Replaced per transaction rather than accumulated, for the same reason `configerrors`
-        is: it describes the last write, and a badge that outlived the write that earned it
-        would be telling the user about a value that has since applied perfectly well.
+        Per key, from the newest reading of it, as `overridden` is: see there.
         """
         return frozenset(self._unapplied)
 
     @property
     def overridden(self) -> frozenset[str]:
-        """Keys the live config sets to something other than what the model asked for.
+        """Keys the live config sets to something other than what the app's Modules set.
 
         `user.lua` is required last (ADR-0005), so a key it sets beats the Module the app
-        wrote -- the Row wears the "Overridden" pill rather than pretending the edit took.
-        Replaced per transaction for the same reason `unapplied` is: it describes the last
-        write, and a badge outliving the write that earned it would be a lie about a value
-        that has since applied perfectly well.
+        wrote -- the Row wears the "Overridden" pill rather than pretending the edit took,
+        from launch on, before anything is edited (#191).
+
+        Per key, from the newest reading of it. The drift scan at launch and after each
+        foreign reload reads every key the app's Modules set and replaces the whole set; a
+        transaction's Read-back replaces only the keys it read back. A badge outliving the
+        reading that earned it would be a lie about a value that has since applied, and an
+        edit to one Option erasing another Option's badge would hide an override nothing
+        has changed.
         """
         return frozenset(self._overridden)
 
@@ -1881,6 +1898,8 @@ class Session:
             # have added. Asked before the Applier exists, so nothing writes in between, and
             # before retirement, which tells "removed" from "not in this schema" by it.
             self._live_hyprland = await fetch_live_hyprland(client)
+        # Before the Applier exists: the first write rewrites the Modules the scan reads.
+        await self._scan_drift(client)
 
         self._events = events
         events.subscribe(self._on_monitor_hotplug, MONITOR_ADDED, MONITOR_REMOVED)
@@ -1997,6 +2016,37 @@ class Session:
             _log.warning("could not read the config's health: %s", error)
             return
         self._observe_foreign(errors, binds)
+
+    async def _scan_drift(self, client: CommandClient) -> None:
+        """ADR-0005's drift badge for every key the app's Modules set (`overrides.py`, #191).
+
+        At launch and after every foreign reload, after `_scan`, so the Row wears its pill
+        before the user edits anything. Replaces both marks, except on keys a transaction
+        read back while this ran (`_drift_watches`). A scan that cannot run -- no Lua, or a
+        compositor that stopped answering -- clears them: marks from before a reload
+        describe a config that has just been replaced, and no scan is no evidence.
+
+        The Modules are evaluated in a worker thread: one Lua process per Module, and the
+        main loop is the window's (#214).
+        """
+        watch: set[str] = set()
+        self._drift_watches.append(watch)
+        try:
+            expected = await asyncio.to_thread(
+                overrides.reference, self._paths.app_dir, self._schema, self._manifest()
+            )
+            mismatches = await overrides.scan(client, expected)
+        except LuaUnavailable as error:
+            if not self._lua_missing_logged:
+                self._lua_missing_logged = True
+                _log.warning("no drift scan, so no Overridden pills until an edit: %s", error)
+            mismatches = ()
+        except IpcError as error:
+            _log.warning("could not scan for overridden settings: %s", error)
+            mismatches = ()
+        finally:
+            self._drift_watches.remove(watch)
+        self._mark(mismatches, covers=lambda name: name not in watch)
 
     async def drain(self) -> None:
         """Wait until every pending edit has been applied and confirmed.
@@ -2118,6 +2168,7 @@ class Session:
         # The other half ADR-0016 asks for: somebody else's reload can break the config just
         # as thoroughly as the app's own, and it surfaces identically.
         await self._scan(client)
+        await self._scan_drift(client)
         self._changed()
 
     def _reread_binds(self) -> None:
@@ -2679,22 +2730,23 @@ class Session:
         """
         if not result.reloaded:
             return
-        self._note(
-            result.errors,
-            written=result.written,
-            binds=result.binds,
-            mismatches=result.mismatches,
-        )
+        self._note(result.errors, written=result.written, binds=result.binds)
+        if result.outcome in (ApplyOutcome.OK, ApplyOutcome.READ_BACK_MISMATCH):
+            # Its Read-back ran, over exactly the keys it carried. A reload that reported
+            # errors read nothing back, so it changes no key's marks.
+            for watch in self._drift_watches:
+                watch.update(result.keys)
+            self._mark(result.mismatches, covers=set(result.keys).__contains__)
 
     def _observe_foreign(self, errors: Sequence[str], binds: int | None) -> None:
         """The same, for a reload this app did not perform.
 
         `written` is empty on purpose: nothing the app wrote is in flight, so no error here
         can be an `OWN_WRITE` -- and claiming one would authorise an automatic rewrite of a
-        file somebody else has just changed (ADR-0016 §Attribution). There are no Read-back
-        mismatches either: nothing was written, so nothing was checked.
+        file somebody else has just changed (ADR-0016 §Attribution). The drift marks are the
+        drift scan's, which follows (`_scan_drift`).
         """
-        self._note(errors, written=(), binds=binds, mismatches=())
+        self._note(errors, written=(), binds=binds)
 
     def _note(
         self,
@@ -2702,7 +2754,6 @@ class Session:
         *,
         written: Sequence[str],
         binds: int | None,
-        mismatches: Sequence[Mismatch],
     ) -> None:
         """Replace the unhealthy state, then act on it if the user is stranded.
 
@@ -2715,12 +2766,6 @@ class Session:
         would name a file the user has since fixed.
         """
         self._recovery = plan(errors, written=written, binds=binds)
-        self._unapplied = tuple(mismatch.name for mismatch in mismatches if mismatch.unapplied)
-        # The other half of the same Read-back, and ADR-0005's drift badge: a key the live
-        # config sets to something else is one `user.lua` or a Bridge won on purpose.
-        self._overridden = tuple(
-            mismatch.name for mismatch in mismatches if mismatch.overridden
-        )
         # Cleared with the rest: the rescue notice belongs to the reload that prompted it.
         # `_restore_transaction` re-raises it *after* observing its own result, which is what
         # lets the notice outlive the restore that earned it without outliving anything else.
@@ -2734,6 +2779,22 @@ class Session:
             self._recovery_halted = False
         if self._recovery.auto_restorable and self._may_recover():
             self._emergency_restore(self._recovery.auto_restorable)
+
+    def _mark(self, mismatches: Sequence[Mismatch], *, covers: Callable[[str], bool]) -> None:
+        """Replace the drift marks on every key `covers` from `mismatches`; others keep theirs.
+
+        `_unapplied` is the loud shape (the Module never ran), `_overridden` the quiet one
+        (something later won): `Mismatch` decides which, and never both.
+        """
+        fresh = [mismatch for mismatch in mismatches if covers(mismatch.name)]
+        self._unapplied = (
+            *(name for name in self._unapplied if not covers(name)),
+            *(mismatch.name for mismatch in fresh if mismatch.unapplied),
+        )
+        self._overridden = (
+            *(name for name in self._overridden if not covers(name)),
+            *(mismatch.name for mismatch in fresh if mismatch.overridden),
+        )
 
     def _may_recover(self) -> bool:
         """Whether the app may still answer a broken config by writing to it unprompted.
