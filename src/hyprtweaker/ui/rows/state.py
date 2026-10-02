@@ -67,6 +67,7 @@ PENDING_RESTART_PILL: Final = "Pending restart"
 UNAPPLIED_PILL: Final = "Didn't apply"
 OVERRIDDEN_PILL: Final = "Overridden"
 DEVICE_PILL: Final = "Per-device"
+PLUGIN_PILL: Final = "Plugin option"
 NOT_IN_HYPRLAND_PILL: Final = "Not in this Hyprland"
 RETIRED_PILL: Final = "Retired in {release}"
 """Which of these a Row shows, and in what order, is `PILL_PRECEDENCE`'s alone."""
@@ -545,6 +546,17 @@ def _new_in_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     )
 
 
+def _plugin_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
+    # ADR-0018 §Plugins: a loaded plugin's setting, inferred from its description alone,
+    # so it renders flagged -- a generic control, no curated title or help -- for good.
+    flag = option.supplement
+    if flag is None or flag.kind is not SupplementKind.PLUGIN:
+        return None
+    return Pill(
+        PLUGIN_PILL, "Added by a loaded plugin; the app shows it with a generic control."
+    )
+
+
 def _device_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     # The `device-override` Row state (ADR-0013, CONTEXT.md). Distinct from
     # "Overridden", which is about a *file* loaded after the app's own and is therefore
@@ -583,6 +595,7 @@ class PillKind(enum.Enum):
     PENDING_RESTART = enum.auto()
     RESTART = enum.auto()
     NEW_IN = enum.auto()
+    PLUGIN = enum.auto()
     DEVICE = enum.auto()
     ADVANCED = enum.auto()
 
@@ -608,7 +621,7 @@ PILL_PRECEDENCE: Final[tuple[PillRule, ...]] = (
     PillRule(PillKind.PENDING_RESTART, _pending_restart_pill, frozenset({PillKind.RESTART})),
     PillRule(PillKind.RESTART, _restart_pill),
     PillRule(PillKind.NEW_IN, _new_in_pill),
-    # `Plugin option` (#175).
+    PillRule(PillKind.PLUGIN, _plugin_pill),
     PillRule(PillKind.DEVICE, _device_pill),
     PillRule(PillKind.ADVANCED, _advanced_pill),
 )

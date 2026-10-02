@@ -22,6 +22,7 @@ from hyprtweaker.engine.model import UNSET, ConfigModel, CssGaps, Gradient, Opti
 from hyprtweaker.engine.schema import (
     ResolvedOption,
     Schema,
+    SupplementKind,
     Visibility,
     Widget,
     load_schema,
@@ -429,6 +430,38 @@ def test_the_new_in_pill_ranks_below_what_failed_and_above_advanced() -> None:
 
     assert (first.label, second.label) == ("Didn't apply", "New in 0.58.0")
     assert second.tooltip.endswith("\nAlso: Advanced.")
+
+
+def _plugin_option() -> tuple[ResolvedOption, Schema]:
+    """A loaded plugin's setting, as the running Hyprland described it (#175)."""
+    record = {"name": "plugin:hyprbars:bar_height", "description": "x", "default": 15}
+    schema = supplement(SCHEMA, (record,), version="0.56.2", kind=SupplementKind.PLUGIN)
+    return schema["plugin:hyprbars:bar_height"], schema
+
+
+def test_a_plugins_setting_wears_a_plugin_option_pill_and_stays_editable() -> None:
+    option, schema = _plugin_option()
+
+    state = row_state(option, FakeContext(schema=schema))
+
+    assert [(pill.label, pill.tooltip) for pill in state.pills] == [
+        ("Plugin option", "Added by a loaded plugin; the app shows it with a generic control.")
+    ]
+    assert state.editable
+
+
+def test_the_plugin_option_pill_ranks_below_what_failed_and_above_per_device() -> None:
+    option, schema = _plugin_option()
+    context = FakeContext(
+        unapplied=frozenset({option.name}),
+        device_overrides={option.name: ("Logitech MX",)},
+        schema=schema,
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Plugin option")
+    assert second.tooltip.endswith("\nAlso: Per-device.")
 
 
 def test_a_pending_restart_replaces_the_restart_pill_rather_than_joining_it() -> None:

@@ -14,7 +14,13 @@ from dataclasses import replace
 
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
-from hyprtweaker.engine.schema import Schema, Visibility, load_schema, supplement
+from hyprtweaker.engine.schema import (
+    Schema,
+    SupplementKind,
+    Visibility,
+    load_schema,
+    supplement,
+)
 from hyprtweaker.ui.pages.plan import (
     NEW_IN_GROUP_DESCRIPTION,
     Disclosure,
@@ -226,6 +232,32 @@ def test_a_section_only_a_newer_hyprland_has_is_titled_with_that_hyprlands_versi
 
     assert [(group.title, len(group.options)) for group in fallback.groups] == [
         ("New in 0.58.0", 1)
+    ]
+
+
+def test_a_loaded_plugins_settings_are_plugin_options_not_new_in_any_version() -> None:
+    """#175 AC 4 in the Tasks view: a plugin's setting has no release, so it is never
+    announced as new in one, and the newer-version description does not describe it."""
+    with_plugin = supplement(
+        SCHEMA,
+        ({"name": "plugin:hyprbars:bar_height", "description": "x", "default": 15},),
+        version="0.56.2",
+        kind=SupplementKind.PLUGIN,
+    )
+
+    categories = plan_tasks_view(with_plugin, MAPPING, Disclosure())
+    fallback = next(
+        page
+        for category in categories
+        for page in category.option_pages
+        if page.section == "tasks.new.plugin"
+    )
+
+    assert [(group.title, group.description) for group in fallback.groups] == [
+        ("Plugin options", "")
+    ]
+    assert [option.name for option in fallback.groups[0].options] == [
+        "plugin:hyprbars:bar_height"
     ]
 
 
