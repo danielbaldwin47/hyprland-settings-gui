@@ -24,6 +24,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import WorkspaceRule  # noqa: E402
+from hyprtweaker.engine.rule_filter import value_text  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
@@ -35,15 +36,6 @@ NO_FIELDS = "Nothing set yet"
 """The subtitle of a rule with no fields: a new rule, until its fields are set."""
 
 
-def _value_text(value: object) -> str:
-    """A field value as summary text -- readable, never round-tripped."""
-    if isinstance(value, Mapping):
-        return " ".join(f"{key}={item}" for key, item in value.items())
-    if isinstance(value, (list, tuple)):
-        return " ".join(str(item) for item in value)
-    return str(value)
-
-
 def fields_summary(fields: Mapping[str, Any]) -> str:
     """The row subtitle: `monitor DP-1, default, decorate off`, the Rules pages' grammar."""
     parts = []
@@ -53,7 +45,7 @@ def fields_summary(fields: Mapping[str, Any]) -> str:
         elif value is False:
             parts.append(f"{name} off")
         else:
-            parts.append(f"{name} {_value_text(value)}")
+            parts.append(f"{name} {value_text(value)}")
     return ", ".join(parts) or NO_FIELDS
 
 
@@ -115,8 +107,7 @@ class WorkspaceRulesPage:
         self._rows: list[WorkspaceRuleRow] = []
         self._listed: list[Gtk.Widget] = []
         self._empty_row: Adw.ActionRow | None = None
-        self._empty_add = Gtk.Button(label="Add rule", valign=Gtk.Align.CENTER)
-        self._empty_add.connect("clicked", lambda _button: self._actions.add())
+        self._empty_add: Gtk.Button | None = None
 
         self._page = Adw.PreferencesPage(title=self.title)
         self._group = Adw.PreferencesGroup(
@@ -159,7 +150,7 @@ class WorkspaceRulesPage:
         return self._empty_row
 
     @property
-    def empty_add_button(self) -> Gtk.Button:
+    def empty_add_button(self) -> Gtk.Button | None:
         """The empty state's own add action -- the one control an empty page needs."""
         return self._empty_add
 
@@ -170,13 +161,11 @@ class WorkspaceRulesPage:
             release(widget)
         self._listed = []
         self._rows = []
-        if self._empty_row is not None:
-            self._empty_row.remove(self._empty_add)
-            self._empty_row = None
+        self._empty_row = None
+        self._empty_add = None
 
         editable = bool(self._session.live)
         self._add_button.set_sensitive(editable)
-        self._empty_add.set_sensitive(editable)
 
         for rule in self.rules:
             row = WorkspaceRuleRow(rule, actions=self._actions, editable=editable)
@@ -185,9 +174,14 @@ class WorkspaceRulesPage:
             self._listed.append(row.widget)
 
         if not self._rows:
+            # A new button with each empty row: the refresh above releases the old row and
+            # everything under it, so a button kept across refreshes would come back dead.
+            add = Gtk.Button(label="Add rule", valign=Gtk.Align.CENTER, sensitive=editable)
+            add.connect("clicked", lambda _button: self._actions.add())
             empty = Adw.ActionRow(title=self.empty_title, subtitle=self.empty_hint)
-            empty.add_suffix(self._empty_add)
+            empty.add_suffix(add)
             self._empty_row = empty
+            self._empty_add = add
             self._group.add(empty)
             self._listed.append(empty)
 

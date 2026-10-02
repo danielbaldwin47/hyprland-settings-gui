@@ -569,7 +569,7 @@ def test_undoing_a_bind_delete_restores_it_in_place_byte_for_byte(tmp_path: Path
         await settle(session, runner)
         assert module_bytes(tmp_path, BINDS_MODULE) != before
         step = session.last_gesture
-        assert isinstance(step, EntityStep) and step.title == "Bind removed"
+        assert isinstance(step, EntityStep) and step.title == "Keybind removed"
 
         assert session.undo()
         await settle(session, runner)

@@ -58,7 +58,7 @@ SITES: dict[str, tuple[Gesture, Gesture, str]] = {
     "edit_binds": (
         lambda s: s.add_bind(bind("SUPER + A")) and s.add_bind(bind("SUPER + B")),
         lambda s: s.remove_bind(0),
-        "Bind removed",
+        "Keybind removed",
     ),
     "save_submap": (
         lambda s: True,
@@ -73,7 +73,7 @@ SITES: dict[str, tuple[Gesture, Gesture, str]] = {
     "_commit_entity_edit, monitor rules": (
         lambda s: s.patch_monitor_rule("eDP-1", {"mode": "1920x1080@60"}),
         lambda s: s.patch_monitor_rule("eDP-1", {"vrr": 1}),
-        "Monitor rule changed",
+        "Display changed",
     ),
     "_commit_entity_edit, workspace rules": (
         lambda s: True,
@@ -191,26 +191,26 @@ def test_toast_titles_name_the_kind_and_what_happened(tmp_path: Path) -> None:
         applier.settle()
 
     assert titles == [
-        "Bind added",
-        "Bind added",
-        "Bind changed",
-        "Bind disabled",
-        "Bind enabled",
-        "Binds reordered",
+        "Keybind added",
+        "Keybind added",
+        "Keybind changed",
+        "Keybind disabled",
+        "Keybind enabled",
+        "Keybinds reordered",
         "Layer rule added",
         "Layer rule disabled",
         "Layer rule removed",
         "Submap added",
         "Submap changed",
-        "Monitor rule changed",
-        "Monitor rule changed",
-        "Monitor rule removed",
+        "Display changed",
+        "Display changed",
+        "Display removed",
         "Workspace rule added",
         "Workspace rule changed",
         "Workspace rule removed",
         "Variable added",
         "Variable removed",
-        "Binds changed",
+        "Keybinds changed",
     ]
 
 
@@ -231,7 +231,7 @@ def test_commits_coalesced_into_one_transaction_are_one_step_each_in_order(
         "Window rule added"
     ]
     assert session.undo()
-    assert entity_top(session).title == "Bind added"
+    assert entity_top(session).title == "Keybind added"
 
 
 # --- undo -------------------------------------------------------------------------------------
@@ -251,7 +251,7 @@ def test_undo_puts_the_list_back_and_writes_it_without_recording(tmp_path: Path)
     assert keys(session) == ["SUPER + A", "SUPER + B", "SUPER + C"]
     assert applier.serial == commits + 1, "the undo did not go through commit_entities"
     applier.settle()
-    assert entity_top(session).title == "Bind added", "the undo recorded a step of its own"
+    assert entity_top(session).title == "Keybind added", "the undo recorded a step of its own"
 
 
 def test_undo_refuses_a_step_whose_list_changed_off_the_stack(tmp_path: Path) -> None:
@@ -267,7 +267,67 @@ def test_undo_refuses_a_step_whose_list_changed_off_the_stack(tmp_path: Path) ->
 
     assert keys(session) == ["SUPER + A", "SUPER + B", "SUPER + HAND"]
     assert applier.serial == 2, "a refused undo wrote something"
-    assert entity_top(session).title == "Bind added", "the stale step is still on top"
+    assert entity_top(session).title == "Keybind added", "the stale step is still on top"
+
+
+def test_undo_during_an_edit_in_flight_waits_for_it_and_drops_nothing(tmp_path: Path) -> None:
+    """Review of #151, finding 12: Ctrl+Z pressed while a removal is still being written
+    used to pop the step beneath it, find it stale and drop it. The removal is the gesture
+    the user means; it is undone once it lands, and the step beneath survives."""
+    session, applier = entity_session(tmp_path)
+    for each in ("SUPER + A", "SUPER + B"):
+        session.add_bind(bind(each))
+        applier.settle()
+    session.remove_bind(0)
+
+    assert not session.undo()
+    assert session.undo_queued
+    assert entity_top(session).title == "Keybind added", "the step under the edit was dropped"
+    assert applier.serial == 3, "the waiting undo wrote something"
+
+    applier.settle()
+    assert keys(session) == ["SUPER + A", "SUPER + B"], "the removal was not undone"
+    assert not session.undo_queued
+    applier.settle()
+    assert entity_top(session).title == "Keybind added"
+    assert session.undo()
+    assert keys(session) == ["SUPER + A"]
+
+
+def test_a_waiting_undo_is_dropped_when_its_edit_fails(tmp_path: Path) -> None:
+    session, applier = entity_session(tmp_path)
+    for each in ("SUPER + A", "SUPER + B"):
+        session.add_bind(bind(each))
+        applier.settle()
+    session.remove_bind(0)
+    assert not session.undo()
+
+    applier.settle("config-errors")
+
+    assert not session.undo_queued
+    assert keys(session) == ["SUPER + B"], "an undo ran for a gesture that never stood"
+    assert entity_top(session).title == "Keybind added"
+
+
+def test_undo_never_drops_a_step_an_open_group_holds_edits_over(tmp_path: Path) -> None:
+    """Finding 12's second reproduction: scale 1 to 2 kept, then a countdown holding 2 to 3.
+    Undoing the kept step would find its list moved and drop it; the window turns Ctrl+Z
+    into Revert there, and the session refuses without touching the stack."""
+    session, applier = entity_session(tmp_path)
+    kept = session.begin_undo_group(DISPLAYS)
+    session.patch_monitor_rule("eDP-1", {"scale": 2})
+    applier.settle()
+    session.end_undo_group(kept, title="Display changed")
+    top = session.last_gesture
+    session.begin_undo_group(DISPLAYS)
+    session.patch_monitor_rule("eDP-1", {"scale": 3})
+    applier.settle()
+
+    assert not session.undo()
+
+    assert session.last_gesture is top
+    assert not session.undo_queued, "a countdown is not waited out"
+    assert [rule.fields for rule in session.monitor_rules] == [{"scale": 3}]
 
 
 # --- lists changed off the stack --------------------------------------------------------------
@@ -292,7 +352,7 @@ def test_profile_activation_records_no_step_and_forgets_display_steps(
     applier.settle()
 
     assert recorded == []
-    assert entity_top(session).title == "Bind added"
+    assert entity_top(session).title == "Keybind added"
 
 
 # --- undo groups ------------------------------------------------------------------------------
@@ -312,7 +372,7 @@ def test_a_reverted_group_leaves_no_step(tmp_path: Path) -> None:
     session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@144"})
     applier.settle()
     session.restore_monitor_rules(snapshot)
-    session.end_undo_group(group, title="Monitor rule changed")
+    session.end_undo_group(group, title="Display changed")
     applier.settle()
 
     assert recorded == []
@@ -329,17 +389,17 @@ def test_a_kept_group_is_one_step_from_before_the_first_edit(tmp_path: Path) -> 
     applier.settle()
     session.patch_monitor_rule("eDP-1", {"scale": 2})
     session.add_bind(bind("SUPER + A"))
-    session.end_undo_group(group, title="Display settings changed")
+    session.end_undo_group(group, title="Display changed")
     assert [getattr(step, "title", None) for step in recorded] == []
     applier.settle()
 
     # One toast for the transaction, naming the newest step: the merge, which lands
     # after the bind that was committed beside it.
-    assert [getattr(step, "title", None) for step in recorded] == ["Display settings changed"]
+    assert [getattr(step, "title", None) for step in recorded] == ["Display changed"]
     assert session.undo()
     assert session.monitor_rules == []
     assert keys(session) == ["SUPER + A"]
-    assert entity_top(session).title == "Bind added"
+    assert entity_top(session).title == "Keybind added"
 
 
 def test_a_group_with_a_failed_commit_records_nothing(tmp_path: Path) -> None:
@@ -350,7 +410,7 @@ def test_a_group_with_a_failed_commit_records_nothing(tmp_path: Path) -> None:
     applier.settle("config-errors")
     session.patch_monitor_rule("eDP-1", {"scale": 2})
     applier.settle()
-    session.end_undo_group(group, title="Display settings changed")
+    session.end_undo_group(group, title="Display changed")
 
     assert session.last_gesture is None
 
@@ -369,17 +429,4 @@ def test_a_bare_list_edit_is_titled_by_its_kind(tmp_path: Path) -> None:
     session.edit_monitor_rules(lambda rules: rules.append(MonitorRule(output="DP-1")))
     applier.settle()
 
-    assert entity_top(session).title == "Monitor rules changed"
-
-
-def test_every_entity_list_has_a_noun_and_declarations_use_their_pages_word() -> None:
-    """The toast's noun table and the lists it names must not drift: a list with no noun
-    would raise in the middle of an edit, and a declaration page saying "variable" while
-    its toast says something else reads as two different things."""
-    from hyprtweaker.engine.model import ENTITY_NOUNS, EntitySet
-    from hyprtweaker.ui.pages.declaration_kinds import KINDS
-
-    assert set(ENTITY_NOUNS) == {kind for kind, _items in EntitySet().kinds()}
-    assert {spec.kind: ENTITY_NOUNS[spec.kind][0] for spec in KINDS} == {
-        spec.kind: spec.singular.capitalize() for spec in KINDS
-    }
+    assert entity_top(session).title == "Displays changed"

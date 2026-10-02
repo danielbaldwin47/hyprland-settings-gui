@@ -78,6 +78,7 @@ from hyprtweaker.engine.ipc import (
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.model.entities import (
+    DISPLAY_KINDS,
     Animation,
     Bind,
     Curve,
@@ -479,6 +480,15 @@ class Session:
         self._undo_group: UndoGroup | None = None
         """The open undo group, if any -- one at a time (`begin_undo_group`)."""
 
+        self._undo_waits_for: EntityStep | None = None
+        """The in-flight step a Ctrl+Z is waiting to undo once it lands (`undo`)."""
+
+        self.on_undo_due: Callable[[], object] | None = None
+        """Called when the edit a waiting Ctrl+Z was pressed over has landed, to undo it.
+
+        The window's own undo, so an undo the window puts behind a countdown still goes
+        there; without one the session undoes it itself."""
+
         self._reverting = False
         self._recovery_halted = False
         self._recovery = Recovery()
@@ -807,7 +817,7 @@ class Session:
     ) -> bool:
         """Change the Bind list and write it, returning whether the edit was accepted.
 
-        `mutate` is handed the live list because for Binds position *is* identity
+        `mutate` is handed the whole list because for Binds position *is* identity
         (ADR-0007): adding is an append at a chosen index, reordering is a move, and there
         is no key to address a bind by. Duplicates are legal, so nothing here de-duplicates.
 
@@ -815,36 +825,46 @@ class Session:
         model holding binds that were never written would show them in the list, survive a
         re-read, and get written later without the user asking again.
 
+        Also `False`, with nothing written, when the edit leaves an enabled Bind whose
+        Trigger cannot load (`trigger_load_problem`) that the list before did not hold:
+        Lua would fail the whole Module (ADR-0007). `mutate` runs on a copy so a refused
+        edit never touches the model. Disabling is never refused, and one already there is
+        carried along.
+
         On the undo stack as one Entity step titled `title` (`_commit_entity_edit`).
         """
-        return self._commit_entity_edit(
-            "binds", lambda: mutate(self._model.entities.binds), title=title
-        )
+        binds = self._model.entities.binds
+        edited = list(binds)
+        mutate(edited)
+        if any(
+            bind.enabled and bind not in binds and trigger_load_problem(bind.keys) is not None
+            for bind in edited
+        ):
+            return False
+
+        def store() -> None:
+            binds[:] = edited
+
+        return self._commit_entity_edit("binds", store, title=title)
 
     def add_bind(self, bind: Bind) -> bool:
-        """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes.
-
-        Refused when the Bind is enabled and its Trigger cannot load (`trigger_load_problem`).
-        """
-        if bind.enabled and trigger_load_problem(bind.keys) is not None:
-            return False
-        return self.edit_binds(lambda binds: binds.append(bind), title="Bind added")
+        """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes."""
+        return self.edit_binds(
+            lambda binds: binds.append(bind), title=entity_title("binds", "added")
+        )
 
     def replace_bind(self, index: int, bind: Bind) -> bool:
         """Replace the Bind at `index`, keeping its position.
 
         In place rather than remove-and-append: position *is* identity, so a bind that
         jumped to the end of the list would change which of two duplicates fires first.
-        Refused when the Bind is enabled and its Trigger cannot load (`trigger_load_problem`).
         """
-        if bind.enabled and trigger_load_problem(bind.keys) is not None:
-            return False
 
         def swap(binds: list[Bind]) -> None:
             if 0 <= index < len(binds):
                 binds[index] = bind
 
-        return self.edit_binds(swap, title="Bind changed")
+        return self.edit_binds(swap, title=entity_title("binds", "changed"))
 
     def remove_bind(self, index: int) -> bool:
         """Delete the Bind at `index`."""
@@ -853,28 +873,25 @@ class Session:
             if 0 <= index < len(binds):
                 del binds[index]
 
-        return self.edit_binds(drop, title="Bind removed")
+        return self.edit_binds(drop, title=entity_title("binds", "removed"))
 
     def set_bind_enabled(self, index: int, enabled: bool) -> bool:
         """Enable or disable the Bind at `index`, in place.
 
         The conflict surface's "disable it" (ADR-0007, #66). In place because the point of
         `enabled` over deletion is exactly that nothing moves: every other bind keeps its
-        position, and re-enabling restores the world as it was.
-
-        Enabling is refused when the Bind's Trigger cannot load (`trigger_load_problem`);
-        disabling never is, so the conflict surface's "disable it" always works.
+        position, and re-enabling restores the world as it was. Enabling a Bind whose Trigger
+        cannot load is refused (`edit_binds`); disabling never is, so the conflict surface's
+        "disable it" always works.
         """
-        binds = self._model.entities.binds
-        target = binds[index] if 0 <= index < len(binds) else None
-        if enabled and target is not None and trigger_load_problem(target.keys) is not None:
-            return False
 
         def flip(binds: list[Bind]) -> None:
             if 0 <= index < len(binds):
                 binds[index] = replace(binds[index], enabled=enabled)
 
-        return self.edit_binds(flip, title="Bind enabled" if enabled else "Bind disabled")
+        return self.edit_binds(
+            flip, title=entity_title("binds", "enabled" if enabled else "disabled")
+        )
 
     def swap_binds(self, first: int, second: int) -> bool:
         """Exchange the positions of two Binds -- which of two duplicates fires first.
@@ -888,7 +905,7 @@ class Session:
             if 0 <= first < len(binds) and 0 <= second < len(binds) and first != second:
                 binds[first], binds[second] = binds[second], binds[first]
 
-        return self.edit_binds(exchange, title="Binds reordered")
+        return self.edit_binds(exchange, title=entity_title("binds", "reordered", plural=True))
 
     def move_bind(self, index: int, to: int) -> bool:
         """Move the Bind at `index` to position `to` -- the Binds page's drag reorder.
@@ -911,7 +928,7 @@ class Session:
         def shift(binds: list[Bind]) -> None:
             binds.insert(to, binds.pop(index))
 
-        return self.edit_binds(shift, title="Binds reordered")
+        return self.edit_binds(shift, title=entity_title("binds", "reordered", plural=True))
 
     def save_submap(self, *, original: str | None, name: str, reset_target: str) -> bool:
         """Create a Submap, or rename one and retune its reset target (#66).
@@ -925,7 +942,7 @@ class Session:
             lambda: binds_analysis.save_submap(
                 self._model.entities, original=original, name=name, reset_target=reset_target
             ),
-            title="Submap added" if original is None else "Submap changed",
+            title=entity_title("submaps", "added" if original is None else "changed"),
         )
 
     def rules(self, kind: str) -> list[WindowRule] | list[LayerRule]:
@@ -1022,7 +1039,7 @@ class Session:
         `mutate` and the ones that moved become one `EntityStep` -- all of them, so a
         cascade such as a submap rename rewriting binds is one step over both lists. The
         step waits for its transaction's verdict (`_pending_entities`); an edit that moved
-        nothing records nothing. `title` is the undo toast's ("Bind removed"); without one
+        nothing records nothing. `title` is the undo toast's ("Keybind removed"); without one
         the step is "<Kinds> changed" after the first list it moved.
 
         Entities are frozen and the snapshots share them, so a step is pointer arrays. A
@@ -1035,13 +1052,13 @@ class Session:
         mutate()
         after = self._entity_lists()
         serial = self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it
-        edits = [EntityEdit(kind, before[kind], after[kind]) for kind in before]
-        moved = [edit for edit in edits if edit.changed]
-        if not moved:
-            return True
-        step = EntityStep(
-            tuple(moved), title or entity_title(moved[0].kind, "changed", plural=True)
+        step = EntityStep.of(
+            (EntityEdit(kind, before[kind], after[kind]) for kind in before), title or ""
         )
+        if step is None:
+            return True
+        if not title:
+            step = replace(step, title=entity_title(step.edits[0].kind, "changed", plural=True))
         group = self._undo_group
         held = group if group is not None and step.kinds & group.kinds else None
         self._pending_entities.append(_PendingEntityStep(serial, step, held))
@@ -1085,7 +1102,9 @@ class Session:
                 MonitorRule(output=output, fields=kept), merge=False
             )
 
-        return self._commit_entity_edit("monitor rules", patch, title="Monitor rule changed")
+        return self._commit_entity_edit(
+            "monitor rules", patch, title=entity_title("monitors", "changed")
+        )
 
     def rename_monitor_rule(self, output: str, to: str) -> bool:
         """Change a rule's identity string, keeping its fields and position.
@@ -1107,7 +1126,9 @@ class Session:
         def rename() -> None:
             rules[index] = replace(rules[index], output=to)
 
-        return self._commit_entity_edit("monitor rules", rename, title="Monitor rule changed")
+        return self._commit_entity_edit(
+            "monitor rules", rename, title=entity_title("monitors", "changed")
+        )
 
     def remove_monitor_rule(self, output: str) -> bool:
         """Delete the rule whose identity is `output`."""
@@ -1116,7 +1137,9 @@ class Session:
             rules = self._model.entities.monitors
             rules[:] = [rule for rule in rules if rule.output != output]
 
-        return self._commit_entity_edit("monitor rules", drop, title="Monitor rule removed")
+        return self._commit_entity_edit(
+            "monitor rules", drop, title=entity_title("monitors", "removed")
+        )
 
     def restore_monitor_rules(self, snapshot: Sequence[MonitorRule]) -> bool:
         """Put the monitor rule list back to `snapshot`, through a normal transaction.
@@ -1132,7 +1155,7 @@ class Session:
         def put_back(rules: list[MonitorRule]) -> None:
             rules[:] = list(snapshot)
 
-        return self.edit_monitor_rules(put_back, title="Monitor rule changed")
+        return self.edit_monitor_rules(put_back, title=entity_title("monitors", "changed"))
 
     def watch_monitors(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Call `callback` on every display hotplug; returns the way to stop.
@@ -1163,14 +1186,6 @@ class Session:
         """The live workspace rule list. Identity is the selector string (ADR-0008)."""
         return self._model.entities.workspace_rules
 
-    def edit_workspace_rules(
-        self, mutate: Callable[[list[WorkspaceRule]], None], *, title: str | None = None
-    ) -> bool:
-        """Change the workspace rule list and write it. Shaped like `edit_monitor_rules`."""
-        return self._commit_entity_edit(
-            "workspace rules", lambda: mutate(self._model.entities.workspace_rules), title=title
-        )
-
     def save_workspace_rule(self, rule: WorkspaceRule, *, original: str | None = None) -> bool:
         """Add a workspace rule, or replace the one whose selector was `original`.
 
@@ -1198,7 +1213,7 @@ class Session:
                     return
             rules.append(rule)
 
-        title = "Workspace rule changed" if replacing else "Workspace rule added"
+        title = entity_title("workspace_rules", "changed" if replacing else "added")
         return self._commit_entity_edit("workspace rules", save, title=title)
 
     def remove_workspace_rule(self, selector: str) -> bool:
@@ -1208,7 +1223,9 @@ class Session:
             rules = self._model.entities.workspace_rules
             rules[:] = [rule for rule in rules if rule.workspace != selector]
 
-        return self._commit_entity_edit("workspace rules", drop, title="Workspace rule removed")
+        return self._commit_entity_edit(
+            "workspace rules", drop, title=entity_title("workspace_rules", "removed")
+        )
 
     # --- declarative entities (#70) -----------------------------------------------------
 
@@ -1437,7 +1454,7 @@ class Session:
             return False
         self._model.entities.monitors[:] = list(monitors)
         self._model.entities.workspace_rules[:] = list(workspaces)
-        self._forget_entities(("monitors", "workspace_rules"))
+        self._forget_entities(DISPLAY_KINDS)
         self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
         self._profile_store.set_active(active)
         return True
@@ -1659,8 +1676,23 @@ class Session:
         Undoing does not push a step of its own. There is no redo tier in v1, and a stack
         that recorded its own reversals would turn Ctrl+Z pressed twice into a value
         oscillating between two states rather than walking back through history.
+
+        `False` without touching the stack while an Entity edit is in flight -- the undo
+        then waits for it (`undo_queued`) and takes it back once it lands -- or while an
+        undo group holds edits over the top step's lists.
         """
         if not self.live or self._applier is None:
+            return False
+        in_flight = [p.step for p in self._pending_entities if p.group is None]
+        if in_flight:
+            # The newest gesture is still being written, so the stack top is not "the last
+            # one" yet -- and an Entity step beneath it would read as stale and be dropped
+            # (review of #151, finding 12). Undo that gesture once it lands instead.
+            self._undo_waits_for = in_flight[-1]
+            return False
+        if self._held_over(self._undo.top):
+            # A group (a display countdown) holds edits over the top step's lists: undoing
+            # under it would find the step stale and drop it. The window reverts instead.
             return False
         step = self._undo.pop()
         if step is None:
@@ -1671,6 +1703,36 @@ class Session:
         self._restore({edit.name: edit.before for edit in step.edits})
         self._applier.commit(*step.names)
         self._changed()
+        return True
+
+    @property
+    def undo_queued(self) -> bool:
+        """Whether a Ctrl+Z is waiting for an edit in flight, to undo it once it lands."""
+        return self._undo_waits_for is not None
+
+    def _held_over(self, step: Step | None) -> bool:
+        """Whether an undo group holds edits, landed or in flight, over `step`'s lists."""
+        if not isinstance(step, EntityStep):
+            return False
+        held = [p.step for p in self._pending_entities if p.group is not None]
+        if self._undo_group is not None:
+            held += self._undo_group.held
+        return any(each.kinds & step.kinds for each in held)
+
+    def _undo_when_landed(self) -> bool:
+        """Run the undo a Ctrl+Z left waiting, if this result landed its edit. `True` if so.
+
+        Only while that edit is the stack top and nothing newer is in flight: a newer edit,
+        or a failed one, means the gesture the user pressed Ctrl+Z over is gone or no longer
+        the last, and the wait is dropped rather than undoing something else.
+        """
+        waited = self._undo_waits_for
+        if waited is None or any(p.step is waited for p in self._pending_entities):
+            return False
+        self._undo_waits_for = None
+        if self._undo.top is not waited or any(p.group is None for p in self._pending_entities):
+            return False
+        (self.on_undo_due or self.undo)()
         return True
 
     def _undo_entities(self, step: EntityStep) -> bool:
@@ -2394,6 +2456,9 @@ class Session:
         self._observe(result)
         self._repoll_if_timed_out(result)
         self._report(result)
+        if self._undo_when_landed():
+            # The user already asked for this gesture back: no offer to undo it.
+            return
         newest: Step | None = entity_steps[-1] if entity_steps else step
         if newest is not None and result.ok and self.on_recorded is not None:
             # After `on_applied`, and only for a transaction that stands: the window shows one

@@ -38,7 +38,7 @@ from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     parse_mode,
     sdr_eotf_name,
 )
-from hyprtweaker.ui.gap_field import GapField, commit_on_settle  # noqa: E402
+from hyprtweaker.ui.rows.gap_field import GapField, commit_on_settle, gap_row  # noqa: E402
 from hyprtweaker.ui.rows.state import NOT_SET  # noqa: E402
 
 Apply = Callable[[Mapping[str, Any]], None]
@@ -47,6 +47,17 @@ Apply = Callable[[Mapping[str, Any]], None]
 FRACTIONAL_WARNING = "Fractional scales can look blurry in apps that don't support them."
 
 _CUSTOM_MODELINE = "Custom modeline"
+MODELINE_FORMAT = (
+    "The timings, in order: clock hdisplay hsync_start hsync_end htotal "
+    "vdisplay vsync_start vsync_end vtotal, then any flags."
+)
+_MODE_LABELS: dict[str, str] = {
+    "preferred": "Display's preferred",
+    "highres": "Highest resolution",
+    "highrr": "Highest refresh rate",
+    "maxwidth": "Widest resolution",
+}
+"""What Resolution shows for each of Hyprland's mode words; the word is what is saved."""
 _CUSTOM_SCALE = "Custom"
 _SCALE_PRESETS: tuple[str, ...] = ("auto", "1", "1.25", "1.5", "2")
 
@@ -111,19 +122,24 @@ class ModeRows:
         self.refresh = Adw.ComboRow(title="Refresh rate")
         self._rates: list[float | None] = []
 
-        self.modeline = Adw.EntryRow(title="Modeline", show_apply_button=True)
-        self.modeline.set_tooltip_text(
-            "clock hdisplay hsync_start hsync_end htotal "
-            "vdisplay vsync_start vsync_end vtotal [flags]"
-        )
+        # ADR-0013 §2: the format stays on screen as help, not in a tooltip. A modeline
+        # runs to ~60 characters, so its entry takes a line of its own under the help
+        # (`gap_row`'s stacked shape); as an ActionRow suffix it showed ~12 of them.
+        self.modeline_entry = Gtk.Entry(hexpand=True, css_classes=["monospace"])
+        self._written_modeline = ""
         if shown == _CUSTOM_MODELINE:
-            self.modeline.set_text(rule_text[len(MODELINE_PREFIX) :].strip())
+            self._written_modeline = rule_text[len(MODELINE_PREFIX) :].strip()
+            self.modeline_entry.set_text(self._written_modeline)
+        self.modeline = gap_row("Modeline", self.modeline_entry, subtitle=MODELINE_FORMAT)
         self.modeline.set_sensitive(editable)
 
         self._show(shown, wanted, specified=specified)
         self.resolution.connect("notify::selected", self._on_resolution)
         self.refresh.connect("notify::selected", self._on_refresh)
-        self.modeline.connect("apply", self._on_modeline)
+        self.modeline_entry.connect("activate", self._on_modeline)
+        left = Gtk.EventControllerFocus()
+        left.connect("leave", lambda _focus: self._on_modeline(self.modeline_entry))
+        self.modeline_entry.add_controller(left)
 
     @property
     def rows(self) -> tuple[Adw.PreferencesRow, ...]:
@@ -180,14 +196,19 @@ class ModeRows:
             return
         self._apply({"mode": format_mode(*shown, self._rates[combo.get_selected()])})
 
-    def _on_modeline(self, entry: Adw.EntryRow) -> None:
+    def _on_modeline(self, entry: Gtk.Entry) -> None:
+        """Enter or focus leaving: write a modeline that is there and new. Leaving an
+        unchanged one writes nothing, since a mode write opens the revert countdown."""
         text = entry.get_text().strip()
-        if text:
+        if text and text != self._written_modeline:
+            self._written_modeline = text
             self._apply({"mode": f"{MODELINE_PREFIX}{text}"})
 
 
 def _size_label(entry: str | Size) -> str:
-    return entry if isinstance(entry, str) else f"{entry[0]}x{entry[1]}"
+    if isinstance(entry, str):
+        return _MODE_LABELS.get(entry, entry)
+    return f"{entry[0]}x{entry[1]}"
 
 
 def _rate_label(rate: float | None) -> str:
@@ -284,27 +305,11 @@ def reserved_row(value: Any, apply: Apply, *, editable: bool) -> Adw.Preferences
         on_commit=lambda gaps: apply({"reserved": gaps}),
     )
     field.set_sensitive(editable)
-    box = Gtk.Box(
-        orientation=Gtk.Orientation.VERTICAL,
-        spacing=6,
-        margin_top=12,
-        margin_bottom=12,
-        margin_start=12,
-        margin_end=12,
+    return gap_row(
+        "Reserved area",
+        field,
+        subtitle="Space kept free at the edges, in pixels, for bars and docks.",
     )
-    box.append(Gtk.Label(label="Reserved area", xalign=0.0))
-    box.append(
-        Gtk.Label(
-            label="Space kept free at the edges, in pixels, for bars and docks.",
-            xalign=0.0,
-            wrap=True,
-            css_classes=["dim-label", "caption"],
-        )
-    )
-    box.append(field)
-    row = Adw.PreferencesRow(title="Reserved area", activatable=False)
-    row.set_child(box)
-    return row
 
 
 # --- Advanced colour --------------------------------------------------------------------
@@ -368,85 +373,94 @@ _LUMINANCE: tuple[_Luminance, ...] = (
 _ON_OFF: tuple[tuple[Any, str], ...] = ((1, "On"), (0, "Off"))
 
 
-def colour_rows(
-    fields: Mapping[str, Any], apply: Apply, *, editable: bool
-) -> tuple[Adw.PreferencesRow, ...]:
-    """ADR-0008's Advanced colour group, collapsed: most displays need none of it.
+class ColourRows:
+    """ADR-0008's Advanced colour group, collapsed unless `shown`: most displays need none
+    of it.
 
     A header row that shows and hides the settings below it, rather than an expander
     nested in the display's expander: libadwaita draws a nested expander's arrow as open
     whenever its parent is open (seen in a widget probe), so a collapsed group would
-    look expanded.
+    look expanded. `shown` is read before a rebuild and handed to the next build, so an
+    edit inside the group does not close it.
     """
-    header = Adw.ActionRow(
-        title="Advanced colour",
-        subtitle="Colour management and HDR. Most displays need none of this.",
-        activatable=True,
-    )
-    arrow = Gtk.Image(icon_name="pan-down-symbolic")
-    header.add_suffix(arrow)
-    eotf = fields.get("sdr_eotf")
-    rows = [
-        _choice_row(
-            "Colour preset",
-            "The colour space the display is driven in.",
-            "cm",
-            CM_PRESETS,
-            fields.get("cm"),
-            apply,
-        ),
-        _choice_row(
-            "SDR transfer function",
-            "How SDR content's brightness curve is read.",
-            "sdr_eotf",
-            SDR_EOTF_NAMES,
-            None if eotf is None else sdr_eotf_name(eotf),
-            apply,
-        ),
-        _number_row(
-            "SDR brightness",
-            "SDR content's brightness in HDR mode; 1 leaves it unchanged.",
-            "sdrbrightness",
-            fields.get("sdrbrightness"),
-            apply,
-        ),
-        _number_row(
-            "SDR saturation",
-            "SDR content's saturation in HDR mode; 1 leaves it unchanged.",
-            "sdrsaturation",
-            fields.get("sdrsaturation"),
-            apply,
-        ),
-        _choice_row(
-            "Wide colour support",
-            "Override whether the display reports wide colour.",
-            "supports_wide_color",
-            _ON_OFF,
-            _tri_state(fields.get("supports_wide_color")),
-            apply,
-        ),
-        _choice_row(
-            "HDR support",
-            "Override whether the display reports HDR.",
-            "supports_hdr",
-            _ON_OFF,
-            _tri_state(fields.get("supports_hdr")),
-            apply,
-        ),
-        *(_luminance_row(spec, fields.get(spec.key), apply) for spec in _LUMINANCE),
-    ]
-    for row in rows:
-        row.set_sensitive(editable)
-        row.set_visible(False)
 
-    def toggle(_header: Adw.ActionRow) -> None:
-        shown = not rows[0].get_visible()
-        for row in rows:
+    def __init__(
+        self, fields: Mapping[str, Any], apply: Apply, *, editable: bool, shown: bool = False
+    ) -> None:
+        self._header = Adw.ActionRow(
+            title="Advanced colour",
+            subtitle="Colour management and HDR. Most displays need none of this.",
+            activatable=True,
+        )
+        self._arrow = Gtk.Image()
+        self._header.add_suffix(self._arrow)
+        eotf = fields.get("sdr_eotf")
+        self._settings: tuple[Adw.PreferencesRow, ...] = (
+            _choice_row(
+                "Colour preset",
+                "The colour space the display is driven in.",
+                "cm",
+                CM_PRESETS,
+                fields.get("cm"),
+                apply,
+            ),
+            _choice_row(
+                "SDR transfer function",
+                "How SDR content's brightness curve is read.",
+                "sdr_eotf",
+                SDR_EOTF_NAMES,
+                None if eotf is None else sdr_eotf_name(eotf),
+                apply,
+            ),
+            _number_row(
+                "SDR brightness",
+                "SDR content's brightness in HDR mode; 1 leaves it unchanged.",
+                "sdrbrightness",
+                fields.get("sdrbrightness"),
+                apply,
+            ),
+            _number_row(
+                "SDR saturation",
+                "SDR content's saturation in HDR mode; 1 leaves it unchanged.",
+                "sdrsaturation",
+                fields.get("sdrsaturation"),
+                apply,
+            ),
+            _choice_row(
+                "Wide colour support",
+                "Override whether the display reports wide colour.",
+                "supports_wide_color",
+                _ON_OFF,
+                _tri_state(fields.get("supports_wide_color")),
+                apply,
+            ),
+            _choice_row(
+                "HDR support",
+                "Override whether the display reports HDR.",
+                "supports_hdr",
+                _ON_OFF,
+                _tri_state(fields.get("supports_hdr")),
+                apply,
+            ),
+            *(_luminance_row(spec, fields.get(spec.key), apply) for spec in _LUMINANCE),
+        )
+        for row in self._settings:
+            row.set_sensitive(editable)
+        self._show(shown)
+        self._header.connect("activated", lambda _header: self._show(not self.shown))
+
+    @property
+    def rows(self) -> tuple[Adw.PreferencesRow, ...]:
+        return (self._header, *self._settings)
+
+    @property
+    def shown(self) -> bool:
+        return self._settings[0].get_visible()
+
+    def _show(self, shown: bool) -> None:
+        for row in self._settings:
             row.set_visible(shown)
-        arrow.set_from_icon_name("pan-up-symbolic" if shown else "pan-down-symbolic")
-
-    header.connect("activated", toggle)
-    return (header, *rows)
+        self._arrow.set_from_icon_name("pan-up-symbolic" if shown else "pan-down-symbolic")
 
 
 def _choice_row(

@@ -175,6 +175,21 @@ class TestPair:
         assert len(helper.stop_buttons) == 1
         assert helper.angle.get_value() == 0
 
+    def test_the_pair_says_why_the_controls_cannot_show_it(self) -> None:
+        """#151 review, finding 30: the generic line gave no reason for the pair."""
+        _, helper, _ = helper_of(PAIR)
+
+        assert helper.widget.get_subtitle() == (
+            "Two colors without an angle are the active and inactive border. Edit them as text."
+        )
+
+    def test_other_text_the_controls_cannot_show_keeps_the_general_line(self) -> None:
+        _, helper, _ = helper_of("rgba(33ccffee) 45deg rgba(595959aa)")
+
+        assert helper.widget.get_subtitle() == (
+            "The controls cannot show this value. Edit it as text."
+        )
+
     def test_the_pair_saves_verbatim(self) -> None:
         editor, _, collected = helper_of(PAIR)
 

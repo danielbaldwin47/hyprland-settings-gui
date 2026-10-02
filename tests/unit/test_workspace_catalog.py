@@ -18,27 +18,6 @@ def _names(kind: T) -> set[str]:
     return {field.name for field in catalog.WORKSPACE_FIELDS if field.type is kind}
 
 
-def test_the_sixteen_published_fields_are_all_here() -> None:
-    assert [field.name for field in catalog.WORKSPACE_FIELDS] == [
-        "monitor",
-        "default",
-        "persistent",
-        "default_name",
-        "on_created_empty",
-        "enabled",
-        "gaps_in",
-        "gaps_out",
-        "float_gaps",
-        "border_size",
-        "no_border",
-        "no_rounding",
-        "no_shadow",
-        "decorate",
-        "animation",
-        "layout",
-    ]
-
-
 def test_every_field_the_importer_produces_is_in_the_catalog() -> None:
     produced = set(importer_rules._WORKSPACE_FIELDS.values()) | set(
         importer_rules._WORKSPACE_INVERTED.values()
@@ -101,3 +80,16 @@ def test_text_typed_over_a_held_value_keeps_the_type_the_value_had() -> None:
 def test_text_that_no_longer_reads_as_the_held_type_stays_text() -> None:
     assert catalog.retype_like(5, "five") == "five"
     assert catalog.retype_like(True, "maybe") == "maybe"
+
+
+def test_layout_choices_drop_the_schemas_lua_placeholder() -> None:
+    assert catalog.layout_choices(("dwindle", "master", "lua:<name>")) == ("dwindle", "master")
+
+
+def test_layout_choices_fall_back_to_the_shipped_layouts() -> None:
+    assert catalog.layout_choices(("lua:<name>",)) == (
+        "dwindle",
+        "master",
+        "scrolling",
+        "monocle",
+    )

@@ -120,7 +120,7 @@ package_sources = {
     'syntax.py',
     'writer.py',
   ],
-  'hyprtweaker/ui': ['__init__.py', 'flash.py', 'gap_field.py', 'release.py', 'search.py'],
+  'hyprtweaker/ui': ['__init__.py', 'flash.py', 'release.py', 'search.py'],
   'hyprtweaker/ui/dialogs': [
     '__init__.py',
     'bind_editor.py',
@@ -156,6 +156,7 @@ package_sources = {
     '__init__.py',
     'chrome.py',
     'factory.py',
+    'gap_field.py',
     'gesture.py',
     'state.py',
   ],

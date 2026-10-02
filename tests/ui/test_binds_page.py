@@ -314,7 +314,10 @@ def test_an_empty_submap_and_the_bind_entering_it_are_flagged_until_it_gets_a_bi
 ) -> None:
     from hyprtweaker.engine.model.entities import Bind, DispatcherCall, Submap
 
-    reason = "Hyprland cannot enter a submap with no binds. Add a bind to it."
+    reason = (
+        "Hyprland cannot enter a submap with no enabled keybinds. "
+        "Add or enable a keybind in it."
+    )
     session, window = build_window(tmp_path)
     session.model.entities.submaps.append(Submap(name="resize"))
     session.model.entities.binds.append(
@@ -346,7 +349,10 @@ def test_a_submap_both_empty_and_unreachable_says_the_empty_part_first(tmp_path:
     window.binds_page.refresh()
 
     description = window.binds_page.groups[1].get_description()
-    empty = "Hyprland cannot enter a submap with no binds. Add a bind to it."
+    empty = (
+        "Hyprland cannot enter a submap with no enabled keybinds. "
+        "Add or enable a keybind in it."
+    )
     assert empty in description and UNREACHABLE in description
     assert description.index(empty) < description.index(UNREACHABLE)
 
@@ -423,6 +429,45 @@ def test_reveal_focuses_the_named_row(tmp_path: Path) -> None:
     window.binds_page.reveal(99)  # out of range must be a no-op, not an error
 
 
+def press(widget: Any, accelerator: str) -> None:
+    """Fire `widget`'s shortcut for `accelerator`, as the key press would."""
+    from gi.repository import Gtk
+
+    for controller in widget.observe_controllers():
+        if isinstance(controller, Gtk.ShortcutController):
+            for each in controller:
+                if each.get_trigger().to_string() == accelerator:
+                    each.get_action().activate(Gtk.ShortcutActionFlags(0), widget, None)
+                    return
+    raise AssertionError(f"{widget!r} has no {accelerator} shortcut")
+
+
+def test_alt_down_twice_moves_the_same_bind_twice_and_focus_follows_it(tmp_path: Path) -> None:
+    """Review of #151, finding 11: keyboard reorder is the only non-pointer route, so the
+    moved bind's rebuilt row must hold the focus for the next Alt+Down."""
+    import main_loop
+    from _live_window import live_entity_window
+
+    session, window, applier = live_entity_window(tmp_path)
+    session.model.entities.binds.extend(
+        exec_bind(f"SUPER + {key}", f"app-{key}") for key in ("A", "B", "C")
+    )
+    page = window.binds_page
+    page.refresh()
+    window.present()
+    window._select_section(page.section)
+    main_loop.settle("the Binds page to map")
+    page.rows[0].widget.grab_focus()
+
+    press(window.get_focus(), "<Alt>Down")
+    applier.settle()
+    press(window.get_focus(), "<Alt>Down")
+    applier.settle()
+
+    assert [row.bind.keys for row in page.rows] == ["SUPER + B", "SUPER + C", "SUPER + A"]
+    assert window.get_focus() is page.rows[2].widget
+
+
 def test_an_ampersand_in_a_trigger_or_command_is_shown_as_written(tmp_path: Path) -> None:
     """`A&B` and `a && b` are text, not Pango markup: parsed as markup they render blank."""
     from gi.repository import Gtk
@@ -477,6 +522,32 @@ def test_a_drag_from_one_handle_to_another_row_calls_move() -> None:
     assert calls == [("move", 0, 4)]
 
 
+def test_a_drag_whose_row_a_refresh_replaced_lands_nowhere(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A refresh mid-drag (an undo, a reload) renumbers the rows: the old drag must not
+    move whatever bind now sits at the index it started from (review #151, finding 39)."""
+    from gi.repository import Gdk, Gtk
+
+    session, window = build_window(tmp_path)
+    monkeypatch.setattr(type(session), "live", property(lambda _self: True))
+    session.model.entities.binds.extend(
+        exec_bind("SUPER + Q", command) for command in ("a", "b", "c")
+    )
+    moved: list[tuple[int, int]] = []
+    monkeypatch.setattr(session, "move_bind", lambda *args: moved.append(args) or True)
+    page = window.binds_page
+    page.refresh()
+    controller(page.rows[0].drag_handle, Gtk.DragSource).emit("prepare", 0.0, 0.0)
+
+    page.refresh()
+    drop = controller(page.rows[2].widget, Gtk.DropTarget)
+
+    assert drop.emit("enter", 0.0, 0.0) == Gdk.DragAction(0)
+    assert drop.emit("drop", 0, 0.0, 0.0) is False
+    assert moved == []
+
+
 def test_a_row_from_another_group_is_not_a_drop_target() -> None:
     """No highlight, no drop: order between groups is not something binds.lua holds."""
     from hyprtweaker.ui.pages.binds import BindDrag
@@ -528,6 +599,49 @@ def test_an_offline_row_has_no_handle_and_takes_no_drop(tmp_path: Path) -> None:
     assert not [c for c in row.widget.observe_controllers() if isinstance(c, Gtk.DropTarget)]
 
 
+def test_an_offline_row_greys_out_its_edit_controls(tmp_path: Path, monkeypatch: Any) -> None:
+    """Read-only is temporary (the Banner says why), so Edit, Remove and Enable show,
+    insensitive, as on the Workspaces page; the rival verbs stay hidden (#159, #113)."""
+    from gi.repository import Gtk
+
+    session, window = build_window(tmp_path)
+    session.model.entities.binds.extend(
+        [
+            exec_bind("SUPER + Q", "a"),
+            exec_bind("SUPER + Q", "b"),
+            exec_bind("SUPER + E", "e", enabled=False),
+        ]
+    )
+    window.binds_page.refresh()
+
+    first, _second, off = window.binds_page.rows
+    sensitive = [
+        (button is not None, button is not None and button.get_sensitive())
+        for button in (first.edit_button, first.remove_button, off.enable_button)
+    ]
+    assert sensitive == [(True, False), (True, False), (True, False)]
+    assert not [
+        c for c in first.widget.observe_controllers() if isinstance(c, Gtk.ShortcutController)
+    ]
+    assert first.conflict_badge is not None
+    verbs = button_labels(first.conflict_badge.get_popover())
+    assert verbs == ["Show"], "the rival verbs Rebind and Disable stay hidden"
+
+
+def button_labels(widget: Any) -> list[str]:
+    """The label of every button under `widget`, in tree order."""
+    from gi.repository import Gtk
+
+    labels: list[str] = []
+    child = widget.get_first_child()
+    while child is not None:
+        if isinstance(child, Gtk.Button) and child.get_label():
+            labels.append(child.get_label())
+        labels.extend(button_labels(child))
+        child = child.get_next_sibling()
+    return labels
+
+
 def shortcut(row: Any, accelerator: str) -> bool:
     """Press `accelerator` on the row, through its own shortcut controller."""
     from gi.repository import Gtk
@@ -563,7 +677,7 @@ def test_alt_up_on_a_groups_first_row_moves_nothing() -> None:
 
 def test_a_drag_on_the_page_reorders_and_ctrl_z_puts_it_back(tmp_path: Path) -> None:
     """The whole loop: drop, the Session moves, the page shows the new fire order with a
-    "Binds reordered" toast, and Undo restores the old order."""
+    "Keybinds reordered" toast, and Undo restores the old order."""
     from test_undo import live_entity_window
 
     session, window, applier = live_entity_window(tmp_path)
@@ -595,8 +709,79 @@ def test_a_drag_on_the_page_reorders_and_ctrl_z_puts_it_back(tmp_path: Path) -> 
 
     assert fire_order() == [("second", "1st of 2"), ("first", "2nd of 2")]
     assert window.undo_toast is not None
-    assert window.undo_toast.get_title() == "Binds reordered"
+    assert window.undo_toast.get_title() == "Keybinds reordered"
 
     window.activate_action("win.undo", None)
 
     assert fire_order() == [("first", "1st of 2"), ("second", "2nd of 2")]
+
+
+def test_a_foreign_reload_refreshes_the_rows_and_the_sidebar_count(tmp_path: Path) -> None:
+    """Rows are index-addressed, so a stale row's Remove would land on another bind
+    (review #151, finding 43). The re-read is the session's own; the window hears of it
+    through `on_state_changed`, as the application wires it."""
+    from _live_window import live_entity_window
+
+    from hyprtweaker.engine.model.entities import EntitySet
+    from hyprtweaker.engine.paths import BINDS_MODULE
+    from hyprtweaker.engine.writer.binds import render_binds_module
+
+    session, window, _applier = live_entity_window(tmp_path)
+    session.on_state_changed = window.sync
+    first, second, third = (
+        exec_bind("SUPER + A", "first"),
+        exec_bind("SUPER + B", "second"),
+        exec_bind("SUPER + C", "third"),
+    )
+    session.model.entities.binds.extend([first, second, third])
+    window.binds_page.refresh()
+    assert len(window.binds_page.rows) == 3
+
+    # Somebody else drops the first bind from binds.lua and reloads Hyprland.
+    hand_edit = render_binds_module(EntitySet(binds=[second, third]), app_version="hand")
+    assert hand_edit is not None
+    (session.paths.app_dir / BINDS_MODULE).parent.mkdir(parents=True, exist_ok=True)
+    (session.paths.app_dir / BINDS_MODULE).write_text(hand_edit, encoding="utf-8")
+    session._reread_binds()
+    session._changed()
+
+    rows = window.binds_page.rows
+    assert [row.widget.get_title() for row in rows] == ["SUPER + B", "SUPER + C"]
+    assert sidebar_count(window, window.binds_page.section) == "2"
+
+    rows[0].remove_button.emit("clicked")
+
+    assert [bind.keys for bind in session.model.entities.binds] == ["SUPER + C"]
+    assert [row.widget.get_title() for row in window.binds_page.rows] == ["SUPER + C"]
+    assert sidebar_count(window, window.binds_page.section) == "1"
+
+
+def test_rows_come_alive_when_the_session_does(tmp_path: Path) -> None:
+    """The window is built before the session goes live, so read-only is where every row
+    starts; the greyed controls must answer once it ends, with no list having moved."""
+    session, window = build_window(tmp_path)
+    session.on_state_changed = window.sync
+    session.model.entities.binds.append(exec_bind("SUPER + Q", "a"))
+    window.binds_page.refresh()
+    assert window.binds_page.rows[0].edit_button.get_sensitive() is False
+
+    class StubApplier:
+        def commit_entities(self) -> int:
+            return 1
+
+    session._applier = StubApplier()
+    session._offline_reason = None
+    session._changed()
+
+    (row,) = window.binds_page.rows
+    assert (row.edit_button.get_sensitive(), row.drag_handle is not None) == (True, True)
+
+
+def sidebar_count(window: Any, section: str) -> str:
+    """The count badge on `section`'s sidebar row, as drawn."""
+    index = 0
+    while (row := window._sidebar.get_row_at_index(index)) is not None:
+        if row.get_name() == section:
+            return row.get_child().get_last_child().get_label()
+        index += 1
+    raise AssertionError(f"no sidebar row for {section}")

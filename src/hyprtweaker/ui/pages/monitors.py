@@ -47,9 +47,9 @@ from hyprtweaker.engine.profiles import MonitorProfile  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.entity_text import profile_summary, rule_summary  # noqa: E402
 from hyprtweaker.ui.pages.monitor_rows import (  # noqa: E402
+    ColourRows,
     ModeRows,
     ScaleRows,
-    colour_rows,
     reserved_row,
 )
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
@@ -65,6 +65,22 @@ _VRR_CHOICES: tuple[tuple[str, int], ...] = (
     ("Fullscreen only", 2),
     ("Fullscreen video", 3),
 )
+
+_RowKey = tuple[str, str]
+"""Which display row an expander is, across rebuilds: `("connected", connector)`,
+`("rule", output)` for a display that is not plugged in, or `("catch-all", "")`."""
+
+
+@dataclass(frozen=True, slots=True)
+class _FocusSpot:
+    """Where keyboard focus sat before a rebuild, by what survives one: the display row,
+    the setting's title inside it (`None` for the display row itself), and the focused
+    widget's place among that setting's descendants (`-1` for the setting itself)."""
+
+    row: _RowKey
+    setting: str | None
+    index: int
+    kind: type
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,6 +380,8 @@ class MonitorsPage:
         Keyed rather than parallel to a list, because a rule's row may sit in Connected,
         Not connected or the catch-all group depending on what is plugged in."""
         self._profile_rows_by_slug: dict[str, Adw.ActionRow] = {}
+        self._expanders: dict[_RowKey, Adw.ExpanderRow] = {}
+        self._colours: dict[str, ColourRows] = {}
 
         self.refresh()
 
@@ -463,6 +481,15 @@ class MonitorsPage:
         monitors = self._connected or ()
         editable = bool(self._session.live)
 
+        # Every applied edit rebuilds the page, and the rows that take several edits in a
+        # row (the four reserved sides, the luminance fields) sit inside a display's
+        # expander: what the user had open, and where their cursor was, comes back.
+        expanded = {key for key, row in self._expanders.items() if row.get_expanded()}
+        colours = {name for name, colour in self._colours.items() if colour.shown}
+        focus = self._focus_spot()
+        self._expanders = {}
+        self._colours = {}
+
         for group, widgets in self._listed.items():
             for widget in widgets:
                 group.remove(widget)
@@ -503,7 +530,11 @@ class MonitorsPage:
                 connector=str(monitor.get("name", "")),
                 description=str(monitor.get("description", "")),
             )
-            row = self._connected_row(monitor, rule, editable=editable)
+            connector = str(monitor.get("name", ""))
+            row = self._connected_row(
+                monitor, rule, editable=editable, colour_shown=connector in colours
+            )
+            self._keep(("connected", connector), row, expanded)
             if rule is not None:
                 self._rule_rows[rule.output] = row
             self._connected_group.add(row)
@@ -521,6 +552,7 @@ class MonitorsPage:
         for rule in leftover:
             row = self._disconnected_row(rule, editable=editable)
             self._rule_rows[rule.output] = row
+            self._keep(("rule", rule.output), row, expanded)
             self._disconnected_group.add(row)
             self._disconnected_rows.append(row)
             self._listed.setdefault(self._disconnected_group, []).append(row)
@@ -536,6 +568,7 @@ class MonitorsPage:
             breaking=True,
         )
         self._rule_rows[CATCH_ALL_OUTPUT] = self._catch_all_row
+        self._keep(("catch-all", ""), self._catch_all_row, expanded)
         self._catch_all_group.add(self._catch_all_row)
         self._listed.setdefault(self._catch_all_group, []).append(self._catch_all_row)
 
@@ -562,6 +595,59 @@ class MonitorsPage:
             )
             self._profiles_group.add(hint)
             self._listed.setdefault(self._profiles_group, []).append(hint)
+
+        if focus is not None:
+            self._restore_focus(focus)
+
+    def _keep(self, key: _RowKey, row: Adw.ExpanderRow, expanded: set[_RowKey]) -> None:
+        """Track `row` under `key`, open if it was open: before it is added, so it opens
+        without the reveal animation and the page does not scroll while it grows."""
+        self._expanders[key] = row
+        row.set_expanded(key in expanded)
+
+    def _focus_spot(self) -> _FocusSpot | None:
+        root = self._page.get_root()
+        focus = root.get_focus() if root is not None else None
+        if focus is None:
+            return None
+        for key, expander in self._expanders.items():
+            if not focus.is_ancestor(expander):
+                continue
+            setting = focus.get_ancestor(Adw.PreferencesRow)
+            if setting is None or setting.get_title() == expander.get_title():
+                setting = expander  # the display row's own header
+            index = -1 if focus is setting else _descendants(setting).index(focus)
+            title = None if setting is expander else setting.get_title()
+            return _FocusSpot(key, title, index, type(focus))
+        return None
+
+    def _restore_focus(self, spot: _FocusSpot) -> None:
+        expander = self._expanders.get(spot.row)
+        if expander is None:
+            return
+        setting: Gtk.Widget | None = expander
+        if spot.setting is not None:
+            setting = next(
+                (
+                    widget
+                    for widget in _descendants(expander)
+                    if isinstance(widget, Adw.PreferencesRow)
+                    and widget.get_title() == spot.setting
+                ),
+                None,
+            )
+        if setting is None:
+            return
+        inside = _descendants(setting)
+        target = (
+            setting
+            if spot.index < 0
+            else inside[spot.index]
+            if spot.index < len(inside)
+            else None
+        )
+        if type(target) is spot.kind and target is not None:
+            target.grab_focus()
 
     # -- search reveals --
 
@@ -637,7 +723,12 @@ class MonitorsPage:
     # -- connected rows --
 
     def _connected_row(
-        self, monitor: Mapping[str, Any], rule: MonitorRule | None, *, editable: bool
+        self,
+        monitor: Mapping[str, Any],
+        rule: MonitorRule | None,
+        *,
+        editable: bool,
+        colour_shown: bool,
     ) -> Adw.ExpanderRow:
         connector = str(monitor.get("name", ""))
         description = str(monitor.get("description", "")).strip()
@@ -761,7 +852,9 @@ class MonitorsPage:
         row.add_row(vrr)
 
         row.add_row(reserved_row(fields.get("reserved"), apply, editable=editable))
-        for setting in colour_rows(fields, apply, editable=editable):
+        colour = ColourRows(fields, apply, editable=editable, shown=colour_shown)
+        self._colours[connector] = colour
+        for setting in colour.rows:
             row.add_row(setting)
         return row
 
@@ -917,6 +1010,17 @@ def _reveal(row: Gtk.Widget | None) -> Gtk.Widget | None:
         row.grab_focus()
         flash(row)
     return row
+
+
+def _descendants(widget: Gtk.Widget) -> list[Gtk.Widget]:
+    """Every widget under `widget`, depth first: the same order for the same shape."""
+    found: list[Gtk.Widget] = []
+    child = widget.get_first_child()
+    while child is not None:
+        found.append(child)
+        found.extend(_descendants(child))
+        child = child.get_next_sibling()
+    return found
 
 
 def _logical(monitor: Mapping[str, Any]) -> tuple[int, int]:
