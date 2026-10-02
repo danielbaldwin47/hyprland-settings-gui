@@ -43,8 +43,8 @@ strict = true
 
 [tool.pytest.ini_options]
 # The per-commit tiers (ADR-0011 tiers 1, 2 and 4: unit, static, ui). `tests/integration`
-# (tier 3) is deliberately absent: it is the on-demand Harness tier and needs a nested
-# compositor.
+# (tier 3) is deliberately absent: it is the Harness tier, run on demand and nightly in CI
+# (the `harness` job), and needs a nested compositor.
 #
 # `tests/static` is `Hyprland --verify-config` over the writer's output -- no compositor,
 # well under a second, and it skips itself where no Hyprland binary exists. It belongs here

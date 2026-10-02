@@ -23,11 +23,12 @@ Three isolation rules, each of which has a way of going wrong:
    and probe-window call made through `env` carries both that and the new signature, so no
    command in this package can be delivered to the host by accident.
 
-**A host Wayland session is required.** Without a host compositor to nest into, backend
-creation fails outright (`CBackend::create() failed!`) even when a render node is handed to it
-explicitly, because the DRM backend wants a seat that the developer's own session already
-owns. So this tier runs *nested*, and `unavailable_reason` reports the missing session as a
-skip rather than letting the launch fail deep inside a test. The headless *output* created
+**Without a card, a host Wayland session is required.** Without a host compositor to nest
+into, backend creation fails outright (`CBackend::create() failed!`) even when a render node
+is handed to it explicitly, because the DRM backend wants a seat that the developer's own
+session already owns. So this tier runs *nested* or on a card (below), and
+`unavailable_reason` reports a machine with neither as a skip rather than letting the
+launch fail deep inside a test. The headless *output* created
 inside the nested compositor (see `visual.py`) is what makes rendering independent of the
 host's screen size -- that part needs no seat.
 
@@ -147,15 +148,29 @@ def render_node_of(card: Path, sys_drm: Path = SYS_DRM) -> Path | None:
     return Path("/dev/dri") / nodes[0].name if nodes else None
 
 
+def is_vkms(card: Path, sys_drm: Path = SYS_DRM) -> bool:
+    """Whether `card` is the kernel's virtual KMS device, which no desktop displays on.
+
+    Since Linux 6.15 `vkms` is a faux device: its sysfs device is `faux/vkms` and its driver
+    `faux_driver`, as a stock CI runner shows it (#195).
+    """
+    device = (sys_drm / card.name / "device").resolve()
+    return device.name == "vkms" and (device / "driver").resolve().name == "faux_driver"
+
+
 def drm_card_problem(card: Path, sys_drm: Path = SYS_DRM) -> str | None:
-    """Why `card` must not be handed to the nested Hyprland, or `None` if it may be."""
+    """Why `card` must not be handed to the nested Hyprland, or `None` if it may be.
+
+    A card needs a render node, except `vkms`, which has none: Hyprland then renders on
+    the card itself (CI's card, ADR-0011 tier 3).
+    """
     if shutil.which("bwrap") is None:
         return "no bwrap binary: the card is only handed over inside one"
     if not card.exists():
         return "no such device"
     if (sys_drm / card.name / "device" / "driver").resolve().name == "nvidia":
         return "an NVIDIA card cannot allocate the headless output (#144)"
-    if render_node_of(card, sys_drm) is None:
+    if render_node_of(card, sys_drm) is None and not is_vkms(card, sys_drm):
         return "the card has no render node"
     connected = [
         connector.parent.name
@@ -202,14 +217,14 @@ def drm_wrapped(
     host's keystrokes against its own binds.
     """
     render = render_node_of(card, sys_drm)
-    if render is None:
+    if render is None and not is_vkms(card, sys_drm):
         raise HarnessUnavailable(f"{card} has no render node")
     wrapped = [
         "bwrap",
         "--dev-bind", "/", "/",
         "--tmpfs", "/dev/dri",
         "--dev-bind", str(card), str(card),
-        "--dev-bind", str(render), str(render),
+        *(["--dev-bind", str(render), str(render)] if render else []),
         "--tmpfs", "/dev/input",
         *_session_fences(environment),
         "--die-with-parent",

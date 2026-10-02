@@ -19,7 +19,7 @@ import sys
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gdk, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 #: The window gives up on its own if a test dies without terminating it, so a crashed run
 #: cannot leave a client holding a surface in a compositor nobody is watching.
@@ -29,6 +29,10 @@ LIFETIME_SECONDS = 600
 def main(argv: list[str]) -> int:
     app_id = argv[1]
     red, green, blue, alpha = (float(part) for part in argv[2].split(","))
+    # The Wayland app id, which tests match as the client's `class`, comes from the
+    # application only once it registers on a session bus; without one (a CI container)
+    # GDK falls back to the program name.
+    GLib.set_prgname(app_id)
     application = Gtk.Application(application_id=app_id)
 
     def on_activate(app: Gtk.Application) -> None:
@@ -57,8 +61,6 @@ def main(argv: list[str]) -> int:
             )
 
         window.present()
-        from gi.repository import GLib
-
         GLib.timeout_add_seconds(LIFETIME_SECONDS, app.quit)
 
     application.connect("activate", on_activate)
