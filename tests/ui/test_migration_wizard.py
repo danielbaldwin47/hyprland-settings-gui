@@ -1398,3 +1398,26 @@ def test_a_relaunched_roll_back_says_which_tool_file_it_left(tmp_path: Path) -> 
     )
     assert config.read_bytes() == edited
     said.force_close()
+
+
+def test_the_wizard_cannot_be_closed_between_switch_and_its_ending(tmp_path: Path) -> None:
+    """F22 of the #148 review: Esc on "Keep or roll back" let the clock run unseen, and the
+    switch rolled back with no message onto a dialog the window had released."""
+    from gi.repository import Gtk
+
+    from hyprtweaker.engine.paths import ConfigPaths
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+    window, _session = build_window(tmp_path)
+    window.route_first_run()
+    dialog = window.show_migration()
+    assert dialog.get_can_close()
+
+    dialog._go_switch(Gtk.Button())
+    assert not dialog.get_can_close()
+
+    dialog._finish("Kept", "")
+    assert dialog.get_can_close()
+    dialog.close()

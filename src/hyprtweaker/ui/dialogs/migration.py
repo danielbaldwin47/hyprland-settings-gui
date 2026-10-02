@@ -578,9 +578,19 @@ class MigrationDialog(Adw.Dialog):
 
     def _go_switch(self, button: Gtk.Button) -> None:
         button.set_sensitive(False)
+        # Not closable until an ending shows: Esc on "Keep or roll back" let the clock run
+        # unseen and roll back with no word (F22 of the #148 review).
+        self.set_can_close(False)
         self._spawn(self._switch())
 
     async def _switch(self) -> None:
+        try:
+            await self._switch_and_say()
+        except BaseException:
+            self.set_can_close(True)
+            raise
+
+    async def _switch_and_say(self) -> None:
         result = await self._flow.switch()
         if not result.ok:
             await self._flow.roll_back_live()
@@ -596,11 +606,13 @@ class MigrationDialog(Adw.Dialog):
                     "You are back on the configuration you started with.\n\n" + detail,
                 )
             )
+            self.set_can_close(True)
             return
         if not result.live:
             # Nothing was switched, so there is nothing to keep or roll back. Starting a
             # countdown here would offer to undo a change that never happened.
             self._view.push(self._done_page("Written", result.detail))
+            self.set_can_close(True)
             # An ending too: the config is written, and the window has to know (hand-test 21).
             if self._on_finished is not None:
                 self._on_finished(None)
@@ -684,6 +696,7 @@ class MigrationDialog(Adw.Dialog):
 
     def _finish(self, title: str, body: str) -> None:
         self._view.push(self._done_page(title, body))
+        self.set_can_close(True)
         if self._on_finished is not None:
             self._on_finished(self._decision)
 
