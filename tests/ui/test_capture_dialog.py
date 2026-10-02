@@ -476,24 +476,26 @@ def test_keys_pressed_in_the_picker_are_not_recorded_as_a_trigger() -> None:
     assert not dialog._owns_keys(dialog._surface)
 
 
-def test_the_bind_editor_hands_its_switch_source_to_capture() -> None:
+def test_the_bind_editor_opens_capture_listing_its_switches(monkeypatch: Any) -> None:
     from gi.repository import Adw
 
-    from hyprtweaker.ui.dialogs.bind_editor import BindEditor
-
-    Adw.init()
-    editor = BindEditor(on_done=lambda _bind: None, fetch_switches=answering(LID))
-    editor._choose(None)
-    made: list[Any] = []
     from hyprtweaker.ui.dialogs import bind_editor
 
-    original = bind_editor.CaptureDialog
-    bind_editor.CaptureDialog = lambda **kwargs: made.append(kwargs) or original(**kwargs)  # type: ignore[misc]
-    try:
-        editor._capture()
-    finally:
-        bind_editor.CaptureDialog = original  # type: ignore[misc]
-    assert made[0]["fetch_switches"] is not None
+    Adw.init()
+    editor = bind_editor.BindEditor(on_done=lambda _bind: None, fetch_switches=answering(LID))
+    editor._choose(None)
+    opened: list[Any] = []
+    real = bind_editor.CaptureDialog
+
+    def keep(**kwargs: Any) -> Any:
+        opened.append(real(**kwargs))
+        return opened[-1]
+
+    monkeypatch.setattr(bind_editor, "CaptureDialog", keep)
+    editor._capture()
+
+    model = opened[0]._switch_row.get_model()
+    assert [model.get_string(i) for i in range(1, model.get_n_items())] == ["Lid Switch"]
 
 
 def test_no_picker_description_holds_markup_characters() -> None:

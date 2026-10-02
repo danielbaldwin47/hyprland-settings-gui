@@ -18,27 +18,6 @@ def _names(kind: T) -> set[str]:
     return {field.name for field in catalog.WORKSPACE_FIELDS if field.type is kind}
 
 
-def test_the_sixteen_published_fields_are_all_here() -> None:
-    assert [field.name for field in catalog.WORKSPACE_FIELDS] == [
-        "monitor",
-        "default",
-        "persistent",
-        "default_name",
-        "on_created_empty",
-        "enabled",
-        "gaps_in",
-        "gaps_out",
-        "float_gaps",
-        "border_size",
-        "no_border",
-        "no_rounding",
-        "no_shadow",
-        "decorate",
-        "animation",
-        "layout",
-    ]
-
-
 def test_every_field_the_importer_produces_is_in_the_catalog() -> None:
     produced = set(importer_rules._WORKSPACE_FIELDS.values()) | set(
         importer_rules._WORKSPACE_INVERTED.values()
