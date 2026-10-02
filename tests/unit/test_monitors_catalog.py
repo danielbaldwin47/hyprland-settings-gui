@@ -5,6 +5,7 @@ from __future__ import annotations
 from hyprtweaker.engine.model.entities import MonitorRule
 from hyprtweaker.engine.monitors_catalog import (
     arrangement_mismatches,
+    breaks_display,
     connected_rules,
     disconnected_rules,
     format_mode,
@@ -13,6 +14,7 @@ from hyprtweaker.engine.monitors_catalog import (
     parse_mode,
     parse_position,
     preferred_identity,
+    revert_breaking,
     rule_for,
     rule_matches_output,
     snap_position,
@@ -251,3 +253,59 @@ class TestArrangementMismatches:
     def test_every_difference_on_a_display_is_reported(self) -> None:
         rules = [MonitorRule(output="DP-1", fields={"scale": 2, "position": "100x0"})]
         assert len(arrangement_mismatches(rules, [live()])) == 2
+
+
+class TestRevertBreaking:
+    """What a Confirm-or-revert revert writes back (#192): the display, not the benign edits."""
+
+    def test_puts_breaking_fields_back_and_keeps_a_benign_edit_made_meanwhile(self) -> None:
+        snapshot = [MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 0})]
+        current = [MonitorRule("eDP-1", {"mode": "1920x1080@48", "scale": 2, "vrr": 1})]
+
+        assert revert_breaking(snapshot, current) == [
+            MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 1})
+        ]
+
+    def test_nothing_benign_moved_gives_the_snapshot_back(self) -> None:
+        snapshot = [
+            MonitorRule("DP-3", {"position": "0x0"}),
+            MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 0}),
+        ]
+        current = [
+            MonitorRule("DP-3", {"position": "1920x0", "transform": 1}),
+            MonitorRule("eDP-1", {"mode": "preferred", "vrr": 0}),
+        ]
+
+        assert revert_breaking(snapshot, current) == [
+            MonitorRule("DP-3", {"position": "0x0"}),
+            MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 0}),
+        ]
+
+    def test_a_rule_the_batch_created_keeps_only_its_benign_fields(self) -> None:
+        current = [
+            MonitorRule("DP-3", {"mode": "2560x1440@144", "vrr": 1}),
+            MonitorRule("HDMI-A-1", {"scale": 2}),
+        ]
+
+        assert revert_breaking([], current) == [MonitorRule("DP-3", {"vrr": 1})]
+
+    def test_a_rule_removed_meanwhile_comes_back_whole(self) -> None:
+        snapshot = [MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 1})]
+
+        assert revert_breaking(snapshot, []) == snapshot
+
+
+class TestBreaksDisplay:
+    def test_a_breaking_field_change_breaks(self) -> None:
+        before = (MonitorRule("eDP-1", {"scale": 1, "vrr": 0}),)
+        after = (MonitorRule("eDP-1", {"scale": 2, "vrr": 0}),)
+        assert breaks_display(before, after) is True
+
+    def test_a_benign_field_change_does_not(self) -> None:
+        before = (MonitorRule("eDP-1", {"scale": 1, "vrr": 0}),)
+        after = (MonitorRule("eDP-1", {"scale": 1, "vrr": 1}),)
+        assert breaks_display(before, after) is False
+
+    def test_a_rule_with_breaking_fields_appearing_breaks(self) -> None:
+        assert breaks_display((), (MonitorRule("DP-3", {"mode": "preferred"}),)) is True
+        assert breaks_display((), (MonitorRule("DP-3", {"vrr": 1}),)) is False

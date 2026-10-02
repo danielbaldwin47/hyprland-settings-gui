@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from .model.entities import MonitorRule
@@ -270,6 +271,66 @@ def disconnected_rules(
     )
 
 
+# --- Confirm-or-revert -----------------------------------------------------------------
+
+
+def breaks_display(before: Sequence[MonitorRule], after: Sequence[MonitorRule]) -> bool:
+    """Whether going from `before` to `after` changes a display-breaking field anywhere.
+
+    What decides that an undo of a monitor step goes behind the countdown (#192): putting
+    back a mode is as able to black-screen the session as choosing one.
+    """
+    return _breaking_by_output(before) != _breaking_by_output(after)
+
+
+def revert_breaking(
+    snapshot: Sequence[MonitorRule], current: Sequence[MonitorRule]
+) -> list[MonitorRule]:
+    """The rule list a Confirm-or-revert revert writes: the display as it was, nothing more.
+
+    The snapshot's rules, in its order, with its display-breaking values (a breaking field
+    the snapshot did not have is removed) and the current benign values, so a vrr or
+    reserved-area edit made while the countdown ran survives the revert (#192). A rule
+    created since keeps only its benign fields, and goes when it has none. A rule removed
+    since comes back whole: removing it changed every breaking field it held.
+    """
+    now = {rule.output: rule for rule in current}
+    before = {rule.output for rule in snapshot}
+    reverted: list[MonitorRule] = []
+    for rule in snapshot:
+        live = now.get(rule.output)
+        if live is None:
+            reverted.append(rule)
+            continue
+        fields = {
+            key: value if key in DISPLAY_BREAKING_FIELDS else live.fields[key]
+            for key, value in rule.fields.items()
+            if key in DISPLAY_BREAKING_FIELDS or key in live.fields
+        }
+        fields.update(
+            (key, value)
+            for key, value in live.fields.items()
+            if key not in DISPLAY_BREAKING_FIELDS and key not in rule.fields
+        )
+        reverted.append(rule if fields == rule.fields else replace(live, fields=fields))
+    for rule in current:
+        if rule.output in before:
+            continue
+        benign = {k: v for k, v in rule.fields.items() if k not in DISPLAY_BREAKING_FIELDS}
+        if benign:
+            reverted.append(replace(rule, fields=benign))
+    return reverted
+
+
+def _breaking_by_output(rules: Iterable[MonitorRule]) -> dict[str, dict[str, Any]]:
+    by_output: dict[str, dict[str, Any]] = {}
+    for rule in rules:
+        breaking = {k: v for k, v in rule.fields.items() if k in DISPLAY_BREAKING_FIELDS}
+        if breaking:
+            by_output[rule.output] = breaking
+    return by_output
+
+
 def arrangement_mismatches(
     rules: Sequence[MonitorRule], monitors: Sequence[Mapping[str, Any]]
 ) -> tuple[str, ...]:
@@ -370,6 +431,7 @@ __all__ = [
     "SPECIAL_MODES",
     "TRANSFORM_NAMES",
     "arrangement_mismatches",
+    "breaks_display",
     "connected_rules",
     "description_of",
     "disconnected_rules",
@@ -379,6 +441,7 @@ __all__ = [
     "parse_mode",
     "parse_position",
     "preferred_identity",
+    "revert_breaking",
     "rule_for",
     "rule_matches_output",
     "snap_position",
