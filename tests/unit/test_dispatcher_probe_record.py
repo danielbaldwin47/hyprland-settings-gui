@@ -76,7 +76,7 @@ class TestTheCheckCatchesTheDefectsItIsFor:
         assert any("takes a bare argument" in p for p in check_entry(record, wrong))
 
     def test_a_free_form_entry_makes_no_claim(self, record: ProbeRecord) -> None:
-        free = Dispatcher(path="focus", label="x", free_form=True)
+        free = Dispatcher(path="focus", label="x", free_form_reason="Give one.")
         assert check_entry(record, free) == []
 
 
