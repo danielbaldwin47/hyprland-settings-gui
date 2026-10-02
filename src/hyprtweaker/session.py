@@ -288,7 +288,7 @@ class Health:
         if self.unapplied:
             return f"{self._unapplied_summary} was written but did not take effect."
         if self.quarantined:
-            disabled = ", ".join(f"{name}.lua" for name in self.quarantined)
+            disabled = ", ".join(f"{name.replace('.', '/')}.lua" for name in self.quarantined)
             return f"{disabled} is disabled until you fix it."
         return ""
 

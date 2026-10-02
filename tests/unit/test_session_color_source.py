@@ -326,3 +326,12 @@ def test_a_file_written_while_the_app_was_closed_loads_at_launch(tmp_path: Path)
     run_with_fake(
         scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
     )
+
+
+def test_a_quarantined_native_bridge_is_named_by_its_file() -> None:
+    from hyprtweaker.session import Health
+
+    assert (
+        Health(quarantined=("dms.colors",)).title
+        == "dms/colors.lua is disabled until you fix it."
+    )
