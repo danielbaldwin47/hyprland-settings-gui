@@ -46,6 +46,7 @@ from hyprtweaker.engine.apply import (
     Edit,
     EntityEdit,
     EntityStep,
+    EntrypointTransaction,
     Mismatch,
     Problem,
     Recovery,
@@ -480,6 +481,9 @@ class Session:
         """The open undo group, if any -- one at a time (`begin_undo_group`)."""
 
         self._reverting = False
+        self._entrypoint_recoveries: list[EntrypointTransaction] = []
+        """Entrypoint rewrites in flight. Each one's result is `_recover_entrypoint`'s to
+        handle, not `_applied`'s: it carries no gesture, and it may have run no reload."""
         self._recovery_halted = False
         self._recovery = Recovery()
         """What the last reload said was wrong, attributed. The Banner is a view of this.
@@ -2357,6 +2361,8 @@ class Session:
         should be able to take it back). A gesture can never be both, which is why the failed
         one is never pushed rather than pushed and popped.
         """
+        if any(result is recovery.result for recovery in self._entrypoint_recoveries):
+            return
         if self._reverting:
             # The restore transaction's own result. It carries no gesture of the user's, and
             # a second auto-revert on top of a failed one is the loop ADR-0016 forbids.
@@ -2782,15 +2788,22 @@ class Session:
         # everything that file was overriding, and the app cannot know which those were
         # without asking about all of them.
         wanted = tuple(option.name for option in self._owned())
+        recovery = applier.recover_entrypoint(write, wanted)
+        self._entrypoint_recoveries.append(recovery)
         try:
-            result = await applier.restore_now(applier.recover_entrypoint(write, wanted))
+            result = await applier.restore_now(recovery)
         except (IpcError, RuntimeError) as error:
             _log.error("could not reload after a recovery: %s", error)
             self._changed()
             return
+        finally:
+            self._entrypoint_recoveries.remove(recovery)
         if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+            # No reload ran, so nothing was learnt about the config: observing this result
+            # would read as a clean reload and clear a Banner whose cause is still on disk.
             _log.error("could not %s: %s", what, result.detail)
-        self._observe(result)
+        else:
+            self._observe(result)
         self._report(result)
         self._changed()
 

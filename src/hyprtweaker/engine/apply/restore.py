@@ -137,6 +137,9 @@ class EntrypointTransaction:
         self._write = write
         self._journal = journal
         self._options = tuple(options)
+        self.result: ApplyResult | None = None
+        """What `run` answered, so the session can tell this result from an Apply's: the
+        queue hands every result to the same subscriber."""
 
     @property
     def options(self) -> tuple[str, ...]:
@@ -150,6 +153,10 @@ class EntrypointTransaction:
 
     async def run(self, keys: Sequence[str]) -> ApplyResult:
         """`keys` is ignored -- the Options to re-read were fixed at construction."""
+        self.result = await self._run()
+        return self.result
+
+    async def _run(self) -> ApplyResult:
         names = self._options
         # Opened before the first byte moves: the Entrypoint Fix overwrites a hand edit by
         # design, and that edit is kept the way Restore last good keeps one.

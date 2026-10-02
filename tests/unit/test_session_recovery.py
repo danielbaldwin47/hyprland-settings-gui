@@ -24,7 +24,7 @@ from hyprtweaker.engine.ipc import IpcError
 from hyprtweaker.engine.model import UNSET
 from hyprtweaker.engine.paths import ENTRYPOINT_NAME, ConfigPaths
 from hyprtweaker.engine.state import Manifest
-from hyprtweaker.engine.writer import LuaSyntaxError, syntax
+from hyprtweaker.engine.writer import LuaSyntaxError, Writer, syntax
 from hyprtweaker.session import Session
 
 BORDER_SIZE = "general:border_size"
@@ -925,6 +925,39 @@ def test_a_regenerate_the_syntax_gate_refuses_journals_nothing(
         assert not ConfigPaths.rooted_at(tmp_path).journal_pending.exists()
         assert (tmp_path / "hypr" / "hyprland.lua").read_bytes() == hand_edit
         assert session.health.unhealthy
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
+    )
+
+
+def test_a_regenerate_whose_write_fails_keeps_the_banner_and_reports_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No reload ran, so nothing was learnt about the config: the Banner that was up stays
+    up. Before this, the failed write was observed as a clean reload and cleared it."""
+
+    def read_only(self: Writer, model: object, *, before_replace: object = None) -> bool:
+        raise OSError(30, "Read-only file system")
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        fake.conversation["j/configerrors"] = ENTRYPOINT_ERROR
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        assert session.health.unhealthy, "the precondition: a Banner to keep"
+        entries = session.journal.entries()
+        reports: list[str] = []
+        session.on_applied = lambda result: reports.append(str(result.outcome))
+        monkeypatch.setattr(Writer, "regenerate_entrypoint", read_only)
+
+        assert session.regenerate_entrypoint()
+        await settle(session, runner)
+
+        assert session.health.unhealthy
+        assert reports == ["write-failed"]
+        assert session.journal.entries() == entries
 
     run_with_fake(
         scenario, FakeHyprland(conversation(**{ROUNDING: 12}), reload_emits_event=True)
