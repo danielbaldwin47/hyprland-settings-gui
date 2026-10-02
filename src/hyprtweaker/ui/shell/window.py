@@ -121,10 +121,12 @@ from hyprtweaker.ui.pages.rules import (  # noqa: E402
     RulesPage,
     WindowRulesPage,
 )
+from hyprtweaker.ui.pages.scripting import ScriptingActions, ScriptingPage  # noqa: E402
 from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     ORPHAN_CATEGORY_TITLE,
     CategoryPlan,
     TasksMapping,
+    entity_page_id,
     load_tasks_mapping,
     plan_tasks_view,
 )
@@ -132,9 +134,20 @@ from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
     WorkspaceRuleActions,
     WorkspaceRulesPage,
 )
+from hyprtweaker.ui.release import release  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
-from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
+from hyprtweaker.ui.search import (  # noqa: E402
+    EntityHit,
+    EntityKind,
+    Hit,
+    OptionHit,
+    SearchIndex,
+    resolve,
+)
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
+
+ENTITY_CHANGED = "That item changed. Results updated."
+"""The toast for a search hit whose entity was removed or rewritten since it was listed."""
 
 IMPORT_ACTION = "import-config"
 IMPORT_LABEL = "Import..."
@@ -160,6 +173,17 @@ def _discard(coro: Any) -> None:
     close = getattr(coro, "close", None)
     if close is not None:
         close()
+
+
+def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> None:
+    """Release each dialog presented on `window` once it has closed.
+
+    An idle rather than the `closed` handler itself: libadwaita is still finishing the close
+    when it emits `closed`, and every handler of it must still find the dialog whole.
+    """
+    dialog = window.get_visible_dialog()
+    if dialog is not None:
+        dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
 
 
 UNDO_ACTION = "undo"
@@ -320,6 +344,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._workspace_rules_page: WorkspaceRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
+        self._scripting_page: ScriptingPage | None = None
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -333,12 +358,14 @@ class MainWindow(Adw.ApplicationWindow):
         Held because it outranks the health Banner: "settings can't be saved yet, Convert..."
         is more use to someone on an unmigrated box than "no compositor", and it is the only
         Banner state with a way out on its own button."""
-        self._index = SearchIndex.build(session.schema)
-        """The finder's index, built once here (ADR-0017 §Index build).
+        self._index = SearchIndex.build(session.schema, session)
+        """The finder's index (ADR-0017 §Index build): its Options built here, its Entities
+        on the first query and whenever a query finds the model moved since.
 
-        At construction rather than on first Ctrl+F: the build is one pass over the Schema
-        and the alternative is a first search that stutters, which is the one search the
-        user judges the feature by."""
+        The Options at construction rather than on first Ctrl+F: the build is one pass over
+        the Schema and the alternative is a first search that stutters, which is the one
+        search the user judges the feature by. The Entities are read from the session at
+        query time, so startup pays nothing for them and no edit has to announce itself."""
         self._revealed: frozenset[str] = frozenset()
         """The Options a search hit has earned a place for on this visit (the One-off reveal).
 
@@ -407,6 +434,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.rebuild()
 
         self.connect("close-request", self._on_close_request)
+        self.connect("notify::visible-dialog", _release_dialogs_on_close)
 
     # --- construction -----------------------------------------------------------------------
 
@@ -828,6 +856,11 @@ class MainWindow(Adw.ApplicationWindow):
         return tuple(self._declaration_pages.values())
 
     @property
+    def scripting_page(self) -> ScriptingPage | None:
+        """The Scripting Page, once built. The UI tier asserts against it."""
+        return self._scripting_page
+
+    @property
     def monitors_page(self) -> MonitorsPage | None:
         """The Displays Page, once built. The UI tier asserts against it."""
         return self._monitors_page
@@ -940,8 +973,15 @@ class MainWindow(Adw.ApplicationWindow):
         self._section_titles = {}
         self._built = []
         self._sidebar.remove_all()
+        # The window holds its focus widget. A focused Row of an old Page outlives `release`,
+        # and its chrome then keeps the Page and the window (#219). Whether GTK lets go of it
+        # on removal depends on whether the window is active, so it is dropped here first.
+        focus = self.get_focus()
+        if focus is not None and focus.is_ancestor(self._stack):
+            self.set_focus(None)
         while (child := self._stack.get_first_child()) is not None:
             self._stack.remove(child)
+            release(child)
 
         self._categories, option_plans = self._plan_view()
 
@@ -1032,6 +1072,15 @@ class MainWindow(Adw.ApplicationWindow):
             self._stack.add_named(_scrolled(page.page), page.section)
             self._register(page.section, page.title, len(page.entities))
             self._section_titles[page.section] = page.title
+
+        # The Scripting Page: a read-only inventory of the user's Lua (ADR-0018, #173).
+        self._scripting_page = ScriptingPage(
+            self._session, actions=ScriptingActions(open_file=self._launch_file)
+        )
+        scripting = self._scripting_page
+        self._stack.add_named(_scrolled(scripting.page), scripting.section)
+        self._section_titles[scripting.section] = scripting.title
+        self._register(scripting.section, scripting.title, scripting.hit_count)
 
         self._fill_sidebar()
         self._select_section(self._restored(selected))
@@ -1736,9 +1785,16 @@ class MainWindow(Adw.ApplicationWindow):
         """
         for page in self._pages:
             page.refresh()
+        # A foreign reload lands here, and Hyprland reloads when a `require`d file such as
+        # `user.lua` changes: the Scripting inventory re-reads with it.
+        if self._scripting_page is not None:
+            self._scripting_page.refresh()
 
         self.sync_banner()
         self._undo_action.set_enabled(self._session.can_undo)
+        # A result list on screen follows the model too: an undo or a foreign reload must
+        # not leave a row that opens something no longer there (settled S2b).
+        self._finder.requery()
 
     def sync_banner(self) -> None:
         """Make the one Banner agree with `Session.health`, and nothing else.
@@ -1944,6 +2000,9 @@ class MainWindow(Adw.ApplicationWindow):
         path = self._session.file_for(problem)
         if path is None:
             return
+        self._launch_file(path)
+
+    def _launch_file(self, path: Path) -> None:
         Gtk.FileLauncher(file=Gio.File.new_for_path(str(path))).launch(self, None, None)
 
     # --- undo -------------------------------------------------------------------------------
@@ -2099,7 +2158,14 @@ class MainWindow(Adw.ApplicationWindow):
         self.start_search()
 
     def open_hit(self, hit: Hit) -> None:
-        """Navigate to a search result: the active View first, Config only if it must.
+        """Navigate to a search result: an Option's Row, or an Entity's row on its Page."""
+        if isinstance(hit, EntityHit):
+            self._open_entity_hit(hit)
+        else:
+            self._open_option_hit(hit)
+
+    def _open_option_hit(self, hit: OptionHit) -> None:
+        """Navigate to an Option's Row: the active View first, Config only if it must.
 
         ADR-0017's navigation rule, in the order it states it. A hit resolves against the
         View the user chose; the switch to Config happens only when the Row has no home
@@ -2117,6 +2183,68 @@ class MainWindow(Adw.ApplicationWindow):
         self._revealed = frozenset({hit.name})
         self.rebuild()
         self.reveal_option(hit.name, flash_row=True)
+
+    def _open_entity_hit(self, hit: EntityHit) -> None:
+        """Open the hit's Page and flash its row -- or say it changed, never land elsewhere.
+
+        The hit is re-resolved first (settled S2b): the entity may have moved since the
+        results were listed, or be gone. Gone is said in a toast over a refreshed list, so
+        the user sees why nothing opened and what the list holds now; a reveal by the old
+        position would open a different bind, which is worse than opening nothing.
+
+        Every Entity Page is in both Views, so there is no View fallback here. An Option's
+        One-off reveal still standing ends, as any navigation ends it. The reveal waits a
+        low-priority turn for the reason `reveal_option` gives: a `GtkStack` lays out only
+        its visible child, so the Page has no geometry to scroll until then.
+        """
+        position = resolve(hit, self._session)
+        if position is None:
+            self._entity_changed()
+            return
+        self._end_one_off_reveal()
+        key: int | str = position
+        if hit.kind is EntityKind.MONITOR_RULE:
+            key = self._session.monitor_rules[position].output
+        elif hit.kind is EntityKind.MONITOR_PROFILE:
+            key = self._session.monitor_profiles()[position][0]
+        self._select_section(entity_page_id(hit.kind.page_kind))
+        GLib.idle_add(self._reveal_entity, hit.kind, key, priority=GLib.PRIORITY_LOW)
+
+    def _reveal_entity(self, kind: EntityKind, key: int | str) -> bool:
+        """Flash the entity's row on its Page and scroll it into view explicitly.
+
+        Explicitly because the Pages reveal by focus, and an insensitive row -- every row
+        of a read-only session -- cannot take focus, so focus alone would scroll nowhere.
+        """
+        row = self._entity_row(kind, key)
+        if row is None:
+            self._entity_changed()
+        else:
+            _scroll_when_laid_out(row)
+        return False
+
+    def _entity_row(self, kind: EntityKind, key: int | str) -> Gtk.Widget | None:
+        """The Page's reveal for one entity: its row, flashed, or `None` when it has none."""
+        match kind:
+            case EntityKind.BIND:
+                page = self._binds_page
+                return page.reveal(key) if page is not None and isinstance(key, int) else None
+            case EntityKind.WINDOW_RULE | EntityKind.LAYER_RULE:
+                rules = self._rules_page(
+                    "window" if kind is EntityKind.WINDOW_RULE else "layer"
+                )
+                return rules.reveal(key) if rules is not None and isinstance(key, int) else None
+            case EntityKind.MONITOR_RULE:
+                monitors = self._monitors_page
+                return monitors.reveal_rule(str(key)) if monitors is not None else None
+            case EntityKind.MONITOR_PROFILE:
+                monitors = self._monitors_page
+                return monitors.reveal_profile(str(key)) if monitors is not None else None
+
+    def _entity_changed(self) -> None:
+        """A hit whose entity is gone: refresh the list and say so, rather than fail quietly."""
+        self._finder.requery()
+        self._toasts.add_toast(Adw.Toast(title=ENTITY_CHANGED, timeout=4))
 
     def _end_one_off_reveal(self) -> None:
         """The visit is over: the user navigated somewhere themselves.
@@ -2220,6 +2348,10 @@ class MainWindow(Adw.ApplicationWindow):
         if row is None:
             return
         section = row.get_name()
+        if self._scripting_page is not None and section == self._scripting_page.section:
+            # Showing the Page re-reads the files: "open in editor, save, come back" must
+            # not need a reload or a restart to show what was just written.
+            self._scripting_page.refresh()
         self._stack.set_visible_child_name(section)
         self._content_page.set_title(self._page_title(section))
         self._split.set_show_content(True)
@@ -2257,8 +2389,12 @@ class MainWindow(Adw.ApplicationWindow):
             dialog = self._countdown.dialog
             dialog.emit("response", "revert")
             dialog.force_close()
-        self._session.close(self.destroy)
+        self._session.close(self._destroy_and_release)
         return True
+
+    def _destroy_and_release(self) -> None:
+        self.destroy()
+        release(self)
 
     # --- helpers ------------------------------------------------------------------------
 
@@ -2317,6 +2453,28 @@ def _scroll_into_view(row: Gtk.Widget) -> None:
     target = adjustment.get_value() + point.y - _REVEAL_MARGIN
     highest = max(adjustment.get_upper() - adjustment.get_page_size(), adjustment.get_lower())
     adjustment.set_value(min(max(target, adjustment.get_lower()), highest))
+
+
+def _scroll_when_laid_out(row: Gtk.Widget) -> None:
+    """`_scroll_into_view`, once the row has been allocated.
+
+    An Entity Page shown for the first time has no geometry until the frame after the
+    switch, and an idle can run before that frame: the scroll then measures a zero-height
+    page and stays at the top while the flash plays off screen (probed over end-4's 197
+    binds). A row with a height has been laid out; one without waits for the frame clock,
+    which ticks only while the row is mapped -- on the Page the hit just opened.
+    """
+    if row.get_height() > 0:
+        _scroll_into_view(row)
+        return
+
+    def tick(widget: Gtk.Widget, _clock: object) -> bool:
+        if widget.get_height() == 0:
+            return GLib.SOURCE_CONTINUE
+        _scroll_into_view(widget)
+        return GLib.SOURCE_REMOVE
+
+    row.add_tick_callback(tick)
 
 
 def _dependents(schema: Schema) -> dict[str, tuple[str, ...]]:

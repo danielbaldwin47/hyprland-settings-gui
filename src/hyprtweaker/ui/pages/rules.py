@@ -40,12 +40,14 @@ from hyprtweaker.engine.rule_filter import (  # noqa: E402
     chips_for,
     filter_rules,
 )
+from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.entity_text import (  # noqa: E402
     Rule,
     rule_subtitle,
     rule_title,
 )
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -328,8 +330,35 @@ class RulesPage:
         self._apply_filter(entry.get_text())
 
     def _apply_filter(self, text: str) -> None:
-        self._filter_text = text.strip().lower()
+        folded = text.strip().lower()
+        if folded == self._filter_text:
+            # The entry's debounced `search-changed` arriving after a programmatic change
+            # (`reveal`, `set_filter`): rebuilding again would drop the row just flashed.
+            return
+        self._filter_text = folded
         self.refresh()
+
+    def reveal(self, index: int) -> Gtk.Widget | None:
+        """Bring the row for the rule at `index` into view and flash it -- a search hit.
+
+        The filter text and chips are cleared first: they can hide the very rule the user
+        asked for, and a hit that lands on "No rules match this filter" is a dead end.
+        Navigate + flash as `BindsPage.reveal`; returns the row for an explicit scroll, or
+        `None` when the list has no rule at `index`.
+        """
+        if self._filter_text or self._active_chips:
+            self._active_chips.clear()
+            for button in self.chip_buttons.values():
+                button.set_active(False)
+            self._filter_text = ""
+            self._filter.set_text("")
+            self.refresh()
+        for row in self._rows:
+            if row.index == index:
+                row.widget.grab_focus()
+                flash(row.widget)
+                return row.widget
+        return None
 
     def refresh(self) -> None:
         """Rebuild the list from the model, applying the filter.
@@ -339,6 +368,7 @@ class RulesPage:
         """
         for widget in self._listed:
             self._group.remove(widget)
+            release(widget)
         self._listed = []
         self._rows = []
 

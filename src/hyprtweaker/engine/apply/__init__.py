@@ -53,7 +53,7 @@ from .preview import EvalPreview, preview_code
 from .queue import DEBOUNCE_SECONDS, ApplyQueue, Transaction
 from .recovery import Action, Problem, Recovery, plan
 from .reread import ReRead, app_owned_options, read_state
-from .restore import RestoreTransaction
+from .restore import EntrypointTransaction, RestoreTransaction
 from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch
 from .transaction import (
     RELOAD_TIMEOUT_SECONDS,
@@ -89,6 +89,7 @@ __all__ = [
     "Edit",
     "EntityEdit",
     "EntityStep",
+    "EntrypointTransaction",
     "EvalPreview",
     "ForeignReloadWatch",
     "Mismatch",
