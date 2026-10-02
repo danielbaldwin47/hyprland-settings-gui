@@ -552,6 +552,24 @@ def test_the_layout_choices_come_from_the_schema_without_the_lua_placeholder(
     ]
 
 
+def test_layouts_your_lua_files_register_join_the_layout_choices(tmp_path: Path) -> None:
+    """#175 AC 1: the workspace-rule picker offers the same Discovered layouts."""
+    from hyprtweaker.engine.paths import ConfigPaths
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.app_dir.mkdir(parents=True, exist_ok=True)
+    paths.user_lua.write_text('hl.layout.register("foo", { recalculate = function() end })\n')
+    _session, window = build_window(tmp_path, live=True)
+    dialog = open_editor(window)
+    pick(dialog, "Layout")
+
+    combo = dialog.fields.row("layout")
+
+    assert [
+        combo.get_model().get_string(i) for i in range(combo.get_model().get_n_items())
+    ] == ["dwindle", "master", "scrolling", "monocle", "lua:foo"]
+
+
 def test_a_value_a_typed_row_cannot_show_gets_a_raw_row_and_is_kept(tmp_path: Path) -> None:
     held = rule("3", gaps_in="5 10", border_size="thick", float_gaps=2)
     session, window = build_window(tmp_path, live=True, rules=(held,))
