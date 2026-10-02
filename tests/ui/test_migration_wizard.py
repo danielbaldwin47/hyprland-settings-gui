@@ -259,6 +259,166 @@ class TestTheMigrationClient:
                 asyncio.run(flow.client.configerrors())
 
 
+FOREIGN_LUA = "hl.config({ general = { gaps_in = 7 } })\n"
+
+
+def _gaps(size: int):  # type: ignore[no-untyped-def]
+    """`general:gaps_in` as the model holds it: four equal sides."""
+    from hyprtweaker.engine.model.values import CssGaps
+
+    return CssGaps(size, size, size, size)
+
+
+def _foreign_root(root: Path, source: str = FOREIGN_LUA) -> Path:
+    """A config dir holding a `hyprland.lua` with no Manifest: detection says foreign."""
+    from hyprtweaker.engine.paths import ConfigPaths
+
+    paths = ConfigPaths.rooted_at(root)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    paths.entrypoint.write_text(source, encoding="utf-8")
+    return paths.entrypoint
+
+
+class TestReadingAForeignLua:
+    """Reading a `hyprland.lua` the app did not write runs it, so the wizard asks (#190)."""
+
+    def test_convert_asks_before_running_the_file_and_read_it_reaches_preview(
+        self, tmp_path: Path
+    ) -> None:
+        entrypoint = _foreign_root(tmp_path)
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+
+        _click(dialog, "Convert...")
+
+        assert _page_title(dialog) == "Read your config"
+        assert _descriptions(dialog) == [
+            "Reading your hyprland.lua means running it once in a sandbox: no commands run, "
+            "no files change."
+        ]
+        assert "Could not read the configuration" not in _text_under(dialog)
+        assert dialog.get_default_widget().get_label() == "Not now"
+
+        _click(dialog, "Read it")
+
+        assert _page_title(dialog) == "Preview"
+        assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(7)
+        assert entrypoint.read_text(encoding="utf-8") == FOREIGN_LUA
+
+    def test_not_now_closes_the_wizard_having_read_nothing(self, tmp_path: Path) -> None:
+        _foreign_root(tmp_path)
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        closed: list[bool] = []
+        dialog.connect("closed", lambda _dialog: closed.append(True))
+        _click(dialog, "Convert...")
+
+        _click(dialog, "Not now")
+
+        assert closed == [True]
+        assert dialog._flow.preview is None
+
+    def test_a_config_built_from_a_pipe_runs_its_command_only_when_asked_to(
+        self, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "ran"
+        command = f"touch {marker}; echo 5"
+        _foreign_root(
+            tmp_path,
+            f'local f = io.popen("{command}")\n'
+            'hl.config({ general = { gaps_in = tonumber(f:read("*a")) } })\n',
+        )
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration()
+        _click(dialog, "Convert...")
+        _click(dialog, "Read it")
+
+        assert _page_title(dialog) == "Commands"
+        assert _row_titles(dialog) == [command]
+        assert dialog.get_default_widget().get_label() == "Not now"
+        run = _button(dialog, "Run them and read")
+        assert not run.has_css_class("suggested-action")
+        assert not marker.exists()
+
+        _click(dialog, "Run them and read")
+
+        assert marker.exists()
+        assert _page_title(dialog) == "Preview"
+        assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(5)
+        assert dialog.get_default_widget() is None
+
+    def test_every_wizard_run_asks_again(self, tmp_path: Path) -> None:
+        _foreign_root(tmp_path)
+        window, _ = build_window(tmp_path)
+        first = window.show_migration()
+        _click(first, "Convert...")
+        _click(first, "Read it")
+        assert _page_title(first) == "Preview"
+        first.close()
+
+        second = window.show_migration()
+        _click(second, "Convert...")
+
+        assert _page_title(second) == "Read your config"
+        assert not (tmp_path / "state" / "hyprtweaker" / "prefs.json").exists()
+
+    def test_an_app_written_config_opens_no_wizard(self, tmp_path: Path) -> None:
+        from hyprtweaker.engine.migration.detect import ConfigKind
+
+        build_window(tmp_path / "app")[0].route_first_run()  # writes the app's own config
+        app_window, _ = build_window(tmp_path / "app")
+        _foreign_root(tmp_path / "foreign")
+        foreign_window, _ = build_window(tmp_path / "foreign")
+
+        assert app_window.route_first_run().kind is ConfigKind.APP_GENERATED
+        assert foreign_window.route_first_run().kind is ConfigKind.FOREIGN_LUA
+        _drain_main_loop()
+
+        assert app_window.get_visible_dialog() is None
+        assert _page_title(foreign_window.get_visible_dialog()) == "Detect"
+
+
+class TestImportAChosenFile:
+    """Import... reads the file the user chose, not the one detection found."""
+
+    def test_a_chosen_lua_opens_on_the_consent_page_and_reads_that_file(
+        self, tmp_path: Path
+    ) -> None:
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+        chosen = tmp_path / "chosen.lua"
+        chosen.write_text(FOREIGN_LUA, encoding="utf-8")
+        window, _ = build_window(tmp_path)
+
+        dialog = window.show_migration(chosen)
+
+        assert _page_title(dialog) == "Read your config"
+        assert str(chosen) in _text_under(dialog)
+        _click(dialog, "Read it")
+        assert _page_title(dialog) == "Preview"
+        assert dialog._flow.preview.detection.source == chosen
+        assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(7)
+
+    def test_a_chosen_conf_is_the_file_convert_reads(self, tmp_path: Path) -> None:
+        from hyprtweaker.engine.paths import ConfigPaths
+
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+        chosen = tmp_path / "chosen.conf"
+        chosen.write_text("general {\n    gaps_in = 9\n}\n", encoding="utf-8")
+        window, _ = build_window(tmp_path)
+        dialog = window.show_migration(chosen)
+
+        _click(dialog, "Convert...")
+
+        assert dialog._flow.preview.detection.source == chosen
+        assert dialog._flow.preview.model.get("general:gaps_in") == _gaps(9)
+
+
 class TestExport:
     def test_the_menu_offers_import_and_export(self, tmp_path: Path) -> None:
         window, _ = build_window(tmp_path)
@@ -312,14 +472,51 @@ def _text_under(dialog) -> str:  # type: ignore[no-untyped-def]
     return "\n".join(parts)
 
 
-def _click(dialog, label: str) -> None:  # type: ignore[no-untyped-def]
+def _visible(dialog):  # type: ignore[no-untyped-def]
+    """The page the user is looking at. Pages underneath stay in the widget tree."""
+    return dialog._view.get_visible_page()
+
+
+def _page_title(dialog) -> str:  # type: ignore[no-untyped-def]
+    return str(_visible(dialog).get_title())
+
+
+def _of_type(dialog, kind):  # type: ignore[no-untyped-def]
+    return [widget for widget in _walk(_visible(dialog)) if isinstance(widget, kind)]
+
+
+def _descriptions(dialog) -> list[str]:  # type: ignore[no-untyped-def]
+    from gi.repository import Adw
+
+    return [group.get_description() for group in _of_type(dialog, Adw.PreferencesGroup)]
+
+
+def _row_titles(dialog) -> list[str]:  # type: ignore[no-untyped-def]
+    from gi.repository import Adw
+
+    return [row.get_title() for row in _of_type(dialog, Adw.ActionRow)]
+
+
+def _button(dialog, label: str):  # type: ignore[no-untyped-def]
     import gi
 
     gi.require_version("Gtk", "4.0")
     from gi.repository import Gtk
 
-    for widget in _walk(dialog):
-        if isinstance(widget, Gtk.Button) and widget.get_label() == label:
-            widget.emit("clicked")
-            return
-    raise AssertionError(f"no button labelled {label!r} in the dialog")
+    for widget in _of_type(dialog, Gtk.Button):
+        if widget.get_label() == label:
+            return widget
+    raise AssertionError(f"no button labelled {label!r} on the visible page")
+
+
+def _click(dialog, label: str) -> None:  # type: ignore[no-untyped-def]
+    _button(dialog, label).emit("clicked")
+
+
+def _drain_main_loop() -> None:
+    """Run what `GLib.idle_add` queued, such as the first-run offer."""
+    from gi.repository import GLib
+
+    context = GLib.MainContext.default()
+    while context.iteration(False):
+        pass

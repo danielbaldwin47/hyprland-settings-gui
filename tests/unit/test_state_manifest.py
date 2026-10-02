@@ -16,6 +16,7 @@ from hyprtweaker.engine.state import (
     FORMAT_VERSION,
     Manifest,
     ModuleRecord,
+    RetiredValue,
     content_hash,
     is_damaged,
 )
@@ -100,6 +101,78 @@ class TestDamagedFiles:
         )
 
         assert set(Manifest.load(path, **VERSIONS).modules) == {"b.lua"}
+
+
+class TestRetiredValues:
+    """ADR-0012 §Retirement: a removed Option's value persists in the Manifest."""
+
+    def test_retired_values_survive_a_round_trip(self, tmp_path: Path) -> None:
+        gradient = {"colors": ["rgba(33ccffee)", "rgba(00ff99ee)"], "angle": 45}
+        manifest = Manifest(
+            **VERSIONS,
+            retired={
+                "general:col.active_border": RetiredValue("0.57.0", gradient),
+                "decoration:rounding": RetiredValue("0.58.1", 10),
+            },
+        )
+        path = tmp_path / "manifest.json"
+        path.write_text(manifest.render(), encoding="utf-8")
+
+        assert Manifest.load(path, **VERSIONS) == manifest
+
+    def test_they_render_as_a_sorted_name_keyed_table(self) -> None:
+        """The on-disk shape #178 and a dotfile-repo diff both read."""
+        manifest = Manifest(
+            **VERSIONS,
+            retired={
+                "misc:z_last": RetiredValue("0.57.0", "text"),
+                "decoration:rounding": RetiredValue("0.58.1", 10),
+            },
+        )
+
+        assert manifest.as_json()["retired"] == {
+            "decoration:rounding": {"retired_in": "0.58.1", "value": 10},
+            "misc:z_last": {"retired_in": "0.57.0", "value": "text"},
+        }
+        assert list(manifest.as_json()["retired"]) == ["decoration:rounding", "misc:z_last"]
+
+    def test_a_manifest_written_before_retirement_reads_with_none(self, tmp_path: Path) -> None:
+        """Additive key, no format bump: an existing install is neither damaged nor empty."""
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            f'{{"format_version": {FORMAT_VERSION}, "modules": '
+            '{"options/general.lua": {"sha256": "ab", "size": 2}}}',
+            encoding="utf-8",
+        )
+
+        manifest = Manifest.load(path, **VERSIONS)
+
+        assert not is_damaged(path)
+        assert manifest.retired == {}
+        assert set(manifest.modules) == {"options/general.lua"}
+
+    def test_a_malformed_retired_entry_is_dropped_not_fatal(self, tmp_path: Path) -> None:
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            f'{{"format_version": {FORMAT_VERSION}, "retired": {{'
+            '"a:no_version": {"value": 1}, '
+            '"a:no_value": {"retired_in": "0.57.0"}, '
+            '"a:not_a_table": 5, '
+            '"a:kept": {"retired_in": "0.57.0", "value": false}}}',
+            encoding="utf-8",
+        )
+
+        assert Manifest.load(path, **VERSIONS).retired == {
+            "a:kept": RetiredValue("0.57.0", False)
+        }
+
+    def test_a_retired_table_of_the_wrong_type_reads_as_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            f'{{"format_version": {FORMAT_VERSION}, "retired": ["a:b"]}}', encoding="utf-8"
+        )
+
+        assert Manifest.load(path, **VERSIONS).retired == {}
 
 
 class TestIsDamaged:
