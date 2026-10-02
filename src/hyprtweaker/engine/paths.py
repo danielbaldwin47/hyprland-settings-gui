@@ -90,6 +90,7 @@ SNAPSHOT_DIR = "snapshots"
 REPORTS_DIR = "reports"
 BACKUPS_DIR = "backups"
 JOURNAL_NAME = "journal.jsonl"
+JOURNAL_PENDING_NAME = "journal-pending.json"
 SENTINEL_NAME = "migration-pending.json"
 
 
@@ -200,6 +201,15 @@ class ConfigPaths:
     def journal(self) -> Path:
         """The change log: one JSON object per Apply transaction, newest last."""
         return self.state_dir / JOURNAL_NAME
+
+    @property
+    def journal_pending(self) -> Path:
+        """The transaction in flight: which Snapshots its write is about to need.
+
+        Written before the first file is replaced and removed when the entry lands, so its
+        presence at the next `Journal.begin` means the app died in between.
+        """
+        return self.state_dir / JOURNAL_PENDING_NAME
 
     @property
     def hyprland_conf(self) -> Path:

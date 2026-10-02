@@ -125,6 +125,78 @@ def test_discarding_a_draft_leaves_no_trace(tmp_path: Path) -> None:
     assert journal.entries() == ()
 
 
+# --- a crash between the write and the commit -----------------------------------------------
+
+
+def crashed_write(paths: ConfigPaths, module: str, text: str | None) -> None:
+    """One write that got as far as replacing `module`, and then the process died.
+
+    The Draft is preserved before the replace, the way the Writer does it, and then simply
+    abandoned: never committed, never discarded. The next process opens a fresh Journal.
+    """
+    draft = Journal(paths).begin([module])
+    draft.preserve(paths.file_for(module))
+    if text is not None:
+        put(paths, module, text)
+
+
+def test_a_crash_after_the_write_recovers_the_pre_write_bytes_from_the_journal(
+    tmp_path: Path,
+) -> None:
+    """ADR-0010: the snapshot is taken *before* each write, so it outlives the process.
+
+    Held in memory until the commit, a hand edit the zero-binds restore overwrote would be
+    gone for good if the app died before the reload answered -- and ADR-0016 spends that
+    edit only because it promises it back.
+    """
+    paths = ConfigPaths.rooted_at(tmp_path)
+    put(paths, GENERAL, "-- hand edit\n")
+    crashed_write(paths, GENERAL, "-- restored\n")
+
+    journal = Journal(paths)
+    # The next process's next write: its own Snapshot GC runs here, and must spare it.
+    transaction(journal, paths, DECORATION, "-- unrelated\n")
+
+    recovered = [entry for entry in journal.entries() if GENERAL in entry.modules]
+    assert len(recovered) == 1
+    entry = recovered[0]
+    assert entry.outcome == "interrupted"
+    assert not entry.confirmed, "nothing confirmed bytes the app never saw reload"
+    change = entry.change(GENERAL)
+    assert change is not None
+    assert journal.snapshot(change.before) == b"-- hand edit\n"
+    assert journal.snapshot(change.after) == b"-- restored\n"
+
+
+def test_a_crash_before_the_replace_landed_records_nothing(tmp_path: Path) -> None:
+    """The file still holds its old bytes, so there is no history to tell -- and no blob."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    put(paths, GENERAL, "-- untouched\n")
+    crashed_write(paths, GENERAL, None)
+
+    journal = Journal(paths)
+    transaction(journal, paths, DECORATION, "-- unrelated\n")
+
+    assert [entry.modules for entry in journal.entries()] == [(DECORATION,)]
+    assert sorted(p.name for p in paths.snapshots_dir.iterdir()) == [
+        content_hash(b"-- unrelated\n")
+    ]
+
+
+def test_a_committed_write_is_not_recovered_a_second_time(tmp_path: Path) -> None:
+    journal, paths = journal_for(tmp_path)
+    put(paths, GENERAL, "-- old\n")
+    draft = journal.begin([GENERAL])
+    draft.preserve(paths.file_for(GENERAL))
+    put(paths, GENERAL, "-- new\n")
+    draft.commit(keys=(), outcome="ok", confirmed=True, changed=[GENERAL])
+
+    fresh = Journal(paths)
+    transaction(fresh, paths, DECORATION, "-- unrelated\n")
+
+    assert [entry.outcome for entry in fresh.entries()] == ["ok", "ok"]
+
+
 def test_a_half_written_app_dir_is_journalled_from_what_the_disk_says(tmp_path: Path) -> None:
     """The `WRITE_FAILED` path has no `WriteResult` to read, so `dirty()` asks the files."""
     journal, paths = journal_for(tmp_path)

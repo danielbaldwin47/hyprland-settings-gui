@@ -282,7 +282,9 @@ class ApplyTransaction:
 
         draft = self._open_draft()
         try:
-            write = self._writer.write(self._model)
+            write = self._writer.write(
+                self._model, before_replace=draft.preserve if draft is not None else None
+            )
         except (LuaSyntaxError, ProtectedFile, ValueError) as error:
             # ADR-0010's guarantee: the gate runs over every rendered file before the first
             # one is replaced, so there is nothing on disk to undo -- and therefore nothing

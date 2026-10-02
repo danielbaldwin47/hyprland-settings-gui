@@ -22,7 +22,7 @@ this; the Writer stays synchronous and ignorant of the compositor.
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -190,6 +190,15 @@ class WriteResult:
         return bool(self.written or self.removed or self.entrypoint_written)
 
 
+BeforeReplace = Callable[[Path], None]
+"""Called with a file's path just before the Writer replaces or deletes it.
+
+How a transaction's Journal Draft makes the bytes about to go durable (`Draft.preserve`)
+while they still exist. Per call rather than held: the Draft is one transaction's, and the
+Writer outlives every transaction.
+"""
+
+
 class ProtectedFile(Exception):
     """An attempt to write a file the app has promised never to rewrite."""
 
@@ -323,7 +332,13 @@ class Writer:
 
     # --- writing ------------------------------------------------------------------------
 
-    def write(self, model: ConfigModel, *, overwrite_hand_edits: bool = False) -> WriteResult:
+    def write(
+        self,
+        model: ConfigModel,
+        *,
+        overwrite_hand_edits: bool = False,
+        before_replace: BeforeReplace | None = None,
+    ) -> WriteResult:
         """Render, gate, and land the whole Module set plus the Entrypoint.
 
         Files an editor got to first are **skipped**, not rewritten. ADR-0005 makes that a
@@ -334,7 +349,8 @@ class Writer:
         user's answer back in.
 
         Nothing reaches disk until every rendered file has passed the syntax gate: a
-        half-written Module set is worse than no write at all.
+        half-written Module set is worse than no write at all. `before_replace` sees each
+        Module and the Entrypoint before it is replaced or pruned.
         """
         manifest = self._manifest_for(model)
 
@@ -369,7 +385,7 @@ class Writer:
         for name, text in sorted(rendered.items()):
             if name in off_limits:
                 skipped.append(name)
-            elif self._write_if_changed(self._paths.app_dir / name, text):
+            elif self._write_if_changed(self._paths.app_dir / name, text, before_replace):
                 written.append(name)
             else:
                 unchanged.append(name)
@@ -379,13 +395,16 @@ class Writer:
             keep=set(rendered),
             off_limits=off_limits,
             prune_entities=model.entities_loaded,
+            before_replace=before_replace,
         )
 
         if ENTRYPOINT_NAME in off_limits:
             skipped.append(ENTRYPOINT_NAME)
             entrypoint_written = False
         else:
-            entrypoint_written = self._write_if_changed(self._paths.entrypoint, entrypoint_text)
+            entrypoint_written = self._write_if_changed(
+                self._paths.entrypoint, entrypoint_text, before_replace
+            )
 
         # A record is the claim "the app wrote exactly these bytes", so it is only ever made
         # for a file this write actually laid down. A skipped file keeps the record it had,
@@ -438,6 +457,8 @@ class Writer:
         module: str,
         data: bytes,
         options: Sequence[str] = (),
+        *,
+        before_replace: BeforeReplace | None = None,
     ) -> bool:
         """Lay a Snapshot's bytes back down as `module`, and record them as the app's own.
 
@@ -452,8 +473,8 @@ class Writer:
         **Overwrites a hand edit on purpose.** Every other path in this class stands down
         from a file an editor touched; this one is only ever reached because the user chose
         Restore last good, or because they are stranded without keybinds (§Zero-binds). The
-        overwritten bytes are not lost -- the Journal snapshotted them, which is what makes
-        the ADR willing to spend them.
+        overwritten bytes are not lost -- `before_replace` hands them to the Journal before
+        the rename, which is what makes the ADR willing to spend them.
 
         Recording the hash is what makes the restored file the app's own again. It has to
         be: leaving the old record would make the file it just wrote read as hand-edited, so
@@ -472,7 +493,7 @@ class Writer:
         # and a Snapshot store is a file tree a user can corrupt like any other.
         syntax.gate(text, module)
 
-        changed = self._write_if_changed(path, text)
+        changed = self._write_if_changed(path, text, before_replace)
         self._record_one(model, module, ModuleRecord.of(text, options))
         return changed
 
@@ -563,7 +584,9 @@ class Writer:
             )
         )
 
-    def _write_if_changed(self, path: Path, text: str) -> bool:
+    def _write_if_changed(
+        self, path: Path, text: str, before_replace: BeforeReplace | None = None
+    ) -> bool:
         """Write `text` atomically unless the file already holds exactly those bytes."""
         if path in self._paths.protected:
             raise ProtectedFile(f"{path} is never rewritten by hyprtweaker")
@@ -580,6 +603,8 @@ class Writer:
         # compositor's watcher, or an editor) sees either the old file or the new one.
         temporary = path.with_name(f".{path.name}.tmp")
         temporary.write_bytes(data)
+        if before_replace is not None:
+            before_replace(path)
         os.replace(temporary, path)
         return True
 
@@ -590,6 +615,7 @@ class Writer:
         off_limits: frozenset[str],
         *,
         prune_entities: bool = True,
+        before_replace: BeforeReplace | None = None,
     ) -> list[str]:
         """Delete Modules the model no longer produces.
 
@@ -617,6 +643,8 @@ class Writer:
                 continue
             path = self._paths.app_dir / name
             if path.is_file():
+                if before_replace is not None:
+                    before_replace(path)
                 path.unlink()
                 removed.append(name)
         return removed
