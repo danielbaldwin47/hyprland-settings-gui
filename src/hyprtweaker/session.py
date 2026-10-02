@@ -1860,10 +1860,12 @@ class Session:
         if found or restored:
             self._spawn(self._write_retirement(applier, restored))
 
-        notices: list[Notice] = list(retirement.unannounced(remaining))
-        for extra in (UnkeptNotice.of(found, values), RenamedNotice.of(restored)):
-            if extra is not None:
-                notices.append(extra)
+        notices: list[Notice] = [
+            *retirement.unannounced(remaining),
+            *UnkeptNotice.of(found, values),
+        ]
+        if (renamed := RenamedNotice.of(restored)) is not None:
+            notices.append(renamed)
         for notice in notices:
             if self.on_notice is not None:
                 self.on_notice(notice)
