@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,20 +26,38 @@ from harness.nested import (
 
 
 def fake_sysfs(
-    root: Path, *, driver: str = "i915", render: bool = True, status: str = ""
+    root: Path,
+    *,
+    device: str = "devices/pci0000:00/0000:00:02.0",
+    driver: str = "i915",
+    render: bool = True,
+    connector: str = "HDMI-A-1",
+    status: str = "",
 ) -> Path:
-    """A `/sys/class/drm` with `card0`, optionally its render node and a `card0-HDMI-A-1`."""
+    """A `/sys/class/drm` with `card0`, optionally its render node and one connector.
+
+    `card0/device` is a link to `device`, as in sysfs; the device's `driver` links to
+    `driver`. A PCI GPU is the default; `VKMS` below is the layout a runner shows.
+    """
     sys_drm = root / "sys-drm"
-    device = sys_drm / "card0" / "device"
-    (device / "drm").mkdir(parents=True)
+    target = root / device
+    (target / "drm").mkdir(parents=True)
     if render:
-        (device / "drm" / "renderD129").mkdir()
+        (target / "drm" / "renderD129").mkdir()
     (root / "drivers" / driver).mkdir(parents=True)
-    (device / "driver").symlink_to(root / "drivers" / driver)
+    (target / "driver").symlink_to(root / "drivers" / driver)
+    (sys_drm / "card0").mkdir(parents=True)
+    (sys_drm / "card0" / "device").symlink_to(target)
     if status:
-        (sys_drm / "card0-HDMI-A-1").mkdir()
-        (sys_drm / "card0-HDMI-A-1" / "status").write_text(status + "\n")
+        (sys_drm / f"card0-{connector}").mkdir()
+        (sys_drm / f"card0-{connector}" / "status").write_text(status + "\n")
     return sys_drm
+
+
+#: A `vkms` card as a stock `ubuntu-latest` runner shows it (kernel 6.17, CI run TODO):
+#: since Linux 6.15 `vkms` sits on the faux bus, its driver is `faux_driver`, and it has
+#: no render node.
+VKMS = {"device": "devices/faux/vkms", "driver": "faux_driver", "render": False}
 
 
 @pytest.fixture
@@ -77,6 +96,18 @@ def test_the_launch_environment_carries_no_seat_without_the_opt_in(
     assert "LIBSEAT_BACKEND" not in environment
 
 
+def test_a_vkms_card_is_handed_over_alone(tmp_path: Path) -> None:
+    """No render node exists to bind: the card is the only device left in /dev/dri."""
+    card = Path("/dev/dri/card0")
+    argv, env = drm_wrapped(["Hyprland"], {}, card, fake_sysfs(tmp_path, **VKMS))
+
+    bound = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--dev-bind"]
+    assert bound == ["/", "/dev/dri/card0"]
+    masked = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--tmpfs"]
+    assert masked == ["/dev/dri", "/dev/input"]
+    assert env == {"LIBSEAT_BACKEND": "noop", "AQ_DRM_DEVICES": "/dev/dri/card0"}
+
+
 def test_a_card_with_no_render_node_cannot_be_wrapped(tmp_path: Path) -> None:
     with pytest.raises(HarnessUnavailable, match="no render node"):
         drm_wrapped(
@@ -97,23 +128,38 @@ def test_a_card_with_no_problem_is_accepted(tmp_path: Path, card: Path) -> None:
     assert drm_card_problem(card, fake_sysfs(tmp_path, status="disconnected")) is None
 
 
+def test_a_vkms_card_with_its_connector_off_is_accepted_without_a_render_node(
+    tmp_path: Path, card: Path
+) -> None:
+    sys_drm = fake_sysfs(tmp_path, **VKMS, connector="Virtual-2", status="disconnected")
+
+    assert drm_card_problem(card, sys_drm) is None
+
+
 @pytest.mark.parametrize(
-    ("driver", "render", "status", "reason"),
+    ("layout", "reason"),
     [
-        ("nvidia", True, "", "NVIDIA"),
-        ("i915", False, "", "no render node"),
-        ("i915", True, "connected", "card0-HDMI-A-1 is connected"),
+        ({"driver": "nvidia"}, "an NVIDIA card cannot allocate the headless output (#144)"),
+        ({"render": False}, "the card has no render node"),
+        # Render-node-less and on the faux bus, but not vkms: only vkms is known virtual.
+        ({**VKMS, "device": "devices/faux/other"}, "the card has no render node"),
+        ({"driver": "hyperv_drm", "render": False}, "the card has no render node"),
+        (
+            {"status": "connected"},
+            "card0-HDMI-A-1 is connected: the nested Hyprland would take over a monitor "
+            "the desktop is using",
+        ),
+        (
+            {**VKMS, "connector": "Virtual-2", "status": "connected"},
+            "card0-Virtual-2 is connected: the nested Hyprland would take over a monitor "
+            "the desktop is using",
+        ),
     ],
 )
 def test_a_card_that_would_break_the_desktop_or_the_output_is_refused(
-    tmp_path: Path, card: Path, driver: str, render: bool, status: str, reason: str
+    tmp_path: Path, card: Path, layout: dict[str, Any], reason: str
 ) -> None:
-    problem = drm_card_problem(
-        card, fake_sysfs(tmp_path, driver=driver, render=render, status=status)
-    )
-
-    assert problem is not None
-    assert reason in problem
+    assert drm_card_problem(card, fake_sysfs(tmp_path, **layout)) == reason
 
 
 def test_a_missing_bwrap_or_node_is_refused(
