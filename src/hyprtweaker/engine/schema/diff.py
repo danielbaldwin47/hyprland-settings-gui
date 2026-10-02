@@ -84,7 +84,9 @@ def added_names(schema: GeneratedSchema, predecessor: GeneratedSchema) -> frozen
     """The Options `schema` has that `predecessor` lacks: the one rule for "added".
 
     `resolve.stamp_added_in` stamps by it and the diff reports by it, so the release-check
-    PR and the app's `New in` group cannot disagree about what a release added.
+    PR and the app's `New in` group agree about what a release added, with one exception:
+    a confirmed rename's new name is stamped `added_in` (the generator reads no Overlay) and
+    the diff reports it under `renamed`, not `added`.
     """
     return frozenset(option.name for option in schema.options) - frozenset(
         option.name for option in predecessor.options
