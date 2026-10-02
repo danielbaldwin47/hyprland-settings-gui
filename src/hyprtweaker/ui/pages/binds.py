@@ -668,18 +668,21 @@ class BindsPage:
                     )
                 )
 
-    def reveal(self, index: int) -> None:
-        """Bring the Row for the bind at `index` into view -- the conflict jump.
+    def reveal(self, index: int) -> Gtk.Widget | None:
+        """Bring the Row for the bind at `index` into view -- the conflict jump, a search hit.
 
         Navigate + flash (ADR-0007): grabbing focus makes every ancestor scroll the row
         into view, and a short background pulse marks which row that was for a reader
-        whose eyes were on the popover, not the focus ring.
+        whose eyes were on the popover, not the focus ring. Returns the row, so a caller
+        whose row may be insensitive (a read-only session) can scroll it explicitly; `None`
+        when no row has that index.
         """
         for row in self._rows:
             if row.index == index:
                 row.widget.grab_focus()
                 flash(row.widget)
-                return
+                return row.widget
+        return None
 
     @property
     def groups(self) -> tuple[Adw.PreferencesGroup, ...]:
