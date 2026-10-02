@@ -140,6 +140,10 @@ def test_below_lua_hyprland_the_session_stays_read_only_and_never_connects(
         )
         assert fake.requests == ["j/version", "j/descriptions"]
         assert session.schema.hyprland_version == "0.56.2"
+        # Finding 24 of the #153 review: "Hyprland is not running" was false here.
+        assert session.offline_sentence == (
+            "Hyprland 0.55.0 is running, and this app needs Hyprland 0.56 or newer."
+        )
 
     run_with_fake(scenario, running("0.55.0"))
 

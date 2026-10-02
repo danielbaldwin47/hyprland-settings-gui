@@ -173,7 +173,7 @@ def test_the_page_sits_under_look_by_its_entity_id_and_no_section_shares_it(
 def test_with_no_tool_the_page_says_so_and_check_again_finds_one(
     tmp_path: Path, stub_tool: Any
 ) -> None:
-    from hyprtweaker.ui.pages.theming import CHECK_AGAIN, EMPTY
+    from hyprtweaker.ui.pages.theming import CHECK_AGAIN
 
     session, _ = make_session(tmp_path)
     page = build_page(session)
@@ -183,7 +183,12 @@ def test_with_no_tool_the_page_says_so_and_check_again_finds_one(
         "Your own color settings apply. No theming tool overrides them."
     )
     assert page.tabs == ()
-    assert ("Wallpaper colors", EMPTY, "") in page.rows
+    assert (
+        "Wallpaper colors",
+        "No wallpaper color tool found. Install matugen or wallust to take colors from your "
+        "wallpaper.",
+        "",
+    ) in page.rows
     assert not [row for row in page.rows if row[0] == "Other tools"]
 
     stub_tool("wallust")
@@ -301,13 +306,52 @@ def test_a_refused_switch_leaves_the_old_source_on_screen(
     assert (
         "Colors",
         "Where colors come from cannot change now",
-        "hyprland.lua was edited outside hyprtweaker. "
-        "Regenerate it before changing where colors come from.",
+        "hyprland.lua was edited outside this app. Press “Regenerate hyprland.lua…” on the "
+        "Theming page, then change where colors come from.",
     ) in page.rows
     page.switch("wallust")
     answer(page.dialog, "agree")
     assert page.dialog.get_heading() == "Could not switch to wallust"
     assert page.color_source_text == "Wallpaper (matugen)"
+
+
+def test_a_hand_edited_entrypoint_offers_its_regenerate_beside_the_reason(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """Finding 19 of the #153 review: the row said "Regenerate it" and nothing on the page
+    could. The button it names sits on the same row, behind a confirm that says what goes."""
+    stub_tool("matugen")
+    stub_tool("wallust")
+    put(tmp_path / MATUGEN_BRIDGE)
+    put(tmp_path / WALLUST_BRIDGE)
+    session, applier = make_session(tmp_path)
+    wired(session, "matugen", "wallust", source="matugen")
+    page = build_page(session)
+    page.reveal_backend("wallust")
+    entrypoint = session.paths.entrypoint
+    entrypoint.write_text(entrypoint.read_text() + "-- my own line\n", encoding="utf-8")
+    page.refresh()
+    transactions = applier.transactions
+
+    click(page, "Regenerate hyprland.lua…")
+    assert page.dialog.get_heading() == "Regenerate hyprland.lua?"
+    assert page.dialog.get_body() == (
+        "This app writes hyprland.lua again from its own settings. The lines added to it by "
+        "hand are removed: put settings of your own in user.lua, which this app never "
+        "changes."
+    )
+    assert page.dialog.get_default_response() == "cancel"
+    answer(page.dialog, "cancel")
+    assert "-- my own line" in entrypoint.read_text()
+
+    click(page, "Regenerate hyprland.lua…")
+    answer(page.dialog, "agree")
+
+    assert applier.transactions == transactions + 1
+    assert "-- my own line" not in entrypoint.read_text()
+    assert not [row for row in page.rows if row[1].startswith("Where colors come from")]
+    assert page.button("Regenerate hyprland.lua…") is None
+    assert page.button("Switch to wallust").get_sensitive()
 
 
 # --- the Color source line -------------------------------------------------------------------
@@ -385,6 +429,10 @@ def test_options_change_the_command_and_write_nothing(tmp_path: Path, stub_tool:
     page = build_page(session)
     files = tree(tmp_path)
 
+    assert page._options.get_description() == (
+        "Used when this app runs matugen for you, until you close it. Your own wallpaper "
+        "script keeps its own settings."
+    )
     regenerate = [row for row in page.rows if row[1] == "Regenerate colors"]
     assert regenerate == [
         (

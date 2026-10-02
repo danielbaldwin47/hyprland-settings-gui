@@ -202,6 +202,13 @@ from hyprtweaker.engine.writer.rules import parse_rules_module
 
 _log = logging.getLogger(__name__)
 
+ENTRYPOINT_EDITED = (
+    "hyprland.lua was edited outside this app. Press “Regenerate hyprland.lua…” on the "
+    "Theming page, then change where colors come from."
+)
+"""Why the Color source cannot change while the Entrypoint holds a hand edit: the next step
+is named by the button the Theming page shows beside it (finding 19 of the #153 review)."""
+
 _Answer = TypeVar("_Answer")
 """What one helper-data query answers: a tuple of mappings, or of names."""
 
@@ -723,6 +730,23 @@ class Session:
         return self._offline_reason
 
     @property
+    def offline_sentence(self) -> str | None:
+        """Why applying is off, as one true sentence for a dialog, a toast or a tooltip, or
+        `None` when it is on. No socket path or exception text: the Banner has the detail.
+        Hyprland may be running and still not reachable, so it never says "not running"."""
+        if self._offline_reason is None:
+            return None
+        if self._unsupported_reason is not None:
+            return f"{self._unsupported_reason}."
+        return "This app is not connected to Hyprland."
+
+    @property
+    def entrypoint_edited(self) -> bool:
+        """Whether `hyprland.lua` was edited outside this app (its bytes are not the
+        Manifest's), which blocks every change to where colors come from."""
+        return ENTRYPOINT_NAME in self._manifest().hand_edited(self._paths)
+
+    @property
     def unapplied(self) -> frozenset[str]:
         """Keys the app's own Modules set that the live config does not.
 
@@ -781,12 +805,9 @@ class Session:
     def color_source_blocked(self) -> str | None:
         """Why the Color source cannot change right now, as a sentence, or `None` if it can."""
         if self._offline_reason is not None:
-            return self._offline_reason
-        if ENTRYPOINT_NAME in self._manifest().hand_edited(self._paths):
-            return (
-                "hyprland.lua was edited outside hyprtweaker. "
-                "Regenerate it before changing where colors come from."
-            )
+            return self.offline_sentence
+        if self.entrypoint_edited:
+            return ENTRYPOINT_EDITED
         return None
 
     def set_color_source(self, source: ChosenSource) -> bool:
@@ -1957,13 +1978,17 @@ class Session:
                 # The model holds the user's colours, not the ones the wallpaper made (S7).
                 done(
                     PresetNotSaved(
-                        "Wallpaper colors can only be captured while Hyprland is running."
+                        f"Wallpaper colors can only be captured while applying is on. "
+                        f"{self.offline_sentence}"
                     )
                 )
                 return
             if CaptureScope.WALLPAPER in chosen:
                 done(
-                    PresetNotSaved("The wallpaper can only be saved while Hyprland is running.")
+                    PresetNotSaved(
+                        "The wallpaper can only be saved while applying is on. "
+                        f"{self.offline_sentence}"
+                    )
                 )
                 return
             values = {
@@ -2105,7 +2130,9 @@ class Session:
         §Sharing). Refused, with the Banner's reason, on a read-only session.
         """
         if not self.live or self._applier is None:
-            return PresetNotApplied(self._offline_reason or "Hyprland is not connected.")
+            return PresetNotApplied(
+                f"Applying is off. {self.offline_sentence or 'This app is not connected.'}"
+            )
         preset = self._preset_store.load(slug)
         if preset is None:
             return PresetNotApplied("This preset could not be read. It may have been deleted.")

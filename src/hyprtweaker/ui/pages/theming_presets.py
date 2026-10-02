@@ -75,9 +75,9 @@ from hyprtweaker.ui.release import release  # noqa: E402
 
 TITLE = "Presets"
 DESCRIPTION = "Save your current look, switch back to it later, or share it as a theme file."
-READ_ONLY_DESCRIPTION = (
-    "Hyprland is not running, so applying is off. You can still save, export and import."
-)
+READ_ONLY_DESCRIPTION = "Applying is off. {reason} You can still save, export and import."
+"""Filled with `Session.offline_sentence`, which is true for an old Hyprland as well as for
+one this app cannot reach."""
 SAVE_LABEL = "Save current as preset…"
 IMPORT_LABEL = "Import…"
 EMPTY_TITLE = "No presets yet"
@@ -85,8 +85,8 @@ EMPTY_SUBTITLE = (
     "A preset keeps a look (colors, gaps, animation switches, fonts, wallpaper) so you can "
     "switch back to it later. Press “Save current as preset” to keep this one."
 )
-COLORS_NEED_HYPRLAND = "Wallpaper colors can only be captured while Hyprland is running"
-WALLPAPER_NEEDS_HYPRLAND = "The wallpaper can only be saved while Hyprland is running"
+COLORS_NEED_HYPRLAND = "Wallpaper colors can only be captured while applying is on"
+WALLPAPER_NEEDS_HYPRLAND = "The wallpaper can only be saved while applying is on"
 FORGET = "Forget"
 
 
@@ -246,7 +246,11 @@ class PresetsGroup:
         self._others = []
         self._buttons = {}
         live = self._session.live
-        self.group.set_description(DESCRIPTION if live else READ_ONLY_DESCRIPTION)
+        self.group.set_description(
+            DESCRIPTION
+            if live
+            else READ_ONLY_DESCRIPTION.format(reason=self._session.offline_sentence or "")
+        )
         presets = self._session.presets()
         remembered = self._actions.remembered()
         if remembered is not None:
@@ -272,7 +276,7 @@ class PresetsGroup:
             row = _row(preset.name, subtitle_of(preset, note))
             apply = Gtk.Button(label="Apply", valign=Gtk.Align.CENTER, sensitive=live)
             if not live:
-                apply.set_tooltip_text(self._session.offline_reason)
+                apply.set_tooltip_text(f"Applying is off. {self._session.offline_sentence}")
             else:
                 apply.set_tooltip_text(f"Apply {preset.name}")
             apply.connect("clicked", lambda _button, s=slug: self.apply(s))

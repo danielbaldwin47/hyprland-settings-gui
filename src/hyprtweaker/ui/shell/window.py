@@ -2217,7 +2217,13 @@ class MainWindow(Adw.ApplicationWindow):
                 self._colour_conflict = dialog
                 dialog.present(self)
             case PresetNotApplied(reason):
-                self._toasts.add_toast(Adw.Toast(title=reason, timeout=5))
+                named = dict(self._session.presets()).get(slug)
+                toast = Adw.Toast(timeout=5)
+                toast.set_use_markup(False)  # a preset's name is the user's text
+                toast.set_title(
+                    f"{named.name if named is not None else slug} was not applied. {reason}"
+                )
+                self._toasts.add_toast(toast)
             case PresetApplied():
                 pass
         return result

@@ -115,7 +115,9 @@ class ThemeImportDialog(Adw.Dialog):
         summary = Adw.PreferencesGroup(
             # The name is the archive's text and may hold `&` or `<`: escaped, not markup.
             title=GLib.markup_escape_text(f"Import “{preset.name}”?"),
-            description=GLib.markup_escape_text(_summary(preset.name, preview, archive, live)),
+            description=GLib.markup_escape_text(
+                _summary(preset.name, preview, archive, self._session.offline_sentence)
+            ),
         )
         groups: list[Gtk.Widget] = [summary]
         source = self._session.preset_color_conflict(preset) if live else None
@@ -199,19 +201,22 @@ class ThemeImportDialog(Adw.Dialog):
 # --- what the preview shows -------------------------------------------------------------------
 
 
-def _summary(name: str, preview: PresetPreview, archive: ThemeArchive, live: bool) -> str:
+def _summary(
+    name: str, preview: PresetPreview, archive: ThemeArchive, offline: str | None
+) -> str:
+    """What importing does, in words. `offline` is why applying is off, or `None` when on."""
     changes = sum(len(section.changes) for section in preview.sections)
     if changes == 0:
         effect = "Every setting it holds already matches yours."
-    elif live:
+    elif offline is None:
         effect = (
             f"Importing adds {name} to your presets and applies it, changing "
             f"{_count(changes)}. Press Ctrl+Z afterwards to put them back."
         )
     else:
         effect = (
-            f"Importing adds {name} to your presets. It would change {_count(changes)}, "
-            "and can be applied once Hyprland is running."
+            f"Importing adds {name} to your presets. Applying it would change "
+            f"{_count(changes)}, but applying is off. {offline}"
         )
     if changes == 0:
         effect += f" Importing adds {name} to your presets."

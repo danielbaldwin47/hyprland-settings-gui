@@ -22,9 +22,9 @@ Applying a color-carrying Preset while a Wallpaper source is active raises one d
 
 ### Presets
 
-A **Preset** is a named bundle of Option values, chosen at save time via a **Capture scope** checklist — Colors / Gaps & layout / Animation switches / Fonts & cursor / Wallpaper — as narrow or broad as wanted. Colors are frozen to the concrete values live at capture, whatever generated them.
+A **Preset** is a named bundle of Option values, chosen at save time via a **Capture scope** checklist — Colors / Gaps & layout / Animation switches / Fonts / Wallpaper — as narrow or broad as wanted. Colors are frozen to the concrete values live at capture, whatever generated them.
 
-*Amended during #168:* Presets hold Options only in v1, so the "Animations" scope is named "Animation switches" (`animations:enabled`, `animations:workspace_wraparound`); curves and animation leaves are Entities, and the scope becomes "Animations" again if they join it. Cursor theme and size are `env` Entities, so "Fonts & cursor" captures the font Options. Capture reads each scoped Option off the running compositor (the Bridge's colours included) and saves only what the config sets; offline it saves the model's set values. Applying never unsets: a Preset holds set values only.
+*Amended during #168:* Presets hold Options only in v1, so the "Animations" scope is named "Animation switches" (`animations:enabled`, `animations:workspace_wraparound`); curves and animation leaves are Entities, and the scope becomes "Animations" again if they join it. Cursor theme and size are `env` Entities, so the scope is named "Fonts" (amended in the #153 review: "Fonts & cursor" promised a cursor it never captured) and captures the font Options. Capture reads each scoped Option off the running compositor (the Bridge's colours included) and saves only what the config sets; offline it saves the model's set values. Applying never unsets: a Preset holds set values only.
 
 **Preset ≠ Profile.** Keybinds, rules, and monitors are excluded: they are workflow, not theme, and the carry-my-whole-setup-to-a-new-machine story is already ADR-0009's first-class Export/Import.
 

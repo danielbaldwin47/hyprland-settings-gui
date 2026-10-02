@@ -75,7 +75,7 @@ _TITLES = {
     # Options-only in v1, so this scope is the two `animations:*` switches; curves and
     # leaves are Entities. It becomes "Animations" again if they join a later scope.
     CaptureScope.ANIMATION_SWITCHES: "Animation switches",
-    CaptureScope.FONTS_CURSOR: "Fonts & cursor",
+    CaptureScope.FONTS_CURSOR: "Fonts",
     CaptureScope.WALLPAPER: "Wallpaper",
 }
 

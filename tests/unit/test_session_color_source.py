@@ -281,8 +281,8 @@ def test_a_hand_edited_entrypoint_refuses_the_switch_and_says_why(tmp_path: Path
         await settle(session, runner)
 
         assert session.color_source_blocked == (
-            "hyprland.lua was edited outside hyprtweaker. "
-            "Regenerate it before changing where colors come from."
+            "hyprland.lua was edited outside this app. Press “Regenerate hyprland.lua…” on "
+            "the Theming page, then change where colors come from."
         )
         assert entrypoint.read_bytes() == edited
         assert fake.requests.count("reload") == reloads

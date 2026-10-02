@@ -102,10 +102,14 @@ BACKENDS_DESCRIPTION = "One tool at a time makes your colors from your wallpaper
 OPTIONS_TITLE = "Regenerate options"
 OTHER_TITLE = "Other tools"
 OTHER_DESCRIPTION = "Shells and tools that send their own settings to Hyprland."
-EMPTY = "No theming tool found. Install matugen or wallust to take colors from your wallpaper."
+EMPTY = (
+    "No wallpaper color tool found. Install matugen or wallust to take colors from your "
+    "wallpaper."
+)
 CHECK_AGAIN = "Check again"
 RESUME = "Resume wallpaper colors"
 REGENERATE = "Regenerate colors"
+REGENERATE_ENTRYPOINT = "Regenerate hyprland.lua…"
 RUN_TIMEOUT = 120.0
 """Seconds a Regenerate may run: matugen and wallust take about one on a large image."""
 
@@ -368,9 +372,10 @@ class ThemingPage:
         self._source.set_description(source_detail(state.source, state.entries))
         self._add(self._source, _row(SOURCE_ROW, source_line(state.source)))
         if state.blocked is not None:
-            self._add(
-                self._source, _row("Where colors come from cannot change now", state.blocked)
-            )
+            row = _row("Where colors come from cannot change now", state.blocked)
+            if self._session.live and self._session.entrypoint_edited:
+                row.add_suffix(_button(REGENERATE_ENTRYPOINT, self._regenerate_entrypoint))
+            self._add(self._source, row)
         target = resume_target(state.source, state.entries, shown=self._shown or BACKENDS[0])
         if target is not None:
             row = _row(RESUME, f"Let {REGISTRY[target].title} make your colors again.")
@@ -519,7 +524,8 @@ class ThemingPage:
         if not visible:
             return
         self._options.set_description(
-            f"Used each time this app runs {REGISTRY[tab.tool].title}."
+            f"Used when this app runs {REGISTRY[tab.tool].title} for you, until you close "
+            "it. Your own wallpaper script keeps its own settings."
         )
         values = self._values[tab.tool]
         for parameter in parameters:
@@ -801,6 +807,29 @@ class ThemingPage:
 
         dialog.connect("response", answered)
         self._confirm(dialog)
+
+    def _regenerate_entrypoint(self) -> None:
+        """The way out of a hand-edited `hyprland.lua` (finding 19 of the #153 review): a
+        confirm that says what goes, then the Banner's Entrypoint Fix."""
+
+        def agreed() -> None:
+            if not self._session.regenerate_entrypoint():
+                self._tell("hyprland.lua was not regenerated", NOT_UPDATED)
+            self.refresh()
+
+        self._confirm(
+            ConsentDialog(
+                heading="Regenerate hyprland.lua?",
+                body=(
+                    "This app writes hyprland.lua again from its own settings. The lines "
+                    "added to it by hand are removed: put settings of your own in user.lua, "
+                    "which this app never changes."
+                ),
+                verb="Regenerate",
+                destructive=True,
+                on_agree=agreed,
+            )
+        )
 
     def _resume(self, tool: str) -> None:
         if not self._session.set_color_source(Wallpaper(tool)):

@@ -1,8 +1,8 @@
 """Save the current look as a Preset: a name and the Capture scopes to keep (ADR-0014, #171).
 
-A scope is a checkbox row whose subtitle says how many settings it keeps, so "Fonts & cursor"
-is never a guess. A scope that cannot be saved right now stays visible, insensitive, and its
-subtitle says why (no wallpaper daemon; Hyprland not running): the user learns the reason
+A scope is a checkbox row whose subtitle says how many settings it keeps, so "Fonts" is
+never a guess. A scope that cannot be saved right now stays visible, insensitive, and its
+subtitle says why (no wallpaper daemon; applying is off): the user learns the reason
 instead of finding the row gone. Save waits for a name and at least one scope.
 
 The dialog owns no saving: it hands `(name, scopes)` to `on_save`. The Presets group asks the

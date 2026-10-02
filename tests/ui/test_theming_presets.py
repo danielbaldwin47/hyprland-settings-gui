@@ -286,7 +286,7 @@ def test_the_save_dialog_offers_the_five_scopes_each_with_its_size(tmp_path: Pat
         "Colors",
         "Gaps & layout",
         "Animation switches",
-        "Fonts & cursor",
+        "Fonts",
         "Wallpaper",
     ]
     assert "Animations" not in [title for title, _ in titles]
@@ -428,10 +428,7 @@ def test_wallpaper_colors_cannot_be_captured_while_hyprland_is_not_running(
 
     colors = group.dialog.rows[_scope("COLORS")]
     assert colors.get_sensitive() is False
-    assert (
-        colors.get_subtitle()
-        == "Wallpaper colors can only be captured while Hyprland is running"
-    )
+    assert colors.get_subtitle() == "Wallpaper colors can only be captured while applying is on"
     assert group.dialog.rows[_scope("GAPS_LAYOUT")].get_sensitive() is True
 
 
@@ -509,11 +506,16 @@ def test_a_read_only_session_cannot_apply_and_the_button_says_why(tmp_path: Path
     group = presets_of(window)
 
     assert group.button(slug, "apply").get_sensitive() is False
-    assert group.button(slug, "apply").get_tooltip_text() == session.offline_reason
+    assert group.button(slug, "apply").get_tooltip_text() == (
+        "Applying is off. This app is not connected to Hyprland."
+    )
     assert group.button(slug, "export").get_sensitive() is True
     assert group.button(slug, "delete").get_sensitive() is True
     assert group.save_button.get_sensitive() is True
-    assert "applying is off" in group.group.get_description()
+    assert group.group.get_description() == (
+        "Applying is off. This app is not connected to Hyprland. You can still save, "
+        "export and import."
+    )
 
 
 def test_going_live_makes_apply_available_on_the_next_refresh(tmp_path: Path) -> None:
@@ -527,7 +529,7 @@ def test_going_live_makes_apply_available_on_the_next_refresh(tmp_path: Path) ->
     window.theming_page.refresh()
 
     assert group.button(slug, "apply").get_sensitive() is True
-    assert "applying is off" not in group.group.get_description()
+    assert "Applying is off" not in group.group.get_description()
 
 
 # --- the wallpaper part -----------------------------------------------------------------------
@@ -699,6 +701,18 @@ def test_import_previews_then_adds_the_preset_to_the_list(tmp_path: Path) -> Non
     dialog = _import_with(window, archive)
     assert dialog.get_title() == "Import theme"
     assert dialog.choice is None  # no wallpaper tool sets colours: nothing to ask
+    from gi.repository import Adw
+
+    summaries = [
+        w.get_description()
+        for w in walk(dialog)
+        if isinstance(w, Adw.PreferencesGroup)
+        and (w.get_description() or "").startswith("Importing adds")
+    ]
+    assert summaries == [
+        "Importing adds Nord to your presets. Applying it would change 1 setting, but "
+        "applying is off. This app is not connected to Hyprland."
+    ]
     labelled(dialog, "Add to Presets").emit("clicked")
     main_loop.settle("the import")
 

@@ -408,7 +408,7 @@ def test_a_read_only_session_refuses_to_apply_with_the_banners_reason(tmp_path: 
     result = session.apply_preset("nord")
 
     assert isinstance(result, PresetNotApplied)
-    assert result.reason == session.offline_reason
+    assert result.reason == "Applying is off. This app is not connected to Hyprland."
     assert session.model.get(BORDER_SIZE) is UNSET
 
 

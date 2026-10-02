@@ -479,7 +479,10 @@ def test_wallpaper_colors_are_not_saved_while_hyprland_is_not_running(
     )
 
     assert save(session, CaptureScope.COLORS) == [
-        PresetNotSaved("Wallpaper colors can only be captured while Hyprland is running.")
+        PresetNotSaved(
+            "Wallpaper colors can only be captured while applying is on. This app is not "
+            "connected to Hyprland."
+        )
     ]
 
 
