@@ -263,9 +263,13 @@ class PluginsGroup:
         self._actions = actions
         self._loaded: frozenset[str] | None = None
         self._loaded_names: tuple[str, ...] = ()
+        self._released = False
         self.rows: list[PluginRow] = []
 
         self.group = Adw.PreferencesGroup(title=PLUGINS_TITLE, description=PLUGINS_DESCRIPTION)
+        # `release` disposes the group, and disposal emits `destroy`: a `plugin list` reply
+        # still in flight then finds the group gone and leaves it alone.
+        self.group.connect("destroy", self._on_destroy)
         self.add_button = Gtk.Button(label=ADD_PLUGIN, valign=Gtk.Align.CENTER)
         self.add_button.set_tooltip_text("Choose a plugin's .so file")
         if actions is not None:
@@ -291,7 +295,12 @@ class PluginsGroup:
         self._render()
         self._session.fetch_loaded_plugins(self._on_loaded)
 
+    def _on_destroy(self, _group: Adw.PreferencesGroup) -> None:
+        self._released = True
+
     def _on_loaded(self, names: tuple[str, ...] | None) -> None:
+        if self._released:
+            return
         loaded = None if names is None else frozenset(name.lower() for name in names)
         if loaded == self._loaded and (names or ()) == self._loaded_names:
             return

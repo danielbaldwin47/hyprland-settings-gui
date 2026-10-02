@@ -17,6 +17,7 @@ from _live_window import live_entity_window
 
 BARS = "/usr/lib/hyprland-plugins/libhyprbars.so"
 EXPO = "/usr/lib/hyprland-plugins/hyprexpo.so"
+BARS2 = "/opt/plugins/libborders-plus-plus.so"
 
 
 def plugin(path: str, *, enabled: bool = True) -> Any:
@@ -195,6 +196,80 @@ def test_alt_up_and_down_reorder_the_list(tmp_path: Path) -> None:
     assert [r.widget.get_subtitle() for r in group_of(window).rows] == [EXPO, BARS]
     assert window.undo_toast is not None
     assert window.undo_toast.get_title() == "Plugins reordered"
+
+
+def shortcut(row: Any, trigger: str) -> Any:
+    from gi.repository import Gtk
+
+    for controller in row.widget.observe_controllers():
+        if isinstance(controller, Gtk.ShortcutController):
+            for each in controller:
+                if each.get_trigger().to_string() == trigger:
+                    return each
+    raise AssertionError(f"no {trigger} shortcut on the row")
+
+
+def test_each_control_rebuilds_the_list_from_inside_its_own_handler_cleanly(
+    tmp_path: Path, capfd: Any
+) -> None:
+    """Spec #152 review finding 6: the switch, remove and Alt+Down each rebuild the list
+    while their own row's handler is still running, and the row they came from is released
+    then. The list must match the model afterwards, with no GTK critical on the way."""
+    import main_loop
+    from gi.repository import Gtk
+
+    session, window, applier = window_with(tmp_path, plugin(BARS), plugin(EXPO), plugin(BARS2))
+    window.present()
+    main_loop.settle("the window to map")
+    capfd.readouterr()
+
+    group_of(window).rows[0].enabled_switch.emit("state-set", False)
+    applier.settle()
+    main_loop.settle("the rebuild after the switch")
+    group_of(window).rows[1].remove_button.emit("clicked")
+    applier.settle()
+    main_loop.settle("the rebuild after the remove")
+    row = group_of(window).rows[0]
+    shortcut(row, "<Alt>Down").get_action().activate(
+        Gtk.ShortcutActionFlags(0), row.widget, None
+    )
+    applier.settle()
+    main_loop.settle("the rebuild after the move")
+
+    listed = [(p.path, p.enabled) for p in session.declarations("plugins")]
+    assert listed == [(BARS2, True), (BARS, False)]
+    assert [
+        (r.widget.get_subtitle(), r.enabled_switch.get_active()) for r in group_of(window).rows
+    ] == listed
+    assert "CRITICAL" not in capfd.readouterr().err
+    window.close()
+
+
+def test_a_loaded_list_answered_after_the_page_was_released_is_dropped(
+    tmp_path: Path, capfd: Any
+) -> None:
+    """The `plugin list` reply is asynchronous: one that lands after a View switch (or the
+    window's close) released the page must not rebuild the disposed group."""
+    import main_loop
+
+    from hyprtweaker.ui.pages.plan import View
+
+    session, window, _applier = window_with(tmp_path, plugin(BARS))
+    held: list[Any] = []
+    session.fetch_loaded_plugins = held.append
+    window.scripting_page.refresh()
+    released = group_of(window)
+    window.present()
+    main_loop.settle("the window to map")
+    window.set_view(View.TASKS if window.view is View.CONFIG else View.CONFIG)
+    main_loop.settle("the new View to build")
+    assert window.scripting_page.plugins is not released, "the precondition: a new page"
+    capfd.readouterr()
+
+    held[0](("hyprbars",))
+
+    assert "CRITICAL" not in capfd.readouterr().err
+    window.close()
 
 
 def test_adding_a_path_already_listed_is_refused_with_a_reason(tmp_path: Path) -> None:
