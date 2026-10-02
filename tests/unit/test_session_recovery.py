@@ -1208,3 +1208,32 @@ def test_a_user_lua_created_later_is_loaded_at_the_next_launch(tmp_path: Path) -
     run_with_fake(
         scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
     )
+
+
+def test_a_read_only_reason_set_while_connecting_outlives_the_connect(tmp_path: Path) -> None:
+    """#148 review R2: a Roll back answered at relaunch while the session was still
+    connecting set read-only, and `_go_live` then cleared it; the next edit rendered the
+    app's Entrypoint over the user's restored `hyprland.lua`. Connecting clears only its
+    own reason."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = session_for(fake, tmp_path, runner)
+        session.start()
+        session.set_read_only("A configuration switch was not finished")
+        paths = ConfigPaths.rooted_at(tmp_path)
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        paths.entrypoint.write_text("-- the user's own, put back\n", encoding="utf-8")
+        await runner.settle()
+
+        session.set_option(ROUNDING, 18)
+        await session.drain()
+        await runner.settle()
+
+        assert not session.live
+        assert session.health.title == (
+            "A configuration switch was not finished — settings are read-only."
+        )
+        assert paths.entrypoint.read_text(encoding="utf-8") == "-- the user's own, put back\n"
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))

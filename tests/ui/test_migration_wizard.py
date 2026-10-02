@@ -1484,3 +1484,104 @@ def test_enter_on_the_detect_page_converts(tmp_path: Path) -> None:
     default = dialog.get_default_widget()
     assert default is not None and default.get_label() == "Convert..."
     dialog.close()
+
+
+class _Compositor:
+    """What a switch asks of Hyprland, answered as a clean load."""
+
+    async def configerrors(self) -> tuple[str, ...]:
+        return ()
+
+    async def bind_count(self) -> int:
+        return 0
+
+    async def workspace_rule_count(self) -> int:
+        return 0
+
+    async def monitors(self) -> tuple[dict[str, Any], ...]:
+        return ()
+
+    async def reload_full_reset(self) -> None:
+        return None
+
+
+def _hypr_files(hypr_dir: Path) -> dict[str, bytes]:
+    return {
+        str(item.relative_to(hypr_dir)): item.read_bytes()
+        for item in sorted(hypr_dir.rglob("*"))
+        if item.is_file()
+    }
+
+
+def _crashed_switch(tmp_path: Path, config: str, schema: Any) -> dict[str, bytes]:
+    """A config, then an Import switched over it and never answered. Returns the hypr dir
+    as it was before the switch."""
+    import asyncio
+
+    from hyprtweaker.engine.migration.flow import MigrationFlow, fresh_start
+    from hyprtweaker.engine.paths import ConfigPaths
+    from hyprtweaker.engine.writer import Writer
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    if config == "app":
+        model = fresh_start(paths, schema, app_version=APP_VERSION)
+        Writer(paths, app_version=APP_VERSION).write(model)
+        paths.presets_dir.mkdir(parents=True, exist_ok=True)
+        (paths.presets_dir / "mine.json").write_text("{}\n", encoding="utf-8")
+    else:
+        paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+    before = _hypr_files(paths.hypr_dir)
+    source = tmp_path / "other.conf"
+    source.write_text(CONF.replace("5", "9"), encoding="utf-8")
+    flow = MigrationFlow(
+        paths=paths, schema=schema, app_version=APP_VERSION, client=_Compositor()
+    )
+    flow.detect()
+    flow.build_preview(source)
+    flow.back_up()
+    asyncio.run(flow.switch())
+    return before
+
+
+class TestTheUnfinishedSwitchOffer:
+    """#148 review R2: the session started under the relaunch's pending-switch offer, and a
+    quick Roll back was undone when it finished connecting. Nothing starts until the user
+    answers, and then only over a config that is the app's own."""
+
+    @pytest.mark.parametrize(("config", "starts"), [("conf", False), ("app", True)])
+    def test_roll_back_puts_the_files_back_and_starts_only_over_the_apps_config(
+        self, tmp_path: Path, config: str, starts: bool
+    ) -> None:
+        window, session = build_window(tmp_path)
+        before = _crashed_switch(tmp_path, config, session.schema)
+        started: list[bool] = []
+
+        window.route_first_run()
+        window.start_when_answered(lambda: started.append(True))
+
+        assert started == []
+        assert not session.live
+        offer = window.get_visible_dialog()
+        assert offer.get_heading() == "A configuration switch was not finished"
+        offer.emit("response", "roll-back")
+        offer.force_close()
+        main_loop.settle("the notes to show")
+
+        assert _hypr_files(session.paths.hypr_dir) == before
+        assert started == ([True] if starts else [])
+        assert not session.live
+        window.get_visible_dialog().force_close()
+
+    def test_keep_starts_the_session(self, tmp_path: Path) -> None:
+        window, session = build_window(tmp_path)
+        _crashed_switch(tmp_path, "conf", session.schema)
+        started: list[bool] = []
+        window.route_first_run()
+        window.start_when_answered(lambda: started.append(True))
+
+        offer = window.get_visible_dialog()
+        offer.emit("response", "keep")
+        offer.force_close()
+
+        assert started == [True]

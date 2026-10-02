@@ -76,16 +76,14 @@ class HyprtweakerApplication(Adw.Application):
         # decides whether there is anything to go live *with*. A fresh user has no App dir
         # until this runs, and an unmigrated one must come up read-only rather than write
         # over a config the app does not own.
-        detection = window.route_first_run()
+        window.route_first_run()
 
         # Started only once the window is listening: the session's first act is a re-read,
         # and it reports the result through those two callbacks.
         if not self._runner.available:
             session.set_read_only(self._runner.unavailable_reason or "cannot apply changes")
-        elif not detection.offers_import:
-            session.start()
         else:
-            # Read-only behind the offer; keeping the import is what starts it.
-            window.on_import_kept = session.start
+            # Read-only behind an offer; the user's answer to it is what starts it.
+            window.start_when_answered(session.start)
 
         return window

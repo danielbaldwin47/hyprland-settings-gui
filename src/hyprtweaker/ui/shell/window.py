@@ -458,12 +458,15 @@ class MainWindow(Adw.ApplicationWindow):
         finally reaches is the *oldest* gesture rather than the last -- an undo that takes
         back something they have since changed twice."""
         self._result_toast: Adw.Toast | None = None
+        """The last failure toast `on_applied` raised, which a Preset's offer replaces."""
         self._theming_memory = ThemingMemory()
         """The Theming page's Regenerate options and tab, kept across rebuilds (F8)."""
         self.on_import_kept: Callable[[], None] | None = None
-        """Starts the session a first-run import offer held back, once that import is kept.
-        Set by the application only when it deferred the start for the offer."""
-        """The last failure toast `on_applied` raised, which a Preset's offer replaces."""
+        """Starts the session an offer in front of it held back, once the user's answer
+        leaves the app's own config in place. Set by `start_when_answered`."""
+        self._switch_offer_open = False
+        """The relaunch's "A configuration switch was not finished" is waiting for an answer:
+        no session may start under it (#148 review R2)."""
 
         self.set_title("Hyprtweaker")
         self.set_default_size(1000, 700)
@@ -809,6 +812,11 @@ class MainWindow(Adw.ApplicationWindow):
 
         pending = sentinel_read(session.paths)
         if pending is not None:
+            # Read-only until answered: a session going live under the offer cleared the
+            # read-only state a Roll back set, and wrote over the restored file (R2).
+            self._switch_offer_open = True
+            session.set_read_only("A configuration switch was not finished")
+            self.sync_banner()
             self._offer_rollback(pending)
             return detection
 
@@ -821,6 +829,22 @@ class MainWindow(Adw.ApplicationWindow):
             self.sync_banner()
             GLib.idle_add(self._present_offer, detection)
         return detection
+
+    def start_when_answered(self, start: Callable[[], None]) -> None:
+        """Start the session now, or once the user has answered the offer in front of it.
+
+        An import offer holds it until the import is kept; the relaunch's pending-switch
+        offer until it is answered, and then only if the answer leaves the app's own config.
+        """
+        if self._switch_offer_open or self._offered is not None:
+            self.on_import_kept = start
+        else:
+            start()
+
+    def _start_held_session(self) -> None:
+        start, self.on_import_kept = self.on_import_kept, None
+        if start is not None:
+            start()
 
     def _detect(self) -> Detection:
         """Which of ADR-0009's four cases this machine is in, asked once per caller."""
@@ -858,14 +882,17 @@ class MainWindow(Adw.ApplicationWindow):
         # Answered once: closing the dialog emits its close response ("roll-back") again,
         # and a second roll back used to delete the file the first put back (hand-test 19).
         _dialog.disconnect_by_func(self._on_rollback_response)
+        self._switch_offer_open = False
         flow = self.migration_flow()
         if response == "keep":
             flow.keep()
+            self._start_held_session()
             return
         flow.roll_back(pending)
         self._spawn(flow.reload_restored())
         # The user's own file is back, so the session must not write to the app's Modules
         # any more: the same offer a launch on that file makes (#148 hand-tests 19, 20).
+        # The app's own config back (an Import over it, R1): the session starts over it.
         detection = self._detect()
         if detection.offers_import:
             self._offered = detection
@@ -873,6 +900,8 @@ class MainWindow(Adw.ApplicationWindow):
                 READ_ONLY_REASON[detection.kind], sentence=CONVERT_SENTENCE
             )
             self.sync_banner()
+        else:
+            self._start_held_session()
         # Said, as the wizard's own Roll back says it, with any theming tool's file left
         # as the user changed it or not put back (finding 21).
         GLib.idle_add(self._show_rollback_notes, flow.rollback_notes)

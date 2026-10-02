@@ -2880,8 +2880,11 @@ class Session:
         )
         self._applier.start()
         self._retire_and_restore(self._applier)
-        self._offline_reason = None
-        self._offline_sentence = None
+        if self._offline_reason == _NOT_CONNECTED_YET:
+            # Only its own reason: one set while this awaited -- a Roll back, a lost stream
+            # -- outlives it, or the next edit wrote over a restored file (#148 review R2).
+            self._offline_reason = None
+            self._offline_sentence = None
         # A tool that ran while the app was closed may have written its file (S4).
         self.load_waiting_bridges()
         self.load_new_user_lua()
