@@ -47,7 +47,7 @@ from hyprtweaker.engine.profiles import MonitorProfile  # noqa: E402
 from hyprtweaker.ui.pages.monitor_rows import (  # noqa: E402
     ModeRows,
     ScaleRows,
-    colour_group,
+    colour_rows,
     reserved_row,
 )
 
@@ -743,7 +743,8 @@ class MonitorsPage:
         row.add_row(vrr)
 
         row.add_row(reserved_row(fields.get("reserved"), apply, editable=editable))
-        row.add_row(colour_group(fields, apply, editable=editable))
+        for setting in colour_rows(fields, apply, editable=editable):
+            row.add_row(setting)
         return row
 
     def _on_match_by_selected(

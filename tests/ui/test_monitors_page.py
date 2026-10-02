@@ -785,13 +785,14 @@ def test_advanced_colour_fields_route_by_the_breaking_set() -> None:
     from hyprtweaker.engine.model import UNSET
 
     row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", supports_hdr=1, cm="srgb")])
-    colour = row_titled(row, "Advanced colour")
-    assert not colour.get_expanded()
+    assert not row_titled(row, "Colour preset").get_visible()  # collapsed by default
+    row_titled(row, "Advanced colour").emit("activated")
+    assert row_titled(row, "Colour preset").get_visible()
 
-    choose(row_titled(colour, "Colour preset"), "HDR")
-    choose(row_titled(colour, "HDR support"), "Not set")
-    choose(row_titled(colour, "SDR transfer function"), "Gamma 2.2")
-    brightness = suffix_of(row_titled(colour, "SDR brightness"), Gtk.SpinButton)
+    choose(row_titled(row, "Colour preset"), "HDR")
+    choose(row_titled(row, "HDR support"), "Not set")
+    choose(row_titled(row, "SDR transfer function"), "Gamma 2.2")
+    brightness = suffix_of(row_titled(row, "SDR brightness"), Gtk.SpinButton)
     brightness.set_value(1.4)
     brightness.emit("activate")
 

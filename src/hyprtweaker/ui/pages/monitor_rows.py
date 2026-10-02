@@ -369,12 +369,23 @@ _LUMINANCE: tuple[_Luminance, ...] = (
 _ON_OFF: tuple[tuple[Any, str], ...] = ((1, "On"), (0, "Off"))
 
 
-def colour_group(fields: Mapping[str, Any], apply: Apply, *, editable: bool) -> Adw.ExpanderRow:
-    """ADR-0008's Advanced colour group, collapsed: most displays need none of it."""
-    group = Adw.ExpanderRow(
+def colour_rows(
+    fields: Mapping[str, Any], apply: Apply, *, editable: bool
+) -> tuple[Adw.PreferencesRow, ...]:
+    """ADR-0008's Advanced colour group, collapsed: most displays need none of it.
+
+    A header row that shows and hides the settings below it, rather than an expander
+    nested in the display's expander: libadwaita draws a nested expander's arrow as open
+    whenever its parent is open (seen in a widget probe), so a collapsed group would
+    look expanded.
+    """
+    header = Adw.ActionRow(
         title="Advanced colour",
         subtitle="Colour management and HDR. Most displays need none of this.",
+        activatable=True,
     )
+    arrow = Gtk.Image(icon_name="pan-down-symbolic")
+    header.add_suffix(arrow)
     eotf = fields.get("sdr_eotf")
     rows = [
         _choice_row(
@@ -427,8 +438,16 @@ def colour_group(fields: Mapping[str, Any], apply: Apply, *, editable: bool) -> 
     ]
     for row in rows:
         row.set_sensitive(editable)
-        group.add_row(row)
-    return group
+        row.set_visible(False)
+
+    def toggle(_header: Adw.ActionRow) -> None:
+        shown = not rows[0].get_visible()
+        for row in rows:
+            row.set_visible(shown)
+        arrow.set_from_icon_name("pan-up-symbolic" if shown else "pan-down-symbolic")
+
+    header.connect("activated", toggle)
+    return (header, *rows)
 
 
 def _choice_row(
@@ -520,7 +539,7 @@ def _luminance_row(spec: _Luminance, current: Any, apply: Apply) -> Adw.ActionRo
     shown = Gtk.Box(spacing=6, valign=Gtk.Align.CENTER)
     shown.append(spin)
     shown.append(clear)
-    stack = Gtk.Stack(valign=Gtk.Align.CENTER)
+    stack = Gtk.Stack(valign=Gtk.Align.CENTER, halign=Gtk.Align.END, hhomogeneous=False)
     stack.add_named(placeholder, "unset")
     stack.add_named(shown, "set")
     stack.set_visible_child_name("unset" if committed[0] is None else "set")
