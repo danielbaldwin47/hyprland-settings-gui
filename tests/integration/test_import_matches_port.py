@@ -197,10 +197,10 @@ def test_the_imported_config_renders_the_same_screen_every_time(
     reason=(
         "the imported end-4 still renders differently from its port: with every Entity "
         "Module written (#101), 26.9% of pixels differ at a max delta of 35/255 "
-        "(measured 2026-10-02), cause not yet traced. The state-level comparison above is "
-        "the part that is checkable today."
+        "(measured 2026-10-02), cause not yet traced (#253). The state-level comparison "
+        "above is the part that is checkable today."
     ),
-    strict=False,
+    strict=True,
 )
 def test_the_imported_config_renders_the_same_screen_as_the_port(
     tmp_path: Path, artifacts: Path, schema
