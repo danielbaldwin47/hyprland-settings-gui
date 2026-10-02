@@ -463,10 +463,14 @@ def _refuse_member(member: tarfile.TarInfo, found: dict[str, bytes]) -> ArchiveR
             "This theme file holds more than a preset and one wallpaper, so nothing was "
             "imported."
         )
-    try:
-        tarfile.data_filter(member, _NOWHERE)
-    except tarfile.FilterError:
-        return _held(member)
+    # `data_filter` arrived in Python 3.11.4; on an older 3.11 the allow-list below, which
+    # admits only two regular files by exact name, is the whole fence (finding 8).
+    data_filter = getattr(tarfile, "data_filter", None)
+    if data_filter is not None:
+        try:
+            data_filter(member, _NOWHERE)
+        except tarfile.FilterError:
+            return _held(member)
     if not member.isreg() or member.name not in _ALLOWED:
         return _held(member)
     if member.name in found:

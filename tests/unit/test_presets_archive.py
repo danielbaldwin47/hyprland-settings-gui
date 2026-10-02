@@ -506,3 +506,22 @@ def test_deleting_an_imported_preset_deletes_its_image(tmp_path: Path) -> None:
     store.delete(slug)
 
     assert tree(tmp_path / "app") == {"presets": None, "presets/wallpapers": None}
+
+
+def test_a_python_without_data_filter_still_refuses_every_hostile_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding 8 of the #153 review: `tarfile.data_filter` is missing on Python 3.11.0-3.11.3,
+    and reaching for it raised AttributeError instead of refusing."""
+    from hyprtweaker.engine.presets_archive import ArchiveRefused, _refuse_member
+
+    monkeypatch.delattr(tarfile, "data_filter")
+    for name, kind in (
+        ("/etc/passwd", tarfile.REGTYPE),
+        ("../preset.json", tarfile.REGTYPE),
+        ("preset.json", tarfile.SYMTYPE),
+    ):
+        info, _ = entry(name, b"", kind)
+        assert isinstance(_refuse_member(info, {}), ArchiveRefused), name
+    info, _ = entry("preset.json", b"{}")
+    assert _refuse_member(info, {}) is None
