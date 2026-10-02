@@ -1034,18 +1034,11 @@ class Session:
 
         return self._commit_entity_edit("monitor rules", drop, title="Monitor rule removed")
 
-    def monitor_snapshot(self) -> tuple[MonitorRule, ...]:
-        """The monitor rule list as it stands -- what Confirm-or-revert restores to.
-
-        A tuple of frozen dataclasses, so the snapshot cannot drift while the countdown
-        runs however many edits land in between.
-        """
-        return tuple(self._model.entities.monitors)
-
     def restore_monitor_rules(self, snapshot: Sequence[MonitorRule]) -> bool:
         """Put the monitor rule list back to `snapshot`, through a normal transaction.
 
-        The revert half of Confirm-or-revert (ADR-0008): a normal Apply rather than a file
+        The revert half of Confirm-or-revert (ADR-0008), given `revert_breaking`'s list so a
+        benign edit made during the countdown survives (#192): a normal Apply rather than a file
         restore, because rendering the previous model produces the previous `monitors.lua`
         byte for byte -- same renderer, same input -- and a second way for bytes to reach
         the App dir would be a second place for bugs to live (ADR-0010 made the same call
@@ -1416,9 +1409,10 @@ class Session:
     def monitor_state_snapshot(self) -> MonitorStateSnapshot:
         """Both rule lists plus the active pointer -- what a profile revert restores.
 
-        Wider than `monitor_snapshot` because activation touches workspace pins and the
+        Both lists and the pointer because activation touches workspace pins and the
         pointer too: reverting an activation that only put the monitor list back would
-        leave the pins of the profile the user just refused.
+        leave the pins of the profile the user just refused. A tuple of frozen rules, so
+        the snapshot cannot drift while a countdown runs however many edits land in it.
         """
         return MonitorStateSnapshot(
             monitors=tuple(self._model.entities.monitors),

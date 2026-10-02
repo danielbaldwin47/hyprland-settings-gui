@@ -64,9 +64,9 @@ from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa:
 from hyprtweaker.engine.model.entities import (  # noqa: E402
     Bind,
     LayerRule,
-    MonitorRule,
     WindowRule,
 )
+from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking  # noqa: E402
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
@@ -188,6 +188,15 @@ SEVERE_BANNER_CLASS = "error"
 A style class rather than a colour, so it follows the user's theme and their accent choice
 -- a hard-coded red is the one thing that would look wrong in every theme but the one it was
 picked in."""
+
+BREAKING_DEBOUNCE_MS = 400
+"""How long after the last display-breaking edit the batch applies (ADR-0008 "batch", #192).
+
+Long enough that dragging a display on the canvas or stepping a scale spinner lands as one
+apply and one countdown, short enough that the change still reads as the click's answer."""
+
+DISPLAY_KINDS = frozenset({"monitors", "workspace_rules"})
+"""The Entity lists a display countdown holds undo steps over: a profile sets both."""
 
 UNDO_TOAST_SECONDS = 4
 """Long enough to notice and reach, short enough not to sit over the Row that just changed."""
@@ -313,7 +322,17 @@ class MainWindow(Adw.ApplicationWindow):
 
         The hotplug dedupe: one dock arriving as several socket2 events must produce one
         toast, and a set with no match clears it so the next docking offers again."""
-        self._profile_confirm: ConfirmRevertDialog | None = None
+        self._countdown: _DisplayCountdown | None = None
+        """The one Confirm-or-revert countdown open over the window, if any (#192).
+
+        Every display-breaking change -- a batch of edits, a profile activation, an undo --
+        opens it or joins it, so the user never faces two clocks."""
+        self._pending_breaking: dict[str, dict[str, Any]] = {}
+        """Display-breaking edits inside the debounce, by rule identity, last value winning.
+
+        Not in the model yet, and the Page is not refreshed meanwhile: its widgets keep the
+        value the user set until the batch applies."""
+        self._debounce: int | None = None
         self._undo_toast: Adw.Toast | None = None
         """The undo offer currently on screen, so the next one replaces it.
 
@@ -1288,34 +1307,112 @@ class MainWindow(Adw.ApplicationWindow):
     # --- monitors -------------------------------------------------------------------------
 
     def _apply_monitor_breaking(self, output: str, fields: Mapping[str, Any]) -> None:
-        """A display-breaking edit: apply, then Confirm-or-revert (ADR-0008).
+        """A display-breaking edit: held for the debounce, then applied behind the countdown.
 
-        The snapshot is taken *before* the patch, so revert restores what the user was
-        looking at when they made the change -- silence, Esc, or the countdown expiring
-        all put it back; only the Keep button makes the new state stand.
-
-        The edit and its revert run inside an undo group (#189): kept, the change is one
-        undo step; reverted, it never stood, and the stack shows nothing for it.
+        ADR-0008 "batch": edits arriving within `BREAKING_DEBOUNCE_MS` of each other land as
+        one patch per display, which the queue carries as one transaction, under one
+        countdown. Each edit re-arms the debounce, so a drag or a spinner held down applies
+        once, after it stops.
         """
-        snapshot = self._session.monitor_snapshot()
-        group = self._session.begin_undo_group(frozenset({"monitors", "workspace_rules"}))
-        if not self._session.patch_monitor_rule(output, fields):
-            self._session.end_undo_group(group, title="Monitor rule changed")
+        self._pending_breaking.setdefault(output, {}).update(fields)
+        if self._debounce is not None:
+            GLib.source_remove(self._debounce)
+        self._debounce = GLib.timeout_add(BREAKING_DEBOUNCE_MS, self._on_debounce)
+
+    def _on_debounce(self) -> bool:
+        self._debounce = None
+        self.flush_monitor_edits()
+        return False
+
+    def flush_monitor_edits(self) -> None:
+        """Apply the held display-breaking edits now: what the debounce does when it runs out.
+
+        Public so the UI tier can run the debounce out without waiting for it.
+        """
+        pending = self._drop_pending_breaking()
+        if not pending:
             return
-        self._refresh_monitors()
-        ConfirmRevertDialog(
-            on_keep=lambda: self._keep_monitors(group),
-            on_revert=lambda: self._revert_monitors(snapshot, group),
-        ).present(self)
 
-    def _keep_monitors(self, group: UndoGroup) -> None:
-        self._session.end_undo_group(group, title="Display settings changed")
+        def patch() -> bool:
+            applied = [self._session.patch_monitor_rule(o, f) for o, f in pending.items()]
+            return any(applied)
+
+        self._behind_countdown(patch)
+
+    def _drop_pending_breaking(self) -> dict[str, dict[str, Any]]:
+        if self._debounce is not None:
+            GLib.source_remove(self._debounce)
+            self._debounce = None
+        pending, self._pending_breaking = self._pending_breaking, {}
+        return pending
+
+    def _behind_countdown(self, change: Callable[[], bool], *, profile: bool = False) -> bool:
+        """Make a display-breaking change inside the one countdown, opening it or joining it.
+
+        Opening snapshots both rule lists and the active profile *before* the change, and
+        opens the undo group that turns the countdown into one step or none (#189). Joining
+        applies the change and gives the clock back in full: the user must get a whole
+        countdown to judge the newest change by, and never a second dialog (S3 of #151). A
+        refused change leaves no countdown behind that it would have opened.
+        """
+        countdown = self._countdown
+        opened = countdown is None
+        if countdown is None:
+            countdown = self._countdown = _DisplayCountdown(
+                snapshot=self._session.monitor_state_snapshot(),
+                group=self._session.begin_undo_group(DISPLAY_KINDS),
+                dialog=ConfirmRevertDialog(
+                    on_keep=self._keep_display, on_revert=self._revert_display
+                ),
+            )
+        if not change():
+            if opened:
+                self._countdown = None
+                self._session.end_undo_group(countdown.group, title="Monitor rule changed")
+            return False
+        countdown.includes_profile |= profile
+        self._refresh_monitors()
+        if opened:
+            countdown.dialog.present(self)
+        else:
+            countdown.dialog.restart()
+        return True
+
+    def _keep_display(self) -> None:
+        """Keep: everything the countdown carried stands, as one undo step."""
+        countdown, self._countdown = self._countdown, None
+        if countdown is None:
+            return
+        self._session.end_undo_group(countdown.group, title="Display settings changed")
         self._refresh_monitors()
 
-    def _revert_monitors(self, snapshot: tuple[MonitorRule, ...], group: UndoGroup) -> None:
-        self._session.restore_monitor_rules(snapshot)
-        self._session.end_undo_group(group, title="Monitor rule changed")
+    def _revert_display(self) -> None:
+        """Revert, Esc, close or expiry: the display goes back to before the countdown.
+
+        Only the display-breaking fields go back (`revert_breaking`), so a vrr edit made
+        while the clock ran survives. A countdown that activated a profile reverts whole --
+        rules, workspace pins and the active pointer -- because a profile sets benign fields
+        too, and the user refused all of it. Breaking edits still inside the debounce are
+        dropped: they were never applied, and the user asked for the old display back.
+        """
+        countdown, self._countdown = self._countdown, None
+        if countdown is None:
+            return
+        self._drop_pending_breaking()
+        snapshot = countdown.snapshot
+        if countdown.includes_profile:
+            self._session.restore_monitor_state(snapshot)
+        else:
+            self._session.restore_monitor_rules(
+                revert_breaking(snapshot.monitors, self._session.monitor_rules)
+            )
+        self._session.end_undo_group(countdown.group, title="Monitor rule changed")
         self._refresh_monitors()
+
+    @property
+    def display_confirm(self) -> ConfirmRevertDialog | None:
+        """The Confirm-or-revert dialog of the open countdown, if one is open."""
+        return None if self._countdown is None else self._countdown.dialog
 
     def _apply_monitor_benign(self, output: str, fields: Mapping[str, Any]) -> None:
         """A benign edit (vrr, an absent display's rule): instant per ADR-0003."""
@@ -1409,30 +1506,18 @@ class MainWindow(Adw.ApplicationWindow):
         self._refresh_monitors()
 
     def _activate_monitor_profile(self, slug: str) -> None:
-        """Activation: one transaction, then Confirm-or-revert (ADR-0015).
+        """Activation: one transaction, behind the one countdown (ADR-0015).
 
-        The snapshot is wider than a field edit's -- both rule lists plus the active
-        pointer -- because activation touches workspace pins too, and a revert that
-        left the refused profile's pins standing would be half a revert.
+        Joins a countdown already open rather than opening a second clock (#192); the
+        revert then puts back both rule lists and the active pointer, because activation
+        touches workspace pins too, and a revert that left the refused profile's pins
+        standing would be half a revert. Breaking edits still inside the debounce are
+        dropped: the profile replaces the monitor list they were going to patch.
         """
-        snapshot = self._session.monitor_state_snapshot()
-        if not self._session.activate_monitor_profile(slug):
-            return
-        self._refresh_monitors()
-        self._profile_confirm = ConfirmRevertDialog(
-            on_keep=self._refresh_monitors,
-            on_revert=lambda: self._revert_monitor_state(snapshot),
+        self._drop_pending_breaking()
+        self._behind_countdown(
+            lambda: self._session.activate_monitor_profile(slug), profile=True
         )
-        self._profile_confirm.present(self)
-
-    @property
-    def profile_confirm(self) -> ConfirmRevertDialog | None:
-        """The countdown guarding the last activation. Probed by the smoke tier."""
-        return self._profile_confirm
-
-    def _revert_monitor_state(self, snapshot: MonitorStateSnapshot) -> None:
-        self._session.restore_monitor_state(snapshot)
-        self._refresh_monitors()
 
     def _update_monitor_profile(self, slug: str) -> None:
         """The drift badge's "Update": recapture reality into the profile."""
@@ -1727,7 +1812,12 @@ class MainWindow(Adw.ApplicationWindow):
         self._dismiss_undo()
         offered = self._session.can_undo
         step = self._session.last_gesture
-        if self._session.undo():
+        if _breaks_display(step):
+            # Putting a mode back can black-screen as surely as choosing one (#192).
+            undone = self._behind_countdown(self._session.undo)
+        else:
+            undone = self._session.undo()
+        if undone:
             # `sync` runs on the session's own `on_state_changed` too, but the undo has
             # already moved the model and the Rows should not wait for the compositor to
             # confirm what the app is about to write.
@@ -1983,6 +2073,13 @@ class MainWindow(Adw.ApplicationWindow):
         if self._closing:
             return False
         self._closing = True
+        # A display change still on its clock must not outlive the window that could have
+        # kept it: closing is one more way out that is not the Keep button (ADR-0008).
+        self._drop_pending_breaking()
+        if self._countdown is not None:
+            dialog = self._countdown.dialog
+            dialog.emit("response", "revert")
+            dialog.force_close()
         self._session.close(self.destroy)
         return True
 
@@ -2061,6 +2158,30 @@ def _dependents(schema: Schema) -> dict[str, tuple[str, ...]]:
 
 def _scrolled(page: Adw.PreferencesPage) -> Gtk.ScrolledWindow:
     return Gtk.ScrolledWindow(child=page, hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+
+@dataclass(slots=True)
+class _DisplayCountdown:
+    """The one Confirm-or-revert countdown (S3 of #151): what Revert restores, and how.
+
+    `snapshot` is taken when the countdown opens, before its first change. `group` holds
+    every monitor and workspace-rule step made while it runs, so Keep ends it as one step
+    and Revert, committed inside it, leaves none or only the benign edits that survived.
+    `includes_profile` turns Revert from field-aware into whole.
+    """
+
+    snapshot: MonitorStateSnapshot
+    group: UndoGroup
+    dialog: ConfirmRevertDialog
+    includes_profile: bool = False
+
+
+def _breaks_display(step: Step | None) -> bool:
+    """Whether undoing `step` would change a display-breaking monitor field."""
+    return isinstance(step, EntityStep) and any(
+        edit.kind == "monitors" and breaks_display(edit.after, edit.before)
+        for edit in step.edits
+    )
 
 
 @dataclass(frozen=True, slots=True)

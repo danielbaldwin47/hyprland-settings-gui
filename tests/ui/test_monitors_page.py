@@ -550,7 +550,7 @@ def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None
     session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@48"})
 
     window._activate_monitor_profile(slug)
-    dialog = window.profile_confirm
+    dialog = window.display_confirm
     assert dialog is not None
     assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@60"]
     active = session.active_monitor_profile()

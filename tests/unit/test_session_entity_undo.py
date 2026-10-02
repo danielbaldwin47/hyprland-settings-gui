@@ -308,7 +308,7 @@ def test_a_reverted_group_leaves_no_step(tmp_path: Path) -> None:
     session.on_recorded = recorded.append
 
     group = session.begin_undo_group(DISPLAYS)
-    snapshot = session.monitor_snapshot()
+    snapshot = session.monitor_state_snapshot().monitors
     session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@144"})
     applier.settle()
     session.restore_monitor_rules(snapshot)

@@ -21,6 +21,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from _live_window import live_entity_window
+
 APP_VERSION = "0.0.0-test"
 
 ROUNDING = "decoration:rounding"
@@ -230,53 +232,6 @@ def _label_text(widget: Any) -> str | None:
 # --- entity steps (#189) ----------------------------------------------------------------------
 
 
-def live_entity_window(tmp_path: Path) -> Any:
-    """A real Session made live by an applier that reports entity commits on `settle()`.
-
-    The UI tier has no compositor, so the applier stands where `_go_live` puts the real one,
-    and `settle()` hands the session the verdict the queue would have -- which is where an
-    entity step is recorded and the toast is raised.
-    """
-    from gi.repository import Adw
-
-    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
-    from hyprtweaker.engine.ipc import Instance, NoInstance
-    from hyprtweaker.engine.paths import ConfigPaths
-    from hyprtweaker.session import Session
-    from hyprtweaker.ui.shell.window import MainWindow
-
-    def no_compositor() -> Instance:
-        raise NoInstance("no compositor in the UI smoke tier")
-
-    class SettlingApplier:
-        serial = 0
-        reported = 0
-
-        def commit_entities(self) -> int:
-            self.serial += 1
-            return self.serial
-
-        def settle(self) -> None:
-            if self.serial > self.reported:
-                self.reported = self.serial
-                session._applied(ApplyResult(ApplyOutcome.OK, entities=self.serial))
-
-    Adw.init()
-    session = Session(
-        spawn=lambda coro: coro.close(),
-        paths=ConfigPaths.rooted_at(tmp_path),
-        app_version=APP_VERSION,
-        connect=no_compositor,
-    )
-    applier = SettlingApplier()
-    session._applier = applier
-    session._offline_reason = None
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
-    window = MainWindow(session, application=app)
-    session.on_recorded = window.offer_undo
-    return session, window, applier
-
-
 def exec_bind(keys: str) -> Any:
     from hyprtweaker.engine.model.entities import Bind, DispatcherCall
 
@@ -325,6 +280,7 @@ def test_a_reverted_display_change_leaves_nothing_to_undo(
     )
 
     window._apply_monitor_breaking("eDP-1", {"mode": "1920x1080@144"})
+    window.flush_monitor_edits()
     applier.settle()
     (dialog,) = shown
     dialog._on_response(dialog, "revert")
@@ -345,6 +301,7 @@ def test_a_kept_display_change_is_one_step(tmp_path: Path, monkeypatch: Any) -> 
     )
 
     window._apply_monitor_breaking("eDP-1", {"mode": "1920x1080@144"})
+    window.flush_monitor_edits()
     applier.settle()
     assert window.undo_toast is None, "a held step raised a toast mid-countdown"
     (dialog,) = shown

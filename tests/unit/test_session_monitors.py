@@ -72,7 +72,7 @@ class TestMonitorRules:
         session, _applier = live_session(tmp_path)
         session.patch_monitor_rule("DP-1", {"scale": 2})
 
-        snapshot = session.monitor_snapshot()
+        snapshot = session.monitor_state_snapshot().monitors
         session.patch_monitor_rule("DP-1", {"scale": 1})
         session.patch_monitor_rule("DP-2", {"mode": "preferred"})
 
@@ -83,7 +83,7 @@ class TestMonitorRules:
         session, applier = live_session(tmp_path)
         session.patch_monitor_rule("desc:BOE", {"scale": 1.5})
 
-        snapshot = session.monitor_snapshot()
+        snapshot = session.monitor_state_snapshot().monitors
         session.patch_monitor_rule("desc:BOE", {"scale": 2, "transform": 1})
         assert session.monitor_rules[0].fields["scale"] == 2
 
