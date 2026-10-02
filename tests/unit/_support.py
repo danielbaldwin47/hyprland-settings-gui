@@ -297,12 +297,29 @@ class SettlingApplier:
         self.commits.append(names)
 
     def settle(self, outcome: str = "ok") -> None:
+        """Report every commit since the last report as one transaction ending in `outcome`.
+
+        `"config-errors"` is Hyprland rejecting a Module this transaction wrote -- the
+        rejection that does not stand (`Session._stands`); an error in a file the app did not
+        write is a different verdict, and stands.
+        """
         from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+        from hyprtweaker.engine.writer import WriteResult
 
         if self.serial == self._reported:
             return
         self._reported = self.serial
-        self._session._applied(ApplyResult(ApplyOutcome(outcome), entities=self.serial))
+        rejected = ApplyOutcome(outcome) is ApplyOutcome.CONFIG_ERRORS
+        self._session._applied(
+            ApplyResult(
+                ApplyOutcome(outcome),
+                entities=self.serial,
+                write=WriteResult(("binds.lua",), (), (), False, ()) if rejected else None,
+                errors=("/home/user/.config/hypr/hyprtweaker/binds.lua:4: unexpected symbol",)
+                if rejected
+                else (),
+            )
+        )
 
 
 def entity_session(root: Path) -> tuple[Session, SettlingApplier]:

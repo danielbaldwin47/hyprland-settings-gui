@@ -85,11 +85,12 @@ class ApplyQueue:
         debounce: float = DEBOUNCE_SECONDS,
         on_result: Callable[[ApplyResult], None] | None = None,
     ) -> None:
-        """`on_result` sees every transaction, including ones nobody is awaiting.
+        """`on_result` sees every Apply transaction, including ones nobody is awaiting.
 
         A debounced `touch` has no caller left to hand a result to by the time it applies,
         so the callback is the only way error surfacing hears about the apply that a
-        slider drag ended in.
+        slider drag ended in. A `run_now` operation is not an Apply: its result goes to the
+        caller awaiting it, and to nobody else (#227).
         """
         self._transaction = transaction
         self._debounce = debounce
@@ -232,7 +233,9 @@ class ApplyQueue:
         comes from the caller and the serialization comes from here.
 
         `keys` is what the result reports itself as accountable for; the operation is free to
-        ignore it and derive its own.
+        ignore it and derive its own. The result is the caller's alone, never `on_result`'s:
+        the caller knows what it ran, and a subscriber reading it as an Apply would close
+        gestures over its keys and report it a second time.
         """
         return await self._enqueue_priority(operation, tuple(keys))
 
@@ -383,7 +386,8 @@ class ApplyQueue:
         for waiter in waiters:
             if not waiter.done():
                 waiter.set_result(result)
-        self._notify(result)
+        if operation is None:
+            self._notify(result)
         # Last, so a `drain()` that returns has already seen every subscriber run.
         self._settle()
 
