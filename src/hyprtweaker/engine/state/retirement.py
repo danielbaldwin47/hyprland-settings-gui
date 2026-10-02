@@ -198,15 +198,26 @@ def restore(
 def _taker(
     name: str, entry: RetiredValue, schema: Schema, live: LiveNames | None
 ) -> ResolvedOption | None:
-    """The Option that takes a kept value back now, if any."""
+    """The Option that takes a kept value back now, if any.
+
+    Stricter than `emittable` with a snapshot: an older Hyprland lacking the name is `Not
+    in this Hyprland`, which keeps writes going, but putting a kept value back into a
+    compositor without the key is a config error. So a running compositor must name it.
+    """
+
+    def takes(taker: str) -> bool:
+        if live is not None and taker not in live.names:
+            return False
+        return emittable(taker, schema, live)
+
     option = schema.get(name)
     if option is not None:
         returned = live is not None or version_key(entry.retired_in) <= version_key(
             schema.hyprland_version
         )
-        return option if returned and emittable(name, schema, live) else None
+        return option if returned and takes(name) else None
     renamed = next((each for each in schema if each.renamed_from == name), None)
-    return renamed if renamed is not None and emittable(renamed.name, schema, live) else None
+    return renamed if renamed is not None and takes(renamed.name) else None
 
 
 def landed(manifest: Manifest, restored: Sequence[Restoration]) -> Manifest:

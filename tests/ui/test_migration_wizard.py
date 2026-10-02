@@ -483,10 +483,8 @@ class TestImportBelowTheFloor:
         assert entry.get_property("text") == "Import..."
         assert entry.get_sensitive() is False
         assert entry.get_tooltip_text() == (
-            "Hyprland 0.55.0 is running, and this app needs Hyprland 0.56 or newer"
-            " — settings are read-only."
+            "Hyprland 0.55.0 is running, and this app needs Hyprland 0.56 or newer."
         )
-        assert entry.get_tooltip_text() == window._banner.get_title()
 
     def test_activating_it_anyway_opens_no_wizard_and_no_file_picker(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -523,6 +523,12 @@ class Session:
         return self._unsupported_reason is not None
 
     @property
+    def unsupported_reason(self) -> str | None:
+        """Why the running Hyprland is too old for this app, as one sentence without a full
+        stop, or `None` when it is not."""
+        return self._unsupported_reason
+
+    @property
     def offline_reason(self) -> str | None:
         """Why this session is read-only, in one line fit for the Banner."""
         return self._offline_reason
@@ -1586,9 +1592,8 @@ class Session:
     ) -> None:
         """Write the model without the retired keys and with the restored values, then
         stop keeping each restored value the write recorded."""
-        # Entities-dirty, so the write happens even with no key to read back: dropping a
-        # retired key is a change to the Module, not to any Option the model holds.
-        applier.commit_entities()
+        # Dropping a retired key changes the Module, not any Option the model holds.
+        applier.force_write()
         await applier.apply(*(each.option.name for each in restored))
         if restored:
             self._writer.set_retired(
