@@ -321,6 +321,9 @@ class ResolvedOption:
     device_overridable: bool = False
     refresh: tuple[str, ...] = ()
     curation_flags: tuple[CurationFlag, ...] = field(default=())
+    renamed_from: str | None = None
+    """The Option's previous name, from the Overlay: where a value retired under that name
+    restores to (ADR-0012, `state/retirement.py`)."""
 
     @property
     def dotted_key(self) -> str:

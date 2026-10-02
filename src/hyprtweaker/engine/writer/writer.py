@@ -22,7 +22,7 @@ this; the Writer stays synchronous and ignorant of the compositor.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -42,7 +42,7 @@ from ..paths import (
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
 )
-from ..state.manifest import Manifest, ModuleRecord
+from ..state.manifest import Manifest, ModuleRecord, RetiredValue
 from ..state.manifest import is_damaged as manifest_is_damaged
 from . import syntax
 from .animations import render_animations_module
@@ -534,6 +534,15 @@ class Writer:
         """
         self._save(self._manifest_for(model).with_quarantine(requires))
         return self.regenerate_entrypoint(model)
+
+    def set_retired(self, model: ConfigModel, retired: Mapping[str, RetiredValue]) -> None:
+        """Record exactly `retired` as the kept values of removed Options (ADR-0012).
+
+        Manifest only: the Module stops carrying a retired key on the next `write`, because
+        the model no longer renders it. Loaded fresh and saved, like `set_quarantine`, so it
+        never reverts a record another write made a moment earlier.
+        """
+        self._save(self._manifest_for(model).with_retired(retired))
 
     # --- internals ----------------------------------------------------------------------
 

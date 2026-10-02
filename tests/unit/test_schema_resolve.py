@@ -322,3 +322,22 @@ def test_load_schema_reads_the_shipped_files() -> None:
 def test_missing_schema_directory_names_where_it_looked(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         load_schema("0.56.2", tmp_path)
+
+
+def test_a_rename_reaches_the_resolved_option() -> None:
+    """ADR-0012: a retired value restores under the new name, and the Session holds a Schema,
+    not the Overlay -- so the old name has to survive resolution."""
+    schema = Schema.merge(
+        generated_module.GeneratedSchema(
+            hyprland_version="0.57.0",
+            options=(option("general:border_width", order=0), option("general:layout")),
+            provenance={},
+        ),
+        Overlay(
+            sections={},
+            options={"general:border_width": OverlayEntry(renamed_from="general:border_size")},
+        ),
+    )
+
+    assert schema["general:border_width"].renamed_from == "general:border_size"
+    assert schema["general:layout"].renamed_from is None
