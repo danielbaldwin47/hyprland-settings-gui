@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 from _support import SAMPLE_APP_VERSION, sample_schema
-from test_bridge_wire import DMS_COLORS, MATUGEN_CONFIG, WALLUST_CONFIG, put
+from test_bridge_wire import DMS_COLORS, HAND_EDIT, MATUGEN_CONFIG, WALLUST_CONFIG, put
 from test_migration_flow import CONF, FakeClient, run
 
 from hyprtweaker.engine.bridge import REGISTRY
-from hyprtweaker.engine.bridge.wire import WireConsent
+from hyprtweaker.engine.bridge.wire import WireConsent, Wired, wire
 from hyprtweaker.engine.migration import bridge_setup
 from hyprtweaker.engine.migration import flow as flow_module
 from hyprtweaker.engine.migration import sentinel as sentinels
@@ -405,6 +405,36 @@ class TestRollBack:
             "as it is. The copy from before setup is in "
             "~/.local/state/hyprtweaker/bridge-backups/.",
         )
+
+    @pytest.mark.parametrize("relaunched", [False, True])
+    def test_a_hand_edit_made_after_an_earlier_setup_survives_switch_and_roll_back(
+        self, two_tools: ConfigPaths, relaunched: bool
+    ) -> None:
+        """Finding 1 of the #153 review, on the wizard's paths: an earlier setup whose entry
+        is gone left its record behind; the user then edited the config by hand. Rolling the
+        switch back, in this app or a relaunched one, puts back that edit, byte for byte."""
+        earlier = WireConsent(offer(flow_for(two_tools, FakeClient()), "matugen").plan)
+        assert isinstance(wire(earlier.plan, earlier, register=lambda _tool: True), Wired)
+        config = two_tools.config_home / "matugen/config.toml"
+        config.write_text(HAND_EDIT, encoding="utf-8")
+        flow = flow_for(two_tools, FakeClient())
+        flow.consent(WireConsent(offer(flow, "matugen").plan))
+        run(flow.switch())
+        assert config.read_text(encoding="utf-8") != HAND_EDIT
+
+        if relaunched:
+            again = MigrationFlow(
+                paths=two_tools,
+                schema=sample_schema(),
+                app_version=SAMPLE_APP_VERSION,
+                client=FakeClient(),
+            )
+            again.roll_back(again.pending_switch())
+        else:
+            flow.roll_back()
+
+        assert config.read_bytes() == HAND_EDIT.encode("utf-8")
+        assert bridges(two_tools) == []
 
 
 class TestTheOrder:

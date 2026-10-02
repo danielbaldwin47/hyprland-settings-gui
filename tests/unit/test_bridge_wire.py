@@ -536,6 +536,61 @@ def test_leave_it_as_it_is_removes_only_the_entry(paths: ConfigPaths) -> None:
     ) == Unwired("matugen", note="matugen is not set up here, so there was nothing to undo.")
 
 
+HAND_EDIT = """\
+[config]
+
+[templates.mine]
+input_path = '~/.config/matugen/templates/mine.css'
+output_path = '~/.config/mine/colors.css'
+"""
+"""The user's own matugen config, written while the app's Bridge entry was gone."""
+
+
+def entry_dropped_then_hand_edited(paths: ConfigPaths) -> tuple[Registrar, Path]:
+    """Set up, then the Bridge entry vanishes without an unwire (a dotfiles checkout drops
+    `manifest.json`), then the user rewrites the tool's config by hand."""
+    config = put(paths.config_home / "matugen/config.toml", MATUGEN_CONFIG)
+    registrar = Registrar(paths)
+    plan = planned(paths, "matugen")
+    wire(plan, WireConsent(plan), register=registrar.add)
+    registrar.save(registrar.manifest().remove_bridge("matugen"))
+    config.write_text(HAND_EDIT, encoding="utf-8")
+    return registrar, config
+
+
+def test_a_hand_edit_made_while_the_entry_was_gone_survives_setting_up_and_removing_again(
+    paths: ConfigPaths,
+) -> None:
+    """Finding 1 of the #153 review: a second `wire` reused the first record, so Remove put
+    back the config from before the first setup and the hand edit was gone, with no copy."""
+    registrar, config = entry_dropped_then_hand_edited(paths)
+    plan = planned(paths, "matugen")
+    assert isinstance(wire(plan, WireConsent(plan), register=registrar.add), Wired)
+    assert config.read_text(encoding="utf-8") != HAND_EDIT
+
+    result = unwire(
+        "matugen", paths=paths, manifest=registrar.manifest(), unregister=registrar.remove
+    )
+
+    assert isinstance(result, Unwired)
+    assert config.read_bytes() == HAND_EDIT.encode("utf-8")
+    assert registrar.manifest().bridges == ()
+
+
+def test_a_hand_edit_made_while_the_entry_was_gone_stops_remove_and_changes_nothing(
+    paths: ConfigPaths,
+) -> None:
+    registrar, config = entry_dropped_then_hand_edited(paths)
+    before = tree(paths.config_home.parent)
+
+    result = unwire(
+        "matugen", paths=paths, manifest=registrar.manifest(), unregister=registrar.remove
+    )
+
+    assert isinstance(result, NeedsChoice)
+    assert tree(paths.config_home.parent) == before
+
+
 def test_a_symlinked_config_stays_a_symlink(paths: ConfigPaths) -> None:
     dotfiles = put(paths.config_home.parent / "dotfiles/matugen.toml", MATUGEN_CONFIG)
     config = paths.config_home / "matugen/config.toml"

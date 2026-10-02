@@ -635,19 +635,39 @@ class _Record:
         return cls(directory, tool, files)
 
     def wrote(self, target: Path, text: str) -> _Record:
-        """This record once `text` is written to `target`, copying the original first time."""
+        """This record once `text` is written to `target`, copying the original first time.
+
+        A file the record already knows but that holds neither its original nor a text
+        `wire` wrote was changed by someone else since (the Bridge entry went missing, then
+        the user edited it, then set the tool up again). The record is stale for that file:
+        what is on disk now becomes its original, copied like a first one, so a later
+        `unwire` puts back the user's edit rather than the file from before the first setup.
+        The older copy stays in the record's directory as history.
+        """
         digest = _sha(text.encode("utf-8"))
         for index, each in enumerate(self.files):
             if each.path == target:
-                updated = replace(each, wrote=tuple(dict.fromkeys([*each.wrote, digest])))
+                if self.status(each) is _Status.CHANGED:
+                    updated = _FileRecord(target, self._copy(target), (digest,))
+                else:
+                    updated = replace(each, wrote=tuple(dict.fromkeys([*each.wrote, digest])))
                 files = (*self.files[:index], updated, *self.files[index + 1 :])
                 return replace(self, files=files)
-        copy_name = None
-        if target.is_file():
-            copy_name = f"copies/{len(self.files)}/{target.name}"
-            (self.directory / copy_name).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, self.directory / copy_name)
-        return replace(self, files=(*self.files, _FileRecord(target, copy_name, (digest,))))
+        return replace(
+            self, files=(*self.files, _FileRecord(target, self._copy(target), (digest,)))
+        )
+
+    def _copy(self, target: Path) -> str | None:
+        """Copy `target` under `copies/<n>/` (a number no copy uses yet); `None` if absent."""
+        if not target.is_file():
+            return None
+        number = 0
+        while (self.directory / f"copies/{number}").exists():
+            number += 1
+        copy_name = f"copies/{number}/{target.name}"
+        (self.directory / copy_name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(target, self.directory / copy_name)
+        return copy_name
 
     def status(self, each: _FileRecord) -> _Status:
         current = _read_bytes(each.path)
