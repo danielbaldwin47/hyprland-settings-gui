@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from _support import synthetic_schema_dir
+from _support import SCHEMA_DIR, synthetic_schema_dir
 
 from hyprtweaker.engine.schema import (
     GeneratedOption,
@@ -21,6 +21,7 @@ from hyprtweaker.engine.schema import (
     SectionOverlay,
     Visibility,
     Widget,
+    available_versions,
     below_lua_floor,
     derive_title,
     load_schema,
@@ -206,6 +207,16 @@ def test_a_lua_hyprland_older_than_every_schema_gets_the_oldest() -> None:
     """ADR-0012 §Support window: every version down to 0.56 degrades, none crashes."""
     assert select_version("0.56.1", ("0.56.2", "0.58.0")) == "0.56.2"
     assert select_version("0.56.0", ("0.56.2",)) == "0.56.2"
+
+
+def test_each_shipped_schema_is_picked_by_the_release_it_describes() -> None:
+    """ADR-0012 §Support window: latest + previous ship, and each loads for its own release."""
+    shipped = available_versions(SCHEMA_DIR)
+
+    assert len(shipped) == 2
+    for running in shipped:
+        assert select_version(running, shipped) == running
+        assert load_schema(running, SCHEMA_DIR).hyprland_version == running
 
 
 def test_a_hyprland_without_a_lua_config_has_no_schema() -> None:

@@ -141,6 +141,10 @@ def unreachable_submaps(entities: EntitySet) -> set[str]:
     while changed:
         changed = False
         for bind, target in entries:
+            # A `submap_universal` bind is live even inside a submap nothing enters:
+            # probed on Hyprland 0.56.2 (nested, wtype key input, #111), it fires at root
+            # and inside another submap, and its entry dispatch lands. A plain bind in
+            # the same submap does not fire. `test_universal_bind_probe.py` re-asks.
             live = (
                 bind.submap is None or bind.options.submap_universal or bind.submap in reachable
             )
