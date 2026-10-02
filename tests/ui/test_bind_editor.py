@@ -286,15 +286,6 @@ def test_the_raw_table_says_what_the_action_takes_in_the_users_words() -> None:
     )
 
 
-def test_an_unconfirmed_action_says_why_it_has_no_form() -> None:
-    editor = add_flow(lookup("group.lock"))
-
-    assert action_group_description(editor) == (
-        "Hyprland does not say which settings this action reads, so the app has no form "
-        "for it. Type each setting as key = value, one per line."
-    )
-
-
 def test_an_action_this_version_does_not_know_keeps_its_raw_table() -> None:
     call = DispatcherCall(path="plugin.thing", args={"speed": 2})
     editor, saved = open_editor(Bind(keys="SUPER + w", dispatcher=call))
@@ -429,6 +420,56 @@ def test_a_text_argument_shows_its_hint_on_the_row() -> None:
         if isinstance(w, Gtk.Label) and w.get_label() == mode.get_subtitle()
     ]
     assert [w.get_visible() for w in hint] == [True]
+
+
+@pytest.mark.parametrize("path", ["group.lock", "group.lock_active", "window.deny_from_group"])
+def test_a_group_gate_saved_with_its_action_shows_it_and_saves_it_untouched(path: str) -> None:
+    """The `action` the Importer writes is a row now (#211), not a key the form carries."""
+    editor, saved = open_editor(
+        Bind(keys="SUPER + g", dispatcher=DispatcherCall(path=path, args={"action": "enable"}))
+    )
+
+    assert "Action" in arg_rows(editor)
+    assert editor._arg_entries["action"].get_text() == "enable"
+    assert kept_lines(editor) == []
+    editor._save()
+    assert saved_lua(saved) == [f'hl.dsp.{path}{{ action = "enable" }}']
+
+
+@pytest.mark.parametrize(
+    "path", ["group.lock", "group.lock_active", "window.deny_from_group", "group.move_window"]
+)
+def test_a_window_the_compositor_ignores_is_kept_not_shown(path: str) -> None:
+    """`window` was fired at each of these and changed nothing (#211), so it has no row; a
+    saved call's copy is carried by the "Also kept" group and survives the save."""
+    args = {"window": "class:foot"}
+    editor, saved = open_editor(
+        Bind(keys="SUPER + g", dispatcher=DispatcherCall(path=path, args=args))
+    )
+
+    assert "Window" not in arg_rows(editor)
+    assert kept_lines(editor) == ['window = "class:foot"']
+    editor._save()
+    assert saved_lua(saved) == [f'hl.dsp.{path}{{ window = "class:foot" }}']
+
+
+def test_move_window_forward_is_a_three_choice_row_and_saves_untouched() -> None:
+    from gi.repository import Adw
+
+    editor, saved = open_editor(
+        Bind(
+            keys="SUPER + g",
+            dispatcher=DispatcherCall(path="group.move_window", args={"forward": False}),
+        )
+    )
+    forwards = arg_rows(editor)["Forwards"]
+
+    assert isinstance(forwards, Adw.ComboRow)
+    assert choices(forwards) == ["Not set", "Yes", "No"]
+    assert forwards.get_selected() == 2
+    assert kept_lines(editor) == []
+    editor._save()
+    assert saved_lua(saved) == ["hl.dsp.group.move_window{ forward = false }"]
 
 
 def test_a_text_argument_row_is_labelled_for_screen_readers() -> None:
