@@ -104,6 +104,10 @@ def hyprland_binary() -> str | None:
 DRM_CARD_VARIABLE = "HARNESS_DRM_CARD"
 SYS_DRM = Path("/sys/class/drm")
 
+#: The owner's switch for nesting into the desktop session in a host window. Without it and
+#: without a card the Harness refuses to run; the shell fence refuses it from an agent.
+HOST_WINDOW_OPT_IN = "HYPRTWEAKER_HARNESS_HOST_WINDOW"
+
 #: How long a harness run waits for another run to release the shared card.
 CARD_LOCK_TIMEOUT_SECONDS = 600.0
 
@@ -121,6 +125,14 @@ def unavailable_reason() -> str | None:
         return "no hyprctl binary on this machine"
     if shutil.which("grim") is None:
         return "no grim binary on this machine (the screenshot half cannot run)"
+    if drm_card() is None and os.environ.get(HOST_WINDOW_OPT_IN) != "1":
+        # Without a card the child nests into the desktop session: one host window per
+        # test on the owner's screen (F12 of the #148 review). Only the owner asks for that.
+        return (
+            f"{DRM_CARD_VARIABLE} is unset, and without a card a nested Hyprland opens a "
+            f"window on the desktop session. Set {DRM_CARD_VARIABLE}=/dev/dri/card0 to run "
+            f"windowless; {HOST_WINDOW_OPT_IN}=1 nests in a host window, and is the owner's"
+        )
     if not os.environ.get("WAYLAND_DISPLAY") and drm_card() is None:
         return (
             "no host Wayland session (WAYLAND_DISPLAY unset): a nested Hyprland cannot "

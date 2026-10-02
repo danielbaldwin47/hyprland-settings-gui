@@ -53,8 +53,16 @@
 #    `omarchy-version`), `hyprpm` (but `list`), `uwsm` (but `check`), `hyprshot`,
 #    `notify-send`, `loginctl` and `systemctl` but their reads (`list-*`, `show*`,
 #    `*-status`; `status`, `cat`, `is-*`).
-#  - Setting `HYPRTWEAKER_UI_HOST_DISPLAY`, the owner's opt-in that maps the UI
-#    tier's windows on the desktop, as a prefix, an assignment or an `export`.
+#  - Setting `HYPRTWEAKER_UI_HOST_DISPLAY` or `HYPRTWEAKER_HARNESS_HOST_WINDOW`, the
+#    owner's opt-ins that put the UI tier or the Harness on the desktop, as a prefix,
+#    an assignment or an `export`.
+#  - An app launch outside the sandbox (#148 review F12): the `hyprtweaker` launcher,
+#    `meson devenv` (its command judged as typed), `tools/sandbox.py --window`; and the
+#    Harness tier (`pytest tests/integration`) without `HARNESS_DRM_CARD=` on it.
+#  - A theming tool, wallpaper daemon or bar (ruling A14): matugen, wallust, noctalia,
+#    qs/quickshell, dms, swww, awww, hyprpaper, waybar; `gsettings` but its reads;
+#    `dbus-update-activation-environment`.
+#  - `git stash` but `list` and `show`: one stack shared by every worktree.
 #
 # A command is judged only at command position: the command is split into
 # simple commands (quotes, `$(…)`, backticks, pipes and heredocs followed), and
@@ -85,7 +93,7 @@ if ! command -v jq > /dev/null 2>&1; then
     raw_stdin='python[0-9.]*( +-)? *<<.*(Gtk|Adw|Gdk|gi\.repository)'
     raw_app='python[0-9.]*( +-[A-Za-z]+)* +(-[A-Za-z]*m *hyprtweaker|src/hyprtweaker)'
     raw_xfile='(^|[^[:alnum:]_.-])(rm|unlink|rmdir|mv|ln|shred|find)[ \t"][^|;&]*(\.X11-unix|\.X[^ /"]*-lock|/tmp/\.X[0-9]*[*?])'
-    raw_session='(^|[^[:alnum:]_.-])(omarchy-[a-z]|(hyprpm|uwsm|loginctl|notify-send|wl-copy|grim|hyprshot|hyprpicker|cage|sway|killall5|skill)([^[:alnum:]_.-]|$))'
+    raw_session='(^|[^[:alnum:]_.-])(omarchy-[a-z]|(hyprpm|uwsm|loginctl|notify-send|wl-copy|grim|hyprshot|hyprpicker|cage|sway|killall5|skill|matugen|wallust|noctalia|quickshell|swww|awww|hyprpaper|dbus-update-activation-environment)([^[:alnum:]_.-]|$))|gsettings +(set|reset)|git( +-[^ ]+)* +stash( +(push|pop|apply|drop|clear|save|store|create|branch)|[\";]|$)|sandbox\.py[^|;&]* --window|HYPRTWEAKER_HARNESS_HOST_WINDOW=[^ "]'
     raw_systemctl='systemctl[^|;&]* (start|stop|restart|try-restart|reload|reload-or-restart|kill|isolate|mask|unmask|enable|disable|daemon-reload|set-environment|unset-environment|import-environment|edit|poweroff|reboot|suspend|hibernate)'
     raw_find_tmp='find +/+(tmp/*)?[ "][^|;&]*-(delete|exec)'
     if grep -Eq "$raw_words|$raw_x|$raw_kill|$raw_gtk|$raw_stdin|$raw_app|$raw_xfile|$raw_session|$raw_systemctl|$raw_find_tmp" <<< "$input"; then
@@ -104,7 +112,7 @@ deny() {
 
 docs="docs/agents/local-checks.md, Running the app; .claude/hooks/desktop-fence.sh"
 xdocs="docs/agents/local-checks.md, Private X displays; .claude/hooks/desktop-fence.sh"
-fenced_words='hyprctl|[Hh]yprland|hyprpm|hyprshot|hyprpicker|omarchy-|uwsm|loginctl|notify-send|wl-copy|wtype|ydotool|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|HYPRTWEAKER_UI_HOST_DISPLAY|\.X11-unix|\.X[^ /]*-lock'
+fenced_words='hyprctl|[Hh]yprland|hyprpm|hyprshot|hyprpicker|omarchy-|uwsm|loginctl|notify-send|wl-copy|wtype|ydotool|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|HYPRTWEAKER_UI_HOST_DISPLAY|HYPRTWEAKER_HARNESS_HOST_WINDOW|matugen|wallust|noctalia|quickshell|swww|awww|hyprpaper|waybar|gsettings|dbus-update-activation-environment|\.X11-unix|\.X[^ /]*-lock'
 re_x_dir='(^|/)\.X11-unix(/|$)'
 re_x_lock='^(/tmp/)?\.X[^/]*-lock$'
 re_x_glob='(^|/)\.X[0-9]*[*?[]'
@@ -112,7 +120,11 @@ re_x_above='^/+(tmp/*)?$' # `/` or `/tmp`: removing it removes the X files with 
 # Python code that loads GTK, runs a command, or removes or links a file.
 re_gtk='gi\.repository|gi\.require_version|(^|[^[:alnum:]_.])(import|from)[[:space:]]+gi([^[:alnum:]_]|$)'
 re_py_run='subprocess|Popen|os\.system|os\.popen|os\.exec|os\.spawn|pty\.spawn|create_subprocess'
-re_py_word='(^|[^[:alnum:]_.-])(hyprctl|Hyprland|hyprland|start-hyprland|wtype|ydotool|ydotoold|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit)([^[:alnum:]_./-]|$)'
+re_py_word='(^|[^[:alnum:]_.-])(hyprctl|Hyprland|hyprland|start-hyprland|wtype|ydotool|ydotoold|xdotool|pkill|killall|xvfb-run|Xvfb|Xorg|Xwayland|Xephyr|Xnest|Xvnc|startx|xinit|matugen|wallust|noctalia|noctalia-shell|qs|quickshell|dms|swww|awww|swww-daemon|awww-daemon|hyprpaper|waybar|gsettings|dbus-update-activation-environment)([^[:alnum:]_./-]|$)'
+# A theming tool, wallpaper daemon or bar: each writes, recolours or restarts something on
+# the owner's desktop session (F12 and ruling A14 of the #148 review). Tests and probes use
+# the refusing stand-ins and stub tools of tests/hermetic.py; real tools are the owner's.
+re_desktop_tool='^(matugen|wallust|noctalia|noctalia-shell|qs|quickshell|dms|swww|awww|swww-daemon|awww-daemon|hyprpaper|waybar)$'
 re_py_unlink='unlink|remove|rename|replace|rmtree|rmdir|symlink|link'
 re_py_xfile='\.X11-unix|\.X[0-9]+-lock'
 # A word that holds pids found by name: the splitter writes `$(<first command>)`
@@ -402,6 +414,7 @@ judge() {
     local -a w=("$@")
     local n=${#w[@]} i=0 text wrapped=0 wrapper="" positional=0 his="" display="" xdisplay=""
     judged_name=""
+    prefix_card=""
     # Prefix: keywords, assignments, `env` and its flags, wrappers and theirs.
     while ((i < n)); do
         text=${w[i]:1}
@@ -434,6 +447,7 @@ judge() {
             HYPRLAND_INSTANCE_SIGNATURE=*) his=${w[i]:0:1}${text#*=} ;;
             WAYLAND_DISPLAY=*) display=${w[i]:0:1}${text#*=} ;;
             DISPLAY=*) xdisplay=${w[i]:0:1}${text#*=} ;;
+            HARNESS_DRM_CARD=?*) prefix_card=${text#*=} ;;
             *)
                 if [[ $text =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
                     judge_assignment "${w[i]}"
@@ -514,6 +528,9 @@ judge() {
                 deny "\`fuser -k\` kills every process that holds the file or port, the owner's desktop compositor, Xwayland or terminal among them. $kill_shape ($docs)."
             done
             ;;
+        matugen | wallust | noctalia | noctalia-shell | qs | quickshell | dms | swww | awww | swww-daemon | awww-daemon | hyprpaper | waybar)
+            deny "\`$name\` is a theming tool, wallpaper daemon or bar: run from an agent's shell it recolours, re-wallpapers or restarts the owner's desktop session (a matugen post_hook reloads whichever compositor it finds). Tests use the refusing stand-ins and \`stub_tool\` of tests/hermetic.py, and the sandbox and widget probe put stand-ins first on PATH; a real run is the owner's ($docs)."
+            ;;
         Xvfb | Xorg | X | Xwayland | Xephyr | Xnest | Xvnc | xvfb-run | startx | xinit)
             deny "\`$name\` from an agent's shell starts an X server, which unlinks the socket of the display number it binds (/tmp/.X11-unix/X<n>) without asking who listens there, so it can replace the desktop's own :0 (it did on 2026-10-01); \`xvfb-run\` also leaves GDK_BACKEND and WAYLAND_DISPLAY alone, so GTK maps on the desktop. Run \`.venv/bin/pytest tests/ui\` or \`.venv/bin/python tools/widget_probe.py <probe.py>\`, which start their own Xvfb on a private display; a script that needs an X server calls \`start_xvfb\` in tests/ui/private_display.py ($xdocs)."
             ;;
@@ -535,6 +552,19 @@ judge() {
             fi
             ;;
         bash | sh | dash | zsh | ksh | mksh | ash | fish) judge_shell "${rest[@]}" ;;
+        meson) judge_meson "${rest[@]}" ;;
+        hyprtweaker)
+            deny "\`$name\` is the app's launcher: it runs the app against the session's own WAYLAND_DISPLAY, so its window maps on the owner's desktop and its writes reach the owner's real config. Run it windowless in a nested Hyprland: \`.venv/bin/python tools/sandbox.py\` ($docs)."
+            ;;
+        pytest | py.test) judge_pytest "${rest[@]}" ;;
+        git) judge_git "${rest[@]}" ;;
+        gsettings)
+            [[ $(first_operand " --schemadir " "${rest[@]}") =~ ^(get|list-.*|range|describe|writable|help|)$ ]] \
+                || deny "\`gsettings $(first_operand " --schemadir " "${rest[@]}")\` writes the owner's desktop settings (dconf), which their running apps and theme read at once. Reads pass: \`gsettings get\`, \`gsettings list-keys\`. Tests and probes keep GSettings in memory (GSETTINGS_BACKEND=memory) ($docs)."
+            ;;
+        dbus-update-activation-environment)
+            deny "\`dbus-update-activation-environment\` rewrites the environment the owner's session bus starts services with, so their portals and apps can end up pointed at a dead display. It has no nested form; leave the session's environment to the owner ($docs)."
+            ;;
         eval) judge_command "$(joined "${rest[@]}")" ;;
         python | python[0-9]*) judge_python "${rest[@]}" ;;
         rm | unlink | rmdir | mv | ln | shred | find) judge_x_files "$name" "${rest[@]}" ;;
@@ -550,8 +580,65 @@ judge_assignment() {
     if [ "$var" = HYPRTWEAKER_UI_HOST_DISPLAY ] && [ -n "$value" ]; then
         deny "\`HYPRTWEAKER_UI_HOST_DISPLAY\` is the owner's opt-in: it maps the UI tier's windows on the owner's desktop session, where Hyprland may raise its \"Application Not Responding\" dialog over their work. Run \`.venv/bin/pytest tests/ui\` as it is, on its private Xvfb; to see a widget, \`.venv/bin/python tools/widget_probe.py <probe.py>\` and its \`shoot\`, or \`tools/sandbox.py --shot\` ($docs)."
     fi
+    if [ "$var" = HYPRTWEAKER_HARNESS_HOST_WINDOW ] && [ -n "$value" ]; then
+        deny "\`HYPRTWEAKER_HARNESS_HOST_WINDOW\` is the owner's opt-in: it nests the Harness tier's Hyprland into the owner's desktop session, one host window per test. Run the tier windowless: \`HARNESS_DRM_CARD=/dev/dri/card0 timeout 900 .venv/bin/pytest tests/integration -m hyprland\` ($docs)."
+    fi
     names_pids "$1" && pid_vars+="$var "
     return 0
+}
+
+# `meson devenv [-C dir] [-w dir] <command>`: the command it runs is judged as typed.
+judge_meson() {
+    local -a args=("$@")
+    local j=0 m=$#
+    [ "${args[0]:-L}" = Ldevenv ] || return 0
+    j=1
+    while ((j < m)); do
+        case "${args[j]:1}" in
+            -C | -w | --workdir) j=$((j + 2)) ;;
+            --dump | --dump-format) j=$((j + 2)) ;;
+            -*) j=$((j + 1)) ;;
+            *) break ;;
+        esac
+    done
+    ((j < m)) && judge "${args[@]:j}"
+    return 0
+}
+
+# pytest on the Harness tier: refused unless the same command names its card, because
+# without one the nested Hyprland opens a window per test on the owner's desktop (F12).
+judge_pytest() {
+    local arg text harness=0
+    for arg in "$@"; do
+        text=${arg:1}
+        [[ $text == tests/integration* || $text == */tests/integration* ]] && harness=1
+    done
+    if ((harness)) && [ -z "$prefix_card" ]; then
+        deny "The Harness tier (\`tests/integration\`) without \`HARNESS_DRM_CARD\` on the same command nests each test's Hyprland into the owner's desktop session, one host window per test. Name the card: \`HARNESS_DRM_CARD=/dev/dri/card0 timeout 900 .venv/bin/pytest tests/integration -m hyprland\` ($docs)."
+    fi
+    return 0
+}
+
+# `git stash` that writes: the stash is one stack shared by the main checkout and every
+# worktree, and in effort #148 another agent's `stash pop` pulled changes into the wrong
+# tree twice. `git stash list` and `git stash show` read and pass.
+judge_git() {
+    local -a args=("$@")
+    local j=0 m=$# text sub
+    while ((j < m)); do
+        text=${args[j]:1}
+        case "$text" in
+            -C | -c | --git-dir | --work-tree | --namespace | --exec-path | --config-env) j=$((j + 2)); continue ;;
+            -*) j=$((j + 1)); continue ;;
+        esac
+        break
+    done
+    ((j < m)) || return 0
+    [ "${args[j]:1}" = stash ] || return 0
+    sub=${args[j + 1]:-L}
+    sub=${sub:1}
+    [[ $sub =~ ^(list|show)$ ]] && return 0
+    deny "\`git stash${sub:+ $sub}\` writes the one stash stack the main checkout and every worktree share: in effort #148 another agent's \`stash pop\` pulled changes into the wrong tree twice. Set work aside with a WIP commit on your own branch, then amend or reset it; \`git stash list\` and \`git stash show\` still read (docs/agents/local-checks.md, Worktrees; .claude/hooks/desktop-fence.sh)."
 }
 
 # Whether any of the words $@ (flag + text) holds pids found by name: a
@@ -688,6 +775,13 @@ judge_python() {
     if [[ $code =~ $re_py_unlink ]] && [[ $code =~ $re_py_xfile ]]; then
         deny "This python code removes, moves or links \`${BASH_REMATCH[0]}\`, the desktop's X sockets or locks: the owner's Xwayland listens on /tmp/.X11-unix/X0. Reading them is the whole of an agent's business there ($xdocs)."
     fi
+    if [[ $script =~ (^|/)tools/sandbox\.py$ ]]; then
+        local arg
+        for arg in "${args[@]:j+1}"; do
+            [[ ${arg:1} == --window ]] && deny "\`tools/sandbox.py --window\` is the owner's interactive mode: the nested Hyprland opens as a window on the focused workspace of the owner's desktop. Run it windowless, as it is by default: \`.venv/bin/python tools/sandbox.py --shot <png>\` ($docs)."
+        done
+    fi
+    [ "$module" = pytest ] && judge_pytest "${args[@]:j+1}"
     local app=""
     if [[ $module == hyprtweaker || $module == hyprtweaker.* ]]; then
         app="python -m $module"

@@ -117,6 +117,41 @@ def verdict(
 
 
 REFUSED = [
+    # F12 of the #148 review: four launch routes the docs forbid
+    "meson devenv -C build python3 -m hyprtweaker",
+    "meson devenv -C build hyprtweaker",
+    "hyprtweaker",
+    "build/src/hyprtweaker --help",
+    ".venv/bin/python tools/sandbox.py --window",
+    ".venv/bin/python tools/sandbox.py --home x --window",
+    ".venv/bin/pytest tests/integration -m hyprland",
+    "timeout 900 .venv/bin/pytest -q tests/integration/test_ipc_live.py",
+    ".venv/bin/python -m pytest tests/integration",
+    "HYPRTWEAKER_HARNESS_HOST_WINDOW=1 .venv/bin/pytest tests/integration",
+    # ruling A14: theming tools, wallpaper daemons, the bar, the session's settings
+    "matugen image ~/wall.png",
+    "wallust run ~/wall.png",
+    "qs -c noctalia-shell",
+    "noctalia-shell",
+    "dms ipc call theme toggle",
+    "swww img ~/wall.png",
+    "awww img ~/wall.png",
+    "hyprpaper &",
+    "waybar &",
+    "gsettings set org.gnome.desktop.interface color-scheme prefer-dark",
+    "gsettings reset org.gnome.desktop.interface gtk-theme",
+    "dbus-update-activation-environment --systemd WAYLAND_DISPLAY",
+    "systemctl --user import-environment WAYLAND_DISPLAY",
+    "systemctl --user set-environment FOO=1",
+    "python3 -c \"import subprocess; subprocess.run(['matugen', 'image', 'x'])\"",
+    # the stash: one stack across the main checkout and every worktree
+    "git stash",
+    "git stash push -m wip",
+    "git stash pop",
+    "git stash apply stash@{0}",
+    "git stash drop",
+    "git stash clear",
+    "git -C ../other stash pop",
     # the ticket's table
     "hyprctl dispatch workspace 2",
     "hyprctl -j clients",
@@ -291,6 +326,21 @@ REFUSED = [
 ]
 
 ALLOWED = [
+    # what the new refusals leave (F12, A14, the stash)
+    "git stash list",
+    "git stash show -p stash@{0}",
+    "git status --short",
+    "grep -rn matugen docs/",
+    'git commit -m "Never run matugen, waybar or git stash from a test"',
+    "HARNESS_DRM_CARD=/dev/dri/card0 timeout 900 .venv/bin/pytest tests/integration -m hyprland",
+    "HARNESS_DRM_CARD=/dev/dri/card0 .venv/bin/python -m pytest tests/integration",
+    ".venv/bin/python tools/sandbox.py --shot /tmp/shot.png",
+    ".venv/bin/python tools/sandbox.py --home x",
+    "gsettings get org.gnome.desktop.interface color-scheme",
+    "meson setup build",
+    "meson devenv -C build ninja test",
+    "timeout 900 .venv/bin/pytest -q -n auto",
+    "pacman -Q matugen",
     # the ticket's table
     "hyprctl instances",
     "hyprctl instances -j",
@@ -479,6 +529,27 @@ def test_the_fence_lets_through_what_cannot_reach_the_desktop(
         ("notify-send hi", "`notify-send`", "ready comment"),
         ("uwsm stop", "`uwsm`", "tools/sandbox.py"),
         ("hyprpm reload", "`hyprpm`", "hyprpm list"),
+        ("hyprtweaker", "`hyprtweaker`", "tools/sandbox.py"),
+        (
+            "meson devenv -C build python3 -m hyprtweaker",
+            "`python -m hyprtweaker`",
+            "tools/sandbox.py",
+        ),
+        (".venv/bin/python tools/sandbox.py --window", "`tools/sandbox.py --window`", "--shot"),
+        (
+            ".venv/bin/pytest tests/integration",
+            "`HARNESS_DRM_CARD`",
+            "HARNESS_DRM_CARD=/dev/dri/card0",
+        ),
+        (
+            "HYPRTWEAKER_HARNESS_HOST_WINDOW=1 .venv/bin/pytest tests/integration",
+            "owner's opt-in",
+            "HARNESS_DRM_CARD=/dev/dri/card0",
+        ),
+        ("matugen image x", "`matugen`", "stub_tool"),
+        ("gsettings set a b c", "`gsettings set`", "gsettings get"),
+        ("dbus-update-activation-environment --all", "`dbus-update-activation", "owner"),
+        ("git stash pop", "`git stash pop`", "WIP commit"),
         ("skill foot", "`skill`", "kill <pid>"),
         ("cage foot", "`cage`", "tools/sandbox.py"),
         ("find /tmp -user diggle -delete", "`find`", "ls /tmp/.X11-unix"),
@@ -574,6 +645,13 @@ def test_without_jq_the_fence_fails_closed_on_the_four_words(no_jq_env: dict[str
         "cage foot",
         "find /tmp -user diggle -delete",
         "rm -rf /tmp/{.X11-unix,.X0-lock}",
+        "git stash pop",
+        "git stash",
+        "matugen image x",
+        "gsettings set a b c",
+        "dbus-update-activation-environment --all",
+        ".venv/bin/python tools/sandbox.py --window",
+        "HYPRTWEAKER_HARNESS_HOST_WINDOW=1 .venv/bin/pytest tests/integration",
     ],
 )
 def test_without_jq_the_fence_refuses_the_new_words(
@@ -606,6 +684,8 @@ def test_without_jq_the_fence_refuses_the_new_words(
         "find /tmp -name '*.log'",
         "rm /tmp/foo",
         "ls .claude/skills",
+        "git stash list",
+        "git status",
     ],
 )
 def test_without_jq_the_fence_still_lets_the_ordinary_checks_through(

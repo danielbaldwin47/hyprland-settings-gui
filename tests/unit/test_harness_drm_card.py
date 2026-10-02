@@ -182,3 +182,24 @@ def test_the_skip_reason_names_the_variable_and_the_card(
     monkeypatch.setenv(DRM_CARD_VARIABLE, str(card.parent / "gone"))
 
     assert unavailable_reason() == f"{DRM_CARD_VARIABLE}={card.parent / 'gone'}: no such device"
+
+
+def test_without_a_card_the_harness_refuses_to_nest_into_the_desktop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F12 of the #148 review: with no card the child opened a window per test on the
+    owner's desktop. Only the owner's switch allows that now."""
+    monkeypatch.setattr(nested, "hyprland_binary", lambda: Path("/usr/bin/Hyprland"))
+    monkeypatch.setattr(nested.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/0")
+    monkeypatch.delenv(DRM_CARD_VARIABLE, raising=False)
+    monkeypatch.delenv(nested.HOST_WINDOW_OPT_IN, raising=False)
+
+    assert unavailable_reason() == (
+        "HARNESS_DRM_CARD is unset, and without a card a nested Hyprland opens a window on "
+        "the desktop session. Set HARNESS_DRM_CARD=/dev/dri/card0 to run windowless; "
+        "HYPRTWEAKER_HARNESS_HOST_WINDOW=1 nests in a host window, and is the owner's"
+    )
+    monkeypatch.setenv(nested.HOST_WINDOW_OPT_IN, "1")
+    assert unavailable_reason() is None
