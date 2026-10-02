@@ -31,6 +31,12 @@ An ordered entry: **Trigger + Action + flags + optional description + owning Sub
 - **Identity is position.** Order is preserved and user-reorderable; duplicates are legal.
 - **Submap**: first-class entity (name, optional reset-target, ordered binds), emitted as nested `hl.define_submap`. A submap no bind enters is badged unreachable.
 
+### Disabled binds (amended during #110)
+
+A disabled bind is written as its own `hl.bind(...)` line behind the comment prefix `-- disabled: ` (`DISABLED_PREFIX`, `engine/writer/binds.py`). A comment rather than a deletion, because deleting would renumber every bind after it (identity is position), and the line stays readable in a text editor. Read-back revives exactly that spelling — the prefix followed by an `hl.` call — line for line before evaluation, and re-marks those binds disabled by line number; any other comment stays a comment. Removing the prefix by hand re-enables the bind.
+
+The cost: only the exact spelling is recognised, and once user files carry these lines, changing it would orphan every bind they disable. The prefix is therefore part of the app's compatibility surface, held to the same care as the `hl.*` calls the app emits.
+
 ### Add flow: two doors
 
 "**Run command**" (`hl.dsp.exec_cmd`: command entry + advanced window-rules table) and "**Hyprland action**" (dispatcher picker grouped by namespace, generated arg forms). Exec is the majority bind type in every corpus rice; it is not buried behind 71 dispatchers.
@@ -45,7 +51,7 @@ Conflict = same (submap, modmask, trigger) among enabled binds (`submap_universa
 
 ### Imported edge cases
 
-Dead-keysym binds arrive commented out from the Importer → disabled row, error badge, re-capture affordance. `catchall`-with-mods and multi-key `binds` (`A&B`) approximations are badged "imported approximately". Multi-key binds are read-only with raw-text editing — no capture UX (0 uses in corpus, mapping only approximate).
+Dead-keysym binds arrive commented out from the Importer → disabled row, error badge, re-capture affordance. `catchall`-with-mods approximations are badged "imported approximately". Multi-key binds (`A&B`) are read-only with no editor at all (amended during #162): on Hyprland 0.56.2 an enabled `&` bind fails the whole config (`hl.bind: failed to parse key string: Unknown keysym`), so such a bind can never be enabled and an editor would serve nothing. The row wears the multi-key read-only badge that #139 builds.
 
 ### Placement
 
