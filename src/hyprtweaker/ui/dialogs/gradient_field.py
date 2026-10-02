@@ -26,7 +26,7 @@ from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine import rule_grammars  # noqa: E402
 from hyprtweaker.engine.model.values import Color, Gradient  # noqa: E402
-from hyprtweaker.ui.dialogs.effect_helpers import GrammarRow  # noqa: E402
+from hyprtweaker.ui.dialogs.effect_helpers import GrammarRow, border_pair_reason  # noqa: E402
 from hyprtweaker.ui.rows.factory import color_of, gdk_rgba  # noqa: E402
 
 _DEFAULT_STOP = Color(0xFFFFFFFF)
@@ -44,6 +44,7 @@ class GradientRow(GrammarRow[Gradient]):
             default=Gradient((_DEFAULT_STOP,), 0.0),
             text=rule_grammars.border_color_text,
             source_text=rule_grammars.border_color_source_text,
+            explain=border_pair_reason,
         )
 
     def _build(self) -> list[Gtk.Widget]:

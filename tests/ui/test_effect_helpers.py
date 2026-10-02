@@ -261,6 +261,27 @@ class TestSuppressEvent:
 
         assert row_of(editor, "suppress_event").widget.get_subtitle() == "fullscreen maximize"
 
+    def test_each_event_reads_in_plain_words(self) -> None:
+        """#151 review, finding 31: the subtitles were the raw keys (`fullscreenoutput`);
+        the keys stay one toggle away, in Edit as text."""
+        editor, _ = open_editor({"suppress_event": "maximize"})
+        helper = row_of(editor, "suppress_event").helper
+
+        assert [(row.get_title(), row.get_subtitle()) for row in helper.switches.values()] == [
+            ("Fullscreen requests", "The window cannot make itself fullscreen"),
+            ("Maximize requests", "The window cannot maximize itself"),
+            ("Activation requests", "The window cannot bring itself to the front"),
+            ("Focus on activation", "The window can ask for attention but not take focus"),
+            (
+                "Fullscreen monitor choice",
+                "The window goes fullscreen where it is, not on the monitor it asks for",
+            ),
+            (
+                "X11 move and resize requests",
+                "A floating X11 window cannot move or resize itself",
+            ),
+        ]
+
 
 class TestRemove:
     def test_the_remove_button_takes_the_helper_row_out(self) -> None:

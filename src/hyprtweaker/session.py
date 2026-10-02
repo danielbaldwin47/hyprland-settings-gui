@@ -1025,13 +1025,13 @@ class Session:
         mutate()
         after = self._entity_lists()
         serial = self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it
-        edits = [EntityEdit(kind, before[kind], after[kind]) for kind in before]
-        moved = [edit for edit in edits if edit.changed]
-        if not moved:
-            return True
-        step = EntityStep(
-            tuple(moved), title or entity_title(moved[0].kind, "changed", plural=True)
+        step = EntityStep.of(
+            (EntityEdit(kind, before[kind], after[kind]) for kind in before), title or ""
         )
+        if step is None:
+            return True
+        if not title:
+            step = replace(step, title=entity_title(step.edits[0].kind, "changed", plural=True))
         group = self._undo_group
         held = group if group is not None and step.kinds & group.kinds else None
         self._pending_entities.append(_PendingEntityStep(serial, step, held))
@@ -1158,14 +1158,6 @@ class Session:
     def workspace_rules(self) -> list[WorkspaceRule]:
         """The live workspace rule list. Identity is the selector string (ADR-0008)."""
         return self._model.entities.workspace_rules
-
-    def edit_workspace_rules(
-        self, mutate: Callable[[list[WorkspaceRule]], None], *, title: str | None = None
-    ) -> bool:
-        """Change the workspace rule list and write it. Shaped like `edit_monitor_rules`."""
-        return self._commit_entity_edit(
-            "workspace rules", lambda: mutate(self._model.entities.workspace_rules), title=title
-        )
 
     def save_workspace_rule(self, rule: WorkspaceRule, *, original: str | None = None) -> bool:
         """Add a workspace rule, or replace the one whose selector was `original`.

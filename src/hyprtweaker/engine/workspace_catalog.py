@@ -15,6 +15,7 @@ unknown fields are never dropped).
 from __future__ import annotations
 
 import enum
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +23,15 @@ BUILTIN_LAYOUTS: tuple[str, ...] = ("dwindle", "master", "scrolling", "monocle")
 """The layouts Hyprland ships, for a session whose schema does not list them. A rule may
 also name a Lua layout (`lua:<name>`); the editor offers those the compositor reports
 (#175) and keeps any layout the file already names."""
+
+
+def layout_choices(known: Iterable[str]) -> tuple[str, ...]:
+    """The layouts a layout row offers, from the schema's known values: without the
+    `lua:<name>` placeholder, which names no layout, and the shipped ones when the schema
+    lists none."""
+    named = tuple(choice for choice in known if "<" not in choice)
+    return named or BUILTIN_LAYOUTS
+
 
 LAYOUT_OPTS = "layout_opts"
 """The table of layout-specific options (`{ orientation = "top" }`). Not a catalog field:

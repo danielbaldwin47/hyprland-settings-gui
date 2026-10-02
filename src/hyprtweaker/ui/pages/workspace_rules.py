@@ -24,6 +24,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import WorkspaceRule  # noqa: E402
+from hyprtweaker.engine.rule_filter import value_text  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.release import release  # noqa: E402
 
@@ -32,15 +33,6 @@ if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
 
 NO_FIELDS = "Nothing set yet"
 """The subtitle of a rule with no fields: a new rule, until its fields are set."""
-
-
-def _value_text(value: object) -> str:
-    """A field value as summary text -- readable, never round-tripped."""
-    if isinstance(value, Mapping):
-        return " ".join(f"{key}={item}" for key, item in value.items())
-    if isinstance(value, (list, tuple)):
-        return " ".join(str(item) for item in value)
-    return str(value)
 
 
 def fields_summary(fields: Mapping[str, Any]) -> str:
@@ -52,7 +44,7 @@ def fields_summary(fields: Mapping[str, Any]) -> str:
         elif value is False:
             parts.append(f"{name} off")
         else:
-            parts.append(f"{name} {_value_text(value)}")
+            parts.append(f"{name} {value_text(value)}")
     return ", ".join(parts) or NO_FIELDS
 
 

@@ -56,7 +56,11 @@ FLAGS: tuple[tuple[str, str, str], ...] = (
     ("drag", "Fires on a drag", "Mouse button held while the pointer moves"),
     ("repeating", "Repeats while held", ""),
     ("non_consuming", "Lets the key through to the app", ""),
-    ("auto_consuming", "Consumes the key automatically", "Hyprland's auto-consuming flag"),
+    (
+        "auto_consuming",
+        "Lets the key through if the action fails",
+        "The app gets the key when the action could not run",
+    ),
     ("transparent", "Does not block other binds", ""),
     ("ignore_mods", "Ignores extra modifiers", ""),
     ("long_press", "Fires on a long press", ""),
@@ -68,7 +72,8 @@ FLAGS: tuple[tuple[str, str, str], ...] = (
 
 `click` and `drag` imply `release` and exclude each other (ADR-0007): the editor sets
 `release` for the user while either is on (`_sync_release`) and refuses the pairs in
-`INCOMPATIBLE`.
+`INCOMPATIBLE`. `auto_consuming`'s words are Hyprland 0.56.2's `KeybindManager.cpp`: the
+bind keeps the key from the app only when its dispatcher succeeds.
 """
 
 INCOMPATIBLE: tuple[tuple[str, str, str], ...] = (
@@ -79,12 +84,14 @@ INCOMPATIBLE: tuple[tuple[str, str, str], ...] = (
     ("release", "repeating", "Release can't repeat."),
 )
 """Pairs the compositor rejects (`Hyprland --verify-config`, 0.56.2), each with the words
-the form shows. Enforced as the editor's own validation (ADR-0007).
+the form shows, as the switch that makes the pair flips; Save refuses it too (ADR-0007).
 
 Probed and accepted, so left unconstrained: `click` with `long_press`, `auto_consuming`
 with `non_consuming`. `release` here is the user's own, not the one `click` or `drag` sets:
 those two name themselves in their own pairs, so the message blames what the user turned on.
 """
+
+_CONFLICT_MESSAGES = frozenset(message for _left, _right, message in INCOMPATIBLE)
 
 FREE_FORM_HOW = "Type each setting as key = value, one per line."
 """Follows the dispatcher's own `free_form_reason` above the raw table."""
@@ -232,6 +239,7 @@ class BindEditor(Adw.Dialog):
 
         self._error = Gtk.Label(css_classes=["error"], visible=False, wrap=True)
         box.append(self._error)
+        self._show_flag_conflict()  # an imported bind may open with a pair Hyprland refuses
 
         # An enable is never quiet: when Save would turn the bind on, this line says so.
         self._enables_note = Gtk.Label(label=ENABLES_NOTE, visible=False, wrap=True)
@@ -339,6 +347,9 @@ class BindEditor(Adw.Dialog):
         for name in ("click", "drag"):
             self._flag_switches[name].connect("notify::active", lambda *_: self._sync_release())
         self._sync_release()
+        # Connected last, so it reads the flags after `_sync_release` and `_own_release`.
+        for row in self._flag_switches.values():
+            row.connect("notify::active", lambda *_: self._show_flag_conflict())
         return group
 
     def _release_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
@@ -367,6 +378,25 @@ class BindEditor(Adw.Dialog):
             release.set_sensitive(True)
             release.set_active(self._own_release)
             release.set_subtitle("")
+
+    def _flag_conflict(self) -> str | None:
+        """The words for the first `INCOMPATIBLE` pair the user has on, if any."""
+        chosen = self._flags_the_user_chose()
+        return next(
+            (message for left, right, message in INCOMPATIBLE if {left, right} <= chosen),
+            None,
+        )
+
+    def _show_flag_conflict(self) -> None:
+        """Say a conflict as the switch flips (Save still refuses it), and take the words
+        back once it is resolved; a refusal Save showed about something else stays."""
+        conflict = self._flag_conflict()
+        if conflict is not None:
+            self._error.set_text(conflict)
+            self._error.set_visible(True)
+        elif self._error.get_text() in _CONFLICT_MESSAGES:
+            self._error.set_visible(False)
+            self._error.set_text("")
 
     def _flags_the_user_chose(self) -> set[str]:
         """The flags on, with `release` as the user's own: click and drag name themselves in
@@ -476,10 +506,8 @@ class BindEditor(Adw.Dialog):
         )
         if problem is not None and not untouched_and_disabled:
             return problem.message
-        chosen = self._flags_the_user_chose()
-        for left, right, message in INCOMPATIBLE:
-            if left in chosen and right in chosen:
-                return message
+        if conflict := self._flag_conflict():
+            return conflict
         entry = self._chosen
         if entry is not None and entry.free_form_reason is None:
             for spec in entry.args:

@@ -923,3 +923,43 @@ def test_a_regex_entry_shows_the_anchors_hyprland_applies_without_storing_them(
 
     editor._save()
     assert collected[0].match["class"] == "kitty"  # the stored value gains no anchors
+
+
+def visible_anchor_marks(widget: Any) -> list[str]:
+    """The anchor labels drawn around a regex entry, as the user sees them."""
+    from gi.repository import Gtk
+
+    marks: list[str] = []
+    child = widget.get_first_child()
+    while child is not None:
+        if (
+            isinstance(child, Gtk.Label)
+            and child.get_text() in ("^(", ")$")
+            and child.get_visible()
+        ):
+            marks.append(child.get_text())
+        marks.extend(visible_anchor_marks(child))
+        child = child.get_next_sibling()
+    return marks
+
+
+def test_an_already_anchored_regex_does_not_wear_the_marks_twice(tmp_path: Path) -> None:
+    """The picker's prefill and most imported rules are `^(kitty)$`: the marks around it
+    would read `^( ^(kitty)$ )$` (#151 review, finding 28)."""
+    from hyprtweaker.ui.dialogs.rule_editor import RuleEditor
+
+    build_window(tmp_path)
+    editor = RuleEditor(
+        kind="window",
+        on_done=lambda _rule: None,
+        rule=window_rule(match={"class": "^(kitty)$", "title": "kitty"}),
+    )
+    anchored = editor._match_rows["class"][1]
+
+    assert visible_anchor_marks(anchored) == []
+    assert visible_anchor_marks(editor._match_rows["title"][1]) == ["^(", ")$"]
+
+    anchored.set_text("kit")
+    assert visible_anchor_marks(anchored) == ["^(", ")$"]
+    anchored.set_text("^kit.*$")
+    assert visible_anchor_marks(anchored) == []

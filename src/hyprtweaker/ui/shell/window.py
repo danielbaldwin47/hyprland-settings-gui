@@ -75,10 +75,10 @@ from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
-from hyprtweaker.engine.workspace_catalog import BUILTIN_LAYOUTS  # noqa: E402
+from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
-from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
+from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.declaration_editor import (  # noqa: E402
     DeclarationEditor,
@@ -1113,7 +1113,7 @@ class MainWindow(Adw.ApplicationWindow):
             on_done=done, bind=binds[index], fetch_switches=self._switch_fetch()
         ).present(self)
 
-    def _switch_fetch(self) -> Callable[..., None] | None:
+    def _switch_fetch(self) -> FetchSwitches | None:
         """The live switch list for Capture's picker, or `None` when nobody is answering.
 
         One source for every door that opens Capture (add, edit, rebind), so none of them
@@ -1309,12 +1309,12 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _layout_choices(self) -> tuple[str, ...]:
-        """The layouts the layout row offers: the schema's own, without its `lua:<name>`
-        placeholder (the compositor's Lua layouts join as #175 discovers them)."""
+        """The layouts the layout row offers, from the schema (the compositor's Lua
+        layouts join as #175 discovers them)."""
         option = self._session.schema.get("general:layout")
-        known = option.known_values.values if option and option.known_values else ()
-        named = tuple(choice for choice in known if "<" not in choice)
-        return named or BUILTIN_LAYOUTS
+        return layout_choices(
+            option.known_values.values if option and option.known_values else ()
+        )
 
     def _add_workspace_rule(self) -> None:
         self.workspace_rule_editor().present(self)
