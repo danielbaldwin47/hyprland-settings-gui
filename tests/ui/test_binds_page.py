@@ -199,6 +199,7 @@ def test_a_user_disabled_bind_enables_in_one_click(tmp_path: Path) -> None:
     row, calls = editable_row(exec_bind("SUPER + Q", "kitty", enabled=False))
 
     assert row.badge_label.get_label() == "Disabled"
+    assert "dim-label" in row.widget.get_css_classes()
     assert row.enable_button.get_label() == "Enable"
     row.enable_button.emit("clicked")
     assert calls == [("enable", 3, True)]
@@ -213,6 +214,7 @@ def test_a_dead_keysym_bind_wears_an_error_badge_and_enable_recaptures(
 
     assert row.badge_label.get_label() == 'Unknown key "notakey"'
     assert "error" in row.badge_label.get_css_classes()
+    assert "dim-label" not in row.widget.get_css_classes(), "row opacity would fade the badge"
     assert row.enable_button.get_label() == "Fix trigger…"
     row.enable_button.emit("clicked")
     assert calls == [("recapture", 3)], "an error-disabled bind must never enable in one click"

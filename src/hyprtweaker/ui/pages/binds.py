@@ -340,8 +340,6 @@ class BindRow:
 
         badge = self.badge
         if badge is not None:
-            # The error badge is not dimmed with the rest: it is the one line on the row
-            # that says the bind needs the user, and the reason has to be readable.
             classes = (
                 ["error", "caption"]
                 if badge.kind is BadgeKind.ERROR
@@ -350,7 +348,9 @@ class BindRow:
             self.badge_label = Gtk.Label(label=badge.text, css_classes=classes)
             self.badge_label.set_tooltip_text(badge.tooltip)
             self.widget.add_suffix(self.badge_label)
-        if not bind.enabled:
+        # An error row is not dimmed: row opacity reaches the badge too, and the badge is
+        # the one line saying this bind needs the user, so it has to be readable.
+        if not bind.enabled and (badge is None or badge.kind is not BadgeKind.ERROR):
             self.widget.add_css_class("dim-label")
 
         # A read-only bind still fires, so it still conflicts -- the badge is not gated
