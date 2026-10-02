@@ -39,7 +39,7 @@ from ..model.values import parse_lua
 from ..schema import ResolvedOption, Schema
 from ..schema.resolve import version_key
 from ..schema.sources import lua_key_for
-from .manifest import Manifest, RetiredValue
+from .manifest import Manifest, RetiredValue, RetireReason
 
 
 class LiveNames(Protocol):
@@ -68,6 +68,9 @@ class Retirement:
     retired_in: str
     """The running compositor's version, or the loaded schema's when there is no snapshot."""
 
+    reason: RetireReason = RetireReason.REMOVED
+    """Why it cannot be emitted; a quiet reason is kept and restored but never announced."""
+
 
 def emittable(name: str, schema: Schema, live: LiveNames | None) -> bool:
     """Whether the app may write `name`: the schema holds it and nothing live contradicts it.
@@ -93,15 +96,29 @@ def detect(
     filtering is exactly what would hide a name the schema dropped. Two triggers, one rule:
     (a) the loaded schema lacks the name -- the app's update shipped a schema without it, or
     a downgrade; (b) the schema holds it but a compositor at or past the schema's release
-    does not.
+    does not. `reason_for` says which of them the user is told about.
     """
     retired_in = live.version if live is not None else schema.hyprland_version
     return tuple(
-        Retirement(name, module, retired_in)
+        Retirement(name, module, retired_in, reason_for(name, schema, live))
         for module, record in sorted(manifest.modules.items())
         for name in record.options
         if not emittable(name, schema, live)
     )
+
+
+def reason_for(name: str, schema: Schema, live: LiveNames | None) -> RetireReason:
+    """Why `name`, which `emittable` refuses, is retired: the one place a reason is chosen.
+
+    Only the running compositor's own word that it lacks the name makes it `REMOVED`. A
+    name it still describes is missing from the loaded schema alone: the startup read
+    missed a Hyprland newer than every shipped schema, so the supplement that would have
+    held the name is not loaded (#214). The value is kept all the same, since the first
+    write drops the key, and the next start that reads the compositor restores it.
+    """
+    if live is not None and name in live.names:
+        return RetireReason.NOT_IN_SCHEMA
+    return RetireReason.REMOVED
 
 
 def capture(
@@ -141,7 +158,7 @@ def retire(
     would claim a restore it cannot deliver. A name retired again replaces its old entry.
     """
     kept = {
-        each.name: RetiredValue(each.retired_in, values[each.name])
+        each.name: RetiredValue(each.retired_in, values[each.name], each.reason)
         for each in found
         if each.name in values
     }
@@ -284,11 +301,12 @@ def unannounced(manifest: Manifest) -> tuple[RetiredNotice, ...]:
 
     Read from `retired`, not from this start's `detect`: once the first write has dropped
     the keys, `detect` finds nothing, and a notice the user closed the app before seeing
-    would never come back. Oldest release first.
+    would never come back. Oldest release first. A value kept for a quiet reason is not
+    news: its Option was not removed, so it raises no notice at all.
     """
     by_release: dict[str, list[str]] = {}
     for name, entry in manifest.retired.items():
-        if entry.retired_in not in manifest.retired_notices:
+        if entry.reason.announced and entry.retired_in not in manifest.retired_notices:
             by_release.setdefault(entry.retired_in, []).append(name)
     return tuple(
         RetiredNotice(release, tuple(sorted(names)))
