@@ -6,7 +6,7 @@ Run on a machine with the target Hyprland available (release-check step 1,
 
     tools/gen_schema.py --source-ref v0.56.2 -o data/schema/hyprland-0.56.2.json
 
-The three sources and how each is reached:
+The four sources and how each is reached:
 
 1. `hyprctl -j descriptions` -- from the running compositor, or `--descriptions FILE`.
 2. `hl.meta.lua` -- `/usr/share/hypr/stubs/hl.meta.lua`, or `--stub FILE`.
@@ -15,6 +15,8 @@ The three sources and how each is reached:
    the generator degrades (Color falls back to string, `vec2Range` bounds and refresh bits
    are absent) and says so in the output's provenance block, which the release-check PR
    must mention. The Overlay then has to carry what was lost.
+4. `hyprctl -j animations` -- from the running compositor, or `--animations FILE`. Only the
+   animation tree's leaf names are kept; the curves half of the payload is live state.
 
 The tool is deliberately thin. Every rule it applies lives in `hyprtweaker.engine.schema`,
 because ADR-0012 makes the app run the same inference at runtime against a Hyprland newer
@@ -79,6 +81,14 @@ def read_descriptions(path: Path | None) -> str:
     ).stdout
 
 
+def read_animations(path: Path | None) -> str:
+    if path is not None:
+        return path.read_text(encoding="utf-8")
+    return subprocess.run(
+        ["hyprctl", "-j", "animations"], capture_output=True, text=True, check=True
+    ).stdout
+
+
 def read_source(directory: Path | None, ref: str | None) -> tuple[str, str] | None:
     """The two `ConfigValues` files, from a checkout or from GitHub at a tag."""
     if directory is not None:
@@ -98,6 +108,7 @@ def read_source(directory: Path | None, ref: str | None) -> tuple[str, str] | No
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--descriptions", type=Path, help="`hyprctl -j descriptions` JSON")
+    parser.add_argument("--animations", type=Path, help="`hyprctl -j animations` JSON")
     parser.add_argument("--stub", type=Path, default=DEFAULT_STUB, help="hl.meta.lua")
     parser.add_argument("--source", type=Path, help="a Hyprland checkout at the release tag")
     parser.add_argument("--source-ref", help="fetch ConfigValues.* from GitHub at this tag")
@@ -108,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     version = args.version or hyprland_version()
 
     records = sources.parse_descriptions(read_descriptions(args.descriptions))
+    animation_leaves = sources.parse_animation_leaves(read_animations(args.animations))
     stub_text = args.stub.read_text(encoding="utf-8")
     stub_types = sources.parse_stub_types(stub_text)
     stub_keys = sources.parse_stub_keys(stub_text)
@@ -135,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         "hyprland_version": version,
         "hyprland_commit": hyprland_commit(),
         "descriptions": "hyprctl -j descriptions",
+        "animations": "hyprctl -j animations",
         "stub": "hl.meta.lua",
         "source_ref": args.source_ref or ("local checkout" if args.source else None),
         "degraded": facts.is_empty,
@@ -147,7 +160,12 @@ def main(argv: list[str] | None = None) -> int:
             "The Overlay must carry them."
         )
 
-    schema = GeneratedSchema(hyprland_version=version, options=options, provenance=provenance)
+    schema = GeneratedSchema(
+        hyprland_version=version,
+        options=options,
+        provenance=provenance,
+        animation_leaves=animation_leaves,
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(dumps(schema), encoding="utf-8")
 
@@ -156,7 +174,10 @@ def main(argv: list[str] | None = None) -> int:
         counts[option.widget.value] = counts.get(option.widget.value, 0) + 1
     flagged = sum(1 for option in options if option.curation_flags)
 
-    print(f"wrote {args.out} -- Hyprland {version}, {len(options)} options")
+    print(
+        f"wrote {args.out} -- Hyprland {version}, {len(options)} options, "
+        f"{len(animation_leaves)} animation leaves"
+    )
     print(f"  widgets: {json.dumps(dict(sorted(counts.items())))}")
     print(f"  needing curation: {flagged}")
     if facts.is_empty:

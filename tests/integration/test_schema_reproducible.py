@@ -79,6 +79,8 @@ def test_the_generator_reproduces_the_committed_schema(
 
     # Provenance records the build commit, which differs between machines running the
     # same release. Everything describing the Options themselves must match exactly.
-    assert (
-        generated_module.load(regenerated).options == generated_module.load(committed).options
-    )
+    again, shipped = generated_module.load(regenerated), generated_module.load(committed)
+    assert again.options == shipped.options
+    # The animation tree is what the same release's compositor reports (#121), so it
+    # reproduces exactly too: a leaf added or dropped by hand fails here.
+    assert again.animation_leaves == shipped.animation_leaves
