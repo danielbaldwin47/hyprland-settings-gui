@@ -26,7 +26,8 @@ when the dialog opens and recounted from that copy on every edit of a match row
 (`rule_matching`). It says which props it could not check, and is simply not shown when no
 compositor answered, when the Match is empty, or when a pattern does not compile -- never
 a zero for a question nobody could answer. Regex entries wear the `^(` and `)$` Hyprland
-applies implicitly, as labels around the text: the stored value never gains them.
+applies implicitly, as labels around the text, hidden while the text anchors itself (`^...$`):
+the stored value never gains them.
 
 **Pick a window / Pick a layer.** Prefills a Match from `hyprctl -j clients` (or the
 layer namespaces) -- helper data only, thrown away after the prefill, and the button
@@ -352,6 +353,7 @@ class RuleEditor(Adw.Dialog):
             if value is not None:
                 entry.set_text(strip_negation(str(value)))
             if prop.kind is MatchKind.REGEX:
+                marks: list[Gtk.Label] = []
                 for anchor, add in (
                     (ANCHOR_OPEN, entry.add_prefix),
                     (ANCHOR_CLOSE, entry.add_suffix),
@@ -359,6 +361,11 @@ class RuleEditor(Adw.Dialog):
                     mark = Gtk.Label(label=anchor, css_classes=["dim-label", "monospace"])
                     mark.set_tooltip_text(ANCHOR_HINT)
                     add(mark)
+                    marks.append(mark)
+                # Text that carries its own anchors (the picker's prefill, most imported
+                # rules) would read `^( ^(kitty)$ )$` between the marks.
+                entry.connect("changed", _show_anchor_marks, marks)
+                _show_anchor_marks(entry, marks)
             if prop.kind in NEGATABLE_KINDS:
                 negate = Gtk.ToggleButton(label="Not", valign=Gtk.Align.CENTER)
                 negate.add_css_class("flat")
@@ -693,6 +700,14 @@ def _is_blank(row: _EffectRow) -> bool:
     if row.helper is not None:
         return row.helper.blank()
     return isinstance(row.widget, Adw.EntryRow) and not row.widget.get_text().strip()
+
+
+def _show_anchor_marks(entry: Adw.EntryRow, marks: list[Gtk.Label]) -> None:
+    """Show the implicit `^(` `)$` only while the text does not anchor itself."""
+    text = entry.get_text().strip()
+    anchored = text.startswith("^") and text.endswith("$") and not text.endswith("\\$")
+    for mark in marks:
+        mark.set_visible(not anchored)
 
 
 def _exact(text: str) -> str:
