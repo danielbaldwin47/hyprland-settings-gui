@@ -72,6 +72,7 @@ from hyprtweaker.engine.bridge import (
     ChosenSource,
     ColorSource,
     ManualColors,
+    Off,
     PresetColors,
     Several,
     ToolSpec,
@@ -424,6 +425,8 @@ class _AppliedPreset:
 
     name: str
     before: dict[str, OptionValue]
+    after: dict[str, OptionValue]
+    """The values it sets: its step's "after" when a later Preset lands in the same batch."""
     source: SourceChange | None = None
     wallpaper: _WallpaperOrder | None = None
 
@@ -436,6 +439,15 @@ class _UndonePreset:
     source: SourceChange | None
     wallpaper: WallpaperChange | None
     notes: tuple[str, ...]
+
+
+def _gates(entries: Sequence[BridgeEntry]) -> tuple[tuple[str, str, object], ...]:
+    """What the Color source is made of: each entry on or gated off, and by what. A tool's
+    entry going from waiting to loaded is not the user changing where colors come from."""
+    return tuple(
+        (entry.tool, entry.module, entry.state if isinstance(entry.state, Off) else "on")
+        for entry in entries
+    )
 
 
 def _typed(option: ResolvedOption, value: Any) -> Any:
@@ -571,10 +583,13 @@ class Session:
         """The Monitor-profile store, built lazily over `monitor-profiles/` (#69)."""
         self._presets: PresetStore | None = None
         """The Preset store, built lazily over `presets/` (ADR-0014)."""
-        self._applying_preset: _AppliedPreset | None = None
-        """The Preset whose Options are queued and not yet reported (`apply_preset`)."""
-        self._undoing_preset: _UndonePreset | None = None
-        """The Preset step whose Options an undo has queued and not yet reported."""
+        self._applying_presets: list[_AppliedPreset] = []
+        """Presets whose Options are queued and not yet reported (`apply_preset`), oldest
+        first. A list, not a slot: a second Preset applied before the first lands is its own
+        gesture, with its own step (finding 14 of the #153 review). A foreign reload leaves
+        them: the transaction carrying them still reports, and its verdict is theirs."""
+        self._undoing_presets: list[_UndonePreset] = []
+        """Preset steps whose Options an undo has queued and not yet reported, oldest first."""
 
         self.on_preset_note: Callable[[str], None] | None = None
         """Called with a sentence saying what applying or undoing a Preset could not do: a
@@ -2175,8 +2190,14 @@ class Session:
             _log.warning("preset %s: skipped %s", slug, ", ".join(skipped))
         order = self._wallpaper_order(preset) if wallpaper else None
         if values:
-            self._applying_preset = _AppliedPreset(
-                preset.name, {name: self._model.get(name) for name in values}, source, order
+            self._applying_presets.append(
+                _AppliedPreset(
+                    preset.name,
+                    {name: self._model.get(name) for name in values},
+                    dict(values),
+                    source,
+                    order,
+                )
             )
             if source is not None:
                 # Manifest only: this transaction's write renders the gated Entrypoint, so
@@ -2232,7 +2253,11 @@ class Session:
         change = WallpaperChange(before, order.image)
         if step is not None:
             if not self._undo.replace(step, replace(step, wallpaper=change)):
-                _log.info("the preset step was undone before its wallpaper was set")
+                # Ctrl+Z came while the daemon was still showing the image: the user has
+                # already asked for the look before, so that is shown now (finding 12).
+                said = await self._put_wallpaper_back(change)
+                if said:
+                    self._say_preset(" ".join(["Settings restored.", *said]))
             return
         recorded = PresetStep.of(name, None, wallpaper=change)
         self._undo.record(recorded)
@@ -2493,11 +2518,17 @@ class Session:
         """
         notes: list[str] = []
         source = step.color_source
+        current = self._manifest().bridges
         if source is not None and (
-            self._manifest().bridges != source.after or self.color_source_blocked is not None
+            _gates(current) != _gates(source.after) or self.color_source_blocked is not None
         ):
             notes.append("Wallpaper colors were changed since, so they stay as they are.")
             source = None
+        elif source is not None:
+            # Only the gates go back: an entry whose tool has written its first file since
+            # stays loaded rather than waiting again (addendum 36 of the #153 review).
+            present = self._bridge_files_present(source.before)
+            source = SourceChange(tuple(with_presence(source.before, present=present)), current)
         if step.options is None:
             # The values matched already, so there are no Options to carry the gate back:
             # the Entrypoint goes back on its own transaction (`set_color_source`'s).
@@ -2512,8 +2543,8 @@ class Session:
             return True
         if source is not None:
             self._writer.record_bridges(self._model, source.before)
-        self._undoing_preset = _UndonePreset(
-            frozenset(step.options.names), source, step.wallpaper, tuple(notes)
+        self._undoing_presets.append(
+            _UndonePreset(frozenset(step.options.names), source, step.wallpaper, tuple(notes))
         )
         self._restore({edit.name: edit.before for edit in step.options.edits})
         self._applier.commit(*step.options.names)  # type: ignore[union-attr]  # undo checked
@@ -3007,7 +3038,6 @@ class Session:
         # spanning somebody else's reload. Entity steps over a list the re-read changes are
         # dropped there (`_reread_after_foreign_reload`).
         self._open_gestures.clear()
-        self._applying_preset = None
         self._spawn(self._reread_after_foreign_reload())
 
     async def _reread_after_foreign_reload(self, keep: Collection[str] = ()) -> None:
@@ -3368,70 +3398,105 @@ class Session:
             return
 
         delta = self._close(result.keys)
-        preset = self._carried_preset(result.keys)
-        if preset is not None:
-            # From the Preset's own snapshot: an Option it set while an earlier edit of it
-            # was in flight had its gesture closed by that edit's transaction.
+        presets = self._carried_presets(result.keys)
+        for preset in reversed(presets):
+            # From each Preset's own snapshot, the oldest last so its value wins: an Option
+            # it set while an earlier edit of it was in flight had its gesture closed by that
+            # edit's transaction, and a Preset applied over another goes back past both.
             delta = {**delta, **preset.before}
-        undone = self._carried_undo(result.keys)
+        undone = self._carried_undos(result.keys)
         stands = self._stands(result)
         entity_steps, failed = self._settle_entities(result, stands=stands)
         if not stands:
             # The gate goes back first, so the auto-revert's write renders the Entrypoint
-            # with the wallpaper's Bridge loading again (S6).
-            if preset is not None and preset.source is not None:
-                self._put_bridges(preset.source.after, preset.source.before)
-            if undone is not None and undone.source is not None:
-                self._put_bridges(undone.source.before, undone.source.after)
+            # with the wallpaper's Bridge loading again (S6). Newest first: each one's
+            # `before` is the one under it's `after`.
+            for preset in reversed(presets):
+                if preset.source is not None:
+                    self._put_bridges(preset.source.after, preset.source.before)
+            for each in reversed(undone):
+                if each.source is not None:
+                    self._put_bridges(each.source.before, each.source.after)
             self._fell(result, delta, self._lists_before(failed))
             return
 
-        option_step = self._step(delta)
-        step: Step | None = (
-            option_step
-            if preset is None
-            else PresetStep.of(preset.name, option_step, color_source=preset.source)
-        )
-        self._undo.record(step)
+        steps = self._preset_steps(presets, delta)
+        for recorded in steps:
+            self._undo.record(recorded)
         for entity_step in entity_steps:
             self._undo.record(entity_step)
         self._observe(result)
         self._repoll_if_timed_out(result)
         self._report(result)
-        if preset is not None and preset.wallpaper is not None:
-            carried = step if isinstance(step, PresetStep) else None
-            self._spawn(self._show_preset_wallpaper(preset.name, preset.wallpaper, carried))
-        if undone is not None:
-            self._spawn(self._finish_preset_undo(undone.wallpaper, undone.notes))
+        for preset, recorded in zip(presets, steps, strict=False):
+            if preset.wallpaper is not None:
+                carried = recorded if isinstance(recorded, PresetStep) else None
+                self._spawn(self._show_preset_wallpaper(preset.name, preset.wallpaper, carried))
+        for each in undone:
+            self._spawn(self._finish_preset_undo(each.wallpaper, each.notes))
+        step = steps[-1] if steps else None
         if self._undo_when_landed():
             # The user already asked for this gesture back: no offer to undo it.
             return
         newest: Step | None = entity_steps[-1] if entity_steps else step
-        if newest is not None and result.ok and self.on_recorded is not None:
+        # A Preset that stands is offered back even when a key did not take: its step is on
+        # the stack, and the toast names what did not take (finding 13 of the #153 review).
+        offered = result.ok or (isinstance(newest, PresetStep) and not entity_steps)
+        if newest is not None and offered and self.on_recorded is not None:
             # After `on_applied`, and only for a clean one: the window shows one toast, and a
             # transaction that stands with a failure (a timeout, a `user.lua` error) has its
             # failure to say. One toast per transaction, naming the newest gesture it carried.
             self.on_recorded(newest)
 
-    def _carried_preset(self, keys: Sequence[str]) -> _AppliedPreset | None:
-        """The applied Preset this transaction carries, taken: every key of it is in `keys`.
+    def _preset_steps(
+        self, presets: Sequence[_AppliedPreset], delta: Mapping[str, OptionValue]
+    ) -> list[Step]:
+        """The steps one standing transaction records: one per Preset it carried, oldest
+        first, so each Ctrl+Z takes back one; without a Preset, the plain Option step.
 
-        All or none, because `apply_preset` commits its keys in one synchronous burst and the
-        queue takes a batch whole.
+        Each Preset's step goes from its own `before` to its own values; the newest goes to
+        the model's, and also carries any other Option edit that landed in the same batch.
         """
-        preset = self._applying_preset
-        if preset is None or not preset.before.keys() <= set(keys):
-            return None
-        self._applying_preset = None
-        return preset
+        if not presets:
+            step = self._step(delta)
+            return [step] if step is not None else []
+        steps: list[Step] = []
+        for index, preset in enumerate(presets):
+            newest = index == len(presets) - 1
+            names = dict(preset.before)
+            if newest:
+                claimed = {name for each in presets for name in each.before}
+                names.update({k: v for k, v in delta.items() if k not in claimed})
+            edits = [
+                Edit(
+                    name,
+                    before,
+                    self._model.get(name) if newest else preset.after.get(name, before),
+                )
+                for name, before in names.items()
+            ]
+            made = PresetStep.of(preset.name, UndoStep.of(edits), color_source=preset.source)
+            if made is not None:
+                steps.append(made)
+        return steps
 
-    def _carried_undo(self, keys: Sequence[str]) -> _UndonePreset | None:
-        """The Preset undo this transaction carries, taken, as `_carried_preset` does."""
-        undone = self._undoing_preset
-        if undone is None or not undone.names <= set(keys):
-            return None
-        self._undoing_preset = None
-        return undone
+    def _carried_presets(self, keys: Sequence[str]) -> list[_AppliedPreset]:
+        """The applied Presets this transaction carries, taken, oldest first: each one every
+        key of which is in `keys`.
+
+        All or none per Preset, because `apply_preset` commits its keys in one synchronous
+        burst and the queue takes a batch whole; two applied before either landed coalesce
+        into one batch and come back together.
+        """
+        carried = [p for p in self._applying_presets if p.before.keys() <= set(keys)]
+        self._applying_presets = [p for p in self._applying_presets if p not in carried]
+        return carried
+
+    def _carried_undos(self, keys: Sequence[str]) -> list[_UndonePreset]:
+        """The Preset undos this transaction carries, taken, as `_carried_presets` does."""
+        carried = [u for u in self._undoing_presets if u.names <= set(keys)]
+        self._undoing_presets = [u for u in self._undoing_presets if u not in carried]
+        return carried
 
     def _put_bridges(
         self, expected: Sequence[BridgeEntry], entries: Sequence[BridgeEntry]

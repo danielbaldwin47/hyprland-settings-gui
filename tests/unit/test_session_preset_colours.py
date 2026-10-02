@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
 from _fake_hyprland import FakeHyprland, run_with_fake
 from _support import Runner, sample_schema, section_conversation, session_for
 from test_session_presets import reject_the_next_reload
@@ -512,3 +513,185 @@ def test_the_current_wallpaper_is_what_the_daemon_shows_or_none(tmp_path: Path) 
     assert session(daemon.seam()).current_wallpaper() == MINE
     assert daemon.calls == [("query",)]
     assert session(no_daemon()).current_wallpaper() is None
+
+
+# --- the review of #153: in-flight applies, undos and reloads ------------------------------
+
+
+def test_ctrl_z_before_the_wallpaper_lands_still_puts_it_back(tmp_path: Path) -> None:
+    """Finding 12: undo while the daemon was still setting the Preset's image restored the
+    settings, then the image landed and stayed, and nothing was said."""
+    import asyncio
+    import threading
+
+    daemon = FakeDaemon(tmp_path / "run")
+    gate = threading.Event()
+    real_run = daemon.run
+
+    def slow_run(argv: Sequence[str], *, timeout: float) -> ToolRun:
+        if argv[1] == "img" and not gate.is_set():
+            gate.wait(5)
+        return real_run(argv, timeout=timeout)
+
+    daemon.run = slow_run  # type: ignore[method-assign]
+    image = tmp_path / "nord.png"
+    image.write_bytes(b"\x89PNG")
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session, notes = await live_session(fake, tmp_path, runner, daemon.seam())
+        write_preset(tmp_path, {BORDER_SIZE: 3}, wallpaper=str(image))
+        fake.conversation.update(conversation(**{BORDER_SIZE: 3}))
+
+        session.apply_preset("nord", wallpaper=True)
+        await session.drain()
+        await asyncio.sleep(0.2)  # the daemon is now showing the image, slowly
+        assert isinstance(session.last_gesture, PresetStep)
+        fake.conversation.update(conversation())
+        assert session.undo()
+        gate.set()
+        await settle(session, runner)
+
+        assert session.model.get(BORDER_SIZE) is UNSET
+        assert daemon.showing == MINE
+        assert notes == []
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_preset_that_stands_with_an_override_still_offers_its_undo(tmp_path: Path) -> None:
+    """Finding 13: a disagreeing live key (READ_BACK_MISMATCH) got no "Applied" offer."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session, _ = await live_session(fake, tmp_path, runner)
+        recorded: list[object] = []
+        session.on_recorded = recorded.append
+        write_preset(tmp_path, NORD)
+        fake.conversation.update(conversation(**{BORDER_SIZE: 7, INACTIVE: PRESET_COLOUR}))
+
+        session.apply_preset("nord")
+        await settle(session, runner)
+
+        (step,) = recorded
+        assert isinstance(step, PresetStep) and step.name == "Nord"
+        assert session.overridden == {BORDER_SIZE}
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_two_presets_applied_before_either_lands_undo_one_at_a_time(tmp_path: Path) -> None:
+    """Finding 14: the second apply overwrote the first's pending record, and the way back
+    to the look before both was lost."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session, _ = await live_session(fake, tmp_path, runner)
+        write_preset(tmp_path, {BORDER_SIZE: 3}, slug="nord")
+        write_preset(tmp_path, {BORDER_SIZE: 5}, slug="dusk")
+        fake.conversation.update(conversation(**{BORDER_SIZE: 5}))
+
+        session.apply_preset("nord")
+        session.apply_preset("dusk")
+        await settle(session, runner)
+        assert session.model.get(BORDER_SIZE) == 5
+
+        fake.conversation.update(conversation(**{BORDER_SIZE: 3}))
+        assert session.undo()
+        await settle(session, runner)
+        assert session.model.get(BORDER_SIZE) == 3
+
+        fake.conversation.update(conversation())
+        assert session.undo()
+        await settle(session, runner)
+        assert session.model.get(BORDER_SIZE) is UNSET
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def reject_the_next_own_reload(fake: FakeHyprland) -> None:
+    """Refuse `general.lua` in every `configerrors` read between the app's next `reload`
+    and the one after it (the auto-revert's), whatever else reads it in between."""
+    from test_session_presets import REJECTION
+
+    clean = fake.conversation["j/configerrors"]
+    reloads = [0]
+
+    def hook(request: str, _seen: int) -> None:
+        if request == "reload":
+            reloads[0] += 1
+        elif request == "j/configerrors":
+            fake.conversation["j/configerrors"] = REJECTION if reloads[0] == 1 else clean
+
+    fake.on_request = hook
+
+
+@pytest.mark.parametrize("stands", [True, False])
+def test_a_foreign_reload_while_a_preset_is_in_flight_keeps_its_verdict(
+    tmp_path: Path, stands: bool
+) -> None:
+    """Addendum 36 (a): a foreign reload between `apply_preset` and its result cleared the
+    pending Preset, so a standing one recorded no step and a failing one left the Bridge
+    states gated."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session, _ = await live_session(fake, tmp_path, runner)
+        await under_matugen(session, tmp_path, runner)
+        before = session.last_gesture
+        write_preset(tmp_path, NORD)
+        fake.conversation.update(conversation(**{BORDER_SIZE: 3, INACTIVE: PRESET_COLOUR}))
+        if not stands:
+            reject_the_next_own_reload(fake)
+
+        session.apply_preset("nord", colors=ColorChoice.USE_PRESET)
+        session._on_foreign_reload()  # the user's script reloaded, before the result
+        await settle(session, runner)
+
+        if stands:
+            assert isinstance(session.last_gesture, PresetStep)
+            assert session.color_source() == PresetColors()
+        else:
+            assert session.last_gesture is before
+            assert session.color_source() == Wallpaper("matugen")
+            assert matugen_line(tmp_path) == 'require("hyprtweaker/bridge/matugen")'
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_tool_that_loads_its_first_file_in_between_does_not_keep_the_presets_source(
+    tmp_path: Path,
+) -> None:
+    """Addendum 36 (b): a waiting entry turning active is not the user changing the Color
+    source, so undo puts the source back and says nothing."""
+    from hyprtweaker.engine.bridge import SHELL_SWITCH
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session, notes = await live_session(fake, tmp_path, runner)
+        await under_matugen(session, tmp_path, runner)
+        paths = ConfigPaths.rooted_at(tmp_path)
+        manifest = Manifest.load(paths.manifest, app_version="x", schema_version="y")
+        Writer(paths, app_version=session.app_version).record_bridges(
+            session.model, manifest.add_bridge(SHELL_SWITCH, present=()).bridges
+        )
+        write_preset(tmp_path, NORD)
+        fake.conversation.update(conversation(**{BORDER_SIZE: 3, INACTIVE: PRESET_COLOUR}))
+        session.apply_preset("nord", colors=ColorChoice.USE_PRESET)
+        await settle(session, runner)
+        assert session.color_source() == PresetColors()
+
+        for module in SHELL_SWITCH.modules:
+            (paths.hypr_dir / module.file).write_text("return {}\n", encoding="utf-8")
+        assert session.load_waiting_bridges()
+        await settle(session, runner)
+        fake.conversation.update(conversation())
+        assert session.undo()
+        await settle(session, runner)
+
+        assert session.color_source() == Wallpaper("matugen")
+        assert notes == []
+        text = paths.entrypoint.read_text(encoding="utf-8")
+        assert 'require("shell-switcher-startup")' in text.splitlines()
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))

@@ -457,6 +457,8 @@ class MainWindow(Adw.ApplicationWindow):
         Without this a burst of gestures stacks toasts, and the button on the one the user
         finally reaches is the *oldest* gesture rather than the last -- an undo that takes
         back something they have since changed twice."""
+        self._result_toast: Adw.Toast | None = None
+        """The last failure toast `on_applied` raised, which a Preset's offer replaces."""
 
         self.set_title("Hyprtweaker")
         self.set_default_size(1000, 700)
@@ -1981,7 +1983,9 @@ class MainWindow(Adw.ApplicationWindow):
         if not result.ok:
             self._dismiss_undo()
         if not result.ok and not result.errors and not result.mismatches:
-            self._toasts.add_toast(Adw.Toast(title=_result_summary(result), timeout=5))
+            toast = Adw.Toast(title=_result_summary(result), timeout=5)
+            self._result_toast = toast
+            self._toasts.add_toast(toast)
 
     def show_revert(self, revert: AutoRevert) -> None:
         """The app has just taken back its own rejected write (ADR-0016 §Auto-revert).
@@ -2269,6 +2273,11 @@ class MainWindow(Adw.ApplicationWindow):
         """
         self._sync_undo_action()
         self._dismiss_undo()
+        if isinstance(step, PresetStep) and self._result_toast is not None:
+            # A Preset that stood with a key that did not take: its offer says what did not,
+            # so the transaction still gets one toast (finding 13 of the #153 review).
+            self._result_toast.dismiss()
+        self._result_toast = None
         toast = Adw.Toast(title=self._gesture_title(step), timeout=UNDO_TOAST_SECONDS)
         toast.set_button_label("Undo")
         toast.connect("button-clicked", lambda *_: self._undo())
@@ -2426,7 +2435,16 @@ class MainWindow(Adw.ApplicationWindow):
         if isinstance(step, EntityStep):
             return step.title
         if isinstance(step, PresetStep):
-            return f"Applied {step.name}. Press Ctrl+Z to undo."
+            names = set(step.options.names) if step.options is not None else set()
+            untaken = [
+                _counted(
+                    len(names & self._session.unconfirmed), "was not confirmed by Hyprland"
+                ),
+                _counted(len(names & self._session.overridden), "is overridden"),
+                _counted(len(names & self._session.unapplied), "did not apply"),
+            ]
+            said = " ".join(f"{part}." for part in untaken if part)
+            return f"Applied {step.name}. {said + ' ' if said else ''}Press Ctrl+Z to undo."
         titles = [self._session.schema[name].title for name in step.names]
         if len(titles) == 1:
             return f"{titles[0]} changed"
@@ -2980,6 +2998,17 @@ _FAILURE_TEXT = {
     ApplyOutcome.WRITE_FAILED: "The settings file could not be written.",
     ApplyOutcome.ABORTED: "The change was refused before anything was written.",
 }
+
+
+def _counted(count: int, verb: str) -> str:
+    """ "1 setting is overridden", "2 settings are overridden"; empty for none."""
+    if count == 0:
+        return ""
+    if count == 1:
+        return f"1 setting {verb}"
+    plural = verb.replace("is ", "are ", 1) if verb.startswith("is ") else verb
+    plural = plural.replace("was ", "were ", 1) if plural.startswith("was ") else plural
+    return f"{count} settings {plural}"
 
 
 def _result_summary(result: ApplyResult) -> str:

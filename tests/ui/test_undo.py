@@ -153,6 +153,25 @@ def test_an_applied_preset_is_offered_back_by_its_name(tmp_path: Path) -> None:
     assert toast.get_button_label() == "Undo"
 
 
+def test_a_preset_that_stood_with_a_key_not_taken_says_so_in_its_offer(tmp_path: Path) -> None:
+    """Finding 13 of the #153 review: the offer names what did not take."""
+    from hyprtweaker.engine.apply import PresetStep
+
+    session, window = build_window(tmp_path)
+    session._overridden = (ROUNDING,)
+    window.offer_undo(PresetStep("Nord", a_gesture()))
+    assert window.undo_toast.get_title() == (
+        "Applied Nord. 1 setting is overridden. Press Ctrl+Z to undo."
+    )
+
+    session._overridden = ()
+    session._unconfirmed = (ROUNDING,)
+    window.offer_undo(PresetStep("Nord", a_gesture()))
+    assert window.undo_toast.get_title() == (
+        "Applied Nord. 1 setting was not confirmed by Hyprland. Press Ctrl+Z to undo."
+    )
+
+
 def test_the_toasts_button_asks_the_session_to_undo(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
     window.offer_undo(a_gesture())
