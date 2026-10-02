@@ -216,7 +216,7 @@ misc:close_special_on_empty | bool | toggle | - | - | default | - | - | - | - | 
 misc:on_focus_under_fullscreen | int | enum-map | - | - | default | - | min=0,max=2 | - | - | Focusing a window under a fullscreen one
 misc:exit_window_retains_fullscreen | bool | toggle | - | - | default | - | - | - | - | Keep fullscreen when a window exits
 misc:initial_workspace_tracking | int | segmented | - | - | default | - | min=0,max=2 | 0=Disabled/1=Single-shot/2=Persistent | - | Initial workspace tracking
-misc:initial_workspace_token_timeout | int | int-range | - | - | default | - | min=1,max=3600 | - | ms | Workspace token timeout
+misc:initial_workspace_token_timeout | int | int-range | - | - | default | - | min=1,max=3600 | - | s | Workspace token timeout
 misc:middle_click_paste | bool | toggle | - | - | default | - | - | - | - | Middle-click paste
 misc:render_unfocused_fps | int | int-range | - | - | default | - | min=1,max=120 | - | fps | Unfocused render rate
 misc:disable_xdg_env_checks | bool | toggle | - | - | advanced | - | - | - | - | Skip XDG environment checks

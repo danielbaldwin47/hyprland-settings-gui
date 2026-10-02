@@ -1504,7 +1504,7 @@
     },
     "misc:initial_workspace_token_timeout": {
       "title": "Workspace token timeout",
-      "unit": "ms",
+      "unit": "s",
       "group": "Focus and placement",
       "order": 7
     },
