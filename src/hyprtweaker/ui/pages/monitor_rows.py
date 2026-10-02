@@ -48,6 +48,10 @@ NOT_SET = "Not set"
 FRACTIONAL_WARNING = "Fractional scales can look blurry in apps that don't support them."
 
 _CUSTOM_MODELINE = "Custom modeline"
+MODELINE_FORMAT = (
+    "The timings, in order: clock hdisplay hsync_start hsync_end htotal "
+    "vdisplay vsync_start vsync_end vtotal, then any flags."
+)
 _MODE_LABELS: dict[str, str] = {
     "preferred": "Display's preferred",
     "highres": "Highest resolution",
@@ -119,19 +123,23 @@ class ModeRows:
         self.refresh = Adw.ComboRow(title="Refresh rate")
         self._rates: list[float | None] = []
 
-        self.modeline = Adw.EntryRow(title="Modeline", show_apply_button=True)
-        self.modeline.set_tooltip_text(
-            "clock hdisplay hsync_start hsync_end htotal "
-            "vdisplay vsync_start vsync_end vtotal [flags]"
-        )
+        # ADR-0013 §2: the format stays on screen as the subtitle, not in a tooltip.
+        self.modeline = Adw.ActionRow(title="Modeline", subtitle=MODELINE_FORMAT)
+        self.modeline_entry = Gtk.Entry(valign=Gtk.Align.CENTER, hexpand=True)
+        self._written_modeline = ""
         if shown == _CUSTOM_MODELINE:
-            self.modeline.set_text(rule_text[len(MODELINE_PREFIX) :].strip())
+            self._written_modeline = rule_text[len(MODELINE_PREFIX) :].strip()
+            self.modeline_entry.set_text(self._written_modeline)
+        self.modeline.add_suffix(self.modeline_entry)
         self.modeline.set_sensitive(editable)
 
         self._show(shown, wanted, specified=specified)
         self.resolution.connect("notify::selected", self._on_resolution)
         self.refresh.connect("notify::selected", self._on_refresh)
-        self.modeline.connect("apply", self._on_modeline)
+        self.modeline_entry.connect("activate", self._on_modeline)
+        left = Gtk.EventControllerFocus()
+        left.connect("leave", lambda _focus: self._on_modeline(self.modeline_entry))
+        self.modeline_entry.add_controller(left)
 
     @property
     def rows(self) -> tuple[Adw.PreferencesRow, ...]:
@@ -188,9 +196,12 @@ class ModeRows:
             return
         self._apply({"mode": format_mode(*shown, self._rates[combo.get_selected()])})
 
-    def _on_modeline(self, entry: Adw.EntryRow) -> None:
+    def _on_modeline(self, entry: Gtk.Entry) -> None:
+        """Enter or focus leaving: write a modeline that is there and new. Leaving an
+        unchanged one writes nothing, since a mode write opens the revert countdown."""
         text = entry.get_text().strip()
-        if text:
+        if text and text != self._written_modeline:
+            self._written_modeline = text
             self._apply({"mode": f"{MODELINE_PREFIX}{text}"})
 
 

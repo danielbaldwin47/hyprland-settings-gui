@@ -704,17 +704,26 @@ def test_a_special_mode_in_the_rule_shows_its_plain_name() -> None:
 
 
 def test_a_modeline_rule_shows_custom_modeline_and_edits_ride_the_breaking_lane() -> None:
+    from gi.repository import Gtk
+
     line = "148.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync"
     row, recorder = dock_row([monitor_rule("desc:Dell U2720Q", mode=f"modeline {line}")])
 
     assert chosen(row_titled(row, "Resolution")) == "Custom modeline"
     assert not row_titled(row, "Refresh rate").get_sensitive()
-    entry = row_titled(row, "Modeline")
-    assert entry.get_visible()
+    modeline = row_titled(row, "Modeline")
+    assert modeline.get_visible()
+    assert modeline.get_subtitle() == (
+        "The timings, in order: clock hdisplay hsync_start hsync_end htotal "
+        "vdisplay vsync_start vsync_end vtotal, then any flags."
+    )
+    entry = suffix_of(modeline, Gtk.Entry)
     assert entry.get_text() == line
+    entry.emit("activate")  # unchanged: nothing to write
+    assert recorder.breaking == []
 
     entry.set_text("174.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync")
-    entry.emit("apply")
+    entry.emit("activate")
 
     assert recorder.breaking == [
         (
@@ -725,15 +734,17 @@ def test_a_modeline_rule_shows_custom_modeline_and_edits_ride_the_breaking_lane(
 
 
 def test_the_modeline_entry_hides_until_custom_modeline_is_chosen() -> None:
+    from gi.repository import Gtk
+
     row, recorder = dock_row([])
-    entry = row_titled(row, "Modeline")
-    assert not entry.get_visible()
+    modeline = row_titled(row, "Modeline")
+    assert not modeline.get_visible()
 
     choose(row_titled(row, "Resolution"), "Custom modeline")
 
-    assert entry.get_visible()
+    assert modeline.get_visible()
     assert recorder.breaking == []  # nothing to write until a modeline is entered
-    entry.emit("apply")  # an empty modeline is no mode at all
+    suffix_of(modeline, Gtk.Entry).emit("activate")  # an empty modeline is no mode at all
     assert recorder.breaking == []
 
 

@@ -85,6 +85,7 @@ class WorkspaceFieldRows:
         self._rows: dict[str, _Row] = {}
         self._opts_rows: dict[str, _Row] = {}
         self._gaps: dict[str, GapField] = {}
+        self._entries: dict[str, Gtk.Entry] = {}
         self._opts_original: Any = fields.get(LAYOUT_OPTS, _MISSING)
         self._opts_touched = False
 
@@ -121,7 +122,7 @@ class WorkspaceFieldRows:
         )
         self._picker.connect("notify::selected", self._on_picked)
         self._picker_group.add(self._picker)
-        self._opts_add = Adw.EntryRow(title="Add an option (its name)", show_apply_button=True)
+        self._opts_add = Adw.EntryRow(title="Add a layout option", show_apply_button=True)
         self._opts_add.connect("apply", lambda _row: self._on_add_option())
         self._opts_group.add(self._opts_add)
 
@@ -159,6 +160,10 @@ class WorkspaceFieldRows:
     def gap_field(self, key: str) -> GapField | None:
         """The gap control of a gap row, for tests and probes."""
         return self._gaps.get(key)
+
+    def text_entry(self, key: str) -> Gtk.Entry | None:
+        """The entry of a typed text row (Monitor, Display name), for tests and probes."""
+        return self._entries.get(key) if key in self._rows else None
 
     def option_row(self, key: str) -> Adw.EntryRow | None:
         row = self._opts_rows.get(key)
@@ -293,13 +298,16 @@ class WorkspaceFieldRows:
                 lambda: choices[min(combo.get_selected(), len(choices) - 1)],
             )
         else:
-            entry = Adw.EntryRow(title=spec.title, text=str(opening))
-            if spec.help:
-                entry.set_tooltip_text(spec.help)
+            # ADR-0013 §2: an ActionRow with an entry suffix, so the help stays on screen
+            # as the subtitle, where an EntryRow could only hide it in a tooltip.
+            entry = Gtk.Entry(text=str(opening), valign=Gtk.Align.CENTER, hexpand=True)
             entry.connect("changed", lambda *_: self._touch(row))
-            entry.add_suffix(remove)
+            self._entries[spec.name] = entry
+            text_row = Adw.ActionRow(title=spec.title, subtitle=spec.help)
+            text_row.add_suffix(entry)
+            text_row.add_suffix(remove)
             row = _Row(
-                spec.name, entry, value, _blank_is_missing(lambda: entry.get_text().strip())
+                spec.name, text_row, value, _blank_is_missing(lambda: entry.get_text().strip())
             )
 
         remove.connect("clicked", lambda _b: self._remove(row))
