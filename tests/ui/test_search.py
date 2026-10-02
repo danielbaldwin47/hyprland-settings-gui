@@ -67,13 +67,13 @@ def window(state_dir: Path) -> Iterator[Any]:
     app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
     built = MainWindow(session, application=app)
     # Mapped, because one assertion below is about *mapping* and nothing else can stand in
-    # for it (see `test_type_to_search_survives_the_title_swap`). Destroyed at teardown: a
-    # window left mapped keeps its `GtkApplication` alive and the next module's `app.run()`
-    # never returns.
+    # for it (see `test_type_to_search_survives_the_title_swap`). Closed at teardown, through
+    # the app's own route, which destroys and releases it: a window left mapped keeps its
+    # `GtkApplication` alive and the next module's `app.run()` never returns.
     built.present()
     settle()
     yield built
-    built.destroy()
+    built.close()
     settle()
 
 

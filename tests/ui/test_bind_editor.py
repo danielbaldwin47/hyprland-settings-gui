@@ -204,6 +204,38 @@ def test_an_enabled_bind_with_a_dead_trigger_still_blocks() -> None:
     assert "'notakey' is not a key name xkb knows" in editor._error.get_text()
 
 
+def test_a_typed_ampersand_trigger_blocks_even_without_xkb(monkeypatch: Any) -> None:
+    """`A&B` fails the whole config on 0.56 whatever xkb says (#199): no validator is no
+    excuse to store it enabled."""
+    monkeypatch.setattr("hyprtweaker.engine.importer.binds.known_keysym", lambda _name: None)
+    monkeypatch.setattr("hyprtweaker.engine.triggers.known_keysym", lambda _name: None)
+    editor, saved = open_editor(
+        Bind(keys="SUPER + Q", dispatcher=DispatcherCall(path="exec_cmd", positional=("x",)))
+    )
+    editor._trigger.set_text("SUPER + A&B")
+    editor._save()
+
+    assert saved == []
+    assert editor._error.get_text() == (
+        "Hyprland can't load a multi-key trigger joined with &: enabled, this keybind "
+        "would stop your whole config from loading. Use a single key."
+    )
+
+
+@needs_xkb
+def test_a_dead_key_inside_a_multi_key_trigger_blocks() -> None:
+    """`validate_trigger` only warns about `SUPER + Q + notakey` (#198); the dead key in it
+    still fails the config, and the one load rule catches it (#199)."""
+    editor, saved = open_editor(
+        Bind(keys="SUPER + Q", dispatcher=DispatcherCall(path="exec_cmd", positional=("x",)))
+    )
+    editor._trigger.set_text("SUPER + Q + notakey")
+    editor._save()
+
+    assert saved == []
+    assert "'notakey' is not a key name xkb knows" in editor._error.get_text()
+
+
 def test_a_free_form_call_keeps_its_booleans_and_quoted_numbers_through_an_edit() -> None:
     """`movetoworkspacesilent` imports as `window.move{ workspace = "3", follow = false }`.
 
@@ -405,3 +437,209 @@ def test_every_key_of_a_saved_curated_call_survives_an_edit(entry: Dispatcher) -
 
     assert not editor._error.get_visible(), editor._error.get_text()
     assert [b.dispatcher for b in saved] == [call]
+
+
+# --- #105: click, drag and auto_consuming, with ADR-0007's constraints in the form --------
+
+
+def term_bind(**flags: bool) -> Bind:
+    """A saved bind on a working key, as the editor opens it, with these flags on."""
+    return Bind(
+        keys="SUPER + T",
+        dispatcher=DispatcherCall(path="exec_cmd", positional=("kitty",)),
+        options=BindOptions(**flags),
+    )
+
+
+def saved_options(bind: Bind, *flip: str) -> tuple[Any, list[Bind]]:
+    """Open `bind`, turn each flag in `flip` on, save; the editor and what it handed back."""
+    editor, saved = open_editor(bind)
+    for name in flip:
+        editor._flag_switches[name].set_active(True)
+    editor._save()
+    return editor, saved
+
+
+def refusal(editor: Any) -> str:
+    return str(editor._error.get_text()) if editor._error.get_visible() else ""
+
+
+def test_the_auto_consuming_switch_says_what_the_flag_does() -> None:
+    """Hyprland 0.56.2 `KeybindManager.cpp`: an auto-consuming bind keeps the key from the
+    app only when its dispatcher succeeds (#151 review, finding 31)."""
+    editor, _ = open_editor(term_bind())
+    row = editor._flag_switches["auto_consuming"]
+
+    assert (row.get_title(), row.get_subtitle()) == (
+        "Lets the key through if the action fails",
+        "The app gets the key when the action could not run",
+    )
+
+
+@pytest.mark.parametrize("name", ["click", "drag", "auto_consuming"])
+def test_each_new_flag_has_a_switch_and_reaches_the_saved_bind(name: str) -> None:
+    editor, saved = saved_options(term_bind(), name)
+
+    assert refusal(editor) == ""
+    assert [getattr(b.options, name) for b in saved] == [True]
+
+
+@pytest.mark.parametrize("name", ["click", "drag"])
+def test_click_and_drag_save_release_without_the_user_setting_it(name: str) -> None:
+    editor, saved = saved_options(term_bind(), name)
+
+    assert not editor._error.get_visible()
+    assert [(b.options.release, getattr(b.options, name)) for b in saved] == [(True, True)]
+
+
+@pytest.mark.parametrize(("name", "caption"), [("click", "Click"), ("drag", "Drag")])
+def test_the_release_switch_shows_on_and_locked_while_click_or_drag_is_on(
+    name: str, caption: str
+) -> None:
+    editor, _ = open_editor(term_bind())
+    release = editor._flag_switches["release"]
+    assert (release.get_active(), release.get_sensitive(), release.get_subtitle()) == (
+        False,
+        True,
+        "",
+    )
+
+    editor._flag_switches[name].set_active(True)
+    assert (release.get_active(), release.get_sensitive(), release.get_subtitle()) == (
+        True,
+        False,
+        f"Set by {caption}",
+    )
+
+
+def test_turning_click_off_gives_release_back_to_the_users_own_value() -> None:
+    editor, saved = open_editor(term_bind())
+    release, click = editor._flag_switches["release"], editor._flag_switches["click"]
+
+    click.set_active(True)
+    click.set_active(False)
+    assert (release.get_active(), release.get_sensitive(), release.get_subtitle()) == (
+        False,
+        True,
+        "",
+    )
+    editor._save()
+    assert [(b.options.release, b.options.click) for b in saved] == [(False, False)]
+
+
+def test_a_release_the_user_set_survives_click_going_on_and_off() -> None:
+    editor, saved = open_editor(term_bind(release=True))
+    click = editor._flag_switches["click"]
+
+    click.set_active(True)
+    click.set_active(False)
+
+    assert editor._flag_switches["release"].get_active()
+    editor._save()
+    assert [(b.options.release, b.options.click) for b in saved] == [(True, False)]
+
+
+def test_an_imported_click_bind_opens_with_release_locked_on_and_saves_unchanged() -> None:
+    """The Importer sets release on every click bind, so release is not the user's own."""
+    editor, saved = open_editor(term_bind(click=True, release=True))
+    release = editor._flag_switches["release"]
+
+    assert (release.get_active(), release.get_sensitive(), release.get_subtitle()) == (
+        True,
+        False,
+        "Set by Click",
+    )
+    editor._save()
+    assert [b.options for b in saved] == [BindOptions(click=True, release=True)]
+
+
+def test_turning_an_imported_click_off_does_not_leave_a_release_the_user_never_chose() -> None:
+    editor, saved = open_editor(term_bind(click=True, release=True))
+    editor._flag_switches["click"].set_active(False)
+
+    assert not editor._flag_switches["release"].get_active()
+    editor._save()
+    assert [b.options for b in saved] == [BindOptions()]
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (("click", "drag"), "Click and Drag can't both be on."),
+        (("click", "repeating"), "Click fires on release, so it can't repeat."),
+        (("drag", "repeating"), "Drag fires on release, so it can't repeat."),
+        (("long_press", "repeating"), "Long press can't repeat."),
+        (("release", "repeating"), "Release can't repeat."),
+    ],
+)
+def test_an_invalid_flag_combination_is_refused_in_plain_words_and_not_saved(
+    flags: tuple[str, ...], message: str
+) -> None:
+    editor, saved = saved_options(term_bind(), *flags)
+
+    assert refusal(editor) == message
+    assert saved == []
+
+
+def test_a_flag_conflict_shows_as_the_switch_flips_and_clears_when_resolved() -> None:
+    """#151 review, finding 41 (owner call 10 overturned): the refusal shows where the
+    user acts, not only once Save is pressed."""
+    editor, saved = open_editor(term_bind())
+    editor._flag_switches["click"].set_active(True)
+    assert refusal(editor) == ""
+
+    editor._flag_switches["repeating"].set_active(True)
+    assert refusal(editor) == "Click fires on release, so it can't repeat."
+
+    editor._flag_switches["repeating"].set_active(False)
+    assert not editor._error.get_visible()
+    assert saved == []
+
+
+def test_an_imported_conflict_shows_as_the_editor_opens() -> None:
+    editor, _ = open_editor(term_bind(long_press=True, repeating=True))
+
+    assert refusal(editor) == "Long press can't repeat."
+
+
+def test_flipping_a_flag_leaves_a_save_refusal_about_something_else() -> None:
+    editor, _ = open_editor(term_bind())
+    editor._trigger.set_text("")
+    editor._save()
+    assert refusal(editor) == "A keybind needs a trigger."
+
+    editor._flag_switches["locked"].set_active(True)
+
+    assert refusal(editor) == "A keybind needs a trigger."
+
+
+def test_an_imported_click_bind_that_repeats_is_refused_naming_click_not_release() -> None:
+    editor, saved = saved_options(term_bind(click=True, release=True), "repeating")
+
+    assert refusal(editor) == "Click fires on release, so it can't repeat."
+    assert saved == []
+
+
+@pytest.mark.parametrize(
+    "flags", [("click", "long_press"), ("auto_consuming", "non_consuming")]
+)
+def test_pairs_hyprland_loads_are_not_refused(flags: tuple[str, ...]) -> None:
+    """`Hyprland --verify-config` accepts both pairs (probed on 0.56.2, #105)."""
+    editor, saved = saved_options(term_bind(), *flags)
+
+    assert refusal(editor) == ""
+    assert len(saved) == 1
+
+
+def test_a_bind_device_survives_a_click_edit() -> None:
+    from hyprtweaker.engine.model.entities import BindDevice
+
+    device = BindDevice(inclusive=False, names=("kbd",))
+    bind = Bind(
+        keys="SUPER + T",
+        dispatcher=DispatcherCall(path="exec_cmd", positional=("kitty",)),
+        options=BindOptions(device=device),
+    )
+    _, saved = saved_options(bind, "click")
+
+    assert [b.options.device for b in saved] == [device]

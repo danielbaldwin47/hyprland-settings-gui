@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from hyprtweaker.engine.binds_analysis import (
+    empty_submaps,
     find_conflicts,
     save_submap,
     unreachable_submaps,
@@ -20,6 +21,7 @@ from hyprtweaker.engine.model.entities import (
     DispatcherCall,
     EntitySet,
     Submap,
+    Unbind,
 )
 
 
@@ -98,6 +100,43 @@ class TestConflicts:
         # all the same -- hiding it from conflict detection would hide a real race.
         binds = [Bind(keys="SUPER + Q"), exec_bind("SUPER + Q")]
         assert 0 in find_conflicts(binds)
+
+
+class TestEmptySubmaps:
+    """A submap Hyprland cannot enter: `define_submap` with no live bind never registers
+    it, and `hl.dsp.submap` into it errors (probed on 0.56.2, #111; #208)."""
+
+    def test_a_submap_with_an_enabled_bind_is_enterable(self) -> None:
+        entities = EntitySet(
+            submaps=[Submap(name="resize")],
+            binds=[exec_bind("right", submap="resize")],
+        )
+        assert empty_submaps(entities) == set()
+
+    def test_a_declared_submap_with_no_binds_is_empty(self) -> None:
+        entities = EntitySet(submaps=[Submap(name="resize")])
+        assert empty_submaps(entities) == {"resize"}
+
+    def test_a_submap_with_only_disabled_binds_is_empty(self) -> None:
+        entities = EntitySet(
+            submaps=[Submap(name="resize")],
+            binds=[exec_bind("right", submap="resize", enabled=False)],
+        )
+        assert empty_submaps(entities) == {"resize"}
+
+    def test_an_unbind_does_not_make_a_submap_enterable(self) -> None:
+        entities = EntitySet(
+            submaps=[Submap(name="resize")],
+            unbinds=[Unbind(keys="SUPER + Q", submap="resize")],
+        )
+        assert empty_submaps(entities) == {"resize"}
+
+    def test_a_bind_in_another_submap_or_at_root_does_not_count(self) -> None:
+        entities = EntitySet(
+            submaps=[Submap(name="resize"), Submap(name="other")],
+            binds=[exec_bind("right", submap="other"), exec_bind("SUPER + Q")],
+        )
+        assert empty_submaps(entities) == {"resize"}
 
 
 class TestUnreachable:

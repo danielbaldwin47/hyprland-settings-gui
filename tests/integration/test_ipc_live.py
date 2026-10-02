@@ -18,6 +18,7 @@ Run it explicitly::
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sys
 from pathlib import Path
@@ -53,6 +54,23 @@ def test_getoption_answers_from_the_real_socket(guarded_hyprland: GuardedInstanc
 
         nested = await client.getoption("input:touchpad:natural_scroll")
         assert nested.name == "input:touchpad:natural_scroll"
+
+    asyncio.run(main())
+
+
+def test_devices_answers_an_object_of_arrays_with_a_switches_one(
+    guarded_hyprland: GuardedInstance,
+) -> None:
+    """#107: the wire shape under `CommandClient.switches()`. A headless nested compositor
+    has no input device, so every array is empty; the keys are what this proves, and they
+    are the five the unit tier's `DEVICES` capture carries."""
+
+    async def main() -> None:
+        client = CommandClient(guarded_hyprland.instance)
+        reply = json.loads(await client._request("devices", json_output=True))
+        assert set(reply) >= {"mice", "keyboards", "tablets", "touch", "switches"}
+        assert reply["switches"] == []
+        assert await client.switches() == ()
 
     asyncio.run(main())
 

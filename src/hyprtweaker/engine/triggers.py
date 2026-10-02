@@ -26,12 +26,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from hyprtweaker.engine.importer.binds import dead_keysyms
 from hyprtweaker.engine.importer.keysyms import known_keysym
 
 __all__ = [
     "CATCHALL",
     "MODIFIERS",
+    "MULTI_KEY",
+    "AmpMultiKey",
+    "Blocked",
     "CaptureRecorder",
+    "DeadKeys",
+    "LoadProblem",
     "Severity",
     "Trigger",
     "TriggerProblem",
@@ -39,6 +45,8 @@ __all__ = [
     "format_trigger",
     "normalise_keysym",
     "parse_trigger",
+    "switch_trigger",
+    "trigger_load_problem",
     "validate_trigger",
     "wheel_token",
 ]
@@ -73,6 +81,10 @@ MOD_ALIASES: dict[str, str] = {
 WHEEL: frozenset[str] = frozenset({"mouse_up", "mouse_down", "mouse_left", "mouse_right"})
 
 CATCHALL = "catchall"
+
+MULTI_KEY = "&"
+"""The multi-key separator. Hyprland 0.56 fails the whole config on an enabled `A&B` bind
+(`Unknown keysym: "A&B"`), so there is nothing valid to edit it into (#162)."""
 
 #: Prefixed forms that are not xkb names, so the keysym validator must not see them.
 #: `code:` is here but *not* in `_EXCLUSIVE_PREFIXES`: `parseKeyString` puts it in the
@@ -263,6 +275,34 @@ def parse_trigger(text: str) -> Trigger:
     return Trigger(tuple(m for m in MODIFIERS if m in set(mods)), " + ".join(keys))
 
 
+def switch_trigger(name: str, when: str = "") -> str | TriggerProblem:
+    """`switch:[on:|off:]<name>` for a switch the compositor reported, or why it cannot be.
+
+    `name` is the device's own string, copied as `hyprctl devices` gives it: Hyprland
+    compares it exactly, spaces and case included, so it is never normalised (and the
+    `hl.device` rule that turns spaces into `-` does not apply here). `when` is `"on"`,
+    `"off"`, or `""` for the plain form that fires both ways.
+
+    `+` and `&` separate keys in a trigger, so a name holding one cannot be written back
+    as the one switch it is: `parse_trigger` would read two keys. That is refused here, with
+    the name in the message, rather than left for `validate_trigger` to call it a
+    combination of keys.
+    """
+    if not name.strip():
+        return TriggerProblem(
+            Severity.BLOCK,
+            "That switch has no name.",
+            "Use switch:<name>, spelled exactly as your device list reports it.",
+        )
+    if "+" in name or MULTI_KEY in name:
+        return TriggerProblem(
+            Severity.BLOCK,
+            f"A switch named {name!r} cannot be bound from here.",
+            "+ and & separate keys in a trigger, so the name would be read as more than one.",
+        )
+    return f"switch:{when}:{name}" if when else f"switch:{name}"
+
+
 def validate_trigger(
     trigger: str | Trigger, *, in_submap: bool = False
 ) -> TriggerProblem | None:
@@ -321,10 +361,13 @@ def validate_trigger(
                 "Mouse, wheel and switch triggers cannot be combined with other keys.",
                 f"Use just one of: {', '.join(p for p in parts if _is_exclusive(p))}.",
             )
+        # Probed under #198 (Hyprland 0.56.2): a keysym pair and a key-code pair both pass
+        # `--verify-config`, and the compositor registers only the last key.
+        fires_as = Trigger(trigger.mods, parts[-1]).display()
         return TriggerProblem(
             Severity.WARN,
             "Multi-key binds are shown as written and cannot be captured.",
-            "Edit the text directly if this is what you meant.",
+            f"Hyprland loads it but binds only the last key, so it fires as {fires_as}.",
         )
 
     if lowered in WHEEL:
@@ -347,14 +390,7 @@ def validate_trigger(
 
     known = known_keysym(key)
     if known is False:
-        suggestion = _SUGGESTIONS.get(lowered)
-        hint = f"Did you mean {suggestion}?" if suggestion else "Try capturing it instead."
-        return TriggerProblem(
-            Severity.BLOCK,
-            f"{key!r} is not a key name xkb knows, so this bind would never fire "
-            "-- and Lua rejects the whole config rather than ignoring it.",
-            hint,
-        )
+        return _unknown_key(key)
     if known is None:
         # No validator on this machine. Saying nothing is right: a guess here would file
         # false errors against perfectly good triggers.
@@ -366,6 +402,84 @@ def validate_trigger(
             f"{key} on its own will fire whenever you type it.",
             "Add a modifier unless you meant that.",
         )
+    return None
+
+
+_LUA_REJECTS = (
+    "so this bind would never fire -- and Lua rejects the whole config rather than ignoring it."
+)
+
+
+def _unknown_key(key: str) -> TriggerProblem:
+    suggestion = _SUGGESTIONS.get(key.lower())
+    hint = f"Did you mean {suggestion}?" if suggestion else "Try capturing it instead."
+    return TriggerProblem(
+        Severity.BLOCK, f"{key!r} is not a key name xkb knows, {_LUA_REJECTS}", hint
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DeadKeys:
+    """The Trigger names keys xkb does not know: the reason the Importer disables a bind."""
+
+    names: tuple[str, ...]
+
+    @property
+    def message(self) -> str:
+        if len(self.names) == 1:
+            return _unknown_key(self.names[0]).full_text()
+        names = ", ".join(repr(name) for name in self.names)
+        return f"{names} are not key names xkb knows, {_LUA_REJECTS} Try capturing it instead."
+
+
+@dataclass(frozen=True, slots=True)
+class AmpMultiKey:
+    """An `A&B` Trigger: Hyprland 0.56 fails the whole config on it (ADR-0007, #162)."""
+
+    @property
+    def message(self) -> str:
+        return (
+            "Hyprland can't load a multi-key trigger joined with &: enabled, this keybind "
+            "would stop your whole config from loading. Use a single key."
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Blocked:
+    """Any other Trigger `validate_trigger` refuses outright."""
+
+    problem: TriggerProblem
+
+    @property
+    def message(self) -> str:
+        return self.problem.full_text()
+
+
+LoadProblem = DeadKeys | AmpMultiKey | Blocked
+"""Why a Trigger cannot be written enabled. Each says why in `message`."""
+
+
+def trigger_load_problem(keys: str) -> LoadProblem | None:
+    """Why Hyprland could not load a bind with this Trigger, or `None` if it can.
+
+    The one definition of "loadable" (#199): the Session refuses to store an enabled bind
+    that fails it, and the Binds row and the bind editor read it to decide what they offer.
+    It judges the Trigger alone -- a Lua-function bind's trigger is judged like any other.
+
+    Order matters. `A&B` goes first, because xkb reads it as one unknown key and a dead-key
+    answer would invite a re-capture that cannot fix a key the bind never really named.
+    Dead keys go before the rest so the answer carries their names, even inside a multi-key
+    trigger, which `validate_trigger` only warns about (#198: it loads, firing as the last
+    key). Without an xkb validator no key reads as dead -- no opinion rather than a guess --
+    so the callers own the fail-safe for a bind the Importer disabled.
+    """
+    if MULTI_KEY in keys:
+        return AmpMultiKey()
+    if dead := dead_keysyms(keys):
+        return DeadKeys(dead)
+    problem = validate_trigger(keys)
+    if problem is not None and problem.blocking:
+        return Blocked(problem)
     return None
 
 

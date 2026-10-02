@@ -24,6 +24,7 @@ from typing import Any
 
 from ..model.entities import LayerRule, WindowRule, WorkspaceRule
 from .loss import LossClass, LossCode, LossContext, LossReport
+from .scalars import bool_prefix as _bool_prefix
 from .scalars import number as _number
 from .scalars import truthy as _truthy
 
@@ -358,9 +359,42 @@ def _layer_effect(name: str, raw: str, notes: LossContext) -> dict[str, Any]:
             )
         return {name: number}
     if name == "ignore_alpha":
-        number = _number(raw)
-        return {name: float(number) if number is not None else raw.strip()}
+        return _ignore_alpha(raw, notes)
     return {name: raw.strip()}
+
+
+def _ignore_alpha(raw: str, notes: LossContext) -> dict[str, Any]:
+    """`ignore_alpha` as the float Lua requires (#205).
+
+    hyprlang took a truth word here too: `true` meant what `ignorezero` meant, so it is
+    written as `0`; `false` is the effect switched off, so it is left out. Anything else is
+    named and dropped -- written as a string, it fails the whole Module.
+    """
+    text = raw.strip()
+    number = _number(text)
+    if number is not None:
+        return {"ignore_alpha": float(number)}
+    truth = _bool_prefix(text)
+    if truth is True:
+        notes.note(
+            LossCode.RULE_VALUE_TYPE,
+            f"ignore_alpha = {text} is written ignore_alpha = 0 (skip fully transparent "
+            "pixels), the number Hyprland's Lua takes for it",
+            replacement="ignore_alpha = 0",
+        )
+        return {"ignore_alpha": 0}
+    if truth is False:
+        notes.note(
+            LossCode.RULE_VALUE_TYPE,
+            f"ignore_alpha = {text} switches the effect off, so it was left out",
+        )
+        return {}
+    notes.note(
+        LossCode.RULE_VALUE_TYPE,
+        f"ignore_alpha = {text} is not a number Hyprland accepts, so the effect was left out",
+        loss_class=LossClass.BREAKAGE,
+    )
+    return {}
 
 
 def map_window_rule(value: str, *, origin: str, report: LossReport) -> WindowRule | None:

@@ -271,3 +271,56 @@ def assert_lists_match(declared: set[str], actual: set[str], meson_file: Path) -
 
     stale = declared - actual
     assert not stale, f"{meson_file.name} installs files that no longer exist: {sorted(stale)}"
+
+
+class SettlingApplier:
+    """An Applier stand-in that holds entity commits until `settle()` reports them.
+
+    Entity undo records where the verdict lands (`Session._applied`), so a stub whose
+    `commit_entities` only counts records nothing. This one numbers each commit as the real
+    queue does and, on `settle()`, reports everything since the last report as one
+    transaction -- the coalescing a real queue would do -- with `outcome` as its verdict.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+        self.serial = 0
+        self._reported = 0
+        self.commits: list[tuple[str, ...]] = []
+        """Option commits, as `Applier.commit` was called -- an Option undo's replay."""
+
+    def commit_entities(self) -> int:
+        self.serial += 1
+        return self.serial
+
+    def commit(self, *names: str) -> None:
+        self.commits.append(names)
+
+    def settle(self, outcome: str = "ok") -> None:
+        from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+
+        if self.serial == self._reported:
+            return
+        self._reported = self.serial
+        self._session._applied(ApplyResult(ApplyOutcome(outcome), entities=self.serial))
+
+
+def entity_session(root: Path) -> tuple[Session, SettlingApplier]:
+    """A live, compositor-less Session whose entity commits report on `settle()`."""
+    from hyprtweaker.engine.ipc import Instance, NoInstance
+    from hyprtweaker.engine.paths import ConfigPaths
+    from hyprtweaker.session import Session
+
+    def no_compositor() -> Instance:
+        raise NoInstance("headless")
+
+    session = Session(
+        spawn=lambda coro: coro.close(),
+        paths=ConfigPaths.rooted_at(root),
+        app_version=SAMPLE_APP_VERSION,
+        connect=no_compositor,
+    )
+    applier = SettlingApplier(session)
+    session._applier = applier  # type: ignore[assignment]
+    session._offline_reason = None
+    return session, applier

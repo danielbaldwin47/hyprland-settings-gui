@@ -25,8 +25,9 @@ desktop session it was started from: its windows would map there, and Hyprland
 would show its "Application Not Responding" dialog over the developer's work
 (#146). ``private_display.py`` starts it and pins GTK to it, for this tier and for
 the widget probe route (``tools/widget_probe.py``) alike.
-``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose, for example
-to watch it. The display opens in ``pytest_configure``, before collection: importing
+``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose. It is the
+owner's switch, for watching the tier, and CI's; the desktop fence refuses it from an
+agent's shell. The display opens in ``pytest_configure``, before collection: importing
 ``Gtk`` initialises GTK, and some ``tests/unit`` modules import UI pages at collection
 time.
 """
@@ -35,10 +36,12 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
+import main_loop
 import pytest
-from private_display import PINNED, pin_environment, start_xvfb
+from private_display import PINNED, pin_environment, session_display_clash, start_xvfb
 
 UI_TESTS_DIR = Path(__file__).parent
 
@@ -57,6 +60,34 @@ def sandboxed_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.delenv("HYPRLAND_INSTANCE_SIGNATURE", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def released_windows() -> Iterator[None]:
+    """Destroy and release every window a test opened, when the test ends (#219).
+
+    GTK keeps a toplevel until it is destroyed, and a destroyed `MainWindow` still holds
+    itself through its handlers until `release` cuts them. A dozen `build_window` helpers
+    left both undone, so a serial run of this tier held 150 windows and aborted. Windows
+    open before the test began, such as a module-scoped one, are their fixture's to close.
+
+    The main loop runs first and last, as the app's would around a close: first for the
+    idles the test left queued, which may present a dialog on the window, and last for the
+    idle that releases a dialog the test closed.
+    """
+    from gi.repository import Gtk
+
+    before = set(Gtk.Window.get_toplevels())
+    yield
+    if not any(window not in before for window in Gtk.Window.get_toplevels()):
+        return
+    from hyprtweaker.ui.release import release
+
+    main_loop.settle("the test's queued idles, before its windows close")
+    for window in [each for each in Gtk.Window.get_toplevels() if each not in before]:
+        window.destroy()
+        release(window)
+    main_loop.settle("the closed windows' and dialogs' release")
 
 
 HOST_DISPLAY_OPT_IN = "HYPRTWEAKER_UI_HOST_DISPLAY"
@@ -81,16 +112,23 @@ def ui_unavailable() -> str | None:
 
     xvfb = shutil.which("Xvfb")
     if xvfb is None:
-        return f"Xvfb is not installed; set {HOST_DISPLAY_OPT_IN}=1 to use the host display"
+        return "Xvfb is not installed (pacman -S xorg-server-xvfb)"
     display = start_xvfb(xvfb)
     if display is None:
         return "Xvfb did not open a display within 10 s"
+    if clash := session_display_clash(display, os.environ.get("DISPLAY")):
+        return clash
 
     # GDK reads these only while it opens its display, and the Harness tier reads the host
     # session from them at test time when both tiers share a process, so restore them.
-    # Not GTK_A11Y: GTK reads it at the first widget, after this returns, and restored it
-    # put every test widget on the desktop's accessibility bus.
-    saved = {name: os.environ.get(name) for name in PINNED if name != "GTK_A11Y"}
+    # DISPLAY stays on the Xvfb: the NVIDIA EGL driver opens `$DISPLAY` again when a
+    # window first realizes, so a restored one sends it to the session's X server, and
+    # it crashes when nothing serves that display. Not GTK_A11Y: GTK reads it at the
+    # first widget, after this returns, and restored it put every test widget on the
+    # desktop's accessibility bus.
+    saved = {
+        name: os.environ.get(name) for name in PINNED if name not in ("DISPLAY", "GTK_A11Y")
+    }
     pin_environment(os.environ, display)
     try:
         return open_display()

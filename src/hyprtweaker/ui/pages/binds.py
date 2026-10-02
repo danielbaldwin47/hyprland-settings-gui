@@ -27,24 +27,28 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.engine.binds_analysis import (  # noqa: E402
+    empty_submaps,
     find_conflicts,
     submap_names,
+    submap_target,
     unreachable_submaps,
 )
 from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup  # noqa: E402
-from hyprtweaker.engine.importer.binds import dead_keysyms  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind  # noqa: E402
+from hyprtweaker.engine.triggers import (  # noqa: E402
+    AmpMultiKey,
+    Blocked,
+    DeadKeys,
+    trigger_load_problem,
+)
 from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
-
-MULTI_KEY = "&"
-"""The multi-key separator. Read-only: Hyprland 0.56 fails the whole config on an enabled
-`A&B` bind (`Unknown keysym: "A&B"`), so there is nothing valid to edit it into (#162)."""
 
 
 def trigger_text(bind: Bind) -> str:
@@ -105,6 +109,13 @@ UNREACHABLE = "Nothing switches to this submap, so its keybinds can never fire."
 than hidden in a tooltip: the person most likely to hit this just made the submap and has
 not yet bound a key to enter it, and a sentence in place is the difference between a
 puzzle and a to-do."""
+
+EMPTY_SUBMAP = (
+    "Hyprland cannot enter a submap with no enabled keybinds. Add or enable a keybind in it."
+)
+"""The empty-submap flag's sentence (#208). A group description and the tooltip of the badge
+on each bind that enters the submap carry it alike. It leads the unreachable sentence: a
+submap with neither gets the bind first, then the way in."""
 
 
 def ordinal(number: int) -> str:
@@ -177,25 +188,30 @@ class BadgeKind(Enum):
     read it the same way, so a bind is described alike wherever it turns up. Each kind fixes
     what the row offers and how it looks, not only what it says:
 
-    - `ERROR`: imported commented out because its Trigger names a key xkb does not know
-      (ADR-0007). Enabled as it stands, Hyprland would refuse the *whole* config, so the
-      row offers re-capture in place of Enable. Edit and Remove stay.
+    - `ERROR`: commented out with a Trigger Hyprland cannot load, most often a key xkb
+      does not know, which the Importer disables (ADR-0007). Enabled as it stands, Hyprland
+      would refuse the *whole* config and the Session refuses the enable (#199), so the row
+      offers re-capture in place of Enable. Edit and Remove stay.
     - `MULTI_KEY`: an `A&B` Trigger, which Hyprland (0.56.2, ADR-0007) cannot load.
       Nothing in the app can make it valid, so no edit and no Enable; Remove is offered.
     - `LUA_FUNCTION`: the action is a Lua function in `user.lua`, which the app does not
       write. Badge only: no edit, no Enable, and no Remove of a line it cannot see.
     - `DISABLED`: commented out by the user. One-click Enable, edit and Remove.
+    - `EMPTY_SUBMAP`: an enabled bind that enters a submap with no live bind (#208), which
+      Hyprland never registers, so the bind fires and then errors. The bind itself is fine,
+      so nothing is taken away: Edit and Remove stay, and the fix is a bind in the submap.
     """
 
     ERROR = "error"
     MULTI_KEY = "multi-key"
     LUA_FUNCTION = "lua-function"
     DISABLED = "disabled"
+    EMPTY_SUBMAP = "empty-submap"
 
     @property
     def editable(self) -> bool:
         """Whether the row offers the bind editor."""
-        return self in (BadgeKind.ERROR, BadgeKind.DISABLED)
+        return self in (BadgeKind.ERROR, BadgeKind.DISABLED, BadgeKind.EMPTY_SUBMAP)
 
     @property
     def removable(self) -> bool:
@@ -205,7 +221,11 @@ class BadgeKind(Enum):
     @property
     def style(self) -> str:
         """The badge label's style class: loud where the badge asks the user to act."""
-        return {BadgeKind.ERROR: "error", BadgeKind.MULTI_KEY: "warning"}.get(self, "dim-label")
+        return {
+            BadgeKind.ERROR: "error",
+            BadgeKind.MULTI_KEY: "warning",
+            BadgeKind.EMPTY_SUBMAP: "warning",
+        }.get(self, "dim-label")
 
     @property
     def dims_row(self) -> bool:
@@ -231,21 +251,24 @@ class BindBadge:
     tooltip: str
 
 
-def bind_badge(bind: Bind) -> BindBadge | None:
+def bind_badge(bind: Bind, *, empty_submaps: frozenset[str] = frozenset()) -> BindBadge | None:
     """The badge this Bind's row carries, or `None` for an enabled, editable bind.
 
     Recomputed from the Bind rather than carried on the model: the Trigger already says
     everything, and a stored flag could disagree with it after an edit.
 
-    Order matters. A function action wins first, since nothing on the row is the app's to
-    change. Multi-key goes before the dead-keysym check, because xkb reads `A&B` as one
-    unknown key: an error badge there would offer a re-capture that cannot fix a key the
-    bind never really named.
+    A function action wins first, since nothing on the row is the app's to change. The
+    rest reads `trigger_load_problem`, the one definition of a Trigger Hyprland can load,
+    which the Session enforces: a disabled bind it would refuse to enable offers re-capture.
 
-    The dead-keysym check is the same oracle the Importer used to disable the bind
-    (`dead_keysyms`). Where libxkbcommon will not load it answers nothing, so a bind reads
-    as plain disabled -- but on such a machine the Importer could not have found the dead
-    key either, so the row never claims more than the import knew.
+    The dead-keysym answer is the same oracle the Importer used to disable the bind. Where
+    libxkbcommon will not load it answers nothing, so a bind reads as plain disabled -- but
+    on such a machine the Importer could not have found the dead key either, so the row
+    never claims more than the import knew.
+
+    `empty_submaps` is `binds_analysis.empty_submaps` of the whole model, which one Bind
+    cannot know. It is read last: a bind that cannot load, or is off, has a reason that
+    comes before it, and only an enabled bind that would fire can fail on entering one.
     """
     if bind.dispatcher is None:
         return BindBadge(
@@ -253,7 +276,8 @@ def bind_badge(bind: Bind) -> BindBadge | None:
             "Defined by a Lua function in user.lua",
             "This keybind's action is a Lua function in user.lua. Edit it there.",
         )
-    if MULTI_KEY in bind.keys:
+    problem = trigger_load_problem(bind.keys)
+    if isinstance(problem, AmpMultiKey):
         return BindBadge(
             BadgeKind.MULTI_KEY,
             "Multi-key: Hyprland can't load it",
@@ -262,22 +286,38 @@ def bind_badge(bind: Bind) -> BindBadge | None:
             "out; remove it, or add a keybind with a single key instead.",
         )
     if bind.enabled:
+        if (target := submap_target(bind)) is not None and target in empty_submaps:
+            return BindBadge(
+                BadgeKind.EMPTY_SUBMAP,
+                "Submap has no enabled keybinds",
+                f"This keybind enters the submap {target}. {EMPTY_SUBMAP} "
+                "Or remove this keybind.",
+            )
         return None
-    if dead := dead_keysyms(bind.keys):
-        names = ", ".join(f'"{name}"' for name in dead)
-        noun = "key" if len(dead) == 1 else "keys"
-        return BindBadge(
-            BadgeKind.ERROR,
-            f"Unknown {noun} {names}",
-            f"Hyprland has no {noun} named {names}, so this keybind was imported commented "
-            "out: enabled, it would stop your whole config from loading. Record a new "
-            "trigger to use it.",
-        )
-    return BindBadge(
-        BadgeKind.DISABLED,
-        "Disabled",
-        "Kept in place but commented out in binds.lua; it does not fire.",
-    )
+    match problem:
+        case DeadKeys(names=dead):
+            names = ", ".join(f'"{name}"' for name in dead)
+            noun = "key" if len(dead) == 1 else "keys"
+            return BindBadge(
+                BadgeKind.ERROR,
+                f"Unknown {noun} {names}",
+                f"Hyprland has no {noun} named {names}, so this keybind was imported "
+                "commented out: enabled, it would stop your whole config from loading. "
+                "Record a new trigger to use it.",
+            )
+        case Blocked():
+            return BindBadge(
+                BadgeKind.ERROR,
+                "Trigger can't load",
+                f"{problem.message} Hyprland can't load this trigger, so this keybind stays "
+                "commented out. Record a new trigger to use it.",
+            )
+        case None:
+            return BindBadge(
+                BadgeKind.DISABLED,
+                "Disabled",
+                "Kept in place but commented out in binds.lua; it does not fire.",
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,8 +340,39 @@ class BindActions:
     """Open Capture on an error-badged bind; a captured trigger also enables it."""
     swap: Callable[[int, int], None]
     """Exchange two binds' positions -- which same-submap duplicate fires first."""
+    move: Callable[[int, int], None]
+    """Move the bind at the first index to the second, in its group -- the drag reorder."""
     edit_submap: Callable[[str | None], None]
     """Open the Submap editor; `None` means create one."""
+
+
+@dataclass(slots=True)
+class BindDrag:
+    """The one bind drag in flight on a Page: whose it is and which group it belongs to.
+
+    The payload GTK carries is only the origin's index, and a drop target has to decide
+    whether to light up *before* the drop delivers it. So the handle records the drag here
+    when it starts, and every row of the Page reads it: a row of another group stays dark
+    and refuses the drop, because `binds.lua` keeps no order between groups.
+    """
+
+    origin: int | None = None
+    submap: str | None = None
+
+    def start(self, row: BindRow) -> None:
+        self.origin, self.submap = row.index, row.bind.submap
+
+    def accepts(self, origin: int | None, target: BindRow) -> bool:
+        """Whether a drop of the bind at `origin` on `target` moves anything."""
+        return (
+            origin is not None
+            and origin == self.origin
+            and origin != target.index
+            and self.submap == target.bind.submap
+        )
+
+
+REORDER_HINT = "Drag to reorder within this group, or press Alt+Up or Alt+Down"
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,12 +422,20 @@ class BindRow:
         on_jump: Callable[[int], None],
         editable: bool,
         conflict: RowConflict | None = None,
+        drag: BindDrag | None = None,
+        neighbours: tuple[int | None, int | None] = (None, None),
+        empty_submaps: frozenset[str] = frozenset(),
     ) -> None:
+        """`drag` is the Page's one `BindDrag`, shared by its rows; `neighbours` are the
+        flat indices of the binds just above and below this one *in its group*, where the
+        keyboard move goes. `empty_submaps` are the submaps no bind makes enterable."""
         self.bind = bind
         self.index = index
+        self.drag_handle: Gtk.Image | None = None
+        """The drag source, on rows the app may move: those whose badge offers Edit."""
         self.conflict = conflict
         self.conflict_badge: Gtk.MenuButton | None = None
-        self.badge = bind_badge(bind)
+        self.badge = bind_badge(bind, empty_submaps=empty_submaps)
         self.badge_label: Gtk.Label | None = None
         self.enable_button: Gtk.Button | None = None
         """Enable for a plain disabled bind; "Fix trigger…" (re-capture) for an error one."""
@@ -400,13 +479,19 @@ class BindRow:
             )
             self.widget.add_suffix(self.conflict_badge)
 
-        if not editable:
-            return
+        # On a read-only session the buttons show insensitive, as on the Workspaces page:
+        # the Banner says why, and the row still says what could be done once it is live.
+        # Only the move routes (drag, Alt+Up/Down) and the conflict's rival verbs stay out.
         kind = badge.kind if badge is not None else None
+        if editable:
+            self._wire_reorder(
+                actions, drag or BindDrag(), neighbours, movable=kind is None or kind.editable
+            )
 
         if kind is not None and (verb := kind.verb) is not None:
             self.enable_button = Gtk.Button(label=verb.label, valign=Gtk.Align.CENTER)
             self.enable_button.set_tooltip_text(verb.tooltip)
+            self.enable_button.set_sensitive(editable)
             self.enable_button.connect("clicked", lambda _button: verb.run(actions, index))
             self.enable_button.add_css_class("flat")
             self.widget.add_suffix(self.enable_button)
@@ -417,6 +502,7 @@ class BindRow:
             )
             self.edit_button.add_css_class("flat")
             self.edit_button.set_tooltip_text("Edit this bind")
+            self.edit_button.set_sensitive(editable)
             self.edit_button.connect("clicked", lambda _button: actions.edit(index))
             self.widget.add_suffix(self.edit_button)
 
@@ -426,8 +512,96 @@ class BindRow:
             )
             self.remove_button.add_css_class("flat")
             self.remove_button.set_tooltip_text("Remove this bind")
+            self.remove_button.set_sensitive(editable)
             self.remove_button.connect("clicked", lambda _button: actions.remove(index))
             self.widget.add_suffix(self.remove_button)
+
+    def _wire_reorder(
+        self,
+        actions: BindActions,
+        drag: BindDrag,
+        neighbours: tuple[int | None, int | None],
+        *,
+        movable: bool,
+    ) -> None:
+        """The handle and keys that move this bind, and the drop target every row is.
+
+        Only a bind the app may edit gets a handle: a Lua-function or multi-key bind is
+        otherwise untouchable here, so moving it would be the one change the row allows.
+        Every row still takes drops, so other binds of its group can move past it. The
+        handle is the drag *source* -- dragging anywhere else on the row would fight scrolling
+        and button presses -- while the whole row is the target, for its full height.
+        """
+        target = Gtk.DropTarget.new(GObject.TYPE_INT, Gdk.DragAction.MOVE)
+        target.connect("enter", self._on_hover, drag)
+        target.connect("motion", self._on_hover, drag)
+        target.connect("drop", self._on_drop, drag, actions)
+        self.widget.add_controller(target)
+
+        handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+        if not movable:
+            # Holds the handle's width, so this row's trigger lines up with its neighbours'.
+            handle.set_opacity(0)
+            self.widget.add_prefix(handle)
+            return
+
+        self.drag_handle = handle
+        self.drag_handle.add_css_class("dim-label")
+        self.drag_handle.set_tooltip_text(REORDER_HINT)
+        self.widget.add_prefix(self.drag_handle)
+        source = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+        source.connect("prepare", self._on_drag_prepare, drag)
+        self.drag_handle.add_controller(source)
+
+        keys = Gtk.ShortcutController()
+        for accelerator, neighbour in zip(("<Alt>Up", "<Alt>Down"), neighbours, strict=True):
+            keys.add_shortcut(
+                Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(accelerator),
+                    Gtk.CallbackAction.new(self._on_step, neighbour, actions),
+                )
+            )
+        self.widget.add_controller(keys)
+
+    def _on_drag_prepare(
+        self, _source: Gtk.DragSource, _x: float, _y: float, drag: BindDrag
+    ) -> Gdk.ContentProvider:
+        drag.start(self)
+        return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_INT, self.index))
+
+    def _on_hover(
+        self, _target: Gtk.DropTarget, _x: float, _y: float, drag: BindDrag
+    ) -> Gdk.DragAction:
+        # No action means no drop highlight and no drop: the row says "not here" while the
+        # pointer is still over it, rather than after the user lets go.
+        if drag.accepts(drag.origin, self):
+            return Gdk.DragAction.MOVE
+        return Gdk.DragAction(0)
+
+    def _on_drop(
+        self,
+        _target: Gtk.DropTarget,
+        value: int,
+        _x: float,
+        _y: float,
+        drag: BindDrag,
+        actions: BindActions,
+    ) -> bool:
+        # Only the action: it refreshes the Page, which rebuilds every row, this one too.
+        origin = int(value)
+        if not drag.accepts(origin, self):
+            return False
+        actions.move(origin, self.index)
+        return True
+
+    def _on_step(
+        self, widget: Gtk.Widget, _args: object, neighbour: int | None, actions: BindActions
+    ) -> bool:
+        if neighbour is None:
+            widget.error_bell()  # already first (or last) in its group
+            return True
+        actions.move(self.index, neighbour)
+        return True
 
     def _conflict_button(
         self,
@@ -546,6 +720,7 @@ class BindsPage:
         self._session = session
         self._actions = actions
         self._rows: list[BindRow] = []
+        self._drag = BindDrag()
 
         self._page = Adw.PreferencesPage(title=self.title)
         self._groups: list[Adw.PreferencesGroup] = []
@@ -591,14 +766,18 @@ class BindsPage:
         """
         for group in self._groups:
             self._page.remove(group)
+            release(group)
         self._groups = []
         self._rows = []
+        # A drag begun on a row just replaced is over: its index may now name another bind.
+        self._drag.origin = self._drag.submap = None
 
         editable = bool(self._session.live)
         entities = self._session.model.entities
         binds = self.binds
         conflicts = find_conflicts(binds)
         unreachable = unreachable_submaps(entities)
+        empty = frozenset(empty_submaps(entities))
 
         root = Adw.PreferencesGroup(title="Keybinds")
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -624,8 +803,8 @@ class BindsPage:
         indexed = list(enumerate(binds))
         rooted = [(index, bind) for index, bind in indexed if bind.submap is None]
         if rooted:
-            for index, bind in rooted:
-                root.add(self._row(bind, index, editable, binds, conflicts))
+            for (index, bind), neighbours in zip(rooted, _neighbours(rooted), strict=True):
+                root.add(self._row(bind, index, editable, binds, conflicts, neighbours, empty))
         else:
             root.add(
                 Adw.ActionRow(
@@ -636,6 +815,8 @@ class BindsPage:
 
         for name in submap_names(entities):
             description = "These keybinds only fire while this submap is active."
+            if name in empty:
+                description += f" {EMPTY_SUBMAP}"
             if name in unreachable:
                 description += f" {UNREACHABLE}"
             # The title is Pango markup: a name with `&` would render blank unescaped.
@@ -663,8 +844,8 @@ class BindsPage:
             self._add_group(group)
 
             owned = [(index, bind) for index, bind in indexed if bind.submap == name]
-            for index, bind in owned:
-                group.add(self._row(bind, index, editable, binds, conflicts))
+            for (index, bind), neighbours in zip(owned, _neighbours(owned), strict=True):
+                group.add(self._row(bind, index, editable, binds, conflicts, neighbours, empty))
             if not owned:
                 group.add(
                     Adw.ActionRow(
@@ -702,6 +883,8 @@ class BindsPage:
         editable: bool,
         binds: list[Bind],
         conflicts: dict[int, tuple[int, ...]],
+        neighbours: tuple[int | None, int | None],
+        empty: frozenset[str],
     ) -> Gtk.Widget:
         conflict: RowConflict | None = None
         if index in conflicts:
@@ -732,6 +915,15 @@ class BindsPage:
             on_jump=self.reveal,
             editable=editable,
             conflict=conflict,
+            drag=self._drag,
+            neighbours=neighbours,
+            empty_submaps=empty,
         )
         self._rows.append(row)
         return row.widget
+
+
+def _neighbours(group: list[tuple[int, Bind]]) -> list[tuple[int | None, int | None]]:
+    """For each bind of one group, the flat indices of the binds above and below it there."""
+    indices: list[int | None] = [None, *(index for index, _bind in group), None]
+    return list(zip(indices, indices[2:], strict=False))

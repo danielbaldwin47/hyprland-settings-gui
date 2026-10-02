@@ -161,9 +161,12 @@ class Applier:
         """
         self._queue.commit(*names)
 
-    def commit_entities(self) -> None:
-        """An Entity changed: write the model and reload, with no Read-back (ADR-0007)."""
-        self._queue.commit_entities()
+    def commit_entities(self) -> int:
+        """An Entity changed: write the model and reload, with no Read-back (ADR-0007).
+
+        Returns the serial the carrying transaction's `ApplyResult.entities` reports.
+        """
+        return self._queue.commit_entities()
 
     def force_write(self) -> None:
         """Write the model and reload although no Option or Entity changed: the Module

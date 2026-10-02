@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import ctypes
 import os
-import select
 import signal
+import socket
 import subprocess
+import time
 from collections.abc import MutableMapping
 
 # Every variable `pin_environment` sets or removes, for a caller that restores them.
@@ -30,46 +31,114 @@ _libc = ctypes.CDLL(None, use_errno=True)
 _PR_SET_PDEATHSIG = 1
 
 
+# Agent X servers take a display number from this range and nowhere else. An X server on
+# a number the desktop session holds replaces its socket: xtrans unlinks a listening path
+# like /tmp/.X11-unix/X0 before binding its own, and `-displayfd`, which walks up from 0,
+# also turns off the lock-file check that would have stopped it. On 2026-10-02 that took
+# the owner's display :0 from Hyprland's Xwayland.
+PRIVATE_DISPLAYS = range(200, 1000)
+_SOCKET = "/tmp/.X11-unix/X{}"
+_LOCK = "/tmp/.X{}-lock"
+# Xvfb writes its lock here first and links it into place; one left by a killed server
+# makes the next Xvfb on that number sleep about 6 s before it gives up (xserver os/utils.c).
+_TEMP_LOCK = "/tmp/.tX{}-lock"
+
+
+def display_number(name: str | None) -> int | None:
+    """The number in an X display name (`:0`, `:0.0`, `unix:0`), or None for no X display."""
+    _, colon, rest = (name or "").rpartition(":")
+    digits = rest.partition(".")[0]
+    return int(digits) if colon and digits.isdigit() else None
+
+
+def session_display_clash(display: str, session: str | None) -> str | None:
+    """Why `display` must not be used, or None: it is the desktop session's own display."""
+    number = display_number(display)
+    if number is None or number != display_number(session):
+        return None
+    return (
+        f"refusing display {display}: it is the desktop session's own DISPLAY ({session}), "
+        "where an X server replaces the session's X socket and GTK draws on the desktop; "
+        f"agent X servers take displays {PRIVATE_DISPLAYS[0]}-{PRIVATE_DISPLAYS[-1]} only "
+        "(docs/agents/local-checks.md § Private X displays)"
+    )
+
+
 def start_xvfb(xvfb: str) -> str | None:
-    """Start a headless X server and return its display name, or None if it failed.
+    """Start a headless X server on a free display in `PRIVATE_DISPLAYS`; None if none came up.
+
+    A number whose lock file, Xvfb's temporary lock or socket exists is skipped and left
+    alone, whether a live server or a crashed run's leftover holds it, and so is the
+    session's own number. The
+    rest is settled by Xvfb's own lock: started with an explicit number (never
+    `-displayfd`), it takes `/tmp/.X<n>-lock` with an atomic link() before it creates any
+    socket, so of several processes starting at once one wins each number and the others
+    exit and try the next.
 
     It dies with this process (PR_SET_PDEATHSIG), including a `timeout` kill that runs no
-    cleanup. Nothing stops it earlier on purpose: GTK keeps the connection until exit, and
-    GDK exits the process when its X server goes away under it.
+    cleanup, and removes its own lock and socket as it goes. Nothing stops it earlier on
+    purpose: GTK keeps the connection until exit, and GDK exits the process when its X
+    server goes away under it.
     """
-    read_fd, write_fd = os.pipe()
+    session = display_number(os.environ.get("DISPLAY"))
+    # CI jobs have no timeout of their own, so a wedged Xvfb must not hang the run.
+    deadline = time.monotonic() + 10
+    for number in PRIVATE_DISPLAYS:
+        if time.monotonic() > deadline:
+            return None
+        if number == session or any(
+            os.path.lexists(path.format(number)) for path in (_LOCK, _TEMP_LOCK, _SOCKET)
+        ):
+            continue
+        try:
+            xvfb_process = subprocess.Popen(
+                [xvfb, f":{number}", "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=lambda: _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM),
+            )
+        except OSError:
+            return None
+        if _serving(xvfb_process, number, deadline):
+            return f":{number}"
+    return None
+
+
+def _serving(xvfb_process: subprocess.Popen[bytes], number: int, deadline: float) -> bool:
+    """Wait until `xvfb_process` holds display `number` and accepts connections.
+
+    False when it exits first (another process took the number) or by the deadline, when
+    it is asked to stop, so it removes its own lock and socket, and killed only if it has
+    not stopped a second later; either way it is reaped.
+    """
+    while time.monotonic() < deadline:
+        if xvfb_process.poll() is not None:
+            return False
+        if _lock_pid(number) == xvfb_process.pid:
+            with socket.socket(socket.AF_UNIX) as probe:
+                try:
+                    probe.connect(_SOCKET.format(number))
+                    return True
+                except OSError:
+                    pass
+        time.sleep(0.02)
+    xvfb_process.terminate()
     try:
-        xvfb_process = subprocess.Popen(
-            [
-                xvfb,
-                "-displayfd",
-                str(write_fd),
-                "-screen",
-                "0",
-                "1280x1024x24",
-                "-nolisten",
-                "tcp",
-            ],
-            pass_fds=(write_fd,),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            preexec_fn=lambda: _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM),
-        )
-    except OSError:
-        os.close(read_fd)
-        return None
-    finally:
-        os.close(write_fd)
-    # Xvfb writes the number once it accepts connections; EOF means it exited first. CI
-    # jobs have no timeout of their own, so a wedged Xvfb must not hang the run.
-    with os.fdopen(read_fd) as pipe:
-        ready, _, _ = select.select([pipe], [], [], 10)
-        number = pipe.readline().strip() if ready else ""
-    if not number:
+        xvfb_process.wait(1)
+    except subprocess.TimeoutExpired:
         xvfb_process.kill()
+        xvfb_process.wait()
+    return False
+
+
+def _lock_pid(number: int) -> int | None:
+    """The pid in display `number`'s lock file, or None while it has none."""
+    try:
+        with open(_LOCK.format(number)) as lock:
+            return int(lock.read().strip() or 0)
+    except (OSError, ValueError):
         return None
-    return f":{number}"
 
 
 def pin_environment(environ: MutableMapping[str, str], display: str) -> None:

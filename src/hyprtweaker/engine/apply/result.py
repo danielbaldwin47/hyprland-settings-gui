@@ -202,6 +202,14 @@ class ApplyResult:
     detail: str = ""
     """Human-readable "why", for the outcomes whose cause is an exception message."""
 
+    entities: int | None = None
+    """The newest `commit_entities` serial this transaction carried, `None` for none.
+
+    Stamped by the queue when it takes the batch, so every entity commit with a serial up to
+    this one was rendered by this transaction and stands or falls with its verdict -- which
+    is when the session records (or drops) those gestures' undo steps.
+    """
+
     @property
     def ok(self) -> bool:
         """Nothing is known to have gone wrong -- so there is nothing to tell the user.

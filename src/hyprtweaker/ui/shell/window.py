@@ -42,8 +42,10 @@ from hyprtweaker.engine.apply import (  # noqa: E402
     Action,
     ApplyOutcome,
     ApplyResult,
+    EntityStep,
     Problem,
-    UndoStep,
+    Step,
+    UndoGroup,
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
@@ -60,18 +62,23 @@ from hyprtweaker.engine.migration.flow import (  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
 from hyprtweaker.engine.model.entities import (  # noqa: E402
+    DISPLAY_KINDS,
+    KEYBIND_KINDS,
     Bind,
     LayerRule,
-    MonitorRule,
     WindowRule,
+    WorkspaceRule,
+    entity_title,
 )
+from hyprtweaker.engine.monitors_catalog import breaks_display, revert_breaking  # noqa: E402
 from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
+from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
 from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
-from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
+from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.declaration_editor import (  # noqa: E402
     DeclarationEditor,
@@ -87,6 +94,7 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
 from hyprtweaker.ui.dialogs.notices import notice_dialog, notice_title  # noqa: E402
 from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
+from hyprtweaker.ui.dialogs.workspace_rule_editor import WorkspaceRuleEditor  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
@@ -123,6 +131,11 @@ from hyprtweaker.ui.pages.tasks import (  # noqa: E402
     load_tasks_mapping,
     plan_tasks_view,
 )
+from hyprtweaker.ui.pages.workspace_rules import (  # noqa: E402
+    WorkspaceRuleActions,
+    WorkspaceRulesPage,
+)
+from hyprtweaker.ui.release import release  # noqa: E402
 from hyprtweaker.ui.rows.factory import OptionRow, RowFactory  # noqa: E402
 from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
@@ -151,6 +164,22 @@ def _discard(coro: Any) -> None:
     close = getattr(coro, "close", None)
     if close is not None:
         close()
+
+
+def _release_dialogs_on_close(window: Adw.ApplicationWindow, _pspec: Any) -> None:
+    """Release each dialog presented on `window` once it has closed.
+
+    An idle rather than the `closed` handler itself: libadwaita is still finishing the close
+    when it emits `closed`, and every handler of it must still find the dialog whole.
+
+    Once per dialog: a dialog becomes visible again each time one it opened (Capture over
+    the bind editor) closes. The mark lives on the wrapper, which PyGObject then keeps for
+    as long as the dialog lives, so it cannot be forgotten and hooked twice.
+    """
+    dialog = window.get_visible_dialog()
+    if dialog is not None and not getattr(dialog, "_release_on_close", False):
+        dialog._release_on_close = True
+        dialog.connect("closed", lambda closed: GLib.idle_add(release, closed))
 
 
 UNDO_ACTION = "undo"
@@ -186,6 +215,16 @@ SEVERE_BANNER_CLASS = "error"
 A style class rather than a colour, so it follows the user's theme and their accent choice
 -- a hard-coded red is the one thing that would look wrong in every theme but the one it was
 picked in."""
+
+BREAKING_DEBOUNCE_MS = 400
+"""How long after the last display-breaking edit the batch applies (ADR-0008 "batch", #192).
+
+Long enough that dragging a display on the canvas or stepping a scale spinner lands as one
+apply and one countdown, short enough that the change still reads as the click's answer."""
+
+DISPLAY_CHANGED = entity_title("monitors", "changed")
+"""A display countdown's undo step, kept or with what survived its Revert: one title for both,
+in the Displays Page's word (review of #151, finding 19)."""
 
 UNDO_TOAST_SECONDS = 4
 """Long enough to notice and reach, short enough not to sit over the Row that just changed."""
@@ -274,8 +313,13 @@ class MainWindow(Adw.ApplicationWindow):
         self._binds_page: BindsPage | None = None
         self._window_rules_page: WindowRulesPage | None = None
         self._layer_rules_page: LayerRulesPage | None = None
+        self._workspace_rules_page: WorkspaceRulesPage | None = None
         self._monitors_page: MonitorsPage | None = None
         self._declaration_pages: dict[str, DeclarationsPage] = {}
+        self._shown_entities: dict[str, tuple[Any, ...]] = {}
+        """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
+        self._shown_live = False
+        """Whether the Entity Pages last drew their rows editable."""
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -311,7 +355,17 @@ class MainWindow(Adw.ApplicationWindow):
 
         The hotplug dedupe: one dock arriving as several socket2 events must produce one
         toast, and a set with no match clears it so the next docking offers again."""
-        self._profile_confirm: ConfirmRevertDialog | None = None
+        self._countdown: _DisplayCountdown | None = None
+        """The one Confirm-or-revert countdown open over the window, if any (#192).
+
+        Every display-breaking change -- a batch of edits, a profile activation, an undo --
+        opens it or joins it, so the user never faces two clocks."""
+        self._pending_breaking: dict[str, dict[str, Any]] = {}
+        """Display-breaking edits inside the debounce, by rule identity, last value winning.
+
+        Not in the model yet, and the Page is not refreshed meanwhile: its widgets keep the
+        value the user set until the batch applies."""
+        self._debounce: int | None = None
         self._undo_toast: Adw.Toast | None = None
         """The undo offer currently on screen, so the next one replaces it.
 
@@ -353,6 +407,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.rebuild()
 
         self.connect("close-request", self._on_close_request)
+        self.connect("notify::visible-dialog", _release_dialogs_on_close)
 
     # --- construction -----------------------------------------------------------------------
 
@@ -518,6 +573,8 @@ class MainWindow(Adw.ApplicationWindow):
         undo.connect("activate", self._on_undo)
         self.add_action(undo)
         self._undo_action = undo
+        # A Ctrl+Z pressed over an edit still in flight runs once the edit lands (#151 review).
+        self._session.on_undo_due = self._undo
 
         for name, handler in (
             (IMPORT_ACTION, self._on_import),
@@ -731,6 +788,11 @@ class MainWindow(Adw.ApplicationWindow):
         """The Layer rules Page, once built. The UI tier asserts against it."""
         return self._layer_rules_page
 
+    @property
+    def workspace_rules_page(self) -> WorkspaceRulesPage | None:
+        """The Workspaces Page, once built. The UI tier asserts against it."""
+        return self._workspace_rules_page
+
     def declaration_page(self, kind: str) -> DeclarationsPage | None:
         """One declarative Entity Page by kind, once built. The UI tier asserts against it.
 
@@ -843,8 +905,15 @@ class MainWindow(Adw.ApplicationWindow):
         self._section_titles = {}
         self._built = []
         self._sidebar.remove_all()
+        # The window holds its focus widget. A focused Row of an old Page outlives `release`,
+        # and its chrome then keeps the Page and the window (#219). Whether GTK lets go of it
+        # on removal depends on whether the window is active, so it is dropped here first.
+        focus = self.get_focus()
+        if focus is not None and focus.is_ancestor(self._stack):
+            self.set_focus(None)
         while (child := self._stack.get_first_child()) is not None:
             self._stack.remove(child)
+            release(child)
 
         self._categories, option_plans = self._plan_view()
 
@@ -867,6 +936,7 @@ class MainWindow(Adw.ApplicationWindow):
                 rebind=self._rebind_bind,
                 recapture=lambda index: self._rebind_bind(index, enable=True),
                 swap=self._swap_binds,
+                move=self._move_bind,
                 edit_submap=self._edit_submap,
             ),
         )
@@ -885,6 +955,20 @@ class MainWindow(Adw.ApplicationWindow):
             self._stack.add_named(_scrolled(rules_page.page), rules_page.section)
             self._section_titles[rules_page.section] = rules_page.title
             self._register(rules_page.section, rules_page.title, len(rules_page.rules))
+
+        # The Workspaces Page: workspace rules, one row per selector (ADR-0008, #159).
+        self._workspace_rules_page = WorkspaceRulesPage(
+            self._session,
+            actions=WorkspaceRuleActions(
+                add=self._add_workspace_rule,
+                edit=self._edit_workspace_rule,
+                remove=self._remove_workspace_rule,
+            ),
+        )
+        workspaces = self._workspace_rules_page
+        self._stack.add_named(_scrolled(workspaces.page), workspaces.section)
+        self._section_titles[workspaces.section] = workspaces.title
+        self._register(workspaces.section, workspaces.title, len(workspaces.rules))
 
         # The Displays destination: an Entity Page over monitor rules plus the live
         # helper data the canvas draws from (ADR-0008, #68).
@@ -921,6 +1005,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._register(page.section, page.title, len(page.entities))
             self._section_titles[page.section] = page.title
 
+        self._shown_entities = self._entity_lists()
+        self._shown_live = bool(self._session.live)
         self._fill_sidebar()
         self._select_section(self._restored(selected))
         self.sync()
@@ -1019,7 +1105,9 @@ class MainWindow(Adw.ApplicationWindow):
             if self._session.add_bind(bind):
                 self._refresh_binds()
 
-        BindEditor(on_done=done, submap=submap).present(self)
+        BindEditor(on_done=done, submap=submap, fetch_switches=self._switch_fetch()).present(
+            self
+        )
 
     def _edit_bind(self, index: int) -> None:
         if self._binds_page is None:
@@ -1032,7 +1120,19 @@ class MainWindow(Adw.ApplicationWindow):
             if self._session.replace_bind(index, bind):
                 self._refresh_binds()
 
-        BindEditor(on_done=done, bind=binds[index]).present(self)
+        BindEditor(
+            on_done=done, bind=binds[index], fetch_switches=self._switch_fetch()
+        ).present(self)
+
+    def _switch_fetch(self) -> FetchSwitches | None:
+        """The live switch list for Capture's picker, or `None` when nobody is answering.
+
+        One source for every door that opens Capture (add, edit, rebind), so none of them
+        offers a different picker. `None` rather than a callable that fails: Capture words
+        "not connected" and "connected, no switch" differently (ADR-0008 degrades to
+        manual entry).
+        """
+        return self._session.fetch_switches if self._session.live else None
 
     def _remove_bind(self, index: int) -> None:
         if self._session.remove_bind(index):
@@ -1046,6 +1146,17 @@ class MainWindow(Adw.ApplicationWindow):
         if self._session.swap_binds(first, second):
             self._refresh_binds()
 
+    def _move_bind(self, index: int, to: int) -> None:
+        """The drag reorder, and Alt+Up/Down: the moved bind lands at `to`.
+
+        The refresh rebuilds every row, so the moved one is revealed there: focus follows
+        it for the next Alt+Up/Down, and the flash shows where a drop landed.
+        """
+        if self._session.move_bind(index, to):
+            self._refresh_binds()
+            if self._binds_page is not None:
+                self._binds_page.reveal(to)
+
     def _rebind_bind(self, index: int, *, enable: bool = False) -> None:
         """The conflict popover's "rebind it": Capture on the other bind, directly.
 
@@ -1053,9 +1164,10 @@ class MainWindow(Adw.ApplicationWindow):
         being solved is *only* that two binds share a trigger, and the fix is a new
         trigger for one of them.
 
-        `enable` is the error row's "Fix trigger…" (#139): a bind imported disabled for a
-        dead keysym. Capture refuses a key xkb does not know, so whatever comes back is
-        loadable, and the user asked for the bind back, so it comes back enabled.
+        `enable` is the error row's "Fix trigger…" (#139): a disabled bind whose trigger
+        Hyprland cannot load, most often a dead keysym the Importer disabled. Capture refuses
+        what would not load, so whatever comes back is loadable (the Session would refuse it
+        otherwise, #199), and the user asked for the bind back, so it comes back enabled.
         """
         if self._binds_page is None:
             return
@@ -1074,6 +1186,7 @@ class MainWindow(Adw.ApplicationWindow):
             on_done=done,
             initial=bind.keys,
             in_submap=bool(bind.submap) or bind.options.submap_universal,
+            fetch_switches=self._switch_fetch(),
         ).present(self)
 
     def _edit_submap(self, name: str | None) -> None:
@@ -1095,9 +1208,7 @@ class MainWindow(Adw.ApplicationWindow):
         ).present(self)
 
     def _refresh_binds(self) -> None:
-        if self._binds_page is not None:
-            self._binds_page.refresh()
-        self.sync()
+        self._refresh_entity_pages(KEYBIND_KINDS)
 
     # --- rules ---------------------------------------------------------------------------
 
@@ -1167,14 +1278,67 @@ class MainWindow(Adw.ApplicationWindow):
             self._refresh_rules(kind)
 
     def _move_rule(self, kind: str, index: int, to: int) -> None:
+        """The drag reorder, and Alt+Up/Down: focus follows the moved rule, as for binds."""
         if self._session.move_rule(kind, index, to):
             self._refresh_rules(kind)
+            page = self._rules_page(kind)
+            if page is not None:
+                page.reveal(to)
 
     def _refresh_rules(self, kind: str) -> None:
-        page = self._rules_page(kind)
-        if page is not None:
-            page.refresh()
-        self.sync()
+        self._refresh_entity_pages(frozenset({f"{kind}_rules"}))
+
+    # --- workspace rules (#159) ---------------------------------------------------------
+
+    def workspace_rule_editor(self, selector: str | None = None) -> WorkspaceRuleEditor:
+        """The editor for a new workspace rule, or for the one whose selector is `selector`.
+
+        Wired whole -- save, refresh, "Show it" -- so the page's buttons and the UI tier
+        drive the same dialog.
+        """
+        rules = self._session.workspace_rules
+        rule = next((item for item in rules if item.workspace == selector), None)
+        original = rule.workspace if rule is not None else None
+
+        def done(saved: WorkspaceRule) -> str | None:
+            if self._session.save_workspace_rule(saved, original=original):
+                self._refresh_workspace_rules()
+                return None
+            return self._session.offline_reason or "the change was not accepted."
+
+        return WorkspaceRuleEditor(
+            on_done=done,
+            on_show=self._reveal_workspace_rule,
+            rule=rule,
+            taken=[item.workspace for item in rules if item is not rule],
+            layouts=self._layout_choices(),
+        )
+
+    def _layout_choices(self) -> tuple[str, ...]:
+        """The layouts the layout row offers, from the schema (the compositor's Lua
+        layouts join as #175 discovers them)."""
+        option = self._session.schema.get("general:layout")
+        return layout_choices(
+            option.known_values.values if option and option.known_values else ()
+        )
+
+    def _add_workspace_rule(self) -> None:
+        self.workspace_rule_editor().present(self)
+
+    def _edit_workspace_rule(self, selector: str) -> None:
+        if any(rule.workspace == selector for rule in self._session.workspace_rules):
+            self.workspace_rule_editor(selector).present(self)
+
+    def _remove_workspace_rule(self, selector: str) -> None:
+        if self._session.remove_workspace_rule(selector):
+            self._refresh_workspace_rules()
+
+    def _reveal_workspace_rule(self, selector: str) -> None:
+        if self._workspace_rules_page is not None:
+            self._workspace_rules_page.reveal(selector)
+
+    def _refresh_workspace_rules(self) -> None:
+        self._refresh_entity_pages(frozenset({"workspace_rules"}))
 
     # --- declarative entities (#70) -------------------------------------------------------
 
@@ -1270,41 +1434,129 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _refresh_declarations(self, kind: str) -> None:
-        page = self._declaration_pages.get(kind)
-        if page is not None:
-            page.refresh()
-        if kind == "curves":
-            animations = self._declaration_pages.get("animations")
-            if animations is not None:
-                animations.refresh()
-        if kind == "devices":
-            # A per-device override badges the Options it shadows, so the Option Pages are
-            # now out of date about themselves.
-            for page_ in self._pages:
-                page_.refresh()
-        self.sync()
+        # A per-device override badges the Options it shadows: `sync` refreshes those.
+        self._refresh_entity_pages(frozenset({kind}))
 
     # --- monitors -------------------------------------------------------------------------
 
     def _apply_monitor_breaking(self, output: str, fields: Mapping[str, Any]) -> None:
-        """A display-breaking edit: apply, then Confirm-or-revert (ADR-0008).
+        """A display-breaking edit: held for the debounce, then applied behind the countdown.
 
-        The snapshot is taken *before* the patch, so revert restores what the user was
-        looking at when they made the change -- silence, Esc, or the countdown expiring
-        all put it back; only the Keep button makes the new state stand.
+        ADR-0008 "batch": edits arriving within `BREAKING_DEBOUNCE_MS` of each other land as
+        one patch per display, which the queue carries as one transaction, under one
+        countdown. Each edit re-arms the debounce, so a drag or a spinner held down applies
+        once, after it stops.
         """
-        snapshot = self._session.monitor_snapshot()
-        if not self._session.patch_monitor_rule(output, fields):
-            return
-        self._refresh_monitors()
-        ConfirmRevertDialog(
-            on_keep=self._refresh_monitors,
-            on_revert=lambda: self._revert_monitors(snapshot),
-        ).present(self)
+        self._pending_breaking.setdefault(output, {}).update(fields)
+        self._sync_undo_action()
+        if self._debounce is not None:
+            GLib.source_remove(self._debounce)
+        self._debounce = GLib.timeout_add(BREAKING_DEBOUNCE_MS, self._on_debounce)
 
-    def _revert_monitors(self, snapshot: tuple[MonitorRule, ...]) -> None:
-        self._session.restore_monitor_rules(snapshot)
+    def _on_debounce(self) -> bool:
+        self._debounce = None
+        self.flush_monitor_edits()
+        return False
+
+    def flush_monitor_edits(self) -> None:
+        """Apply the held display-breaking edits now: what the debounce does when it runs out.
+
+        Public so the UI tier can run the debounce out without waiting for it.
+        """
+        pending = self._drop_pending_breaking()
+        if not pending:
+            return
+
+        def patch() -> bool:
+            applied = [self._session.patch_monitor_rule(o, f) for o, f in pending.items()]
+            return any(applied)
+
+        self._behind_countdown(patch)
+
+    def _drop_pending_breaking(self) -> dict[str, dict[str, Any]]:
+        if self._debounce is not None:
+            GLib.source_remove(self._debounce)
+            self._debounce = None
+        pending, self._pending_breaking = self._pending_breaking, {}
+        return pending
+
+    def _behind_countdown(self, change: Callable[[], bool], *, profile: bool = False) -> bool:
+        """Make a display-breaking change inside the one countdown, opening it or joining it.
+
+        Opening snapshots both rule lists and the active profile *before* the change, and
+        opens the undo group that turns the countdown into one step or none (#189). Joining
+        applies the change and gives the clock back in full: the user must get a whole
+        countdown to judge the newest change by, and never a second dialog (S3 of #151). A
+        refused change leaves no countdown behind that it would have opened, and neither does
+        a change that, netted out, moves no display-breaking field (scale 1 to 1.25 and back
+        inside the debounce): there is nothing on screen to confirm (review of #151, 38).
+        A profile activation always counts: its countdown is its only take-back.
+        """
+        countdown = self._countdown
+        opened = countdown is None
+        if countdown is None:
+            countdown = self._countdown = _DisplayCountdown(
+                snapshot=self._session.monitor_state_snapshot(),
+                group=self._session.begin_undo_group(DISPLAY_KINDS),
+                dialog=ConfirmRevertDialog(
+                    on_keep=self._keep_display, on_revert=self._revert_display
+                ),
+            )
+        applied = change()
+        nothing_to_confirm = not profile and not breaks_display(
+            countdown.snapshot.monitors, self._session.monitor_rules
+        )
+        if opened and (not applied or nothing_to_confirm):
+            self._countdown = None
+            self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
+        if not applied:
+            return False
+        countdown.includes_profile |= profile
+        self._refresh_entity_pages(DISPLAY_KINDS)
+        self._sync_undo_action()
+        if self._countdown is not countdown:
+            return True
+        if opened:
+            countdown.dialog.present(self)
+        else:
+            countdown.dialog.restart()
+        return True
+
+    def _keep_display(self) -> None:
+        """Keep: everything the countdown carried stands, as one undo step."""
+        countdown, self._countdown = self._countdown, None
+        if countdown is None:
+            return
+        self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
         self._refresh_monitors()
+
+    def _revert_display(self) -> None:
+        """Revert, Esc, close or expiry: the display goes back to before the countdown.
+
+        Only the display-breaking fields go back (`revert_breaking`), so a vrr edit made
+        while the clock ran survives. A countdown that activated a profile reverts whole --
+        rules, workspace pins and the active pointer -- because a profile sets benign fields
+        too, and the user refused all of it. Breaking edits still inside the debounce are
+        dropped: they were never applied, and the user asked for the old display back.
+        """
+        countdown, self._countdown = self._countdown, None
+        if countdown is None:
+            return
+        self._drop_pending_breaking()
+        snapshot = countdown.snapshot
+        if countdown.includes_profile:
+            self._session.restore_monitor_state(snapshot)
+        else:
+            self._session.restore_monitor_rules(
+                revert_breaking(snapshot.monitors, self._session.monitor_rules)
+            )
+        self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
+        self._refresh_entity_pages(DISPLAY_KINDS)
+
+    @property
+    def display_confirm(self) -> ConfirmRevertDialog | None:
+        """The Confirm-or-revert dialog of the open countdown, if one is open."""
+        return None if self._countdown is None else self._countdown.dialog
 
     def _apply_monitor_benign(self, output: str, fields: Mapping[str, Any]) -> None:
         """A benign edit (vrr, an absent display's rule): instant per ADR-0003."""
@@ -1398,30 +1650,18 @@ class MainWindow(Adw.ApplicationWindow):
         self._refresh_monitors()
 
     def _activate_monitor_profile(self, slug: str) -> None:
-        """Activation: one transaction, then Confirm-or-revert (ADR-0015).
+        """Activation: one transaction, behind the one countdown (ADR-0015).
 
-        The snapshot is wider than a field edit's -- both rule lists plus the active
-        pointer -- because activation touches workspace pins too, and a revert that
-        left the refused profile's pins standing would be half a revert.
+        Joins a countdown already open rather than opening a second clock (#192); the
+        revert then puts back both rule lists and the active pointer, because activation
+        touches workspace pins too, and a revert that left the refused profile's pins
+        standing would be half a revert. Breaking edits still inside the debounce are
+        dropped: the profile replaces the monitor list they were going to patch.
         """
-        snapshot = self._session.monitor_state_snapshot()
-        if not self._session.activate_monitor_profile(slug):
-            return
-        self._refresh_monitors()
-        self._profile_confirm = ConfirmRevertDialog(
-            on_keep=self._refresh_monitors,
-            on_revert=lambda: self._revert_monitor_state(snapshot),
+        self._drop_pending_breaking()
+        self._behind_countdown(
+            lambda: self._session.activate_monitor_profile(slug), profile=True
         )
-        self._profile_confirm.present(self)
-
-    @property
-    def profile_confirm(self) -> ConfirmRevertDialog | None:
-        """The countdown guarding the last activation. Probed by the smoke tier."""
-        return self._profile_confirm
-
-    def _revert_monitor_state(self, snapshot: MonitorStateSnapshot) -> None:
-        self._session.restore_monitor_state(snapshot)
-        self._refresh_monitors()
 
     def _update_monitor_profile(self, slug: str) -> None:
         """The drift badge's "Update": recapture reality into the profile."""
@@ -1447,10 +1687,11 @@ class MainWindow(Adw.ApplicationWindow):
         and `set_connected` rebuilds on either, so refreshing here first would pay for
         every edit twice.
         """
-        if self._monitors_page is None:
-            return
-        self._session.fetch_monitors(self._monitors_page.set_connected)
-        self.sync()
+        self._refresh_entity_pages(frozenset({"monitors"}))
+
+    def _set_connected(self, monitors: tuple[Mapping[str, Any], ...] | None) -> None:
+        if self._monitors_page is not None:
+            self._monitors_page.set_connected(monitors)
 
     def sync(self) -> None:
         """Make every control agree with the model, and the Banner with the session's health.
@@ -1463,9 +1704,10 @@ class MainWindow(Adw.ApplicationWindow):
         """
         for page in self._pages:
             page.refresh()
+        self._draw_entity_pages(self._moved_entities())
 
         self.sync_banner()
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
 
     def sync_banner(self) -> None:
         """Make the one Banner agree with `Session.health`, and nothing else.
@@ -1533,7 +1775,7 @@ class MainWindow(Adw.ApplicationWindow):
         # that has since applied would be the app reporting a failure that is over.
         for name in {*result.pending_restart, *result.keys}:
             self._refresh_chrome_for(name)
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
         self.sync_banner()
 
         if not result.ok:
@@ -1685,7 +1927,7 @@ class MainWindow(Adw.ApplicationWindow):
         """
         return self._undo_toast
 
-    def offer_undo(self, step: UndoStep) -> None:
+    def offer_undo(self, step: Step) -> None:
         """Offer to take back the gesture that just landed.
 
         Told which gesture rather than reading the stack top, and the difference is visible:
@@ -1693,7 +1935,7 @@ class MainWindow(Adw.ApplicationWindow):
         already on disk -- would otherwise raise an offer for whatever gesture happened to be
         underneath, naming a Row the user has not touched for a while.
         """
-        self._undo_action.set_enabled(self._session.can_undo)
+        self._sync_undo_action()
         self._dismiss_undo()
         toast = Adw.Toast(title=self._gesture_title(step), timeout=UNDO_TOAST_SECONDS)
         toast.set_button_label("Undo")
@@ -1712,26 +1954,139 @@ class MainWindow(Adw.ApplicationWindow):
             self._undo_toast = None
 
     def _undo(self) -> None:
-        """Take back the last gesture. The session decides whether there is one."""
+        """Take back the last gesture. The session decides whether there is one.
+
+        Except on the Displays: while a countdown shows, the newest gesture is the change on
+        its clock, so Ctrl+Z is its Revert -- the step beneath cannot be undone from under the
+        countdown without being lost (review of #151, finding 12 and owner call 4). A
+        breaking edit still in its debounce is the newest gesture too, and goes unapplied.
+        """
         self._dismiss_undo()
-        if self._session.undo():
+        if self._countdown is not None:
+            # The Esc path: "revert" is the dialog's close response.
+            dialog = self._countdown.dialog
+            dialog.emit("response", "revert")
+            dialog.force_close()
+            return
+        if self._drop_pending_breaking():
+            self._refresh_monitors()
+            self._sync_undo_action()
+            return
+        offered = self._session.can_undo
+        step = self._session.last_gesture
+        if _breaks_display(step):
+            # Putting a mode back can black-screen as surely as choosing one (#192).
+            undone = self._behind_countdown(self._session.undo)
+        else:
+            undone = self._session.undo()
+        if undone:
             # `sync` runs on the session's own `on_state_changed` too, but the undo has
             # already moved the model and the Rows should not wait for the compositor to
             # confirm what the app is about to write.
             self.sync()
-        self._undo_action.set_enabled(self._session.can_undo)
+        elif offered and not self._session.undo_queued:
+            # An entity step whose list changed since -- a hand edit was adopted. The session
+            # dropped it rather than write over that edit; say so, or Ctrl+Z looks dead. A
+            # queued undo is not refused: it runs when the edit in flight lands.
+            self._toasts.add_toast(Adw.Toast(title="Can't undo that change any more"))
+        self._sync_undo_action()
+
+    def _sync_undo_action(self) -> None:
+        """Ctrl+Z is live while there is a step to undo, or a display change to revert."""
+        revertible = self._countdown is not None or bool(self._pending_breaking)
+        self._undo_action.set_enabled(self._session.can_undo or revertible)
+
+    def _refresh_entity_pages(self, kinds: frozenset[str]) -> None:
+        """Re-render the Pages that show the Entity lists `kinds`, then `sync` the rest.
+
+        For an edit the window made itself: those Pages are drawn even when their list did
+        not move (a monitor profile is not an Entity list, and its Page shows it).
+        """
+        self._draw_entity_pages(kinds)
+        self.sync()
+
+    def _moved_entities(self) -> frozenset[str]:
+        """The Entity lists that differ from what their Pages last drew: every one when the
+        session went live or read-only since, since each row's controls follow that."""
+        lists = self._entity_lists()
+        if bool(self._session.live) != self._shown_live:
+            return frozenset(lists)
+        return frozenset(
+            kind for kind, items in lists.items() if self._shown_entities.get(kind) != items
+        )
+
+    def _draw_entity_pages(self, kinds: frozenset[str]) -> None:
+        """Rebuild the Pages showing `kinds` from the model, and every sidebar count.
+
+        `sync` calls this with the lists that moved behind the window's back -- a foreign
+        reload adopting a hand edit, the startup load, an edit's cascade into another list
+        -- because rows are index-addressed: a stale row's Remove lands on another entity.
+        """
+        if not kinds:
+            return
+        if "curves" in kinds:
+            # The animations that named a curve may now carry a dangling reference, so their
+            # Page has to be rebuilt too -- the finding lives on a row nobody touched.
+            kinds |= {"animations"}
+        if kinds & KEYBIND_KINDS and self._binds_page is not None:
+            self._binds_page.refresh()
+        for kind in ("window", "layer"):
+            rules_page = self._rules_page(kind)
+            if f"{kind}_rules" in kinds and rules_page is not None:
+                rules_page.refresh()
+        if "workspace_rules" in kinds and self._workspace_rules_page is not None:
+            self._workspace_rules_page.refresh()
+        if "monitors" in kinds and self._monitors_page is not None:
+            # The answer rebuilds the Page (`_refresh_monitors`).
+            self._session.fetch_monitors(self._set_connected)
+        for kind in kinds & self._declaration_pages.keys():
+            self._declaration_pages[kind].refresh()
+
+        lists = self._entity_lists()
+        self._shown_entities.update((kind, lists[kind]) for kind in kinds if kind in lists)
+        self._shown_live = bool(self._session.live)
+        self._sync_entity_counts()
+
+    def _entity_lists(self) -> dict[str, tuple[Any, ...]]:
+        return {kind: tuple(items) for kind, items in self._session.model.entities.kinds()}
+
+    def _sync_entity_counts(self) -> None:
+        """Make each Entity Page's sidebar count say how many entities it lists now."""
+        counts: dict[str, int] = {}
+        if self._binds_page is not None:
+            counts[self._binds_page.section] = len(self._binds_page.binds)
+        for page in (self._window_rules_page, self._layer_rules_page):
+            if page is not None:
+                counts[page.section] = len(page.rules)
+        if self._workspace_rules_page is not None:
+            counts[self._workspace_rules_page.section] = len(self._workspace_rules_page.rules)
+        if self._monitors_page is not None:
+            counts[MonitorsPage.section] = len(self._monitors_page.rules)
+        for declarations in self._declaration_pages.values():
+            counts[declarations.section] = len(declarations.entities)
+        index = 0
+        while (row := self._sidebar.get_row_at_index(index)) is not None:
+            index += 1
+            count = counts.get(row.get_name())
+            badge = row.get_child().get_last_child() if count is not None else None
+            if isinstance(badge, Gtk.Label):
+                badge.set_label(str(count))
 
     def _on_undo(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
         self._undo()
 
-    def _gesture_title(self, step: UndoStep) -> str:
+    def _gesture_title(self, step: Step) -> str:
         """What the undo toast calls the gesture it is offering to reverse.
 
         The Option's own title, because that is the word on the Row the user just changed --
         never the dotted key, which lives in the Help popover and the search index (ADR-0013).
         A gesture spanning several Options is counted rather than listed: the css-gaps editor
         writes four sides at once, and "Gaps in, Gaps in, Gaps in, Gaps in" is not a sentence.
+        An Entity step carries its own title ("Bind removed"): only the session knew which
+        of add, remove or reorder the gesture was.
         """
+        if isinstance(step, EntityStep):
+            return step.title
         titles = [self._session.schema[name].title for name in step.names]
         if len(titles) == 1:
             return f"{titles[0]} changed"
@@ -1946,8 +2301,19 @@ class MainWindow(Adw.ApplicationWindow):
         if self._closing:
             return False
         self._closing = True
-        self._session.close(self.destroy)
+        # A display change still on its clock must not outlive the window that could have
+        # kept it: closing is one more way out that is not the Keep button (ADR-0008).
+        self._drop_pending_breaking()
+        if self._countdown is not None:
+            dialog = self._countdown.dialog
+            dialog.emit("response", "revert")
+            dialog.force_close()
+        self._session.close(self._destroy_and_release)
         return True
+
+    def _destroy_and_release(self) -> None:
+        self.destroy()
+        release(self)
 
     # --- helpers ------------------------------------------------------------------------
 
@@ -2024,6 +2390,30 @@ def _dependents(schema: Schema) -> dict[str, tuple[str, ...]]:
 
 def _scrolled(page: Adw.PreferencesPage) -> Gtk.ScrolledWindow:
     return Gtk.ScrolledWindow(child=page, hscrollbar_policy=Gtk.PolicyType.NEVER)
+
+
+@dataclass(slots=True)
+class _DisplayCountdown:
+    """The one Confirm-or-revert countdown (S3 of #151): what Revert restores, and how.
+
+    `snapshot` is taken when the countdown opens, before its first change. `group` holds
+    every monitor and workspace-rule step made while it runs, so Keep ends it as one step
+    and Revert, committed inside it, leaves none or only the benign edits that survived.
+    `includes_profile` turns Revert from field-aware into whole.
+    """
+
+    snapshot: MonitorStateSnapshot
+    group: UndoGroup
+    dialog: ConfirmRevertDialog
+    includes_profile: bool = False
+
+
+def _breaks_display(step: Step | None) -> bool:
+    """Whether undoing `step` would change a display-breaking monitor field."""
+    return isinstance(step, EntityStep) and any(
+        edit.kind == "monitors" and breaks_display(edit.after, edit.before)
+        for edit in step.edits
+    )
 
 
 @dataclass(frozen=True, slots=True)

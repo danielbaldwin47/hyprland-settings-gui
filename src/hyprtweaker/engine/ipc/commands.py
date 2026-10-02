@@ -246,6 +246,32 @@ class CommandClient:
             raise MalformedReply(f"monitors answered {payload!r}")
         return tuple(item for item in payload if isinstance(item, Mapping))
 
+    async def switches(self) -> tuple[Mapping[str, Any], ...]:
+        """Every switch device the compositor reports, by name. The switch picker (#107).
+
+        Asks `j/devices`, an object of arrays (`mice`, `keyboards`, `tablets`, `touch`,
+        `switches`), and returns the `switches` one. Each entry is `{"address", "name"}`;
+        the picker reads `name`, which a `switch:` trigger compares as an exact string, so
+        it is handed over untouched. An entry with no string `name` is dropped, because
+        it could not be written into a trigger. Helper data only (ADR-0008).
+
+        A reply with no `switches` key answers `()`: the compositor is there and has
+        nothing to list, which is the case on every desktop without a lid or tablet-mode
+        switch. Callers tell that from "nobody answered" (`IpcError`).
+        """
+        reply = await self._request("devices", json_output=True)
+        payload = _parse_json(reply, "devices")
+        if not isinstance(payload, Mapping):
+            raise MalformedReply(f"devices answered {payload!r}")
+        entries = payload.get("switches", [])
+        if not isinstance(entries, list):
+            raise MalformedReply(f"devices answered switches {entries!r}")
+        return tuple(
+            entry
+            for entry in entries
+            if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
+        )
+
     async def eval(self, code: str) -> EvalReply:
         """Run Lua in the live config state -- the Eval preview tier (ADR-0010).
 

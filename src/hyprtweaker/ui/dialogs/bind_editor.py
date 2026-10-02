@@ -34,12 +34,15 @@ from hyprtweaker.engine.dispatchers import (  # noqa: E402
     lookup,
     namespaces,
 )
-from hyprtweaker.engine.importer.binds import dead_keysyms  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall  # noqa: E402
-from hyprtweaker.engine.triggers import parse_trigger, validate_trigger  # noqa: E402
+from hyprtweaker.engine.triggers import (  # noqa: E402
+    DeadKeys,
+    parse_trigger,
+    trigger_load_problem,
+)
 from hyprtweaker.engine.writer.binds import lua_value  # noqa: E402
 from hyprtweaker.engine.writer.lua import table_key  # noqa: E402
-from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
+from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
 
 TRIGGER_HELP = "Modifiers and one key, joined by +. For example: SUPER + SHIFT + Q"
 
@@ -49,8 +52,15 @@ ENABLES_NOTE = "Saving with a working key also enables this bind."
 FLAGS: tuple[tuple[str, str, str], ...] = (
     ("locked", "Works on the lock screen", ""),
     ("release", "Fires when the key is released", ""),
+    ("click", "Fires on a click", "Mouse button pressed and released without moving"),
+    ("drag", "Fires on a drag", "Mouse button held while the pointer moves"),
     ("repeating", "Repeats while held", ""),
     ("non_consuming", "Lets the key through to the app", ""),
+    (
+        "auto_consuming",
+        "Lets the key through if the action fails",
+        "The app gets the key when the action could not run",
+    ),
     ("transparent", "Does not block other binds", ""),
     ("ignore_mods", "Ignores extra modifiers", ""),
     ("long_press", "Fires on a long press", ""),
@@ -58,16 +68,30 @@ FLAGS: tuple[tuple[str, str, str], ...] = (
     ("allow_input_capture", "Works during input capture", ""),
     ("submap_universal", "Works in every submap", "Fires everywhere, not just where defined"),
 )
-"""The flags the editor offers, in the order they read best.
+"""The flags the editor offers, in the order they read best: every `BindOptions` flag.
 
-Not the whole of `BindOptions`: `click` and `drag` imply `release` and are mutually
-exclusive with it (ADR-0007), and `auto_consuming` is absent from the stub though the code
-parses it (#105). Those need constraint handling rather than a switch, and a switch that
-silently produced an invalid combination would be worse than not offering it yet.
+`click` and `drag` imply `release` and exclude each other (ADR-0007): the editor sets
+`release` for the user while either is on (`_sync_release`) and refuses the pairs in
+`INCOMPATIBLE`. `auto_consuming`'s words are Hyprland 0.56.2's `KeybindManager.cpp`: the
+bind keeps the key from the app only when its dispatcher succeeds.
 """
 
-INCOMPATIBLE = (("long_press", "repeating"), ("release", "repeating"))
-"""Pairs the compositor rejects. Enforced as the editor's own validation (ADR-0007)."""
+INCOMPATIBLE: tuple[tuple[str, str, str], ...] = (
+    ("click", "drag", "Click and Drag can't both be on."),
+    ("click", "repeating", "Click fires on release, so it can't repeat."),
+    ("drag", "repeating", "Drag fires on release, so it can't repeat."),
+    ("long_press", "repeating", "Long press can't repeat."),
+    ("release", "repeating", "Release can't repeat."),
+)
+"""Pairs the compositor rejects (`Hyprland --verify-config`, 0.56.2), each with the words
+the form shows, as the switch that makes the pair flips; Save refuses it too (ADR-0007).
+
+Probed and accepted, so left unconstrained: `click` with `long_press`, `auto_consuming`
+with `non_consuming`. `release` here is the user's own, not the one `click` or `drag` sets:
+those two name themselves in their own pairs, so the message blames what the user turned on.
+"""
+
+_CONFLICT_MESSAGES = frozenset(message for _left, _right, message in INCOMPATIBLE)
 
 FREE_FORM_HOW = "Type each setting as key = value, one per line."
 """Follows the dispatcher's own `free_form_reason` above the raw table."""
@@ -93,9 +117,12 @@ class BindEditor(Adw.Dialog):
         on_done: Callable[[Bind], None],
         bind: Bind | None = None,
         submap: str | None = None,
+        fetch_switches: FetchSwitches | None = None,
     ) -> None:
-        """`submap` is where a *new* bind will live (#66's per-submap add); an edited
-        bind keeps the submap it already has, and the parameter is ignored."""
+        """`fetch_switches` is the live switch list Capture's picker reads (#107), `None`
+        with no compositor connected. `submap` is where a *new* bind will live (#66's
+        per-submap add); an edited bind keeps the submap it already has, and the parameter
+        is ignored."""
         super().__init__(
             title="Edit keybind" if bind else "Add keybind",
             content_width=560,
@@ -104,10 +131,12 @@ class BindEditor(Adw.Dialog):
         self._on_done = on_done
         self._original = bind
         self._submap = bind.submap if bind is not None else submap
+        self._fetch_switches = fetch_switches
         self._chosen: Dispatcher | None = None
         self._arg_entries: dict[str, Gtk.Widget] = {}
         self._kept: dict[str, object] = {}
         self._flag_switches: dict[str, Adw.SwitchRow] = {}
+        self._own_release = False
 
         self._view = Adw.NavigationView()
         self.set_child(self._view)
@@ -210,6 +239,7 @@ class BindEditor(Adw.Dialog):
 
         self._error = Gtk.Label(css_classes=["error"], visible=False, wrap=True)
         box.append(self._error)
+        self._show_flag_conflict()  # an imported bind may open with a pair Hyprland refuses
 
         # An enable is never quiet: when Save would turn the bind on, this line says so.
         self._enables_note = Gtk.Label(label=ENABLES_NOTE, visible=False, wrap=True)
@@ -309,7 +339,71 @@ class BindEditor(Adw.Dialog):
             row.set_active(bool(getattr(options, name)))
             self._flag_switches[name] = row
             group.add(row)
+        # The Importer sets `release` on every click and drag bind, so on those it is the
+        # flag's doing, not the user's: their own value starts off.
+        self._own_release = options.release and not (options.click or options.drag)
+        release = self._flag_switches["release"]
+        release.connect("notify::active", self._release_toggled)
+        for name in ("click", "drag"):
+            self._flag_switches[name].connect("notify::active", lambda *_: self._sync_release())
+        self._sync_release()
+        # Connected last, so it reads the flags after `_sync_release` and `_own_release`.
+        for row in self._flag_switches.values():
+            row.connect("notify::active", lambda *_: self._show_flag_conflict())
         return group
+
+    def _release_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
+        """Remember what the user chose. The row is insensitive while click or drag locks
+        it on, so a locked toggle is `_sync_release`'s and not remembered."""
+        if row.get_sensitive():
+            self._own_release = row.get_active()
+
+    def _sync_release(self) -> None:
+        """Show `release` as click or drag leave it: on and locked while either is on,
+        the user's own value, visibly, once both are off."""
+        release = self._flag_switches["release"]
+        implied = next(
+            (
+                title
+                for name, title in (("click", "Click"), ("drag", "Drag"))
+                if self._flag_switches[name].get_active()
+            ),
+            None,
+        )
+        if implied:
+            release.set_sensitive(False)
+            release.set_active(True)
+            release.set_subtitle(f"Set by {implied}")
+        else:
+            release.set_sensitive(True)
+            release.set_active(self._own_release)
+            release.set_subtitle("")
+
+    def _flag_conflict(self) -> str | None:
+        """The words for the first `INCOMPATIBLE` pair the user has on, if any."""
+        chosen = self._flags_the_user_chose()
+        return next(
+            (message for left, right, message in INCOMPATIBLE if {left, right} <= chosen),
+            None,
+        )
+
+    def _show_flag_conflict(self) -> None:
+        """Say a conflict as the switch flips (Save still refuses it), and take the words
+        back once it is resolved; a refusal Save showed about something else stays."""
+        conflict = self._flag_conflict()
+        if conflict is not None:
+            self._error.set_text(conflict)
+            self._error.set_visible(True)
+        elif self._error.get_text() in _CONFLICT_MESSAGES:
+            self._error.set_visible(False)
+            self._error.set_text("")
+
+    def _flags_the_user_chose(self) -> set[str]:
+        """The flags on, with `release` as the user's own: click and drag name themselves in
+        their refusals rather than as a release the user never touched."""
+        on = {name for name, row in self._flag_switches.items() if row.get_active()}
+        on.discard("release")
+        return on | ({"release"} if self._own_release else set())
 
     # --- saving ---------------------------------------------------------------------------
 
@@ -371,6 +465,7 @@ class BindEditor(Adw.Dialog):
             on_done=self._trigger.set_text,
             initial=self._trigger.get_text(),
             in_submap=self._in_submap(),
+            fetch_switches=self._fetch_switches,
         )
         dialog.present(self)
 
@@ -380,46 +475,39 @@ class BindEditor(Adw.Dialog):
 
         The Importer's disable is not the user's choice, so a working key undoes it, as
         "Fix trigger…" on the row does. A bind disabled with a working trigger (the conflict
-        surface's disable) is the user's choice and stays off. Without an xkb validator
-        `dead_keysyms` finds nothing, so nothing here enables: it fails safe.
+        surface's disable) is the user's choice and stays off. Without an xkb validator no
+        key reads as dead (`trigger_load_problem`), so nothing here enables: it fails safe.
         """
         original = self._original
-        if original is None or original.enabled or not dead_keysyms(original.keys):
+        if original is None or original.enabled:
             return False
-        trigger = self._trigger.get_text().strip()
-        if not trigger:
+        if not isinstance(trigger_load_problem(original.keys), DeadKeys):
             return False
-        problem = validate_trigger(trigger, in_submap=self._in_submap())
-        if problem is not None and problem.blocking:
-            return False
-        return not dead_keysyms(str(parse_trigger(trigger)))
+        return trigger_load_problem(str(parse_trigger(self._trigger.get_text()))) is None
 
     def _validate(self) -> str:
         trigger = self._trigger.get_text().strip()
         if not trigger:
             return "A keybind needs a trigger."
-        # Typed triggers get the same hard block Capture applies. A dead keysym reaching
-        # the writer is not a cosmetic problem: Lua fails the whole config on it, and the
-        # compositor gives no error to find it by (ADR-0007). The one exception is a
-        # disabled bind whose trigger this edit left alone, such as a dead keysym the
-        # Importer disabled (#108): the Writer keeps a disabled bind commented out, so
-        # nothing dead reaches the compositor, and blocking would mean the user cannot
-        # fix the description until they have fixed the key.
-        problem = validate_trigger(trigger, in_submap=self._in_submap())
+        # Typed triggers get the same hard block Capture applies, through the one rule the
+        # Session enforces (`trigger_load_problem`). A dead keysym reaching the writer is
+        # not a cosmetic problem: Lua fails the whole config on it, and the compositor
+        # gives no error to find it by (ADR-0007). The one exception is a disabled bind
+        # whose trigger this edit left alone, such as a dead keysym the Importer disabled
+        # (#108): the Writer keeps a disabled bind commented out, so nothing dead reaches
+        # the compositor, and blocking would mean the user cannot fix the description until
+        # they have fixed the key.
+        problem = trigger_load_problem(str(parse_trigger(trigger)))
         original = self._original
         untouched_and_disabled = (
             original is not None
             and not original.enabled
             and parse_trigger(trigger) == parse_trigger(original.keys)
         )
-        if problem is not None and problem.blocking and not untouched_and_disabled:
-            return problem.full_text()
-        for left, right in INCOMPATIBLE:
-            if (
-                self._flag_switches[left].get_active()
-                and self._flag_switches[right].get_active()
-            ):
-                return f"{left} and {right} cannot both be set."
+        if problem is not None and not untouched_and_disabled:
+            return problem.message
+        if conflict := self._flag_conflict():
+            return conflict
         entry = self._chosen
         if entry is not None and entry.free_form_reason is None:
             for spec in entry.args:
@@ -444,12 +532,12 @@ class BindEditor(Adw.Dialog):
         path = entry.path if entry else EXEC_PATH
 
         # `replace` rather than a fresh `BindOptions`, so editing a bind keeps the fields
-        # this dialog does not show. `device`, `auto_consuming`, `click`, `drag` and
-        # `submap_universal` all belong to binds this app can import but not yet edit
-        # (#105, #66), and building the options from the switches alone would delete them
-        # the first time a user touched an unrelated flag -- exactly the silent overwrite
-        # ADR-0007 forbids. `origin` is carried for the same reason: it is where the bind
-        # came from, and this edit does not move it.
+        # this dialog does not show. `device` is one: building the options from the switches
+        # alone would delete it the first time a user touched an unrelated flag -- exactly
+        # the silent overwrite ADR-0007 forbids. `release` is saved as the switch shows it:
+        # on for the user's own choice and for a click or drag, which imply it.
+        # `origin` is carried for the same reason: it is where the bind came from, and
+        # this edit does not move it.
         base = self._original.options if self._original else BindOptions()
         options = replace(
             base,

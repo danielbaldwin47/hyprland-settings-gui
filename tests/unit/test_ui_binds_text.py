@@ -33,6 +33,14 @@ def exec_bind(keys: str = "SUPER + Q", command: str = "kitty", **kwargs: object)
     )
 
 
+def submap_bind(keys: str, target: str, **kwargs: object) -> Bind:
+    return Bind(
+        keys=keys,
+        dispatcher=DispatcherCall(path="submap", positional=(target,)),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
 class TestTrigger:
     def test_plain_keys_read_back_as_written(self) -> None:
         assert trigger_text(exec_bind("SUPER + SHIFT + Q")) == "SUPER + SHIFT + Q"
@@ -105,6 +113,18 @@ class TestBindBadge:
         assert badge is not None
         assert (badge.kind, badge.text) == (BadgeKind.ERROR, 'Unknown key "notakey"')
 
+    def test_a_disabled_bind_whose_trigger_cannot_load_offers_a_fix_not_enable(self) -> None:
+        """The Session refuses to enable it (#199): a one-click Enable would be a dead end."""
+        badge = bind_badge(exec_bind("SUPER + mouse:272 + Q", enabled=False))
+        assert badge is not None
+        assert (badge.kind, badge.text, badge.tooltip) == (
+            BadgeKind.ERROR,
+            "Trigger can't load",
+            "Mouse, wheel and switch triggers cannot be combined with other keys. "
+            "Use just one of: mouse:272. Hyprland can't load this trigger, so this keybind "
+            "stays commented out. Record a new trigger to use it.",
+        )
+
     def test_a_multi_key_bind_is_not_mistaken_for_a_dead_keysym(self) -> None:
         """`A&B` is one token xkb does not know; the multi-key reason must win."""
         badge = bind_badge(exec_bind("SUPER + A&B", enabled=False))
@@ -120,6 +140,49 @@ class TestBindBadge:
         assert (badge.kind, badge.text) == (
             BadgeKind.LUA_FUNCTION,
             "Defined by a Lua function in user.lua",
+        )
+
+    def test_a_bind_entering_an_empty_submap_warns_with_the_reason(self) -> None:
+        badge = bind_badge(
+            submap_bind("SUPER + R", "resize"), empty_submaps=frozenset({"resize"})
+        )
+        assert badge is not None
+        assert (badge.kind, badge.text) == (
+            BadgeKind.EMPTY_SUBMAP,
+            "Submap has no enabled keybinds",
+        )
+        assert (
+            "Hyprland cannot enter a submap with no enabled keybinds. "
+            "Add or enable a keybind in it." in badge.tooltip
+        )
+        assert badge.kind.style == "warning"
+
+    def test_the_empty_submap_badge_leaves_the_bind_editable_and_removable(self) -> None:
+        """The bind is fine; the submap is what is missing a bind, so nothing is taken away."""
+        kind = BadgeKind.EMPTY_SUBMAP
+        assert (kind.editable, kind.removable, kind.verb) == (True, True, None)
+
+    def test_a_bind_entering_another_submap_has_no_badge(self) -> None:
+        badge = bind_badge(
+            submap_bind("SUPER + R", "resize"), empty_submaps=frozenset({"other"})
+        )
+        assert badge is None
+
+    def test_a_bind_that_is_not_an_entry_has_no_badge(self) -> None:
+        assert bind_badge(exec_bind(), empty_submaps=frozenset({"resize"})) is None
+
+    def test_an_earlier_reason_wins_over_the_empty_submap(self) -> None:
+        empty = frozenset({"resize"})
+        disabled = bind_badge(
+            submap_bind("SUPER + R", "resize", enabled=False), empty_submaps=empty
+        )
+        multi = bind_badge(submap_bind("SUPER + A&B", "resize"), empty_submaps=empty)
+        function = bind_badge(Bind(keys="SUPER + R", dispatcher=None), empty_submaps=empty)
+        assert disabled is not None and multi is not None and function is not None
+        assert (disabled.kind, multi.kind, function.kind) == (
+            BadgeKind.DISABLED,
+            BadgeKind.MULTI_KEY,
+            BadgeKind.LUA_FUNCTION,
         )
 
     def test_multi_key_and_lua_function_carry_different_reasons(self) -> None:

@@ -22,7 +22,8 @@ def test_the_tier_draws_on_its_own_display_and_leaves_the_host_env_alone() -> No
     # The Harness tier reads the host session from the environment at test time, in the
     # same process when both tiers run together.
     assert os.environ.get("WAYLAND_DISPLAY") == ABSENT_WAYLAND_DISPLAY
-    assert "DISPLAY" not in os.environ
+    # DISPLAY stays on the tier's display: the NVIDIA EGL driver reopens `$DISPLAY`.
+    assert os.environ.get("DISPLAY") == display.get_name()
 
 
 def test_the_tier_keeps_the_hosts_scale_and_screen_reader_off_its_widgets() -> None:

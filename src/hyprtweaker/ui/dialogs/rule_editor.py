@@ -14,7 +14,20 @@ that names one twice is a rule fighting itself).
 shelved by category. An effect the catalog does not know -- a plugin's, or a newer
 Hyprland's -- shows as a raw custom row and passes through *unedited by identity*: its
 value object is only replaced when the user actually changes the text, so a table-valued
-effect survives an unrelated edit byte-for-byte (ADR-0008: "never dropped").
+effect survives an unrelated edit byte-for-byte (ADR-0008: "never dropped"). The string-
+grammar effects (`opacity`, `fullscreen_state`, `suppress_event`, and `border_color`'s
+gradient editor, #156) get a helper row instead
+of a text entry (`effect_helpers`, picked by `Effect.grammar` through `EFFECT_HELPERS`),
+with the same untouched-keeps-the-original rule and an "Edit as text" toggle.
+
+**Matches N.** The Match group carries a live "Matches 3 open windows" badge (layers:
+"layer surfaces"): a client-side approximation over one fetch of the open windows, taken
+when the dialog opens and recounted from that copy on every edit of a match row
+(`rule_matching`). It says which props it could not check, and is simply not shown when no
+compositor answered, when the Match is empty, or when a pattern does not compile -- never
+a zero for a question nobody could answer. Regex entries wear the `^(` and `)$` Hyprland
+applies implicitly, as labels around the text, hidden while the text anchors itself (`^...$`):
+the stored value never gains them.
 
 **Pick a window / Pick a layer.** Prefills a Match from `hyprctl -j clients` (or the
 layer namespaces) -- helper data only, thrown away after the prefill, and the button
@@ -34,9 +47,10 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model.entities import LayerRule, WindowRule  # noqa: E402
+from hyprtweaker.engine.rule_matching import badge_text, count_matches  # noqa: E402
 from hyprtweaker.engine.rules_catalog import (  # noqa: E402
     CATEGORIES,
     NEGATABLE_KINDS,
@@ -53,6 +67,16 @@ from hyprtweaker.engine.rules_catalog import (  # noqa: E402
     prop_title,
     strip_negation,
 )
+from hyprtweaker.ui.dialogs.effect_helpers import (  # noqa: E402
+    EffectHelper,
+    EffectHelperBuilder,
+    FullscreenStateRow,
+    OpacityRow,
+    SuppressEventRow,
+    effect_text,
+)
+from hyprtweaker.ui.dialogs.gradient_field import GradientRow  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 
 Rule = WindowRule | LayerRule
 
@@ -77,17 +101,36 @@ _SPIN_BOUNDS: dict[str, tuple[float, float]] = {
 
 _DEFAULT_INT_BOUNDS = (0.0, 100000.0)
 
+ANCHOR_OPEN = "^("
+ANCHOR_CLOSE = ")$"
+ANCHOR_HINT = (
+    "Hyprland matches the whole value, as if it were written between ^( and )$. "
+    "You do not need to add them."
+)
+
+EFFECT_HELPERS: dict[str, EffectHelperBuilder] = {
+    "opacity": OpacityRow,
+    "fullscreen_state": FullscreenStateRow,
+    "suppress_event": SuppressEventRow,
+    "gradient": GradientRow,
+}
+"""Helper widget per string grammar: the key is `Effect.grammar` from the catalog, the
+value builds the row from the effect's original value (`None` for a new effect). An effect
+whose grammar has no entry here falls back to a text entry."""
+
 
 @dataclass(frozen=True, slots=True)
 class _EffectRow:
     """One effect row's bookkeeping: the key, its typed spec (or `None` for raw), the
     editing widget, and the value it opened with -- the identity half of the unknown-
-    effect pass-through."""
+    effect pass-through. A row built by a grammar helper carries it in `helper`, and the
+    helper then owns collecting and the blank check (`widget` is the helper's row)."""
 
     name: str
     spec: Effect | None
     widget: Gtk.Widget
     original: Any
+    helper: EffectHelper | None = None
 
 
 class RuleEditor(Adw.Dialog):
@@ -117,6 +160,9 @@ class RuleEditor(Adw.Dialog):
         self._original = rule
         self._taken = tuple(name for name in taken_names if name)
         self._fetch = fetch_targets
+        self._targets: tuple[Mapping[str, Any], ...] | None = None
+        """The last answer to `fetch_targets`: `None` until one arrives and whenever
+        nobody answered, `()` for a compositor with nothing open."""
 
         # One ordered list per group, so the collected dict keeps the rule's own order.
         self._match_rows: dict[str, tuple[MatchProp, Gtk.Widget, Gtk.ToggleButton | None]] = {}
@@ -131,8 +177,12 @@ class RuleEditor(Adw.Dialog):
         self._pick_xwayland = Adw.SwitchRow(title="XWayland")
 
         self._view = Adw.NavigationView()
+        self._view.connect("popped", self._on_popped)
         self.set_child(self._view)
         self._view.push(self._form_page())
+        # A fetch can answer after the dialog closed and its widgets were released.
+        self._closed = False
+        self.connect("closed", self._on_closed)
 
         if rule is not None:
             for name, value in rule.match.items():
@@ -140,6 +190,9 @@ class RuleEditor(Adw.Dialog):
                 self._add_match_row(prop, value)
             for name, value in rule.effects.items():
                 self._add_effect_row(name, value)
+
+        if self._fetch is not None:
+            self._fetch(self._on_counting_targets)
 
     # --- the form -------------------------------------------------------------------------
 
@@ -168,6 +221,20 @@ class RuleEditor(Adw.Dialog):
             else "Which layer surfaces this rule applies to.",
         )
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.match_badge = Gtk.Label(
+            visible=False,
+            wrap=True,
+            max_width_chars=34,
+            justify=Gtk.Justification.RIGHT,
+            valign=Gtk.Align.CENTER,
+            margin_end=6,
+            css_classes=["dim-label", "caption"],
+        )
+        self.match_badge.set_tooltip_text(
+            "An estimate from the windows open right now. Hyprland's own matching can "
+            "differ on unusual patterns."
+        )
+        header.append(self.match_badge)
         if self._fetch is not None:
             pick = Gtk.Button(icon_name="find-location-symbolic", valign=Gtk.Align.CENTER)
             pick.add_css_class("flat")
@@ -276,6 +343,7 @@ class RuleEditor(Adw.Dialog):
         if prop.kind is MatchKind.BOOL:
             switch = Adw.SwitchRow(title=prop_title(prop.name))
             switch.set_active(bool(value) if value is not None else True)
+            switch.connect("notify::active", self._on_match_edited)
             widget = switch
         elif prop.kind is MatchKind.INT:
             low, high = _SPIN_BOUNDS.get(prop.name, _DEFAULT_INT_BOUNDS)
@@ -283,11 +351,26 @@ class RuleEditor(Adw.Dialog):
             spin.set_title(prop_title(prop.name))
             if value is not None:
                 spin.set_value(float(value))
+            spin.connect("notify::value", self._on_match_edited)
             widget = spin
         else:
             entry = Adw.EntryRow(title=prop_title(prop.name))
             if value is not None:
                 entry.set_text(strip_negation(str(value)))
+            if prop.kind is MatchKind.REGEX:
+                marks: list[Gtk.Label] = []
+                for anchor, add in (
+                    (ANCHOR_OPEN, entry.add_prefix),
+                    (ANCHOR_CLOSE, entry.add_suffix),
+                ):
+                    mark = Gtk.Label(label=anchor, css_classes=["dim-label", "monospace"])
+                    mark.set_tooltip_text(ANCHOR_HINT)
+                    add(mark)
+                    marks.append(mark)
+                # Text that carries its own anchors (the picker's prefill, most imported
+                # rules) would read `^( ^(kitty)$ )$` between the marks.
+                entry.connect("changed", _show_anchor_marks, marks)
+                _show_anchor_marks(entry, marks)
             if prop.kind in NEGATABLE_KINDS:
                 negate = Gtk.ToggleButton(label="Not", valign=Gtk.Align.CENTER)
                 negate.add_css_class("flat")
@@ -295,7 +378,9 @@ class RuleEditor(Adw.Dialog):
                     f"Match windows that do not match this (the {NEGATIVE_PREFIX} prefix)"
                 )
                 negate.set_active(is_negated(value))
+                negate.connect("toggled", self._on_match_edited)
                 entry.add_suffix(negate)
+            entry.connect("changed", self._on_match_edited)
             widget = entry
 
         remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
@@ -306,16 +391,56 @@ class RuleEditor(Adw.Dialog):
 
         self._match_rows[prop.name] = (prop, widget, negate)
         self._match_group.add(widget)
+        self._refresh_badge()
 
-    def _on_remove_match(self, _button: Gtk.Button, name: str, widget: Gtk.Widget) -> None:
+    def _on_remove_match(
+        self, _button: Gtk.Button | None, name: str, widget: Gtk.Widget
+    ) -> None:
         self._match_rows.pop(name, None)
         self._match_group.remove(widget)
+        # From an idle: this runs inside the row's own trash button's handler.
+        GLib.idle_add(release, widget)
+        self._refresh_badge()
+
+    # --- the matches-N badge ----------------------------------------------------------------
+
+    def _on_match_edited(self, *_args: object) -> None:
+        self._refresh_badge()
+
+    def _on_counting_targets(self, payload: tuple[Mapping[str, Any], ...] | None) -> None:
+        if self._closed:
+            return
+        self._targets = payload
+        self._refresh_badge()
+
+    def _refresh_badge(self) -> None:
+        """Recount from the cached answer; show nothing when there is nothing to say.
+
+        Never asks the compositor again: an edit fires this per keystroke, and one fetch
+        per keystroke would be one IPC round trip per letter.
+        """
+        result = (
+            count_matches(self._kind, self._collect_match(), self._targets)
+            if self._targets is not None
+            else None
+        )
+        if result is None:
+            self.match_badge.set_visible(False)
+            return
+        self.match_badge.set_label(badge_text(self._kind, result))
+        self.match_badge.set_visible(True)
 
     def _add_effect_row(self, name: str, value: Any) -> None:
         spec = find_effect(self._kind, name)
         widget: Gtk.Widget
+        helper: EffectHelper | None = None
 
-        if spec is not None and spec.type is EffectType.BOOL:
+        build = EFFECT_HELPERS.get(spec.grammar) if spec is not None and spec.grammar else None
+        if build is not None:
+            helper = build(value)
+            helper.widget.set_title(prop_title(name))
+            widget = helper.widget
+        elif spec is not None and spec.type is EffectType.BOOL:
             switch = Adw.SwitchRow(title=prop_title(name))
             switch.set_active(bool(value) if value is not None else True)
             widget = switch
@@ -338,7 +463,7 @@ class RuleEditor(Adw.Dialog):
                 title=name if spec is None else prop_title(name), use_markup=False
             )
             if value is not None:
-                entry.set_text(_effect_text(value))
+                entry.set_text(effect_text(value))
             widget = entry
 
         remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
@@ -348,13 +473,14 @@ class RuleEditor(Adw.Dialog):
         _row_add_suffix(widget, remove)
 
         self._effect_entries.append(
-            _EffectRow(name=name, spec=spec, widget=widget, original=value)
+            _EffectRow(name=name, spec=spec, widget=widget, original=value, helper=helper)
         )
         self._effects_group.add(widget)
 
     def _on_remove_effect(self, _button: Gtk.Button, name: str, widget: Gtk.Widget) -> None:
         self._effect_entries = [row for row in self._effect_entries if row.widget is not widget]
         self._effects_group.remove(widget)
+        GLib.idle_add(release, widget)
 
     # --- pick a window / pick a layer -----------------------------------------------------
 
@@ -370,35 +496,37 @@ class RuleEditor(Adw.Dialog):
                 title="Also match",
                 description="The class is always used. Add more to narrow the match.",
             )
-            for row in (
-                self._pick_title,
-                self._pick_initial_class,
-                self._pick_initial_title,
-                self._pick_xwayland,
-            ):
+            for row in self._pick_switches():
                 options.add(row)
             box.append(options)
+            self._picker_options = options
 
-        self._picker_group = Adw.PreferencesGroup(
+        group = Adw.PreferencesGroup(
             title="Open windows" if self._kind == "window" else "Layer surfaces"
         )
+        self._picker_group: Adw.PreferencesGroup | None = group
         self._picker_rows: list[Gtk.Widget] = []
         waiting = Adw.ActionRow(title="Asking Hyprland…")
-        self._picker_group.add(waiting)
+        group.add(waiting)
         self._picker_rows.append(waiting)
-        box.append(self._picker_group)
+        box.append(group)
 
         page.set_child(_dialog_body(box))
         self._view.push(page)
         self._fetch(self._on_targets)
 
     def _on_targets(self, payload: tuple[Mapping[str, Any], ...] | None) -> None:
+        # The picker asked fresh, so its answer is the newest the badge can count over.
+        self._on_counting_targets(payload)
+        group = self._picker_group
+        if self._closed or group is None:  # the page that asked was popped and released
+            return
         for row in self._picker_rows:
-            self._picker_group.remove(row)
+            group.remove(row)
         self._picker_rows = []
 
         def add_row(row: Gtk.Widget) -> None:
-            self._picker_group.add(row)
+            group.add(row)
             self._picker_rows.append(row)
 
         if payload is None:
@@ -438,6 +566,32 @@ class RuleEditor(Adw.Dialog):
                 add_row(row)
             if not self._picker_rows:
                 add_row(Adw.ActionRow(title="No layer surfaces found"))
+
+    def _pick_switches(self) -> tuple[Adw.SwitchRow, ...]:
+        return (
+            self._pick_title,
+            self._pick_initial_class,
+            self._pick_initial_title,
+            self._pick_xwayland,
+        )
+
+    def _on_popped(self, _view: Adw.NavigationView, page: Adw.NavigationPage) -> None:
+        """Let go of a picker page once it is off the stack, keeping its opt-in switches.
+
+        The switches are built once and outlive every picker page (`prefill_from_window`
+        reads them), so they leave the page before `release` takes the rest. From an idle,
+        as the window releases a closed dialog: the view is still finishing the pop.
+        """
+        if page.get_tag() != "picker":
+            return
+        if self._kind == "window":
+            for row in self._pick_switches():
+                self._picker_options.remove(row)
+        self._picker_group = None
+        GLib.idle_add(release, page)
+
+    def _on_closed(self, _dialog: Adw.Dialog) -> None:
+        self._closed = True
 
     def prefill_from_window(self, info: Mapping[str, Any]) -> None:
         """Prefill the Match from one `clients` entry -- exact, escaped (ADR-0008).
@@ -509,7 +663,9 @@ class RuleEditor(Adw.Dialog):
     def _collect_effects(self) -> dict[str, Any]:
         collected: dict[str, Any] = {}
         for row in self._effect_entries:
-            if isinstance(row.widget, Adw.SwitchRow):
+            if row.helper is not None:
+                collected[row.name] = row.helper.value()
+            elif isinstance(row.widget, Adw.SwitchRow):
                 collected[row.name] = row.widget.get_active()
             elif isinstance(row.widget, Adw.SpinRow):
                 value = row.widget.get_value()
@@ -520,7 +676,7 @@ class RuleEditor(Adw.Dialog):
                 )
             elif isinstance(row.widget, Adw.EntryRow):
                 text = row.widget.get_text().strip()
-                if row.original is not None and text == _effect_text(row.original):
+                if row.original is not None and text == effect_text(row.original):
                     # Untouched: keep the original object, so a table-valued effect
                     # round-trips by identity rather than through its string.
                     collected[row.name] = row.original
@@ -545,7 +701,7 @@ class RuleEditor(Adw.Dialog):
         # screen, so "Save" quietly meaning "and also delete that one" would be a second
         # meaning nobody asked for. Deleting is what the row's remove button is for.
         for row in self._effect_entries:
-            if isinstance(row.widget, Adw.EntryRow) and not row.widget.get_text().strip():
+            if _is_blank(row):
                 return (
                     f"The {prop_title(row.name)} effect needs a value — "
                     "remove the row to drop the effect."
@@ -575,29 +731,31 @@ class RuleEditor(Adw.Dialog):
         self.close()
 
 
+def _is_blank(row: _EffectRow) -> bool:
+    """A text effect with nothing in it: a helper says so itself, an entry by its text."""
+    if row.helper is not None:
+        return row.helper.blank()
+    return isinstance(row.widget, Adw.EntryRow) and not row.widget.get_text().strip()
+
+
+def _show_anchor_marks(entry: Adw.EntryRow, marks: list[Gtk.Label]) -> None:
+    """Show the implicit `^(` `)$` only while the text does not anchor itself."""
+    text = entry.get_text().strip()
+    anchored = text.startswith("^") and text.endswith("$") and not text.endswith("\\$")
+    for mark in marks:
+        mark.set_visible(not anchored)
+
+
 def _exact(text: str) -> str:
     """A picked value as an exact, escaped regex -- the ADR-0008 prefill shape."""
     return f"^({re.escape(text)})$"
 
 
-def _effect_text(value: Any) -> str:
-    """A raw effect value as entry text, and the identity check for "untouched".
-
-    A list renders as its space-joined items because that *is* the string grammar the
-    vec2 effects accept (`move`/`size` take `"x y"` or `{x, y}`) -- so a user who edits
-    the shown text saves a value the compositor still understands, instead of a Python
-    repr. Untouched rows never reach this conversion; they keep the original object.
-    """
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (list, tuple)):
-        return " ".join(str(item) for item in value)
-    return str(value)
-
-
 def _row_add_suffix(widget: Gtk.Widget, suffix: Gtk.Widget) -> None:
     """Every Adwaita row kind spells `add_suffix` the same way; typed narrowly anyway."""
-    if isinstance(widget, (Adw.EntryRow, Adw.ActionRow, Adw.SwitchRow, Adw.SpinRow)):
+    if isinstance(
+        widget, (Adw.EntryRow, Adw.ActionRow, Adw.SwitchRow, Adw.SpinRow, Adw.ExpanderRow)
+    ):
         widget.add_suffix(suffix)
 
 
