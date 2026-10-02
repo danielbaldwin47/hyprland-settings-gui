@@ -11,7 +11,7 @@ Run from the checkout or worktree root, with the main checkout's venv:
 timeout 900 .venv/bin/pytest -q -n auto
 ```
 
-- `pytest` with no path runs the three per-commit tiers in `pyproject.toml` `testpaths` (unit, static, ui): 2245 passed, 12 skipped in about 12 s with `-n auto` (68 s serial) with #146. CI fails a run with more skips than `SKIP_CEILING` in `.github/workflows/ci.yml`; a ticket that adds or removes an intentional skip moves that number.
+- `pytest` with no path runs the per-commit tiers (ADR-0011 tiers 1, 2 and 4) in `pyproject.toml` `testpaths` (unit, static, ui): 2245 passed, 12 skipped in about 12 s with `-n auto` (68 s serial) with #146. CI fails a run with more skips than `SKIP_CEILING` in `.github/workflows/ci.yml`; a ticket that adds or removes an intentional skip moves that number.
 - `-n auto` is pytest-xdist, installed in the shared venv. It stays out of `addopts`: `meson test` runs the system pytest, which may lack xdist.
 - The UI tier draws on an Xvfb of its own in each pytest process and sandboxes the config dir per test (`tests/ui/conftest.py`), so it never reaches the desktop compositor. It skips without GTK or without `Xvfb`; `HYPRTWEAKER_REQUIRE_UI=1` makes that skip a failure. To watch it, set `HYPRTWEAKER_UI_HOST_DISPLAY=1`: its windows then map on the desktop session, and Hyprland may raise its "Application Not Responding" dialog over them.
 - `mypy` checks only the `files` list in `pyproject.toml` (the Engine and the gi-free modules above it, ADR-0011).

@@ -13,7 +13,7 @@ from __future__ import annotations
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
 from hyprtweaker.engine.schema import Visibility, load_schema
-from hyprtweaker.ui.pages.plan import PagePlan, View, is_visible, plan_config_view
+from hyprtweaker.ui.pages.plan import Disclosure, PagePlan, View, is_visible, plan_config_view
 from hyprtweaker.ui.pages.tasks import (
     NEW_IN_GROUP_DESCRIPTION,
     CategorySpec,
@@ -36,7 +36,9 @@ def page_named(section: str, *, show_advanced: bool = True) -> PagePlan:
     """The one planned Page with this sidebar id. Raises if the curation lost it."""
     return next(
         page
-        for category in plan_tasks_view(SCHEMA, MAPPING, show_advanced=show_advanced)
+        for category in plan_tasks_view(
+            SCHEMA, MAPPING, Disclosure(show_advanced=show_advanced)
+        )
         for page in category.option_pages
         if page.section == section
     )
@@ -45,7 +47,9 @@ def page_named(section: str, *, show_advanced: bool = True) -> PagePlan:
 def placed_options(mapping: TasksMapping = MAPPING, *, show_advanced: bool = True) -> list[str]:
     return [
         option.name
-        for category in plan_tasks_view(SCHEMA, mapping, show_advanced=show_advanced)
+        for category in plan_tasks_view(
+            SCHEMA, mapping, Disclosure(show_advanced=show_advanced)
+        )
         for page in category.option_pages
         for group in page.groups
         for option in group.options
@@ -66,7 +70,7 @@ def test_every_option_the_tasks_view_may_show_is_on_exactly_one_page() -> None:
     reachable = [
         option.name
         for option in SCHEMA
-        if is_visible(option, show_advanced=True, view=View.TASKS)
+        if is_visible(option, Disclosure(show_advanced=True, view=View.TASKS))
     ]
 
     assert sorted(placed) == sorted(reachable)
@@ -78,7 +82,7 @@ def test_what_tasks_withholds_is_exactly_what_config_still_reaches() -> None:
     in_tasks = set(placed_options())
     in_config = {
         option.name
-        for plan in plan_config_view(SCHEMA, show_advanced=True)
+        for plan in plan_config_view(SCHEMA, Disclosure(show_advanced=True))
         for group in plan.groups
         for option in group.options
     }
@@ -90,7 +94,7 @@ def test_what_tasks_withholds_is_exactly_what_config_still_reaches() -> None:
 
 def test_no_curated_page_is_empty() -> None:
     """An empty destination is a curation mistake: it claims Options that do not exist."""
-    for category in plan_tasks_view(SCHEMA, MAPPING, show_advanced=True):
+    for category in plan_tasks_view(SCHEMA, MAPPING, Disclosure(show_advanced=True)):
         for page in category.option_pages:
             assert page.groups, f"{page.section} builds no Groups"
 
@@ -177,7 +181,7 @@ def test_a_section_the_mapping_never_placed_still_reaches_every_option() -> None
 
 def test_an_uncurated_section_lands_in_the_new_in_version_group() -> None:
     """#7's designed degradation: new settings appear flagged, never silently absent."""
-    categories = plan_tasks_view(SCHEMA, uncurated("cursor"), show_advanced=True)
+    categories = plan_tasks_view(SCHEMA, uncurated("cursor"), Disclosure(show_advanced=True))
     fallback = [
         page
         for category in categories
@@ -198,7 +202,7 @@ def test_an_uncurated_section_lands_in_the_new_in_version_group() -> None:
 def test_the_fallback_group_says_why_it_exists() -> None:
     """#7 and ADR-0012 both say "flagged", and a version heading is not on its own a flag:
     it reads as *new* rather than as *not yet placed on a curated page*."""
-    categories = plan_tasks_view(SCHEMA, uncurated("cursor"), show_advanced=True)
+    categories = plan_tasks_view(SCHEMA, uncurated("cursor"), Disclosure(show_advanced=True))
     fallback = next(
         page
         for category in categories
@@ -215,7 +219,7 @@ def test_an_ordinary_curated_group_carries_no_description() -> None:
 
 
 def test_the_fallback_page_joins_the_system_category() -> None:
-    categories = plan_tasks_view(SCHEMA, uncurated("cursor"), show_advanced=True)
+    categories = plan_tasks_view(SCHEMA, uncurated("cursor"), Disclosure(show_advanced=True))
     holder = [
         category
         for category in categories
@@ -229,13 +233,65 @@ def test_the_fallback_page_joins_the_system_category() -> None:
 def test_an_uncurated_hidden_section_gets_no_fallback_page_at_all() -> None:
     """`debug` is unhomed by design; a fallback Page for it would put "Crash Hyprland" one
     click from the default view, which ADR-0013 §5 forbids however the switch is set."""
-    sections = [
-        page.section
-        for category in plan_tasks_view(SCHEMA, MAPPING, show_advanced=True)
-        for page in category.option_pages
-    ]
+    for show_advanced in (True, False):
+        sections = [
+            page.section
+            for category in plan_tasks_view(
+                SCHEMA, MAPPING, Disclosure(show_advanced=show_advanced)
+            )
+            for page in category.option_pages
+        ]
 
-    assert "tasks.new.debug" not in sections
+        assert "tasks.new.debug" not in sections
+
+
+def fallback_page(mapping: TasksMapping, section: str, *, show_advanced: bool) -> PagePlan:
+    return next(
+        page
+        for category in plan_tasks_view(
+            SCHEMA, mapping, Disclosure(show_advanced=show_advanced)
+        )
+        for page in category.option_pages
+        if page.section == f"tasks.new.{section}"
+    )
+
+
+def test_an_uncurated_section_withholds_its_advanced_options_rather_than_dropping_them() -> (
+    None
+):
+    """#136: `cursor` has 20 default and 2 advanced options. With the switch off the page
+    shows the 20 and counts the 2, so the hint can say they exist; with it on, all 22 show."""
+    off = fallback_page(uncurated("cursor"), "cursor", show_advanced=False)
+    on = fallback_page(uncurated("cursor"), "cursor", show_advanced=True)
+
+    assert (off.option_count, off.withheld) == (20, 2)
+    assert (on.option_count, on.withheld) == (22, 0)
+
+
+def test_an_uncurated_all_advanced_section_keeps_a_page_that_counts_what_it_withholds() -> None:
+    """`opengl` is one advanced option. Skipping the page whole left no trace that it exists;
+    the page stays, empty of groups, and the count tells it to explain itself."""
+    off = fallback_page(uncurated("opengl"), "opengl", show_advanced=False)
+    on = fallback_page(uncurated("opengl"), "opengl", show_advanced=True)
+
+    assert (off.groups, off.withheld) == ((), 1)
+    assert (on.option_count, on.withheld) == (1, 0)
+
+
+def test_a_revealed_advanced_option_on_a_fallback_page_is_shown_not_withheld() -> None:
+    (option,) = SCHEMA.section("opengl")
+    page = next(
+        page
+        for category in plan_tasks_view(
+            SCHEMA,
+            uncurated("opengl"),
+            Disclosure(show_advanced=False, revealed=frozenset({option.name})),
+        )
+        for page in category.option_pages
+        if page.section == "tasks.new.opengl"
+    )
+
+    assert (page.option_count, page.withheld) == (1, 0)
 
 
 # --- how a claim resolves ---------------------------------------------------------------------
@@ -273,7 +329,7 @@ def test_a_single_section_page_groups_exactly_as_the_config_view_does() -> None:
     decoration = page_named("look.decoration")
     config = next(
         plan
-        for plan in plan_config_view(SCHEMA, show_advanced=True)
+        for plan in plan_config_view(SCHEMA, Disclosure(show_advanced=True))
         if plan.section == "decoration"
     )
 
@@ -286,7 +342,7 @@ def test_entity_destinations_are_passed_through_for_the_shell_to_place() -> None
     """Their contents come from the model, so the planner only carries the sidebar id."""
     entities = [
         page.section
-        for category in plan_tasks_view(SCHEMA, MAPPING, show_advanced=True)
+        for category in plan_tasks_view(SCHEMA, MAPPING, Disclosure(show_advanced=True))
         for page in category.pages
         if isinstance(page, EntitySpec)
     ]
@@ -297,7 +353,7 @@ def test_entity_destinations_are_passed_through_for_the_shell_to_place() -> None
 
 def test_with_advanced_off_the_curated_pages_withhold_rather_than_drop() -> None:
     """The count is what tells an empty-looking Page to explain itself instead of lying."""
-    off = plan_tasks_view(SCHEMA, MAPPING, show_advanced=False)
+    off = plan_tasks_view(SCHEMA, MAPPING, Disclosure(show_advanced=False))
     shown = sum(
         len(group.options)
         for category in off

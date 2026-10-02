@@ -444,6 +444,86 @@ def test_removing_an_optional_field_takes_the_key_out_of_the_entity(tmp_path: Pa
     assert dialog.build() == Device("mouse", {})
 
 
+def optional_tier_rows(dialog: Any) -> list[Any]:
+    """Every preferences row under the optional group, in tree order.
+
+    Adw rows parent to an internal list box, so the group's own children are no help;
+    this walks the whole subtree the way a user sees it.
+    """
+    from gi.repository import Adw
+
+    rows: list[Any] = []
+
+    def walk(widget: Any) -> None:
+        child = widget.get_first_child()
+        while child is not None:
+            if isinstance(child, Adw.PreferencesRow):
+                rows.append(child)
+            walk(child)
+            child = child.get_next_sibling()
+
+    walk(dialog._optional_group)
+    return rows
+
+
+def optional_tier_titles(dialog: Any) -> list[str]:
+    return [row.get_title() for row in optional_tier_rows(dialog)]
+
+
+def pick_from_add_row(dialog: Any, label: str) -> None:
+    """Choose `label` in the "Add a setting" picker, as the user does."""
+    (picker,) = [
+        row for row in optional_tier_rows(dialog) if row.get_title() == "Add a setting"
+    ]
+    model = picker.get_model()
+    labels = [model.get_string(i) for i in range(model.get_n_items())]
+    picker.set_selected(labels.index(label))
+
+
+def test_adding_and_removing_optional_fields_leaves_one_row_per_present_key(
+    tmp_path: Path,
+) -> None:
+    from hyprtweaker.engine.entities_catalog import DEVICE_FIELD_SPECS
+    from hyprtweaker.engine.model.entities import Device
+
+    dialog = editor("devices", entity=Device("mouse", {"sensitivity": -0.5}))
+    assert optional_tier_titles(dialog) == ["Sensitivity", "Add a setting"]
+
+    # The add handler runs inside `notify::selected` of the picker row the rebuild then
+    # removes, so drive it through the picker rather than calling the rebuild directly.
+    pick_from_add_row(dialog, "Acceleration profile")
+    assert optional_tier_titles(dialog) == [
+        "Sensitivity",
+        "Acceleration profile",
+        "Add a setting",
+    ]
+
+    dialog._on_remove(None, DEVICE_FIELD_SPECS["sensitivity"])
+    assert optional_tier_titles(dialog) == ["Acceleration profile", "Add a setting"]
+    assert "sensitivity" not in dialog._rows
+
+    pick_from_add_row(dialog, "Sensitivity")
+    dialog._on_remove(None, DEVICE_FIELD_SPECS["accel_profile"])
+    pick_from_add_row(dialog, "Acceleration profile")
+    assert sorted(optional_tier_titles(dialog)) == [
+        "Acceleration profile",
+        "Add a setting",
+        "Sensitivity",
+    ]
+    assert set(dialog.build().fields) == {"sensitivity", "accel_profile"}
+
+
+def test_the_add_row_goes_once_every_optional_field_is_present(tmp_path: Path) -> None:
+    from hyprtweaker.engine.model.entities import Device
+
+    every = {spec.name: "" for spec in editor("devices")._descriptor.optional}
+    dialog = editor("devices", entity=Device("mouse", every))
+
+    titles = optional_tier_titles(dialog)
+    assert "Add a setting" not in titles
+    assert len(titles) == len(set(titles)) == len(every)
+
+
 @pytest.mark.parametrize("kind", KINDS)
 def test_every_kinds_editor_constructs(kind: str, tmp_path: Path) -> None:
     """The cheapest real assertion in this tier: seven forms, all of them build."""

@@ -21,15 +21,18 @@ select = [
 ]
 
 [tool.mypy]
-# The Engine, plus the two modules above it that never import `gi`. ADR-0011
-# exempts the UI because PyGObject stubs are perpetually partial and the layer
-# is `gi`-dynamic -- neither is true of toolkit-free code, and `session.py` in
-# particular is where the model, the writer and the socket meet.
+# The Engine, plus every module above it that never imports `gi` (`session.py` and the
+# gi-free UI modules that decide rather than draw). ADR-0011 exempts the rest of the UI
+# because PyGObject stubs are perpetually partial and the layer is `gi`-dynamic -- neither
+# is true of toolkit-free code, and `session.py` in particular is where the model, the
+# writer and the socket meet. A new gi-free UI module joins this list and the ADR's.
 files = [
     "src/hyprtweaker/engine",
     "src/hyprtweaker/session.py",
     "src/hyprtweaker/ui/pages/plan.py",
+    "src/hyprtweaker/ui/pages/tasks.py",
     "src/hyprtweaker/ui/pages/declaration_kinds.py",
+    "src/hyprtweaker/ui/rows/gesture.py",
     "src/hyprtweaker/ui/rows/state.py",
     "src/hyprtweaker/ui/search.py",
 ]
@@ -38,8 +41,9 @@ python_version = "3.11"
 strict = true
 
 [tool.pytest.ini_options]
-# The three per-commit tiers (ADR-0011). `tests/integration` is deliberately absent: it is
-# the nightly/on-demand tier and reaches for the network and a nested compositor.
+# The per-commit tiers (ADR-0011 tiers 1, 2 and 4: unit, static, ui). `tests/integration`
+# (tier 3) is deliberately absent: it is the on-demand Harness tier and needs a nested
+# compositor.
 #
 # `tests/static` is `Hyprland --verify-config` over the writer's output -- no compositor,
 # well under a second, and it skips itself where no Hyprland binary exists. It belongs here
