@@ -21,7 +21,7 @@ gi.require_version("Adw", "1")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 
-from gi.repository import Adw, Gdk, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gtk, Pango  # noqa: E402
 
 from hyprtweaker.engine.bridge.wire import Change, WirePlan  # noqa: E402
 
@@ -42,17 +42,24 @@ def _label(text: str, *, dim: bool = False) -> Gtk.Label:
     return label
 
 
-def _code(text: str) -> Gtk.Widget:
-    """Exact text in a box of its own, unwrapped: a stanza wrapped at a dialog's width no
-    longer reads as the file it is. Long text scrolls rather than stretching the dialog."""
+def _code(text: str, *, wrap: bool = False) -> Gtk.Widget:
+    """Exact text in a box of its own. A stanza stays unwrapped: wrapped at a dialog's width
+    it no longer reads as the file it is, so long text scrolls rather than stretching the
+    dialog. A command line wraps (`wrap`), so all of it is in view without scrolling: the
+    user agrees to the whole command, not to the part that fits."""
     label = Gtk.Label(xalign=0.0, yalign=0.0, selectable=True)
     label.set_use_markup(False)
     label.set_label(text)
     label.add_css_class("monospace")
+    if wrap:
+        label.set_wrap(True)
+        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
     scroller = Gtk.ScrolledWindow(
         child=label, propagate_natural_height=True, max_content_height=220
     )
-    scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    scroller.set_policy(
+        Gtk.PolicyType.NEVER if wrap else Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC
+    )
     scroller.add_css_class("card")
     label.set_margin_start(8)
     label.set_margin_end(8)
@@ -81,7 +88,7 @@ class PlanView:
             lead = "This runs once, to make the colors:"
             self._add(_label(lead), lead)
             shown = shlex.join(command)
-            self._add(_code(shown), shown)
+            self._add(_code(shown, wrap=True), shown)
         if plan is not None and plan.patch:
             self._patch(plan)
 
@@ -100,7 +107,7 @@ class PlanView:
             expander = Gtk.Expander(label=SHOW_CHANGES, child=changes)
             self.widget.append(expander)
         if plan.files:
-            copies = f"A copy of each changed file is kept in {plan.backups_shown}"
+            copies = f"A copy of each changed file is kept in {plan.backups_shown}."
             self._add(_label(copies, dim=True), copies)
 
     def _patch(self, plan: WirePlan) -> None:
