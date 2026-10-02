@@ -292,6 +292,7 @@ class PluginsGroup:
     def _render(self) -> None:
         for row in self.rows:
             self.group.remove(row.widget)
+            release(row.widget)
         for widget in (self.empty_row, self.also_loaded):
             if widget.get_parent() is not None:
                 self.group.remove(widget)
