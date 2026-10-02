@@ -899,6 +899,7 @@ class MainWindow(Adw.ApplicationWindow):
                 rebind=self._rebind_bind,
                 recapture=lambda index: self._rebind_bind(index, enable=True),
                 swap=self._swap_binds,
+                move=self._move_bind,
                 edit_submap=self._edit_submap,
             ),
         )
@@ -1091,6 +1092,17 @@ class MainWindow(Adw.ApplicationWindow):
     def _swap_binds(self, first: int, second: int) -> None:
         if self._session.swap_binds(first, second):
             self._refresh_binds()
+
+    def _move_bind(self, index: int, to: int) -> None:
+        """The drag reorder, and Alt+Up/Down: the moved bind lands at `to`.
+
+        The refresh rebuilds every row, so the moved one is revealed there: focus follows
+        it for the next Alt+Up/Down, and the flash shows where a drop landed.
+        """
+        if self._session.move_bind(index, to):
+            self._refresh_binds()
+            if self._binds_page is not None:
+                self._binds_page.reveal(to)
 
     def _rebind_bind(self, index: int, *, enable: bool = False) -> None:
         """The conflict popover's "rebind it": Capture on the other bind, directly.

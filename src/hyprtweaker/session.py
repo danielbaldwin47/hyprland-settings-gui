@@ -854,6 +854,29 @@ class Session:
 
         return self.edit_binds(exchange, title="Binds reordered")
 
+    def move_bind(self, index: int, to: int) -> bool:
+        """Move the Bind at `index` to position `to` -- the Binds page's drag reorder.
+
+        A move rather than a swap, as for Rules: everything between shifts by one, and the
+        moved bind takes the target's place within its group. Both are flat-list indices.
+
+        Refused (`False`, nothing written, no undo step) for an index out of range, a move
+        onto itself, and a target in another group: `binds.lua` keeps root binds first and
+        one block per Submap, so order *between* groups is not something the file can hold.
+        Not refused for an unloadable stored bind (#199): a move changes order, not whether
+        Hyprland can load it.
+        """
+        binds = self._model.entities.binds
+        if not (0 <= index < len(binds) and 0 <= to < len(binds)) or index == to:
+            return False
+        if binds[index].submap != binds[to].submap:
+            return False
+
+        def shift(binds: list[Bind]) -> None:
+            binds.insert(to, binds.pop(index))
+
+        return self.edit_binds(shift, title="Binds reordered")
+
     def save_submap(self, *, original: str | None, name: str, reset_target: str) -> bool:
         """Create a Submap, or rename one and retune its reset target (#66).
 

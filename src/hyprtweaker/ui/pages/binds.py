@@ -27,7 +27,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.engine.binds_analysis import (  # noqa: E402
     find_conflicts,
@@ -311,8 +311,39 @@ class BindActions:
     """Open Capture on an error-badged bind; a captured trigger also enables it."""
     swap: Callable[[int, int], None]
     """Exchange two binds' positions -- which same-submap duplicate fires first."""
+    move: Callable[[int, int], None]
+    """Move the bind at the first index to the second, in its group -- the drag reorder."""
     edit_submap: Callable[[str | None], None]
     """Open the Submap editor; `None` means create one."""
+
+
+@dataclass(slots=True)
+class BindDrag:
+    """The one bind drag in flight on a Page: whose it is and which group it belongs to.
+
+    The payload GTK carries is only the origin's index, and a drop target has to decide
+    whether to light up *before* the drop delivers it. So the handle records the drag here
+    when it starts, and every row of the Page reads it: a row of another group stays dark
+    and refuses the drop, because `binds.lua` keeps no order between groups.
+    """
+
+    origin: int | None = None
+    submap: str | None = None
+
+    def start(self, row: BindRow) -> None:
+        self.origin, self.submap = row.index, row.bind.submap
+
+    def accepts(self, origin: int | None, target: BindRow) -> bool:
+        """Whether a drop of the bind at `origin` on `target` moves anything."""
+        return (
+            origin is not None
+            and origin == self.origin
+            and origin != target.index
+            and self.submap == target.bind.submap
+        )
+
+
+REORDER_HINT = "Drag to reorder within this group, or press Alt+Up or Alt+Down"
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,9 +393,16 @@ class BindRow:
         on_jump: Callable[[int], None],
         editable: bool,
         conflict: RowConflict | None = None,
+        drag: BindDrag | None = None,
+        neighbours: tuple[int | None, int | None] = (None, None),
     ) -> None:
+        """`drag` is the Page's one `BindDrag`, shared by its rows; `neighbours` are the
+        flat indices of the binds just above and below this one *in its group*, where the
+        keyboard move goes."""
         self.bind = bind
         self.index = index
+        self.drag_handle: Gtk.Image | None = None
+        """The drag source, on rows the app may move: those whose badge offers Edit."""
         self.conflict = conflict
         self.conflict_badge: Gtk.MenuButton | None = None
         self.badge = bind_badge(bind)
@@ -414,6 +452,9 @@ class BindRow:
         if not editable:
             return
         kind = badge.kind if badge is not None else None
+        self._wire_reorder(
+            actions, drag or BindDrag(), neighbours, movable=kind is None or kind.editable
+        )
 
         if kind is not None and (verb := kind.verb) is not None:
             self.enable_button = Gtk.Button(label=verb.label, valign=Gtk.Align.CENTER)
@@ -439,6 +480,93 @@ class BindRow:
             self.remove_button.set_tooltip_text("Remove this bind")
             self.remove_button.connect("clicked", lambda _button: actions.remove(index))
             self.widget.add_suffix(self.remove_button)
+
+    def _wire_reorder(
+        self,
+        actions: BindActions,
+        drag: BindDrag,
+        neighbours: tuple[int | None, int | None],
+        *,
+        movable: bool,
+    ) -> None:
+        """The handle and keys that move this bind, and the drop target every row is.
+
+        Only a bind the app may edit gets a handle: a Lua-function or multi-key bind is
+        otherwise untouchable here, so moving it would be the one change the row allows.
+        Every row still takes drops, so other binds of its group can move past it. The
+        handle is the drag *source* -- dragging anywhere else on the row would fight scrolling
+        and button presses -- while the whole row is the target, for its full height.
+        """
+        target = Gtk.DropTarget.new(GObject.TYPE_INT, Gdk.DragAction.MOVE)
+        target.connect("enter", self._on_hover, drag)
+        target.connect("motion", self._on_hover, drag)
+        target.connect("drop", self._on_drop, drag, actions)
+        self.widget.add_controller(target)
+
+        handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+        if not movable:
+            # Holds the handle's width, so this row's trigger lines up with its neighbours'.
+            handle.set_opacity(0)
+            self.widget.add_prefix(handle)
+            return
+
+        self.drag_handle = handle
+        self.drag_handle.add_css_class("dim-label")
+        self.drag_handle.set_tooltip_text(REORDER_HINT)
+        self.widget.add_prefix(self.drag_handle)
+        source = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+        source.connect("prepare", self._on_drag_prepare, drag)
+        self.drag_handle.add_controller(source)
+
+        keys = Gtk.ShortcutController()
+        for accelerator, neighbour in zip(("<Alt>Up", "<Alt>Down"), neighbours, strict=True):
+            keys.add_shortcut(
+                Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(accelerator),
+                    Gtk.CallbackAction.new(self._on_step, neighbour, actions),
+                )
+            )
+        self.widget.add_controller(keys)
+
+    def _on_drag_prepare(
+        self, _source: Gtk.DragSource, _x: float, _y: float, drag: BindDrag
+    ) -> Gdk.ContentProvider:
+        drag.start(self)
+        return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_INT, self.index))
+
+    def _on_hover(
+        self, _target: Gtk.DropTarget, _x: float, _y: float, drag: BindDrag
+    ) -> Gdk.DragAction:
+        # No action means no drop highlight and no drop: the row says "not here" while the
+        # pointer is still over it, rather than after the user lets go.
+        if drag.accepts(drag.origin, self):
+            return Gdk.DragAction.MOVE
+        return Gdk.DragAction(0)
+
+    def _on_drop(
+        self,
+        _target: Gtk.DropTarget,
+        value: int,
+        _x: float,
+        _y: float,
+        drag: BindDrag,
+        actions: BindActions,
+    ) -> bool:
+        # Only the action: it refreshes the Page, which rebuilds every row, this one too.
+        origin = int(value)
+        if not drag.accepts(origin, self):
+            return False
+        actions.move(origin, self.index)
+        return True
+
+    def _on_step(
+        self, widget: Gtk.Widget, _args: object, neighbour: int | None, actions: BindActions
+    ) -> bool:
+        if neighbour is None:
+            widget.error_bell()  # already first (or last) in its group
+            return True
+        actions.move(self.index, neighbour)
+        return True
 
     def _conflict_button(
         self,
@@ -557,6 +685,7 @@ class BindsPage:
         self._session = session
         self._actions = actions
         self._rows: list[BindRow] = []
+        self._drag = BindDrag()
 
         self._page = Adw.PreferencesPage(title=self.title)
         self._groups: list[Adw.PreferencesGroup] = []
@@ -635,8 +764,8 @@ class BindsPage:
         indexed = list(enumerate(binds))
         rooted = [(index, bind) for index, bind in indexed if bind.submap is None]
         if rooted:
-            for index, bind in rooted:
-                root.add(self._row(bind, index, editable, binds, conflicts))
+            for (index, bind), neighbours in zip(rooted, _neighbours(rooted), strict=True):
+                root.add(self._row(bind, index, editable, binds, conflicts, neighbours))
         else:
             root.add(
                 Adw.ActionRow(
@@ -674,8 +803,8 @@ class BindsPage:
             self._add_group(group)
 
             owned = [(index, bind) for index, bind in indexed if bind.submap == name]
-            for index, bind in owned:
-                group.add(self._row(bind, index, editable, binds, conflicts))
+            for (index, bind), neighbours in zip(owned, _neighbours(owned), strict=True):
+                group.add(self._row(bind, index, editable, binds, conflicts, neighbours))
             if not owned:
                 group.add(
                     Adw.ActionRow(
@@ -713,6 +842,7 @@ class BindsPage:
         editable: bool,
         binds: list[Bind],
         conflicts: dict[int, tuple[int, ...]],
+        neighbours: tuple[int | None, int | None],
     ) -> Gtk.Widget:
         conflict: RowConflict | None = None
         if index in conflicts:
@@ -743,6 +873,14 @@ class BindsPage:
             on_jump=self.reveal,
             editable=editable,
             conflict=conflict,
+            drag=self._drag,
+            neighbours=neighbours,
         )
         self._rows.append(row)
         return row.widget
+
+
+def _neighbours(group: list[tuple[int, Bind]]) -> list[tuple[int | None, int | None]]:
+    """For each bind of one group, the flat indices of the binds above and below it there."""
+    indices: list[int | None] = [None, *(index for index, _bind in group), None]
+    return list(zip(indices, indices[2:], strict=False))

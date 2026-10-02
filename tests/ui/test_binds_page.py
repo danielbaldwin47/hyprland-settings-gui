@@ -170,11 +170,18 @@ def test_a_disabled_bind_is_badged_and_does_not_conflict(tmp_path: Path) -> None
 # --- the four badge states (#139) -------------------------------------------------------
 
 
-def editable_row(bind: Any) -> tuple[Any, list[tuple[Any, ...]]]:
+def editable_row(
+    bind: Any,
+    index: int = 3,
+    *,
+    calls: list[tuple[Any, ...]] | None = None,
+    drag: Any = None,
+    neighbours: tuple[int | None, int | None] = (None, None),
+) -> tuple[Any, list[tuple[Any, ...]]]:
     """One `BindRow` as a live session builds it, with every verb recorded."""
     from hyprtweaker.ui.pages.binds import BindActions, BindRow
 
-    calls: list[tuple[Any, ...]] = []
+    calls = [] if calls is None else calls
     actions = BindActions(
         add=lambda submap: calls.append(("add", submap)),
         edit=lambda index: calls.append(("edit", index)),
@@ -183,9 +190,18 @@ def editable_row(bind: Any) -> tuple[Any, list[tuple[Any, ...]]]:
         rebind=lambda index: calls.append(("rebind", index)),
         recapture=lambda index: calls.append(("recapture", index)),
         swap=lambda first, second: calls.append(("swap", first, second)),
+        move=lambda index, to: calls.append(("move", index, to)),
         edit_submap=lambda name: calls.append(("edit_submap", name)),
     )
-    row = BindRow(bind, 3, actions=actions, on_jump=lambda _index: None, editable=True)
+    row = BindRow(
+        bind,
+        index,
+        actions=actions,
+        on_jump=lambda _index: None,
+        editable=True,
+        drag=drag,
+        neighbours=neighbours,
+    )
     return row, calls
 
 
@@ -369,3 +385,163 @@ def test_an_ampersand_in_a_trigger_or_command_is_shown_as_written(tmp_path: Path
     shown = texts(row.widget)
     assert "SUPER + A&B" in shown
     assert "make && run" in shown
+
+
+# --- reorder: drag and keyboard (#161) ------------------------------------------------------
+
+
+def controller(widget: Any, kind: Any) -> Any:
+    """The one event controller of type `kind` on `widget`."""
+    found = [each for each in widget.observe_controllers() if isinstance(each, kind)]
+    assert len(found) == 1, f"{len(found)} {kind.__name__} on {widget}"
+    return found[0]
+
+
+def drag_onto(source: Any, target: Any) -> bool:
+    """Drive one drag the way GTK does: the handle's source prepares the payload, then the
+    target row's drop target gets `enter` and, if it took the drag, `drop`."""
+    from gi.repository import Gdk, GObject, Gtk
+
+    provider = controller(source.drag_handle, Gtk.DragSource).emit("prepare", 0.0, 0.0)
+    assert provider.ref_formats().contain_gtype(GObject.TYPE_INT)
+    drop = controller(target.widget, Gtk.DropTarget)
+    if drop.emit("enter", 0.0, 0.0) != Gdk.DragAction.MOVE:
+        return False
+    return bool(drop.emit("drop", source.index, 0.0, 0.0))
+
+
+def test_a_drag_from_one_handle_to_another_row_calls_move() -> None:
+    from hyprtweaker.ui.pages.binds import BindDrag
+
+    drag, calls = BindDrag(), []
+    first, _ = editable_row(exec_bind("SUPER + Q", "a"), 0, calls=calls, drag=drag)
+    second, _ = editable_row(exec_bind("SUPER + Q", "b"), 4, calls=calls, drag=drag)
+
+    assert drag_onto(first, second) is True
+
+    assert calls == [("move", 0, 4)]
+
+
+def test_a_row_from_another_group_is_not_a_drop_target() -> None:
+    """No highlight, no drop: order between groups is not something binds.lua holds."""
+    from hyprtweaker.ui.pages.binds import BindDrag
+
+    drag, calls = BindDrag(), []
+    root, _ = editable_row(exec_bind("SUPER + Q", "a"), 0, calls=calls, drag=drag)
+    resize, _ = editable_row(
+        exec_bind("right", "grow", submap="resize"), 1, calls=calls, drag=drag
+    )
+    other, _ = editable_row(exec_bind("left", "go", submap="move"), 2, calls=calls, drag=drag)
+
+    assert drag_onto(root, resize) is False
+    assert drag_onto(resize, root) is False
+    assert drag_onto(resize, other) is False
+    assert drag_onto(root, root) is False, "a row is no target for itself"
+    assert calls == []
+
+
+def test_read_only_rows_get_no_handle_but_other_binds_move_past_them(
+    monkeypatch: Any,
+) -> None:
+    from hyprtweaker.engine.model.entities import Bind
+    from hyprtweaker.ui.pages.binds import BindDrag
+
+    no_xkb_for_notakey(monkeypatch)
+    drag, calls = BindDrag(), []
+    lua, _ = editable_row(Bind(keys="SUPER + W", dispatcher=None), 1, calls=calls, drag=drag)
+    multi, _ = editable_row(
+        exec_bind("SUPER + A&B", "kitty", enabled=False), 2, calls=calls, drag=drag
+    )
+    plain, _ = editable_row(exec_bind("SUPER + E", "e"), 3, calls=calls, drag=drag)
+
+    assert (lua.drag_handle, multi.drag_handle) == (None, None)
+    assert plain.drag_handle is not None
+    assert drag_onto(plain, lua) is True
+    assert drag_onto(plain, multi) is True
+    assert calls == [("move", 3, 1), ("move", 3, 2)]
+
+
+def test_an_offline_row_has_no_handle_and_takes_no_drop(tmp_path: Path) -> None:
+    from gi.repository import Gtk
+
+    session, window = build_window(tmp_path)
+    session.model.entities.binds.append(exec_bind("SUPER + Q", "a"))
+    window.binds_page.refresh()
+
+    (row,) = window.binds_page.rows
+    assert row.drag_handle is None
+    assert not [c for c in row.widget.observe_controllers() if isinstance(c, Gtk.DropTarget)]
+
+
+def shortcut(row: Any, accelerator: str) -> bool:
+    """Press `accelerator` on the row, through its own shortcut controller."""
+    from gi.repository import Gtk
+
+    shortcuts = controller(row.widget, Gtk.ShortcutController)
+    for each in shortcuts:
+        if each.get_trigger().to_string() == accelerator:
+            return bool(
+                each.get_action().activate(Gtk.ShortcutActionFlags(0), row.widget, None)
+            )
+    raise AssertionError(f"no {accelerator} shortcut on the row")
+
+
+def test_alt_up_and_down_move_a_row_past_its_group_neighbours() -> None:
+    """The keyboard route to the same move: no reorder only a pointer can make."""
+    row, calls = editable_row(exec_bind("SUPER + Q", "a"), 4, neighbours=(1, 6))
+
+    assert shortcut(row, "<Alt>Up") is True
+    assert shortcut(row, "<Alt>Down") is True
+
+    assert calls == [("move", 4, 1), ("move", 4, 6)]
+    tooltip = row.drag_handle.get_tooltip_text()
+    assert "Alt+Up" in tooltip and "Alt+Down" in tooltip
+
+
+def test_alt_up_on_a_groups_first_row_moves_nothing() -> None:
+    row, calls = editable_row(exec_bind("SUPER + Q", "a"), 0, neighbours=(None, 2))
+
+    shortcut(row, "<Alt>Up")
+
+    assert calls == []
+
+
+def test_a_drag_on_the_page_reorders_and_ctrl_z_puts_it_back(tmp_path: Path) -> None:
+    """The whole loop: drop, the Session moves, the page shows the new fire order with a
+    "Binds reordered" toast, and Undo restores the old order."""
+    from test_undo import live_entity_window
+
+    session, window, applier = live_entity_window(tmp_path)
+    assert session.edit_binds(
+        lambda binds: binds.extend(
+            [
+                exec_bind("SUPER + Q", "first"),
+                exec_bind("right", "grow", submap="resize"),
+                exec_bind("SUPER + Q", "second"),
+            ]
+        )
+    )
+    applier.settle()
+    page = window.binds_page
+    page.refresh()
+
+    def fire_order() -> list[tuple[str, str]]:
+        return [
+            (row.bind.dispatcher.positional[0], row.conflict.short_text)
+            for row in page.rows
+            if row.conflict is not None
+        ]
+
+    assert fire_order() == [("first", "1st of 2"), ("second", "2nd of 2")]
+    first, second, _grow = page.rows
+
+    assert drag_onto(first, second) is True
+    applier.settle()
+
+    assert fire_order() == [("second", "1st of 2"), ("first", "2nd of 2")]
+    assert window.undo_toast is not None
+    assert window.undo_toast.get_title() == "Binds reordered"
+
+    window.activate_action("win.undo", None)
+
+    assert fire_order() == [("first", "1st of 2"), ("second", "2nd of 2")]
