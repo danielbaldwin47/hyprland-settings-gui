@@ -762,6 +762,8 @@ class BindsPage:
             release(group)
         self._groups = []
         self._rows = []
+        # A drag begun on a row just replaced is over: its index may now name another bind.
+        self._drag.origin = self._drag.submap = None
 
         editable = bool(self._session.live)
         entities = self._session.model.entities
