@@ -76,8 +76,8 @@ class UndoStep:
     """One user gesture, as everything it changed.
 
     Plural because one gesture is not always one Option: the css-gaps editor's four spinners
-    coalesce into one Apply transaction, and so will applying a Preset (#69). Undoing half of
-    a gesture would leave a state the user never chose.
+    coalesce into one Apply transaction, and so does applying a Preset (`PresetStep`).
+    Undoing half of a gesture would leave a state the user never chose.
     """
 
     edits: tuple[Edit, ...]
@@ -149,7 +149,26 @@ class EntityStep:
         return frozenset(edit.kind for edit in self.edits)
 
 
-Step = UndoStep | EntityStep
+@dataclass(frozen=True, slots=True)
+class PresetStep:
+    """Applying a Preset: every Option it changed, under the Preset's name (ADR-0014).
+
+    Its own variant rather than a title on `UndoStep`, because the undo toast names the
+    Preset ("Applied Nord") where an Option step names a Row, and because undoing a Preset
+    is meant to put back everything the apply changed -- Options here; the Color source and
+    the wallpaper join it with #170.
+    """
+
+    name: str
+    options: UndoStep
+
+    @classmethod
+    def of(cls, name: str, options: UndoStep | None) -> PresetStep | None:
+        """A step, or `None` when the Preset changed nothing (it matched the current look)."""
+        return cls(name, options) if options is not None else None
+
+
+Step = UndoStep | EntityStep | PresetStep
 """Anything on the one stack. Option and entity gestures interleave in the order they landed."""
 
 
