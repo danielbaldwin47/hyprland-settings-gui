@@ -304,7 +304,8 @@ def test_an_option_the_running_hyprland_lacks_wears_the_not_in_this_hyprland_pil
 
     assert pill.label == "Not in this Hyprland"
     assert pill.tooltip == (
-        "Hyprland 0.56.0 does not have this option; the app is using its 0.56.2 schema."
+        "Hyprland 0.56.0 does not have this setting, so a change made here will not take "
+        "effect."
     )
     assert _pills(SCHEMA["general:gaps_in"], context) == (), "only the option it lacks"
 
@@ -320,8 +321,8 @@ def test_a_retired_option_wears_its_release_in_place_of_not_in_this_hyprland() -
     assert row_state(SCHEMA["decoration:rounding"], context).pills == (
         Pill(
             "Retired in 0.57.0",
-            "Hyprland 0.57.0 removed this option; your value is kept and comes back if the "
-            "option returns.",
+            "Hyprland 0.57.0 removed this setting; your value is kept and comes back if the "
+            "setting returns.",
         ),
     )
     assert _pills(SCHEMA["decoration:dim_strength"], context) == ("Not in this Hyprland",)
@@ -390,12 +391,32 @@ def test_an_option_only_a_newer_hyprland_has_wears_a_new_in_pill_and_stays_edita
     assert [(pill.label, pill.tooltip) for pill in state.pills] == [
         (
             "New in 0.58.0",
-            "Not in the shipped schema; shown with a generic control until the next "
-            "release check.",
+            "Hyprland 0.58.0 added this setting after this version of the app was made, so it "
+            "gets a basic control until you update the app.",
         )
     ]
     assert state.editable
     assert _pills(SCHEMA["general:gaps_in"], context) == (), "a shipped option has none"
+
+
+def test_the_version_pills_speak_the_users_words_not_the_apps_internals() -> None:
+    """#150 review finding 3: a user knows Hyprland versions and settings; "schema" and
+    "release check" are the app's own machinery and mean nothing on a Row."""
+    newer, schema = _supplemented(
+        {"name": "general:snap_new", "description": "x", "default": False}
+    )
+    older = FakeContext(live_hyprland=_live_without("decoration:rounding"))
+
+    tooltips = [
+        *(pill.tooltip for pill in row_state(newer, FakeContext(schema=schema)).pills),
+        *(pill.tooltip for pill in row_state(SCHEMA["decoration:rounding"], older).pills),
+    ]
+
+    assert len(tooltips) == 2
+    for tooltip in tooltips:
+        assert "schema" not in tooltip.lower()
+        assert "release check" not in tooltip.lower()
+        assert tooltip.startswith("Hyprland 0.5")
 
 
 def test_the_new_in_pill_ranks_below_what_failed_and_above_advanced() -> None:

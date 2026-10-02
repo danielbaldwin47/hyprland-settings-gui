@@ -192,7 +192,7 @@ class TestArrangementMismatches:
     def test_a_different_position_is_named_with_both_values(self) -> None:
         rules = [MonitorRule(output="DP-1", fields={"position": "1920x0"})]
         assert arrangement_mismatches(rules, [live(at=(0, 0))]) == (
-            "DP-1 is at 0x0, the configuration asks for 1920x0",
+            "DP-1 is at position 0, 0, the configuration asks for 1920, 0",
         )
 
     def test_a_different_resolution_is_named_and_the_refresh_rate_is_not_compared(self) -> None:
@@ -206,7 +206,7 @@ class TestArrangementMismatches:
     def test_a_different_rotation_is_named(self) -> None:
         rules = [MonitorRule(output="DP-1", fields={"transform": 1})]
         assert arrangement_mismatches(rules, [live()]) == (
-            "DP-1 is rotated as transform 0, the configuration asks for transform 1",
+            "DP-1's rotation is normal, the configuration asks for rotated 90°",
         )
 
     def test_words_that_are_not_numbers_ask_for_nothing_in_particular(self) -> None:

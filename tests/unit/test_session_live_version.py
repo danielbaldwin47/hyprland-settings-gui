@@ -230,7 +230,8 @@ def test_a_row_names_the_option_the_running_hyprland_lacks(tmp_path: Path) -> No
     (pill,) = row_state(rounding, session).pills
     assert (pill.label, pill.tooltip) == (
         "Not in this Hyprland",
-        "Hyprland 0.56.0 does not have this option; the app is using its 0.56.2 schema.",
+        "Hyprland 0.56.0 does not have this setting, so a change made here will not take "
+        "effect.",
     )
 
 
