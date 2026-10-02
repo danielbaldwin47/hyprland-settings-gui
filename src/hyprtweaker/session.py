@@ -1139,14 +1139,6 @@ class Session:
         """The live workspace rule list. Identity is the selector string (ADR-0008)."""
         return self._model.entities.workspace_rules
 
-    def edit_workspace_rules(
-        self, mutate: Callable[[list[WorkspaceRule]], None], *, title: str | None = None
-    ) -> bool:
-        """Change the workspace rule list and write it. Shaped like `edit_monitor_rules`."""
-        return self._commit_entity_edit(
-            "workspace rules", lambda: mutate(self._model.entities.workspace_rules), title=title
-        )
-
     def save_workspace_rule(self, rule: WorkspaceRule, *, original: str | None = None) -> bool:
         """Add a workspace rule, or replace the one whose selector was `original`.
 

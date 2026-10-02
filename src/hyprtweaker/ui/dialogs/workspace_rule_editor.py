@@ -15,10 +15,7 @@ rule the app cannot parse would otherwise be uneditable here (CONTEXT.md "Findin
 opens in advanced with a line saying Hyprland may not read it, and saves with its fields.
 
 The fields are `WorkspaceFieldRows`; a save is `dataclasses.replace(rule, workspace=new,
-fields=...)`, so `origin` rides along too. Extension points:
-- `add_group(group)` puts a group of rows below the selector, in the dialog's one page.
-- `collect_fields()` is what a save stores as the rule's fields.
-- `selector_problem(text)` is the blocking judgement of an edited selector.
+fields=collect_fields())`, so `origin` rides along too.
 """
 
 from __future__ import annotations
@@ -170,7 +167,7 @@ class WorkspaceRuleEditor(Adw.Dialog):
             rule.fields if rule is not None else {}, layouts=layouts
         )
         for group in self._fields.groups:
-            self.add_group(group)
+            self._groups.append(group)
 
         self.set_child(self._body())
         # The selector is the dialog's one question: the cursor starts there.
@@ -193,22 +190,9 @@ class WorkspaceRuleEditor(Adw.Dialog):
         box.append(scroller)
         return box
 
-    # --- extension points (#160) -----------------------------------------------------------
-
-    def add_group(self, group: Adw.PreferencesGroup) -> None:
-        """Add a group of rows below the selector, in order of the calls."""
-        self._groups.append(group)
-
     def collect_fields(self) -> Mapping[str, Any]:
         """The fields a save stores: the rule's own mapping while no row was touched."""
         return self._fields.collect()
-
-    def selector_problem(self, selector: str) -> str | None:
-        """Why a selector the user typed cannot be saved, or `None` when it can.
-
-        Only an error blocks; a warning shows under the selector and the save goes on."""
-        issue = check_selector(selector)
-        return issue.message if issue is not None and issue.severity is Severity.ERROR else None
 
     # --- what tests and probes drive --------------------------------------------------------
 
@@ -259,7 +243,13 @@ class WorkspaceRuleEditor(Adw.Dialog):
         selector = original if original is not None and text == original else text.strip()
 
         if selector != original:
-            problem = self._simple_problem() or self.selector_problem(selector)
+            # Only an error blocks; a warning shows under the selector and the save goes on.
+            issue = check_selector(selector)
+            problem = self._simple_problem() or (
+                issue.message
+                if issue is not None and issue.severity is Severity.ERROR
+                else None
+            )
             if problem is not None:
                 self._error.set_label(problem)
                 self._error.set_visible(True)
