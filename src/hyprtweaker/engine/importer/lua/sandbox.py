@@ -248,18 +248,21 @@ def _run(
     if cancel is not None and cancel.is_set():
         raise Cancelled("the read was cancelled before it started")
     deadline = time.monotonic() + timeout
-    with subprocess.Popen(
-        command,
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    ) as process:
-        with _running_lock:
-            _running.add(process)
+    # Started and registered under the lock, so the exit hook either sees it or waits for
+    # it: registered after, a config whose app quit at that moment ran on (#148 fix review).
+    with _running_lock:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        _running.add(process)
+    with process:
         try:
             return _wait(process, deadline, cancel)
         finally:
