@@ -31,6 +31,7 @@ from hyprtweaker.engine.importer.binds import _KEY_RENAMES
 from hyprtweaker.engine.importer.dispatchers import LEGACY_DISPATCHERS, MAX_SCRIPT_BYTES
 from hyprtweaker.engine.importer.keysyms import known_keysym, validator_available
 from hyprtweaker.engine.schema import load_schema
+from hyprtweaker.engine.model.entities import DispatcherCall
 from hyprtweaker.engine.writer.animations import render_animation
 from hyprtweaker.engine.writer.binds import DISABLED_PREFIX, render_bind
 from hyprtweaker.engine.writer.inputs import render_device
@@ -367,6 +368,46 @@ class TestBinds:
         assert bind is not None
         assert bind.enabled is False
         assert LossCode.UNKNOWN_KEYSYM in {item.code for item in report}
+
+    def test_a_vim_letter_direction_is_imported_disabled_and_read_as_vim(
+        self, report: LossReport
+    ) -> None:
+        """hyprlang reads `movewindow, h` as an unknown direction and does nothing; Lua's
+        `hl.dsp.window.move` refuses it at bind time and fails the whole config (#206)."""
+        bind = map_bind("", "SUPER CTRL, left, movewindow, h", origin="x:1", report=report)
+        assert bind is not None
+        assert bind.enabled is False
+        assert bind.dispatcher == DispatcherCall("window.move", {"direction": "l"})
+        [item] = [item for item in report if item.code is LossCode.DEAD_DISPATCHER]
+        assert item.message == (
+            "direction 'h' is not one Hyprland knows (l, r, u, d), so this bind never fired "
+            "in hyprlang; it is imported commented out, with 'h' read as the vim key for "
+            "left -- enable it if that is what you meant"
+        )
+        assert item.replacement == 'direction = "l"'
+
+    def test_a_direction_with_no_reading_is_imported_disabled_as_written(
+        self, report: LossReport
+    ) -> None:
+        bind = map_bind("", "SUPER, x, movefocus, x", origin="x:1", report=report)
+        assert bind is not None
+        assert bind.enabled is False
+        assert bind.dispatcher == DispatcherCall("focus", {"direction": "x"})
+        [item] = [item for item in report if item.code is LossCode.DEAD_DISPATCHER]
+        assert item.message == (
+            "direction 'x' is not one Hyprland knows (l, r, u, d), so this bind never fired "
+            "in hyprlang and is imported commented out -- enabled as written, it would fail "
+            "the whole config at bind time"
+        )
+
+    def test_a_known_direction_stays_enabled(self, report: LossReport) -> None:
+        bind = map_bind("", "SUPER, l, movewindoworgroup, top", origin="x:1", report=report)
+        assert bind is not None
+        assert bind.enabled is True
+        assert bind.dispatcher == DispatcherCall(
+            "window.move", {"direction": "t", "group_aware": True}
+        )
+        assert LossCode.DEAD_DISPATCHER not in {item.code for item in report}
 
     def test_a_live_keysym_bind_stays_enabled(self, report: LossReport) -> None:
         bind = map_bind("", "SUPER, XF86AudioPlay, killactive", origin="x:1", report=report)
