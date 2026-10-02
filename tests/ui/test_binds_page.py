@@ -573,6 +573,49 @@ def test_an_offline_row_has_no_handle_and_takes_no_drop(tmp_path: Path) -> None:
     assert not [c for c in row.widget.observe_controllers() if isinstance(c, Gtk.DropTarget)]
 
 
+def test_an_offline_row_greys_out_its_edit_controls(tmp_path: Path, monkeypatch: Any) -> None:
+    """Read-only is temporary (the Banner says why), so Edit, Remove and Enable show,
+    insensitive, as on the Workspaces page; the rival verbs stay hidden (#159, #113)."""
+    from gi.repository import Gtk
+
+    session, window = build_window(tmp_path)
+    session.model.entities.binds.extend(
+        [
+            exec_bind("SUPER + Q", "a"),
+            exec_bind("SUPER + Q", "b"),
+            exec_bind("SUPER + E", "e", enabled=False),
+        ]
+    )
+    window.binds_page.refresh()
+
+    first, _second, off = window.binds_page.rows
+    sensitive = [
+        (button is not None, button is not None and button.get_sensitive())
+        for button in (first.edit_button, first.remove_button, off.enable_button)
+    ]
+    assert sensitive == [(True, False), (True, False), (True, False)]
+    assert not [
+        c for c in first.widget.observe_controllers() if isinstance(c, Gtk.ShortcutController)
+    ]
+    assert first.conflict_badge is not None
+    verbs = button_labels(first.conflict_badge.get_popover())
+    assert verbs == ["Show"], "the rival verbs Rebind and Disable stay hidden"
+
+
+def button_labels(widget: Any) -> list[str]:
+    """The label of every button under `widget`, in tree order."""
+    from gi.repository import Gtk
+
+    labels: list[str] = []
+    child = widget.get_first_child()
+    while child is not None:
+        if isinstance(child, Gtk.Button) and child.get_label():
+            labels.append(child.get_label())
+        labels.extend(button_labels(child))
+        child = child.get_next_sibling()
+    return labels
+
+
 def shortcut(row: Any, accelerator: str) -> bool:
     """Press `accelerator` on the row, through its own shortcut controller."""
     from gi.repository import Gtk

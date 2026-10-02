@@ -479,16 +479,19 @@ class BindRow:
             )
             self.widget.add_suffix(self.conflict_badge)
 
-        if not editable:
-            return
+        # On a read-only session the buttons show insensitive, as on the Workspaces page:
+        # the Banner says why, and the row still says what could be done once it is live.
+        # Only the move routes (drag, Alt+Up/Down) and the conflict's rival verbs stay out.
         kind = badge.kind if badge is not None else None
-        self._wire_reorder(
-            actions, drag or BindDrag(), neighbours, movable=kind is None or kind.editable
-        )
+        if editable:
+            self._wire_reorder(
+                actions, drag or BindDrag(), neighbours, movable=kind is None or kind.editable
+            )
 
         if kind is not None and (verb := kind.verb) is not None:
             self.enable_button = Gtk.Button(label=verb.label, valign=Gtk.Align.CENTER)
             self.enable_button.set_tooltip_text(verb.tooltip)
+            self.enable_button.set_sensitive(editable)
             self.enable_button.connect("clicked", lambda _button: verb.run(actions, index))
             self.enable_button.add_css_class("flat")
             self.widget.add_suffix(self.enable_button)
@@ -499,6 +502,7 @@ class BindRow:
             )
             self.edit_button.add_css_class("flat")
             self.edit_button.set_tooltip_text("Edit this bind")
+            self.edit_button.set_sensitive(editable)
             self.edit_button.connect("clicked", lambda _button: actions.edit(index))
             self.widget.add_suffix(self.edit_button)
 
@@ -508,6 +512,7 @@ class BindRow:
             )
             self.remove_button.add_css_class("flat")
             self.remove_button.set_tooltip_text("Remove this bind")
+            self.remove_button.set_sensitive(editable)
             self.remove_button.connect("clicked", lambda _button: actions.remove(index))
             self.widget.add_suffix(self.remove_button)
 
