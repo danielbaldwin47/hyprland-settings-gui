@@ -18,7 +18,9 @@ hands its value straight to the Option that names it in `renamed_from` -- so a n
 "retired this release" lists `found` less what `restored` took back under a new name.
 
 One rule decides whether a name can be emitted (`emittable`), and both directions use it,
-so an Option is never retired and restored by the same inputs.
+so an Option is never retired and restored by the same inputs. `restore` is the stricter
+of the two offline (see its docstring): putting a refused key back costs a config error,
+leaving a value kept costs nothing.
 """
 
 from __future__ import annotations
@@ -29,7 +31,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..importer.lua.sandbox import Consent, LuaUnavailable, evaluate
-from ..schema import Schema
+from ..model.values import parse_lua
+from ..schema import ResolvedOption, Schema
 from ..schema.resolve import version_key
 from ..schema.sources import lua_key_for
 from .manifest import Manifest, RetiredValue
@@ -139,6 +142,67 @@ def retire(
         if each.name in values
     }
     return manifest.with_retired({**manifest.retired, **kept})
+
+
+@dataclass(frozen=True, slots=True)
+class Restoration:
+    """A kept value going back into the model, under the Option that now takes it."""
+
+    retired_name: str
+    """The name it was kept under -- the old name, when this is a rename."""
+
+    option: ResolvedOption
+    value: Any
+    """The model value, parsed against `option`: hand it to `ConfigModel.set`."""
+
+    @property
+    def renamed(self) -> bool:
+        """A rename migration, which ADR-0012 announces with its own Info notice."""
+        return self.option.name != self.retired_name
+
+
+def restore(
+    manifest: Manifest, schema: Schema, live: LiveNames | None
+) -> tuple[Manifest, tuple[Restoration, ...]]:
+    """Every kept value whose Option is back, and the Manifest no longer keeping them.
+
+    Back means one of two things (ADR-0012): the same name is emittable again (a downgrade,
+    or a later release re-adding it), or an emittable Option names it in `renamed_from`.
+    The value is parsed against that Option with `parse_lua`, so restoring needs no schema
+    entry for the old name; a value the Option will not take stays kept, never guessed.
+
+    Offline, a same-name return needs the schema to be at least as new as the release that
+    retired it: an older schema still describing the Option is no evidence the user's
+    Hyprland takes it back, and emitting a key it last refused is a config error.
+    """
+    restored: list[Restoration] = []
+    for name, entry in sorted(manifest.retired.items()):
+        option = _taker(name, entry, schema, live)
+        if option is None:
+            continue
+        try:
+            value = parse_lua(option, entry.value)
+        except (ValueError, TypeError):
+            continue
+        restored.append(Restoration(name, option, value))
+
+    taken = {each.retired_name for each in restored}
+    remaining = {name: e for name, e in manifest.retired.items() if name not in taken}
+    return manifest.with_retired(remaining), tuple(restored)
+
+
+def _taker(
+    name: str, entry: RetiredValue, schema: Schema, live: LiveNames | None
+) -> ResolvedOption | None:
+    """The Option that takes a kept value back now, if any."""
+    option = schema.get(name)
+    if option is not None:
+        returned = live is not None or version_key(entry.retired_in) <= version_key(
+            schema.hyprland_version
+        )
+        return option if returned and emittable(name, schema, live) else None
+    renamed = next((each for each in schema if each.renamed_from == name), None)
+    return renamed if renamed is not None and emittable(renamed.name, schema, live) else None
 
 
 _ABSENT = object()

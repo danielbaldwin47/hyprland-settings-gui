@@ -17,7 +17,13 @@ from hyprtweaker.engine.model import ConfigModel
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
 from hyprtweaker.engine.state import Manifest, RetiredValue
-from hyprtweaker.engine.state.retirement import Retirement, capture, detect, retire
+from hyprtweaker.engine.state.retirement import (
+    Retirement,
+    capture,
+    detect,
+    restore,
+    retire,
+)
 from hyprtweaker.engine.writer import Writer
 
 ACTIVE_BORDER = {"colors": ["rgba(33ccffee)", "rgba(00ff99ee)"], "angle": 45}
@@ -174,3 +180,94 @@ class TestRetire:
         )
         assert capture(paths.app_dir, found) == {}
         assert retire(load(paths), found, {}).retired == {}
+
+
+def kept(**retired: RetiredValue) -> Manifest:
+    """A Manifest keeping `retired`, with names spelled `section__key` -> `section:key`."""
+    return Manifest(
+        app_version="x",
+        schema_version="x",
+        retired={name.replace("__", ":"): value for name, value in retired.items()},
+    )
+
+
+class TestRestore:
+    """AC 2: a kept value comes back when its Option does -- by downgrade or by rename."""
+
+    def test_a_rename_restores_under_the_new_name_in_one_startup_pass(
+        self, paths: ConfigPaths
+    ) -> None:
+        """The sequence the Session runs, from a Module file and a Manifest."""
+        schema = schema_renaming(
+            "general:col.active_border", "general:col.border_active", version="0.57.0"
+        )
+        manifest = load(paths)
+
+        found = detect(manifest, schema, None)
+        manifest = retire(manifest, found, capture(paths.app_dir, found))
+        manifest, restored = restore(manifest, schema, None)
+        model = ConfigModel(schema)
+        for each in restored:
+            model.set(each.option.name, each.value)
+
+        assert [(r.retired_name, r.option.name, r.renamed) for r in restored] == [
+            ("general:col.active_border", "general:col.border_active", True)
+        ]
+        assert manifest.retired == {}
+        assert (
+            '      border_active = { colors = { "rgba(33ccffee)", "rgba(00ff99ee)" }, '
+            "angle = 45 },\n"
+        ) in Writer(paths, SAMPLE_APP_VERSION).render_modules(model)["options/general.lua"]
+
+    def test_a_downgrade_restores_under_the_same_name(self) -> None:
+        manifest, restored = restore(
+            kept(general__resize_on_border=RetiredValue("0.57.0", True)),
+            sample_schema(),
+            live("0.56.2"),
+        )
+
+        assert [(r.retired_name, r.option.name, r.value, r.renamed) for r in restored] == [
+            ("general:resize_on_border", "general:resize_on_border", True, False)
+        ]
+        assert manifest.retired == {}
+
+    def test_offline_a_schema_newer_than_the_retirement_restores(self) -> None:
+        """The Option came back in a later release: the schema alone is the evidence."""
+        manifest, restored = restore(
+            kept(decoration__rounding=RetiredValue("0.56.0", 10)), sample_schema(), None
+        )
+
+        assert [(r.retired_name, r.value) for r in restored] == [("decoration:rounding", 10)]
+        assert manifest.retired == {}
+
+    @pytest.mark.parametrize(
+        ("schema", "snapshot"),
+        [
+            pytest.param(
+                schema_without("decoration:rounding", version="0.57.0"), None, id="still-gone"
+            ),
+            pytest.param(
+                sample_schema(),
+                live("0.57.0", without=("decoration:rounding",)),
+                id="newer-hyprland-still-lacks-it",
+            ),
+            pytest.param(sample_schema(), None, id="offline-schema-older-than-retirement"),
+        ],
+    )
+    def test_a_value_stays_kept_while_its_option_cannot_be_emitted(
+        self, schema: Schema, snapshot: Live | None
+    ) -> None:
+        """Offline with a schema older than the retiring release, nothing says the Option is
+        back: restoring would emit a key the user's Hyprland last refused."""
+        before = kept(decoration__rounding=RetiredValue("0.57.0", 10))
+
+        assert restore(before, schema, snapshot) == (before, ())
+
+    def test_a_value_the_new_option_will_not_take_stays_kept(self) -> None:
+        """A rename that changed the type: keeping the value beats a guessed conversion."""
+        before = kept(general__border_size=RetiredValue("0.56.2", "thick"))
+        schema = schema_renaming(
+            "general:border_size", "general:border_width", version="0.57.0"
+        )
+
+        assert restore(before, schema, None) == (before, ())

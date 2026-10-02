@@ -2,7 +2,9 @@
 
 The **Manifest** (`manifest.json` in the App dir) records what the app wrote and what it
 looked like: app version, Schema version, a SHA-256 per Module for hand-edit detection,
-and the migration provenance the Importer stamps once (ADR-0005).
+the migration provenance the Importer stamps once (ADR-0005), and the kept values of
+Options a Hyprland release retired (ADR-0012; `retirement` detects, captures and restores
+them).
 
 The **Journal** and its **Snapshots** (`$XDG_STATE_HOME/hyprtweaker/`) record what every
 write replaced and whether the write was good: one content-addressed copy per distinct
