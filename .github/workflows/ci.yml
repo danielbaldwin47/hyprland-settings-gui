@@ -25,12 +25,15 @@ permissions:
 
 env:
   # Skip ceiling for the pytest jobs: equals today's intentional data-driven
-  # skips (corpus rices without binds, parametrized doc-skips, and one #70 test
-  # that runs the real `Hyprland` binary, which no runner has). A missing
+  # skips in the ui-smoke job's `tests/ui tests/unit`, 13: 10 corpus rices
+  # without binds (test_writer_binds_corpus), 2 parametrized doc-skips
+  # (test_no_hyprctl_spawn), and one #70 test that runs the real `Hyprland`
+  # binary, which no runner has. `tests/static` runs only under `meson test`,
+  # which has no ceiling, so its skips never count here. A missing
   # dependency skips tests silently -- lua5.4's absence once skipped 72 tests
   # while the job stayed green -- so any count above this fails the job.
   # The PR that adds or removes an intentional skip moves this number with it.
-  SKIP_CEILING: '14'
+  SKIP_CEILING: '13'
 
 jobs:
   lint:
@@ -76,7 +79,7 @@ jobs:
           # for gi (test_ui_binds_text, test_ui_rules_text,
           # test_ui_declaration_text) which this runner lacks. Their tests run
           # for real in the ui-smoke job, where gi exists.
-          SKIP_CEILING: '16'
+          SKIP_CEILING: '15'
         run: |
           set -o pipefail
           pytest tests/unit -n auto -v 2>&1 | tee pytest-out.log
