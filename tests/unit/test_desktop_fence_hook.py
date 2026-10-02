@@ -1,9 +1,12 @@
-"""The desktop fence (#204): a PreToolUse hook on Bash that refuses an agent's bare `hyprctl`,
-`Hyprland`, `wtype` and `ydotool` against the owner's desktop compositor.
+"""The desktop fence (#204, #209): a PreToolUse hook on Bash that refuses an agent's bare
+`hyprctl`, `Hyprland`, `wtype` and `ydotool` against the owner's desktop compositor, a pattern
+kill (`pkill`, `killall`), a GTK start outside the probe route, an X server started from the
+agent's shell, and a removal, move or link of the session's X sockets and locks.
 
 The hook is fed tool-call payloads on stdin, as Claude Code feeds it, and its stdout is read
-for the verdict. Nothing here runs `hyprctl`, `Hyprland`, `wtype` or `ydotool`. Both
-compositors are faked the way Hyprland presents them: an instance directory under a fake
+for the verdict. Nothing here runs `hyprctl`, `Hyprland`, `wtype`, `ydotool`, `pkill`,
+`killall`, an X server or an `rm` of an X socket. Both compositors are faked the way Hyprland
+presents them: an instance directory under a fake
 `$XDG_RUNTIME_DIR/hypr` whose `hyprland.lock` names a pid and a Wayland socket. The pid is a
 `sleep` started with the account's `HOME` (the session's own compositor) or with a sandbox
 `HOME` (a nested instance, as `NestedHyprland` and `tools/sandbox.py` give it). The hook runs
@@ -148,6 +151,48 @@ REFUSED = [
     "WAYLAND_DISPLAY=wayland-5 wtype hello",
     "WAYLAND_DISPLAY=$NESTED_DISPLAY wtype hello",
     f"HYPRLAND_INSTANCE_SIGNATURE={NESTED} wtype hello",
+    # a pattern kill (#209): by name across the whole session
+    "pkill -f foo",
+    "pkill Hyprland",
+    "killall Hyprland",
+    "timeout 5 pkill -f 'a|b'",
+    "make && killall foot",
+    "sudo /usr/bin/killall -9 foot",
+    # a GTK start outside the probe route
+    '.venv/bin/python -c "from gi.repository import Gtk"',
+    ".venv/bin/python3 -c 'from gi.repository import Adw'",
+    'python3 -c \'import gi; gi.require_version("Gtk", "4.0")\'',
+    "python -Ic 'from gi.repository import Gdk'",
+    "python3 - <<'EOF'\nfrom gi.repository import Gtk\nEOF",
+    ".venv/bin/python <<EOF\nimport gi\ngi.require_version('Adw', '1')\nEOF",
+    "xvfb-run python x.py",
+    "xvfb-run -a .venv/bin/python tools/widget_probe.py p.py",
+    "python -m hyprtweaker",
+    ".venv/bin/python -um hyprtweaker --config x",
+    "python -m hyprtweaker.main",
+    "python src/hyprtweaker/__main__.py",
+    "PYTHONPATH=src .venv/bin/python -m hyprtweaker",
+    # an X server started from the agent's shell
+    "Xvfb :99",
+    "Xvfb -displayfd 3",
+    "timeout 5 Xvfb :201 &",
+    "/usr/bin/Xvfb :250 -screen 0 1x1x24",
+    "Xorg :1",
+    "Xwayland :5 -rootless",
+    # a removal, move or link of the session's X sockets and locks
+    "rm /tmp/.X11-unix/X0",
+    "rm -f /tmp/.X0-lock",
+    "rm -rf /tmp/.X11-unix",
+    "rm /tmp/.X11-unix/X*",
+    "rm /tmp/.X*-lock",
+    "sudo rm /tmp/.X1-lock",
+    "mv /tmp/.X11-unix/X0 /tmp/x0.bak",
+    "mv /tmp/x0 /tmp/.X11-unix/X0",
+    "ln /tmp/.X11-unix/X0_ /tmp/.X11-unix/X0",
+    "ln -sf /tmp/elsewhere /tmp/.X11-unix/X0",
+    "unlink /tmp/.X11-unix/X0",
+    "find /tmp/.X11-unix -name 'X*' -delete",
+    "ls /tmp/.X11-unix && rm /tmp/.X11-unix/X0",
 ]
 
 ALLOWED = [
@@ -175,6 +220,39 @@ ALLOWED = [
     "which ydotool",
     "ls /usr/bin/Hyprland  # Hyprland itself stays unrun",
     "pacman -Q hyprland",
+    # what the new refusals leave: a recorded pid, the probe routes, the checks, data
+    "kill 1234",
+    "kill $!",
+    "kill -TERM $pid",
+    "pgrep -af Xvfb",
+    "ps aux | grep -E 'Xvfb|Xwayland'",
+    ".venv/bin/python tools/widget_probe.py probe.py --flag",
+    "env FOO=1 .venv/bin/python tools/widget_probe.py probe.py",
+    ".venv/bin/python tools/sandbox.py --config ~/.config/hypr/hyprland.lua",
+    ".venv/bin/pytest tests/ui",
+    ".venv/bin/python -m pytest -q tests/ui",
+    "grep -rn Gtk src/",
+    "grep -rn 'from gi.repository import Gtk' src/hyprtweaker/",
+    "grep -rn foo src/hyprtweaker/",
+    ".venv/bin/mypy",
+    ".venv/bin/python -m mypy src/hyprtweaker",
+    ".venv/bin/ruff check src/hyprtweaker",
+    ".venv/bin/python -c 'print(1 + 1)'",
+    "python3 - <<'EOF'\nprint(1)\nEOF",
+    "python3 -c 'import json; print(json.dumps({}))'",
+    "git commit -m 'Never pkill -f or xvfb-run; rm /tmp/.X11-unix/X0 is refused'",
+    "echo Xvfb Xorg Xwayland >> notes.md",
+    "which Xvfb xvfb-run",
+    # the session's X files may be read, and other files removed, moved and linked
+    "ls -la /tmp/.X11-unix/",
+    "ss -xlp | grep X11",
+    "cat /tmp/.X0-lock",
+    "rm -f /tmp/scratch.txt",
+    "rm -rf build/",
+    "mv notes.md /tmp/notes.md",
+    "ln -s /tmp/a /tmp/b",
+    "find src -name '*.py'",
+    "cd /tmp && ls .X11-unix",
 ]
 
 
@@ -200,6 +278,19 @@ def test_the_fence_lets_through_what_cannot_reach_the_desktop(
         ("Hyprland", "`Hyprland`", "tools/sandbox.py"),
         ("wtype hello", "`wtype`", "WAYLAND_DISPLAY=<display"),
         ("ydotool key 28:1", "`ydotool`", "WAYLAND_DISPLAY=<display"),
+        ("pkill -f foo", "`pkill`", "kill <pid>"),
+        ("killall Hyprland", "`killall`", "kill <pid>"),
+        (
+            ".venv/bin/python -c 'from gi.repository import Gtk'",
+            "`python -c`",
+            "tools/widget_probe.py <probe.py>",
+        ),
+        ("xvfb-run python x.py", "`xvfb-run`", "tools/widget_probe.py <probe.py>"),
+        ("python -m hyprtweaker", "`python -m hyprtweaker`", "tools/sandbox.py"),
+        ("Xvfb :99", "`Xvfb`", "start_xvfb"),
+        ("Xwayland :5", "`Xwayland`", "start_xvfb"),
+        ("rm /tmp/.X11-unix/X0", "`rm`", "ls /tmp/.X11-unix"),
+        ("ln /tmp/.X11-unix/X0_ /tmp/.X11-unix/X0", "`ln`", "ls /tmp/.X11-unix"),
     ],
 )
 def test_a_refusal_names_the_call_why_and_the_shape_that_works(
@@ -224,17 +315,65 @@ def test_a_refusal_says_why_this_selector_is_not_nested(world: World) -> None:
     assert unexpanded is not None and "$SIG" in unexpanded
 
 
-def test_without_jq_the_fence_fails_closed_on_the_four_words(
-    world: World, tmp_path: Path
-) -> None:
+@pytest.fixture
+def no_jq_env(world: World, tmp_path: Path) -> dict[str, str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for name in ("cat", "grep"):
         (bin_dir / name).symlink_to(tool(name))
-    env = {**world.env, "PATH": str(bin_dir)}
-    reason = verdict(FENCE, "grep hyprctl docs/", env)
+    return {**world.env, "PATH": str(bin_dir)}
+
+
+def test_without_jq_the_fence_fails_closed_on_the_four_words(no_jq_env: dict[str, str]) -> None:
+    reason = verdict(FENCE, "grep hyprctl docs/", no_jq_env)
     assert reason is not None and "install jq" in reason
-    assert verdict(FENCE, "ls docs/", env) is None
+    assert verdict(FENCE, "ls docs/", no_jq_env) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pkill -f foo",
+        "killall Hyprland",
+        "xvfb-run python x.py",
+        '.venv/bin/python -c "from gi.repository import Gtk"',
+        '.venv/bin/python3 -c \'import gi; gi.require_version("Adw", "1")\'',
+        "python -m hyprtweaker",
+        "python3 - <<'EOF'\nfrom gi.repository import Gtk\nEOF",
+        "Xvfb :99",
+        "timeout 5 Xorg :1",
+        "rm /tmp/.X11-unix/X0",
+        "ln /tmp/.X11-unix/X0_ /tmp/.X11-unix/X0",
+        "rm -f /tmp/.X0-lock",
+    ],
+)
+def test_without_jq_the_fence_refuses_the_new_words(
+    no_jq_env: dict[str, str], command: str
+) -> None:
+    reason = verdict(FENCE, command, no_jq_env)
+    assert reason is not None and "install jq" in reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "kill 1234",
+        "kill $!",
+        "grep -rn Gtk src/",
+        "grep -rn foo src/hyprtweaker/",
+        ".venv/bin/python tools/widget_probe.py probe.py",
+        ".venv/bin/python tools/sandbox.py --config x",
+        ".venv/bin/pytest tests/ui",
+        ".venv/bin/mypy",
+        ".venv/bin/ruff check src/hyprtweaker",
+        "ls /tmp/.X11-unix/",
+        "rm -f /tmp/scratch.txt",
+    ],
+)
+def test_without_jq_the_fence_still_lets_the_ordinary_checks_through(
+    no_jq_env: dict[str, str], command: str
+) -> None:
+    assert verdict(FENCE, command, no_jq_env) is None
 
 
 def test_settings_register_both_hooks_on_bash_and_the_base_guard_still_refuses_a_merge(
