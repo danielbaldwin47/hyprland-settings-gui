@@ -23,23 +23,22 @@ than a green one that quietly skipped everything.
 The tier draws on an Xvfb display of its own, one per pytest process, never on the
 desktop session it was started from: its windows would map there, and Hyprland
 would show its "Application Not Responding" dialog over the developer's work
-(#146). ``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose,
-for example to watch it. The display opens in ``pytest_configure``, before
-collection: importing ``Gtk`` initialises GTK, and some ``tests/unit`` modules
-import UI pages at collection time.
+(#146). ``private_display.py`` starts it and pins GTK to it, for this tier and for
+the widget probe route (``tools/widget_probe.py``) alike.
+``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose, for example
+to watch it. The display opens in ``pytest_configure``, before collection: importing
+``Gtk`` initialises GTK, and some ``tests/unit`` modules import UI pages at collection
+time.
 """
 
 from __future__ import annotations
 
-import ctypes
 import os
-import select
 import shutil
-import signal
-import subprocess
 from pathlib import Path
 
 import pytest
+from private_display import PINNED, pin_environment, start_xvfb
 
 UI_TESTS_DIR = Path(__file__).parent
 
@@ -61,51 +60,6 @@ def sandboxed_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 HOST_DISPLAY_OPT_IN = "HYPRTWEAKER_UI_HOST_DISPLAY"
-
-_libc = ctypes.CDLL(None, use_errno=True)
-_PR_SET_PDEATHSIG = 1
-
-
-def start_xvfb(xvfb: str) -> str | None:
-    """Start a headless X server and return its display name, or None if it failed.
-
-    It dies with this process (PR_SET_PDEATHSIG), including a `timeout` kill that runs no
-    cleanup. Nothing stops it earlier on purpose: GTK keeps the connection until exit, and
-    GDK exits the process when its X server goes away under it.
-    """
-    read_fd, write_fd = os.pipe()
-    try:
-        xvfb_process = subprocess.Popen(
-            [
-                xvfb,
-                "-displayfd",
-                str(write_fd),
-                "-screen",
-                "0",
-                "1280x1024x24",
-                "-nolisten",
-                "tcp",
-            ],
-            pass_fds=(write_fd,),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            preexec_fn=lambda: _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM),
-        )
-    except OSError:
-        os.close(read_fd)
-        return None
-    finally:
-        os.close(write_fd)
-    # Xvfb writes the number once it accepts connections; EOF means it exited first. CI
-    # jobs have no timeout of their own, so a wedged Xvfb must not hang the run.
-    with os.fdopen(read_fd) as pipe:
-        ready, _, _ = select.select([pipe], [], [], 10)
-        number = pipe.readline().strip() if ready else ""
-    if not number:
-        xvfb_process.kill()
-        return None
-    return f":{number}"
 
 
 def ui_unavailable() -> str | None:
@@ -134,11 +88,10 @@ def ui_unavailable() -> str | None:
 
     # GDK reads these only while it opens its display, and the Harness tier reads the host
     # session from them at test time when both tiers share a process, so restore them.
-    saved = {
-        name: os.environ.get(name) for name in ("DISPLAY", "GDK_BACKEND", "WAYLAND_DISPLAY")
-    }
-    os.environ.update(DISPLAY=display, GDK_BACKEND="x11")
-    os.environ.pop("WAYLAND_DISPLAY", None)
+    # Not GTK_A11Y: GTK reads it at the first widget, after this returns, and restored it
+    # put every test widget on the desktop's accessibility bus.
+    saved = {name: os.environ.get(name) for name in PINNED if name != "GTK_A11Y"}
+    pin_environment(os.environ, display)
     try:
         return open_display()
     finally:

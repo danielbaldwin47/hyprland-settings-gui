@@ -65,7 +65,9 @@ from hyprtweaker.engine.ipc import (
     EventStream,
     Instance,
     IpcError,
+    LiveHyprland,
     NoInstance,
+    read_live_hyprland,
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.model.entities import (
@@ -106,8 +108,22 @@ from hyprtweaker.engine.profiles import (
     drift,
     matches,
 )
-from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
-from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
+from hyprtweaker.engine.schema import (
+    MINIMUM_HYPRLAND,
+    ResolvedOption,
+    Schema,
+    below_lua_floor,
+    load_schema,
+    newer_than_shipped,
+    supplement,
+)
+from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash, retirement
+from hyprtweaker.engine.state.retirement import (
+    RenamedNotice,
+    Restoration,
+    RetiredNotice,
+    UnkeptNotice,
+)
 from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
@@ -284,6 +300,10 @@ Spawn = Callable[[Coroutine[Any, Any, None]], None]
 """How this session gets a coroutine running. The GTK app passes the main loop's own
 scheduler, so engine callbacks land on the thread that owns the widgets."""
 
+Notice = RetiredNotice | UnkeptNotice | RenamedNotice
+"""A one-time Info notice of ADR-0012's: a release removed settings (kept, or not), or
+renamed them."""
+
 _NOT_CONNECTED_YET = "Connecting to Hyprland…"
 """The reason a session is read-only between construction and `start()` finishing.
 
@@ -302,15 +322,44 @@ class Session:
         paths: ConfigPaths | None = None,
         app_version: str,
         connect: Callable[[], Instance] = Instance.current,
+        read_live: Callable[[], LiveHyprland | None] | None = None,
     ) -> None:
         """`connect` names the compositor to talk to; by default, the one we run under.
 
         Injected for the same reason the Harness can drive the real `Applier`: an `Instance`
         is a frozen dataclass over a socket directory, so a nested Hyprland or a scripted
         pair of sockets is a first-class session and needs no monkeypatching.
+
+        `read_live` answers which Hyprland that is, before anything else here runs: the
+        model is built from the Schema for that version (ADR-0012 §Pinning). By default a
+        blocking read over `connect`, bounded at one second; tests that have no compositor
+        to ask, or want to pose as another version, hand in the answer. It runs whether or
+        not `schema` is injected, so `live_hyprland` means the same thing in every session.
         """
         self._spawn = spawn
-        self._schema = schema if schema is not None else load_schema()
+        self._live_hyprland = (
+            read_live() if read_live is not None else read_live_hyprland(connect)
+        )
+        live_version = self._live_hyprland.version if self._live_hyprland else None
+        self._unsupported_reason = (
+            f"Hyprland {live_version} is running, and this app needs Hyprland "
+            f"{MINIMUM_HYPRLAND} or newer"
+            if live_version is not None and below_lua_floor(live_version)
+            else None
+        )
+        """Why this session can never go live, or `None`. Set only for a Hyprland too old to
+        have a Lua config: no amount of reconnecting changes that, so `start` honours it."""
+        if schema is None:
+            # Below the floor, the oldest shipped Schema: the nearest to what is running,
+            # and a read-only session only displays it.
+            wanted = MINIMUM_HYPRLAND if self._unsupported_reason else live_version
+            schema = load_schema(wanted)
+        live = self._live_hyprland
+        if live is not None and newer_than_shipped(live.version):
+            # ADR-0012 §Pinning: what a newer compositor added beyond every shipped schema
+            # still gets a Row, inferred from its own description and flagged as such.
+            schema = supplement(schema, live.descriptions, version=live.version)
+        self._schema = schema
         self._paths = paths if paths is not None else ConfigPaths.default()
         self._app_version = app_version
         self._connect = connect
@@ -333,6 +382,12 @@ class Session:
         self.on_reverted: Callable[[AutoRevert], None] | None = None
         """Called when the app has just taken back its own rejected write (ADR-0016)."""
 
+        self.on_notice: Callable[[Notice], None] | None = None
+        """Called at startup with each notice ADR-0012 owes the user: per release that
+        retired Options they set, and once for values that moved to a renamed Option.
+
+        A Retired notice keeps coming, start after start, until `notice_seen` records it."""
+
         self.on_recorded: Callable[[UndoStep], None] | None = None
         """Called with the gesture a finished transaction put on the undo stack.
 
@@ -345,11 +400,16 @@ class Session:
         self._model = ConfigModel(self._schema)
         self._writer = Writer(self._paths, app_version=app_version)
         self._journal = Journal(self._paths)
+        self._retired = self._manifest().retired
+        """The Options still Retired, by name, as `retired_in` reads them for a Row's pill.
+
+        Copied from the Manifest at construction and replaced by the startup pass, so a Row
+        asks no file; an offline session still badges what earlier sessions retired."""
 
         self._events: EventStream | None = None
         self._client: CommandClient | None = None
         self._applier: Applier | None = None
-        self._offline_reason: str | None = _NOT_CONNECTED_YET
+        self._offline_reason: str | None = self._unsupported_reason or _NOT_CONNECTED_YET
         self._closing = False
         self._pending_restart: set[str] = set()
         self._monitor_watchers: list[Callable[[], None]] = []
@@ -440,6 +500,33 @@ class Session:
     def live(self) -> bool:
         """Whether edits reach a running compositor. False means the Rows are read-only."""
         return self._offline_reason is None
+
+    @property
+    def live_hyprland(self) -> LiveHyprland | None:
+        """The running compositor's version and option descriptions, read once at startup.
+
+        `None` when there was no compositor, it did not answer, or its version is not a
+        release number. Not the same fact as `live`: a compositor can be described here and
+        still refuse every edit (one too old for a Lua config, or a socket that died later).
+        The Schema it selected is `schema.hyprland_version`, which can be older (ADR-0012
+        degradation).
+        """
+        return self._live_hyprland
+
+    @property
+    def hyprland_too_old(self) -> bool:
+        """Whether the running Hyprland predates the Lua config, so nothing here can apply.
+
+        Read-only for the whole run, whatever the config on disk: there is nothing to
+        convert a hyprlang config *to* on a compositor that only reads hyprlang.
+        """
+        return self._unsupported_reason is not None
+
+    @property
+    def unsupported_reason(self) -> str | None:
+        """Why the running Hyprland is too old for this app, as one sentence without a full
+        stop, or `None` when it is not."""
+        return self._unsupported_reason
 
     @property
     def offline_reason(self) -> str | None:
@@ -566,6 +653,35 @@ class Session:
     def is_modified(self, option: ResolvedOption) -> bool:
         """Whether the model emits this Option at all -- ADR-0005's tri-state, not `!=`."""
         return self._model.is_set(option.name)
+
+    def unknown_to_version(self, option: ResolvedOption) -> bool:
+        """Whether the running Hyprland was described and does not have this Option.
+
+        The `unknown-to-this-version` Row state (#77): the app degraded onto a Schema the
+        compositor does not match (ADR-0012). False with no snapshot -- no compositor is
+        no evidence -- so an offline session badges nothing as missing.
+        """
+        live = self._live_hyprland
+        return live is not None and option.name not in live.names
+
+    def retired_in(self, option: ResolvedOption) -> str | None:
+        """The release that retired this Option while the user set it, if it is Retired.
+
+        ADR-0012's "the Row is badged": the app keeps the value and has stopped writing it.
+        Only a Retired Option the loaded Schema still describes has a Row to badge.
+        """
+        entry = self._retired.get(option.name)
+        return entry.retired_in if entry is not None else None
+
+    def notice_seen(self, notice: Notice) -> None:
+        """The user has dismissed `notice`: a Retired one is not shown again (ADR-0012).
+
+        Called on dismissal, not on display, so a notice the app closed before the user saw
+        it comes back on the next start. A rename notice records nothing: the move it
+        reports is done, and the next start has nothing to say about it.
+        """
+        if isinstance(notice, RetiredNotice):
+            self._writer.record_retired_notice(self._model, notice.release)
 
     # --- what the UI writes -----------------------------------------------------------------
 
@@ -1385,7 +1501,14 @@ class Session:
     # --- lifecycle --------------------------------------------------------------------------
 
     def start(self) -> None:
-        """Connect, recover the model, and begin applying. Returns immediately."""
+        """Connect, recover the model, and begin applying. Returns immediately.
+
+        A Hyprland too old for a Lua config is not connected to at all: `_go_live` ends by
+        clearing the read-only reason, and this one has to outlive it.
+        """
+        if self._unsupported_reason is not None:
+            self.set_read_only(self._unsupported_reason)
+            return
         self._spawn(self._go_live())
 
     def set_read_only(self, reason: str) -> None:
@@ -1428,8 +1551,54 @@ class Session:
             on_result=self._applied,
         )
         self._applier.start()
+        self._retire_and_restore(self._applier)
         self._offline_reason = None
         self._changed()
+
+    def _retire_and_restore(self, applier: Applier) -> None:
+        """ADR-0012 §Retirement, once per start, before the session's first write.
+
+        The first write rewrites each Module from the model, which cannot hold a retired
+        Option, so the value is read out of the Module and kept in the Manifest first. Then
+        a write without the key clears the config error a removed key raises, and puts back
+        any kept value whose Option has returned or been renamed. A restored value leaves
+        the Manifest only once that write has put it in a Module (`landed`), so stopping in
+        between loses nothing: the next start finds it kept and restores it again.
+        """
+        live = self._live_hyprland
+        before = self._manifest()
+        found = retirement.detect(before, self._schema, live)
+        values = retirement.capture(self._paths.app_dir, found)
+        kept = retirement.retire(before, found, values)
+        remaining, restored = retirement.restore(kept, self._schema, live)
+        if kept.retired != before.retired:
+            self._writer.set_retired(self._model, kept.retired)
+        self._retired = remaining.retired
+        for each in restored:
+            self._model.set(each.option.name, each.value)
+        if found or restored:
+            self._spawn(self._write_retirement(applier, restored))
+
+        notices: list[Notice] = list(retirement.unannounced(remaining))
+        for extra in (UnkeptNotice.of(found, values), RenamedNotice.of(restored)):
+            if extra is not None:
+                notices.append(extra)
+        for notice in notices:
+            if self.on_notice is not None:
+                self.on_notice(notice)
+
+    async def _write_retirement(
+        self, applier: Applier, restored: Sequence[Restoration]
+    ) -> None:
+        """Write the model without the retired keys and with the restored values, then
+        stop keeping each restored value the write recorded."""
+        # Dropping a retired key changes the Module, not any Option the model holds.
+        applier.force_write()
+        await applier.apply(*(each.option.name for each in restored))
+        if restored:
+            self._writer.set_retired(
+                self._model, retirement.landed(self._manifest(), restored).retired
+            )
 
     def _manifest(self) -> Manifest:
         return Manifest.load(

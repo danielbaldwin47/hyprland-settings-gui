@@ -25,10 +25,11 @@ from pathlib import Path
 from typing import Any
 
 from hyprtweaker.engine.schema import ResolvedOption, Schema
-from hyprtweaker.engine.schema.resolve import schema_dir
+from hyprtweaker.engine.schema.resolve import schema_dir, version_key
 
 from .plan import (
     DEFAULT_DISCLOSURE,
+    NEW_IN_GROUP_DESCRIPTION,
     Disclosure,
     GroupPlan,
     PagePlan,
@@ -36,6 +37,7 @@ from .plan import (
     group_title,
     is_visible,
     is_withheld,
+    new_in_group_title,
 )
 
 TASKS_FILENAME = "tasks.json"
@@ -56,28 +58,6 @@ A plain word rather than the `New in <version>` heading: that string names a *Gr
 uncurated Options (`CONTEXT.md`: a Group is the titled block inside a Page), and reusing it
 one level up would put a Group's name where a category's belongs, telling the reader that a
 whole sidebar section is a version rather than a subject.
-"""
-
-
-def new_in_group_title(version: str) -> str:
-    """The heading uncurated Options appear under (ADR-0012, #7).
-
-    Named for the Hyprland version rather than a bare "Other" because the version is the
-    actionable part: it tells the user these arrived with an upgrade, and it tells whoever
-    curates next exactly which release to diff.
-    """
-    return f"New in {version}"
-
-
-NEW_IN_GROUP_DESCRIPTION = (
-    "Settings this version of Hyprland has that the curated pages do not place yet. "
-    "They work exactly as they do in the Config view."
-)
-"""The flag #7 and ADR-0012 ask for ("appears ... flagged, until it is curated").
-
-The heading alone reads as *new*, which is not the same claim: it would leave a user to
-wonder whether an uncurated setting is half-supported. Saying it plainly is what makes the
-degradation legible rather than merely visible.
 """
 
 
@@ -287,17 +267,6 @@ def _placements(mapping: TasksMapping) -> dict[str, _Placement]:
     return placements
 
 
-def _claimed_elsewhere(placed: dict[str, _Placement], name: str, page_id: str) -> bool:
-    """Whether some *other* Page named this Option, so its Section's home must not take it.
-
-    The one predicate the home-versus-named precedence turns on (`groups` outrank
-    `sections`), spelled once: written inline it reads as a comparison between a placement
-    and a page id, which is not the question being asked.
-    """
-    claim = placed.get(name)
-    return claim is not None and claim.page_id != page_id
-
-
 def _plan_page(
     schema: Schema,
     spec: PageSpec,
@@ -309,17 +278,27 @@ def _plan_page(
     Sections first because they are what the Page is *about* -- the curated Groups on a Page
     like Rendering are settings pulled in from `misc`, and leading with borrowed settings
     would read as though `misc` were the subject.
+
+    An Option the mapping places by name sits only where it was placed, on this Page or on
+    another: one Option, one Row. One no group places, that a newer Hyprland added
+    (`added_in`), leaves its Section's Group for a `New in <version>` Group at the foot of
+    its home Page, so it stands out among the settings that were always there until
+    curation places it (ADR-0012).
     """
     withheld = 0
 
     section_groups: dict[str, list[ResolvedOption]] = {}
+    new_in: dict[str, list[ResolvedOption]] = {}
     multi = len(spec.sections) > 1
     for section in spec.sections:
         for option in schema.section(section):
-            if _claimed_elsewhere(placed, option.name, spec.id):
+            if option.name in placed:
                 continue
             if not is_visible(option, disclosure):
                 withheld += is_withheld(option, disclosure)
+                continue
+            if option.added_in is not None:
+                new_in.setdefault(option.added_in, []).append(option)
                 continue
             title = _section_group_title(schema, option, section, multi=multi)
             section_groups.setdefault(title, []).append(option)
@@ -344,6 +323,15 @@ def _plan_page(
             members.append(curated)
         if members:
             groups.append(GroupPlan(title=group.title, options=tuple(members)))
+
+    groups.extend(
+        GroupPlan(
+            title=new_in_group_title(version),
+            options=tuple(options),
+            description=NEW_IN_GROUP_DESCRIPTION,
+        )
+        for version, options in sorted(new_in.items(), key=lambda item: version_key(item[0]))
+    )
 
     return PagePlan(
         section=spec.id,
@@ -379,14 +367,10 @@ def _with_fallbacks(
 ) -> list[CategoryPlan]:
     """Append a Page per uncurated Section: a release adds settings rather than hiding them.
 
-    Keyed on the Section rather than on the individual Option, which is a real limit worth
-    stating: an Option added to a Section the mapping *already* homes lands on that home
-    Page unflagged, because nothing here can tell it apart from the Options that were always
-    there. Detecting that needs a per-Option "added in" fact the Schema does not carry -- it
-    would come from diffing two shipped Generated schemas (ADR-0012's standing drift loop),
-    not from anything visible at plan time. Whole uncurated Sections are what this catches,
-    and they are the case where an Option would otherwise be unreachable rather than merely
-    unsorted.
+    Keyed on the Section: a Section the mapping never homed has no Page for its Options to
+    land on, so each gets one here. An Option a release adds to a Section the mapping
+    already homes needs no Page of its own -- `_plan_page` groups it by its `added_in` stamp
+    on the home Page. Between them, an uncurated Option is always shown and always flagged.
     """
     homed = mapping.homed_sections
 
@@ -403,16 +387,21 @@ def _with_fallbacks(
             # Every Option here is either curated elsewhere by name or is the hidden tier.
             # Nothing to show, and nothing the user could turn on to see.
             continue
-        groups = (
-            (
-                GroupPlan(
-                    title=new_in_group_title(schema.hyprland_version),
-                    options=tuple(visible),
-                    description=NEW_IN_GROUP_DESCRIPTION,
-                ),
+        # Titled with the release that added each Option where it is known (`added_in`,
+        # which a runtime-supplemented Option carries too), so a Section only the running
+        # Hyprland has is not announced as new in the shipped one.
+        by_version: dict[str, list[ResolvedOption]] = {}
+        for option in visible:
+            by_version.setdefault(option.added_in or schema.hyprland_version, []).append(option)
+        groups = tuple(
+            GroupPlan(
+                title=new_in_group_title(version),
+                options=tuple(members),
+                description=NEW_IN_GROUP_DESCRIPTION,
             )
-            if visible
-            else ()
+            for version, members in sorted(
+                by_version.items(), key=lambda item: version_key(item[0])
+            )
         )
         fallbacks.append(
             PagePlan(

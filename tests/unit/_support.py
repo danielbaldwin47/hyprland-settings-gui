@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from _fake_hyprland import FakeHyprland
 
+    from hyprtweaker.engine.ipc import LiveHyprland
     from hyprtweaker.engine.model import ConfigModel
     from hyprtweaker.engine.schema import Schema
     from hyprtweaker.session import Session
@@ -104,6 +105,73 @@ def sample_schema() -> Schema:
     return load_schema(SAMPLE_VERSION, SCHEMA_DIR)
 
 
+def schema_without(*names: str, version: str) -> Schema:
+    """The sample Schema as a later release that removed `names` would ship it."""
+    from hyprtweaker.engine.schema import Schema
+
+    base = sample_schema()
+    return Schema(
+        hyprland_version=version,
+        options=tuple(o for o in base if o.name not in names),
+        sections=base.sections,
+    )
+
+
+def schema_renaming(old: str, new: str, *, version: str) -> Schema:
+    """The sample Schema as a release that renamed `old` to `new` would ship it."""
+    from dataclasses import replace
+
+    from hyprtweaker.engine.schema import Schema
+
+    base = sample_schema()
+    path = tuple(new.replace(":", ".").split("."))
+    return Schema(
+        hyprland_version=version,
+        options=tuple(
+            replace(o, name=new, lua_key=".".join(path), path=path, renamed_from=old)
+            if o.name == old
+            else o
+            for o in base
+        ),
+        sections=base.sections,
+    )
+
+
+def synthetic_schema_dir(directory: Path, *versions: str) -> Path:
+    """A schema directory shipping exactly `versions`, one Option each, and an empty Overlay.
+
+    For version selection: what ships in `data/schema` changes with every release check,
+    and a test of "between two shipped schemas" must not change with it.
+    """
+    from hyprtweaker.engine.schema import GeneratedOption, GetOptionKey, OptionType, Widget
+    from hyprtweaker.engine.schema import generated as generated_module
+
+    option = GeneratedOption(
+        name="general:border_size",
+        lua_key="general.border_size",
+        section="general",
+        path=("general", "border_size"),
+        order=0,
+        type=OptionType.INT,
+        widget=Widget.INT_RANGE,
+        description="size of the border",
+        default=1,
+        default_raw=1,
+        sentinel_default=False,
+        getoption_key=GetOptionKey.INT,
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    for version in versions:
+        schema = generated_module.GeneratedSchema(
+            hyprland_version=version, options=(option,), provenance={}
+        )
+        (directory / f"hyprland-{version}.json").write_text(
+            generated_module.dumps(schema), encoding="utf-8"
+        )
+    (directory / "overlay.json").write_text('{"format_version": 1}', encoding="utf-8")
+    return directory
+
+
 class Runner:
     """A `Session.spawn` for tests: real tasks on the running loop, awaitable to quiescence.
 
@@ -153,7 +221,19 @@ def section_conversation(*sections: str, **set_values: Any) -> dict[str, str]:
     return conversation
 
 
-def session_for(fake: FakeHyprland, root: Path, runner: Runner) -> Session:
+def session_for(
+    fake: FakeHyprland,
+    root: Path,
+    runner: Runner,
+    *,
+    live_hyprland: LiveHyprland | None = None,
+) -> Session:
+    """A Session over `fake`, posing as the Hyprland `live_hyprland` describes, if any.
+
+    The snapshot is handed in rather than read: the startup read blocks, and `fake` serves
+    on the loop this is called from, so the read would wait out its timeout and answer
+    `None` in every test.
+    """
     from hyprtweaker.engine.paths import ConfigPaths
     from hyprtweaker.session import Session
 
@@ -163,6 +243,7 @@ def session_for(fake: FakeHyprland, root: Path, runner: Runner) -> Session:
         paths=ConfigPaths.rooted_at(root),
         app_version=SAMPLE_APP_VERSION,
         connect=lambda: fake.instance,
+        read_live=lambda: live_hyprland,
     )
 
 

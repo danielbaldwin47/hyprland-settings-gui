@@ -2,12 +2,14 @@
 
 Curves, animations, gestures, per-device overrides, environment variables, autostart
 commands and permissions are the half of the config surface that is neither an Option nor
-an ordered rule list. They have no Generated schema and never will: `hyprctl descriptions`
-describes `hl.config` values, and none of these are one. Their shapes come from the Lua
-API instead, so they are declared here by hand exactly the way `rules_catalog` and
-`dispatchers` declare theirs -- a catalogue is the honest home for "what the compositor's
-C++ parser accepts", and putting it beside them keeps one answer to "where do entity field
-names live" (`model/entities.py` docstring makes the same point for the dataclasses).
+an ordered rule list. `hyprctl descriptions` describes `hl.config` values, and none of these
+are one, so their field shapes come from the Lua API instead and are declared here by hand
+exactly the way `rules_catalog` and `dispatchers` declare theirs -- a catalogue is the
+honest home for "what the compositor's C++ parser accepts", and putting it beside them keeps
+one answer to "where do entity field names live" (`model/entities.py` docstring makes the
+same point for the dataclasses). The one exception is the animation tree's leaf *names*:
+`hyprctl -j animations` reports them, so they ride in the Generated schema
+(`animation_leaves`) and the list below is only the fallback for a schema without them.
 
 Every constant below cites the research doc that established it
 (`docs/research/lua-api-surface.md` §10-15, `docs/research/hyprlang-to-lua.md` §2.10), so a
@@ -25,11 +27,12 @@ from __future__ import annotations
 
 import enum
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from .model.entities import Animation, Curve, Device, EntitySet, EnvVar, Gesture
+from .schema import Schema
 from .triggers import MOD_ALIASES
 
 # --- field descriptions ------------------------------------------------------------------
@@ -125,7 +128,7 @@ SPRING_FIELDS: tuple[FieldSpec, ...] = (
 
 # --- animations (`lua-api-surface.md` §10) ------------------------------------------------
 
-ANIMATION_LEAVES: tuple[str, ...] = (
+SHIPPED_ANIMATION_LEAVES: tuple[str, ...] = (
     "global",
     "windows",
     "windowsIn",
@@ -161,17 +164,35 @@ ANIMATION_LEAVES: tuple[str, ...] = (
     "monitorAdded",
     "zoomFactor",
 )
-"""The animation tree's leaf names, as `hyprctl -j animations` reports them on 0.56.2.
+"""The animation tree's leaf names as 0.56.2 reports them: the fallback, not the source.
 
-Version-dependent like the Generated schema, and shipped statically for the same reason
-the schemas are: the app has to render the Page before it has spoken to a compositor, and
-on a machine that is not running Hyprland at all. Unknown leaves are accepted rather than
-rejected (`unknown_leaves`), so a newer release adding one degrades to "shown, flagged"
-instead of "silently unwritable" -- the ADR-0012 rule for Options, applied here.
+The Generated schema records the tree its Hyprland reported (`GeneratedSchema.animation_leaves`)
+and `animation_leaves` serves that. This list answers only for a schema generated before the
+block existed, so the Page still renders its dropdown against a Hyprland the app has no
+newer record of. Unknown leaves are accepted rather than rejected (`unknown_leaves`), so a
+release newer than any schema degrades to "shown, flagged" instead of "silently unwritable"
+-- the ADR-0012 rule for Options, applied here.
 
 `__internal_fadeCTM` is deliberately absent: it is an implementation detail the compositor
 reports but no config should name.
 """
+
+
+def animation_leaves(schema: Schema) -> tuple[str, ...]:
+    """The leaves this Schema's Hyprland has, in tree order: its own record, else the
+    shipped list.
+
+    Callers do not care which served it; a Schema whose block is absent is a version the
+    app has no record of, and the shipped list is the best answer there is. The schema
+    records its leaves alphabetically, which put `border` first in the dropdown and on an
+    untouched Save; the shipped list's order is the tree's (`global` at the root), so the
+    known leaves take it and a leaf the app has no place for yet follows them.
+    """
+    if schema.animation_leaves is None:
+        return SHIPPED_ANIMATION_LEAVES
+    rank = {leaf: index for index, leaf in enumerate(SHIPPED_ANIMATION_LEAVES)}
+    return tuple(sorted(schema.animation_leaves, key=lambda leaf: rank.get(leaf, len(rank))))
+
 
 ANIMATION_SPEED_MIN = 0.0
 ANIMATION_SPEED_MAX = 100.0
@@ -818,7 +839,7 @@ def curve_findings(curve: Curve) -> tuple[Finding, ...]:
     return tuple(findings)
 
 
-def animation_findings(animation: Animation) -> tuple[Finding, ...]:
+def animation_findings(animation: Animation, leaves: Collection[str]) -> tuple[Finding, ...]:
     """What Hyprland would say about one animation, curve references aside.
 
     The required-field rules are the binary's, not the wiki's -- probed with
@@ -829,6 +850,10 @@ def animation_findings(animation: Animation) -> tuple[Finding, ...]:
 
     Both were missing from the research doc's account of `hl.animation`, and both are
     reachable from the Add form in two clicks.
+
+    `leaves` is the tree the compositor has (`animation_leaves(schema)`). It has no default:
+    one that fell back to the shipped list would check a newer Hyprland's tree against an
+    older one without anybody noticing.
     """
     findings: list[Finding] = []
     enabled = animation.fields.get("enabled")
@@ -844,7 +869,7 @@ def animation_findings(animation: Animation) -> tuple[Finding, ...]:
         findings.append(
             Finding(animation.leaf, "Set a speed: Hyprland requires one to animate.")
         )
-    if animation.leaf not in ANIMATION_LEAVES:
+    if animation.leaf not in leaves:
         findings.append(
             Finding(
                 animation.leaf,
@@ -868,11 +893,11 @@ def animation_findings(animation: Animation) -> tuple[Finding, ...]:
     return tuple(findings)
 
 
-def unknown_leaves(entities: EntitySet) -> tuple[str, ...]:
+def unknown_leaves(entities: EntitySet, leaves: Collection[str]) -> tuple[str, ...]:
     """Animation leaves this Hyprland's tree does not have, deduplicated in model order."""
     seen: list[str] = []
     for animation in entities.animations:
-        if animation.leaf not in ANIMATION_LEAVES and animation.leaf not in seen:
+        if animation.leaf not in leaves and animation.leaf not in seen:
             seen.append(animation.leaf)
     return tuple(seen)
 
@@ -949,7 +974,6 @@ __all__ = [
     "ANIMATION_CURVE_KEYS",
     "ANIMATION_FIELDS",
     "ANIMATION_FIELD_SPECS",
-    "ANIMATION_LEAVES",
     "ANIMATION_SPEED_MAX",
     "ANIMATION_SPEED_MIN",
     "BUILTIN_CURVES",
@@ -975,6 +999,7 @@ __all__ = [
     "PERMISSION_ENFORCE_OPTION",
     "PERMISSION_MODES",
     "PERMISSION_TYPES",
+    "SHIPPED_ANIMATION_LEAVES",
     "SHUTDOWN_EVENT",
     "SPRING_FIELDS",
     "SPRING_MIN",
@@ -986,6 +1011,7 @@ __all__ = [
     "FieldType",
     "Finding",
     "animation_findings",
+    "animation_leaves",
     "coerce",
     "curve_findings",
     "curve_usage",

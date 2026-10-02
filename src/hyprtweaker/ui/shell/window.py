@@ -54,6 +54,7 @@ from hyprtweaker.engine.migration.export import render as export_render  # noqa:
 from hyprtweaker.engine.migration.flow import (  # noqa: E402
     Decision,
     MigrationFlow,
+    asks_consent,
     fresh_start,
 )
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
@@ -68,7 +69,7 @@ from hyprtweaker.engine.prefs import Prefs, PrefsStore  # noqa: E402
 from hyprtweaker.engine.profiles import MonitorStateSnapshot  # noqa: E402
 from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
-from hyprtweaker.session import AutoRevert, Session  # noqa: E402
+from hyprtweaker.session import AutoRevert, Notice, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
 from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog  # noqa: E402
@@ -83,11 +84,13 @@ from hyprtweaker.ui.dialogs.migration import (  # noqa: E402
     import_dialog,
     migration_dialog,
 )
+from hyprtweaker.ui.dialogs.notices import notice_dialog, notice_title  # noqa: E402
 from hyprtweaker.ui.dialogs.rule_editor import RuleEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.submap_editor import SubmapEditor  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.binds import BindActions, BindsPage  # noqa: E402
 from hyprtweaker.ui.pages.config import ConfigPage  # noqa: E402
+from hyprtweaker.ui.pages.declaration_kinds import BY_KIND  # noqa: E402
 from hyprtweaker.ui.pages.declarations import (  # noqa: E402
     PAGES as DECLARATION_PAGES,
 )
@@ -125,6 +128,7 @@ from hyprtweaker.ui.search import Hit, SearchIndex  # noqa: E402
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
 
 IMPORT_ACTION = "import-config"
+IMPORT_LABEL = "Import..."
 EXPORT_ACTION = "export-config"
 REPORT_ACTION = "import-report"
 
@@ -185,6 +189,12 @@ picked in."""
 
 UNDO_TOAST_SECONDS = 4
 """Long enough to notice and reach, short enough not to sit over the Row that just changed."""
+
+NOTICE_TOAST_SECONDS = 8
+"""ADR-0012's Info notices: as long as the auto-revert toast, which also offers Details.
+
+A timeout rather than a toast that waits for the user: every toast queues behind the one on
+screen, and a notice nobody closed would hold back the next undo offer indefinitely."""
 
 SHOW_ADVANCED_ACTION = "show-advanced"
 """One global switch, in the primary menu -- never per-Page (ADR-0013 §5).
@@ -444,17 +454,46 @@ class MainWindow(Adw.ApplicationWindow):
         menu.append_section("View", views)
 
         interop = Gio.Menu()
-        interop.append("Import...", f"win.{IMPORT_ACTION}")
+        interop.append(IMPORT_LABEL, f"win.{IMPORT_ACTION}")
         interop.append("Export...", f"win.{EXPORT_ACTION}")
         interop.append("Last import report", f"win.{REPORT_ACTION}")
         # A section of its own: Import and Export are about somebody else's config coming in
         # or this one going out, which is a different kind of act from changing a setting.
         menu.append_section(None, interop)
+        # The popover is built here rather than left to the button, so its entries exist to
+        # be given a tooltip: a menu model has no attribute for one.
+        popover = Gtk.PopoverMenu.new_from_model(menu)
+        if self._session.hyprland_too_old:
+            self._explain_unavailable_import(popover)
         return Gtk.MenuButton(
             icon_name="open-menu-symbolic",
-            menu_model=menu,
+            popover=popover,
             tooltip_text="Main menu",
         )
+
+    def _explain_unavailable_import(self, popover: Gtk.PopoverMenu) -> None:
+        """Say why Import is greyed out, in the Banner's own words (#101), less its "settings
+        are read-only", which is about the Pages, not about importing.
+
+        Below Hyprland 0.56 the compositor reads hyprlang only, so the wizard would write a
+        Lua file it cannot load. The action is disabled in `_install_actions`; this is the
+        half that tells the user why, on the entry they are looking at.
+        """
+        pending: list[Gtk.Widget] = [popover]
+        while pending:
+            widget = pending.pop()
+            # `GtkModelButton` is private API and reports no action name, so the entry is
+            # found by the label this menu gave it.
+            if (
+                type(widget).__name__ == "GtkModelButton"
+                and widget.get_property("text") == IMPORT_LABEL
+            ):
+                widget.set_tooltip_text(f"{self._session.unsupported_reason}.")
+                return
+            child = widget.get_first_child()
+            while child is not None:
+                pending.append(child)
+                child = child.get_next_sibling()
 
     def _install_actions(self) -> None:
         advanced = Gio.SimpleAction.new_stateful(
@@ -488,6 +527,8 @@ class MainWindow(Adw.ApplicationWindow):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", handler)
             self.add_action(action)
+        # Never reachable below Hyprland 0.56, for the whole run: that does not change.
+        self.lookup_action(IMPORT_ACTION).set_enabled(not self._session.hyprland_too_old)
 
         search = Gio.SimpleAction.new(SEARCH_ACTION, None)
         search.connect("activate", self._on_search_action)
@@ -537,7 +578,10 @@ class MainWindow(Adw.ApplicationWindow):
         )
         if source is not None:
             flow.detect()
-            flow.build_preview(source)
+            if not asks_consent(source):
+                # A `.lua` is read only once the wizard has asked (#190); building its
+                # preview here would raise `ConsentRequired` out of the file chooser.
+                flow.build_preview(source)
         return flow
 
     def show_migration(self, source: Path | None = None) -> MigrationDialog:
@@ -547,6 +591,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.migration_flow(source),
             spawn=self._spawn,
             on_finished=self._on_migration_finished,
+            source=source,
         )
 
     def _on_migration_finished(self, decision: Decision | None) -> None:
@@ -567,6 +612,11 @@ class MainWindow(Adw.ApplicationWindow):
         """
         session = self._session
         detection = self._detect()
+        if session.hyprland_too_old:
+            # Nothing to route: a fresh scaffold or a converted config would be a Lua file
+            # this compositor never reads. The Session's own Banner says what is needed.
+            self._offered = None
+            return detection
         self._offered = detection if detection.offers_import else None
 
         pending = sentinel_read(session.paths)
@@ -624,6 +674,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._spawn(flow.roll_back_live(pending))
 
     def _on_import(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
+        if self._session.hyprland_too_old:
+            return
         import_dialog(self, self.show_migration)
 
     def _on_export(self, _action: Gio.SimpleAction, _parameter: Any) -> None:
@@ -1137,36 +1189,37 @@ class MainWindow(Adw.ApplicationWindow):
         """The curves an animation may name -- what makes the dropdown truthful."""
         return tuple(curve.name for curve in self._session.curves if curve.name)
 
+    def declaration_editor(
+        self, kind: str, *, on_done: Callable[[Any], None], index: int | None = None
+    ) -> DeclarationEditor:
+        """The editor for a new entity of `kind`, or for the one at `index`."""
+        entities = self._session.declarations(kind)
+        return DeclarationEditor(
+            kind=kind,
+            on_done=on_done,
+            entity=entities[index] if index is not None else None,
+            curve_names=self._curve_names(),
+            taken=taken_identities(kind, entities, skip=index),
+            bounds=self._session.device_field_bounds,
+            choices=BY_KIND[kind].choices_from(self._session.schema),
+        )
+
     def _add_declaration(self, kind: str) -> None:
         def done(entity: Any) -> None:
             if self._session.add_declaration(kind, entity):
                 self._refresh_declarations(kind)
 
-        DeclarationEditor(
-            kind=kind,
-            on_done=done,
-            curve_names=self._curve_names(),
-            taken=taken_identities(kind, self._session.declarations(kind)),
-            bounds=self._session.device_field_bounds,
-        ).present(self)
+        self.declaration_editor(kind, on_done=done).present(self)
 
     def _edit_declaration(self, kind: str, index: int) -> None:
-        entities = self._session.declarations(kind)
-        if not 0 <= index < len(entities):
+        if not 0 <= index < len(self._session.declarations(kind)):
             return
 
         def done(entity: Any) -> None:
             if self._session.replace_declaration(kind, index, entity):
                 self._refresh_declarations(kind)
 
-        DeclarationEditor(
-            kind=kind,
-            on_done=done,
-            entity=entities[index],
-            curve_names=self._curve_names(),
-            taken=taken_identities(kind, entities, skip=index),
-            bounds=self._session.device_field_bounds,
-        ).present(self)
+        self.declaration_editor(kind, on_done=done, index=index).present(self)
 
     def _remove_declaration(self, kind: str, index: int) -> None:
         """Delete one entity, warning first when other rows depend on it.
@@ -1462,12 +1515,13 @@ class MainWindow(Adw.ApplicationWindow):
         exists to surface invisible in the one case the user just caused.
 
         Then a failure toast, but only for a failure the Banner has nothing to say about.
-        ADR-0016 is explicit that toasts are "only for transient auto-revert events", and
-        both kinds of failure the Banner *does* carry are excluded here: a config error,
-        which belongs to the Banner and its dialog because they can offer to fix it, and a
-        read-back mismatch, which raises the Banner and badges its Row. What is left for a
-        toast is the handful of failures that never reached the compositor at all -- a
-        refused write, a full disk -- which would otherwise happen in silence.
+        ADR-0016 keeps toasts for transient events, "never a persistent unhealthy state, which
+        is the Banner's", and both kinds of failure the Banner *does* carry are excluded
+        here: a config error, which belongs to the Banner and its dialog because they can
+        offer to fix it, and a read-back mismatch, which raises the Banner and badges its
+        Row. What is left for a toast is the handful of failures that never reached the
+        compositor at all -- a refused write, a full disk -- which would otherwise happen in
+        silence.
 
         A *successful* transaction gets no toast: instant apply's whole promise is that the
         change is the feedback (ADR-0003), and the offer to undo it arrives separately through
@@ -1507,6 +1561,26 @@ class MainWindow(Adw.ApplicationWindow):
                 "button-clicked", lambda *_: error_dialog(self, recovery_plan(revert.errors))
             )
         self._toasts.add_toast(toast)
+
+    def show_notice(self, notice: Notice) -> Adw.Toast:
+        """One of ADR-0012's one-time notices: a release removed or renamed settings.
+
+        A toast rather than the Banner: neither is a fault, and the Banner is for a state the
+        user has to act on (ADR-0016). **Details** lists the settings. The notice counts as
+        seen when the toast goes away -- timeout, button or close -- and not when it is
+        raised, so one queued behind other toasts when the app quits comes back next start.
+        Returned for the UI tier.
+        """
+        toast = Adw.Toast(title=notice_title(notice), timeout=NOTICE_TOAST_SECONDS)
+        toast.set_button_label("Details")
+        toast.connect("button-clicked", lambda *_: self.notice_details(notice))
+        toast.connect("dismissed", lambda *_: self._session.notice_seen(notice))
+        self._toasts.add_toast(toast)
+        return toast
+
+    def notice_details(self, notice: Notice) -> Adw.AlertDialog:
+        """The settings a notice is about. Returned for the UI tier."""
+        return notice_dialog(self, notice, self._session.schema)
 
     # --- recovery (ADR-0016) ------------------------------------------------------------------
 

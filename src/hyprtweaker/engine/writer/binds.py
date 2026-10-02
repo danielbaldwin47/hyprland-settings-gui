@@ -157,6 +157,20 @@ def render_bind(bind: Bind, *, depth: int = 0) -> str | None:
     return f"{INDENT * depth}{line}"
 
 
+def live_bind_count(entities: EntitySet) -> int:
+    """How many binds `binds.lua` registers, submap binds included (#101).
+
+    Asked of `render_bind` itself rather than re-derived from the model: a bind with no
+    emittable action renders as nothing and a disabled one as a comment, and neither is
+    ever in `hyprctl binds`. The Migration switch compares the live count with this one, so
+    the two cannot drift apart when the Writer learns another reason not to emit.
+    """
+    rendered = (render_bind(bind) for bind in entities.binds)
+    return sum(
+        1 for line in rendered if line is not None and not line.startswith(DISABLED_PREFIX)
+    )
+
+
 def render_binds_module(entities: EntitySet, *, app_version: str) -> str | None:
     """The whole `binds.lua`, or `None` when there is nothing to write.
 
@@ -364,6 +378,7 @@ def _parse_path(
 __all__ = [
     "ParsedBinds",
     "ReadOnlyBind",
+    "live_bind_count",
     "lua_value",
     "parse_binds_module",
     "render_bind",

@@ -270,11 +270,114 @@ def disconnected_rules(
     )
 
 
+def arrangement_mismatches(
+    rules: Sequence[MonitorRule], monitors: Sequence[Mapping[str, Any]]
+) -> tuple[str, ...]:
+    """Where a live display differs from what its rule asks for, one sentence each (#101).
+
+    The Migration switch's monitor check (ADR-0009). Each connected display answers to its
+    own rule, else to the catch-all. Only the fields a rule states as numbers are compared:
+    `preferred`, `auto` and the other words leave Hyprland to choose, so there is nothing
+    to hold it to. The refresh rate is not compared, because a rule is a request and
+    Hyprland picks the closest advertised mode (`format_mode`). Rules for displays that are
+    not connected are not a mismatch; nothing is live to differ.
+
+    Reads helper data against rules and keeps neither: nothing here is written back or
+    reconciled with the model (ADR-0008).
+    """
+    catch_all = next((rule for rule in rules if rule.output == CATCH_ALL_OUTPUT), None)
+    found: list[str] = []
+    for monitor in monitors:
+        name = str(monitor.get("name", ""))
+        rule = (
+            rule_for(rules, connector=name, description=str(monitor.get("description", "")))
+            or catch_all
+        )
+        if rule is not None:
+            found.extend(_mismatches_with(rule, name, monitor))
+    return tuple(found)
+
+
+def _mismatches_with(rule: MonitorRule, name: str, monitor: Mapping[str, Any]) -> list[str]:
+    fields = rule.fields
+    if fields.get("disabled"):
+        return [f"{name} is still active, the configuration disables it"]
+
+    found: list[str] = []
+    wanted_scale = _number(fields.get("scale"))
+    live_scale = _number(monitor.get("scale"))
+    if (
+        wanted_scale is not None
+        and live_scale is not None
+        and abs(wanted_scale - live_scale) > _SCALE_TOLERANCE
+    ):
+        found.append(
+            f"{name} is at scale {_trim(live_scale)}, "
+            f"the configuration asks for {_trim(wanted_scale)}"
+        )
+
+    mode = parse_mode(str(fields.get("mode", "")))
+    if mode is not None:
+        live_size = (monitor.get("width"), monitor.get("height"))
+        if live_size != (mode[0], mode[1]):
+            found.append(
+                f"{name} runs {live_size[0]}x{live_size[1]}, "
+                f"the configuration asks for {mode[0]}x{mode[1]}"
+            )
+
+    # A mirror has no position of its own: Hyprland places it on its source.
+    position = parse_position(str(fields.get("position", "")))
+    if position is not None and not fields.get("mirror"):
+        live_at = (monitor.get("x"), monitor.get("y"))
+        if live_at != position:
+            found.append(
+                f"{name} is at position {live_at[0]}, {live_at[1]}, "
+                f"the configuration asks for {position[0]}, {position[1]}"
+            )
+
+    wanted_transform = _number(fields.get("transform"))
+    live_transform = _number(monitor.get("transform"))
+    if (
+        wanted_transform is not None
+        and live_transform is not None
+        and wanted_transform != live_transform
+    ):
+        found.append(
+            f"{name}'s rotation is {_transform_name(live_transform)}, "
+            f"the configuration asks for {_transform_name(wanted_transform)}"
+        )
+    return found
+
+
+def _transform_name(transform: float) -> str:
+    """A transform as the word the Monitors page shows for it, never the bare code."""
+    index = int(transform)
+    if index == transform and 0 <= index < len(TRANSFORM_NAMES):
+        return TRANSFORM_NAMES[index].lower()
+    return f"transform {_trim(transform)}"
+
+
+_SCALE_TOLERANCE = 0.01
+"""Hyprland rounds a fractional scale to what the output can express (1.566667, not 1.57)."""
+
+
+def _number(value: object) -> float | None:
+    """A rule or IPC value as a number, or `None` for `auto` and friends. Never a bool."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _trim(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
 __all__ = [
     "CATCH_ALL_OUTPUT",
     "DISPLAY_BREAKING_FIELDS",
     "SPECIAL_MODES",
     "TRANSFORM_NAMES",
+    "arrangement_mismatches",
     "connected_rules",
     "description_of",
     "disconnected_rules",

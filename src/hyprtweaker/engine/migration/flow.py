@@ -24,24 +24,27 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterator
+from collections import Counter
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Literal, Protocol
 
-from ..importer.loss import BACKUP_NAME, LossReport, rescue_command, rescue_line
+from ..importer.loss import BACKUP_NAME, LossCode, LossReport, rescue_command, rescue_line
 from ..importer.lua.mapping import import_lua
-from ..importer.lua.sandbox import Consent
+from ..importer.lua.sandbox import Consent, Policy
 from ..importer.mapping import ImportResult, import_config
 from ..model import ConfigModel
 from ..model.values import lua_string
+from ..monitors_catalog import arrangement_mismatches
 from ..paths import ConfigPaths
 from ..schema import Schema
 from ..state.manifest import Manifest
 from ..writer import Writer
+from ..writer.binds import live_bind_count
 from ..writer.lua import table_key
 from . import backup as backups
 from . import sentinel as sentinels
@@ -113,12 +116,17 @@ class Client(Protocol):
     """The slice of the IPC command client a migration needs.
 
     A Protocol rather than the concrete class so the flow's tests do not need a compositor,
-    and so it is obvious at a glance that migration talks to Hyprland in exactly three ways.
+    and so it is obvious at a glance what migration asks Hyprland: the one reload, and the
+    four reads ADR-0009's live checks are made of.
     """
 
     async def configerrors(self) -> tuple[str, ...]: ...
 
     async def bind_count(self) -> int: ...
+
+    async def workspace_rule_count(self) -> int: ...
+
+    async def monitors(self) -> tuple[Mapping[str, Any], ...]: ...
 
     async def reload_full_reset(self) -> None: ...
 
@@ -137,6 +145,69 @@ class Preview:
     @property
     def model(self) -> ConfigModel:
         return self.result.model
+
+    @property
+    def imported(self) -> int:
+        """How many settings this read got: its Options plus its Entities."""
+        return len(self.model) + len(self.result.entities)
+
+    @property
+    def offered(self) -> tuple[Offered, ...]:
+        """What the wizard's second offer would do for real, verbatim (#190).
+
+        Non-empty only after a *blocked* read that came back empty (no Option, no Entity)
+        or erroring, and that tried to run a command on the way: a config that builds itself
+        from `io.popen` output reads as nothing, or as a Lua error, while its commands are
+        faked. Anything else it read is a Preview worth showing as it is, and a read that
+        already ran them for real has nothing left to offer.
+
+        Running for real runs everything the blocked read faked, so the file operations are
+        listed beside the commands, and a repeat is listed once with how many times it ran,
+        in the order each first ran (#150 review, findings 6 and 19).
+        """
+        faked = [
+            use
+            for use in self.result.shell
+            if use.kind in _OFFERED_KINDS and use.policy == Policy.BLOCK
+        ]
+        if not any(_OFFERED_KINDS[use.kind] == "command" for use in faked):
+            return ()
+        erroring = LossCode.EVAL_ERROR in self.loss.code_counts()
+        if self.imported and not erroring:
+            return ()
+        times = Counter((_OFFERED_KINDS[use.kind], use.cmd) for use in faked)
+        return tuple(Offered(text, kind, n) for (kind, text), n in times.items())
+
+
+OfferedKind = Literal["command", "delete", "move"]
+
+
+@dataclass(frozen=True, slots=True)
+class Offered:
+    """One thing the second offer would do for real, as the config wrote it."""
+
+    text: str
+    """The command line, the path deleted, or `old -> new` for a move."""
+    kind: OfferedKind
+    times: int = 1
+
+
+_OFFERED_KINDS: dict[str, OfferedKind] = {
+    "os.execute": "command",
+    "io.popen": "command",
+    "os.remove": "delete",
+    "os.rename": "move",
+}
+"""The `ShellUse` kinds a config does itself. `importer.listdir` is the importer's own
+listing (`runner.lua`), which runs under every policy and so is never offered."""
+
+
+def asks_consent(source: Path) -> bool:
+    """Whether reading `source` means running it, so the user is asked first (#190).
+
+    Every `.lua` is read by evaluating it (the Lua importer); a `.conf` is only parsed.
+    """
+    return source.suffix == ".lua"
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,9 +239,12 @@ class Check:
     hard: bool = True
     """Whether failing it rolls the migration back.
 
-    Entity counts are soft for now: the Entity Modules (`binds.lua`, `monitors.lua`, ...)
-    are #64 and are not written yet, so a mismatch here reports a known gap in what the app
-    can emit rather than evidence that the switch went wrong.
+    Decided by what a false alarm costs. A hard check that misfires on a legitimate config
+    rolls back a migration that worked, the worst outcome this wizard has, so only the two
+    that mean "the user may be stranded" are hard: `configerrors`, and the bind count
+    (a config that loads with no keybinds is ADR-0016's emergency). Workspace rules and
+    monitors are compared with what Hyprland *did* with a request -- merged a selector,
+    picked the closest mode -- so a difference there is reported, not acted on.
     """
 
 
@@ -273,7 +347,7 @@ class MigrationFlow:
         if path is None:
             raise ValueError("nothing to import: no source file was detected or given")
 
-        if path.suffix == ".lua":
+        if asks_consent(path):
             result = import_lua(path, self.schema, consent=consent or Consent())
         else:
             result = import_config(path, self.schema)
@@ -394,7 +468,7 @@ class MigrationFlow:
         self._record_provenance(preview)
 
         await self.client.reload_full_reset()
-        checks = await self._verify_live(preview)
+        checks = await self.verify_live(preview)
         ok = all(check.ok for check in checks if check.hard)
         errors = tuple(
             check.detail for check in checks if not check.ok and check.name == "configerrors"
@@ -423,8 +497,12 @@ class MigrationFlow:
             errors = await self.client.configerrors()
         return errors
 
-    async def _verify_live(self, preview: Preview) -> list[Check]:
-        """ADR-0009's live checks, spoken over the IPC socket rather than by spawning."""
+    async def verify_live(self, preview: Preview) -> list[Check]:
+        """ADR-0009's live checks, spoken over the IPC socket rather than by spawning.
+
+        Public so the Harness can run them against a compositor it booted on a written
+        config, which is the only place the false-alarm question has an answer.
+        """
         assert self.client is not None
         checks: list[Check] = []
 
@@ -438,17 +516,57 @@ class MigrationFlow:
             )
         )
 
-        expected = len(preview.result.entities.binds)
-        if expected:
+        entities = preview.result.entities
+
+        # The count the Writer emits, not the count imported: disabled binds are comments and
+        # function-valued ones never reach `binds.lua`. `>=`, because `legacy.lua` and a
+        # preserved script can register binds the model never held.
+        expected_binds = live_bind_count(entities)
+        if expected_binds:
             live = await self.client.bind_count()
+            ok = live >= expected_binds
             checks.append(
                 Check(
                     name="binds",
-                    ok=live >= expected,
-                    detail=f"{live} live, {expected} imported",
+                    ok=ok,
+                    detail=""
+                    if ok
+                    else (
+                        f"Only {live} of the {expected_binds} keybinds in the new "
+                        "configuration are active."
+                    ),
+                    hard=True,
+                )
+            )
+
+        # Window and layer rules have no IPC listing in Hyprland, so `configerrors` is all
+        # that verifies them; saying so in a row the user cannot act on would be noise.
+        expected_workspace_rules = len(entities.workspace_rules)
+        if expected_workspace_rules:
+            live = await self.client.workspace_rule_count()
+            ok = live >= expected_workspace_rules
+            checks.append(
+                Check(
+                    name="workspace rules",
+                    ok=ok,
+                    detail=""
+                    if ok
+                    else (
+                        f"Only {live} of the {expected_workspace_rules} workspace rules in "
+                        "the new configuration are active."
+                    ),
                     hard=False,
                 )
             )
+
+        if entities.monitors:
+            mismatches = arrangement_mismatches(entities.monitors, await self.client.monitors())
+            checks.extend(
+                Check(name="monitors", ok=False, detail=detail, hard=False)
+                for detail in mismatches
+            )
+            if not mismatches:
+                checks.append(Check(name="monitors", ok=True, hard=False))
         return checks
 
     # --- 5. keep or roll back -----------------------------------------------------------
@@ -618,6 +736,10 @@ class MigrationFlow:
         if result.legacy:
             paths.legacy_lua.write_text(result.legacy, encoding="utf-8")
 
+        # The Writer renders `model.entities`, and an Importer returns its Entities beside the
+        # model rather than in it: without this the tree carries the Options and none of the
+        # binds, rules or monitors the Preview promised (#101).
+        result.model.adopt_entities(result.entities)
         Writer(paths, app_version=self.app_version).write(result.model)
 
     def _record_provenance(self, preview: Preview) -> None:

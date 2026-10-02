@@ -20,8 +20,10 @@ Every choice below was re-prototyped on the #8 codebase and screenshotted in a n
 A generated Row is: **title, description as subtitle, typed control, and a fixed-order suffix strip**:
 
 ```
-[state pills: Advanced · Restart] [value summary] [dependency badge] [reset (when modified)] [ⓘ help]
+[state pills: Restart · Advanced] [value summary] [dependency badge] [reset (when modified)] [ⓘ help]
 ```
+
+State pills: at most two, the two highest-ranked in the precedence table in `ui/rows/state.py`; the second pill's tooltip names the rest ("Also: …").
 
 1. **Subtitle = description.** The subtitle is the option's description (the curated `help` text when the Overlay overrides it). The dotted key moves into the ⓘ popover (copyable) and stays in the search index — typing `kb_layout` still finds the Row. This supersedes the dotted-key-subtitle wording in `CONTEXT.md`.
 

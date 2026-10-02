@@ -36,6 +36,7 @@ files = [
     "src/hyprtweaker/ui/rows/gesture.py",
     "src/hyprtweaker/ui/rows/state.py",
     "src/hyprtweaker/ui/search.py",
+    "tools/release_watch.py",
 ]
 mypy_path = "src"
 python_version = "3.11"
@@ -52,6 +53,10 @@ strict = true
 # exactly the one that should.
 testpaths = ["tests/unit", "tests/static", "tests/ui"]
 pythonpath = ["src"]
+# A test still running after this many seconds dumps every thread's traceback to stderr, and
+# keeps running. The per-commit suite takes about 13 s in all, so a dump names a stuck test:
+# without it, a worker pinned at 100% CPU for minutes named nothing (fix/150-ui-spin).
+faulthandler_timeout = 60
 markers = [
     "hyprland: integration tier; needs a real Hyprland binary (auto-skipped without one)",
 ]

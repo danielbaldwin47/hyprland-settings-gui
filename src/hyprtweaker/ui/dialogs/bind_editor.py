@@ -16,6 +16,7 @@ goes in the list -- because position is identity, and only the list knows the po
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import replace
 
@@ -36,6 +37,8 @@ from hyprtweaker.engine.dispatchers import (  # noqa: E402
 from hyprtweaker.engine.importer.binds import dead_keysyms  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger, validate_trigger  # noqa: E402
+from hyprtweaker.engine.writer.binds import lua_value  # noqa: E402
+from hyprtweaker.engine.writer.lua import table_key  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
 
 TRIGGER_HELP = "Modifiers and one key, joined by +. For example: SUPER + SHIFT + Q"
@@ -66,6 +69,20 @@ silently produced an invalid combination would be worse than not offering it yet
 INCOMPATIBLE = (("long_press", "repeating"), ("release", "repeating"))
 """Pairs the compositor rejects. Enforced as the editor's own validation (ADR-0007)."""
 
+FREE_FORM_HOW = "Type each setting as key = value, one per line."
+"""Follows the dispatcher's own `free_form_reason` above the raw table."""
+
+UNKNOWN_ACTION = "This version of the app does not know this action."
+"""The raw table's reason for a saved dispatcher the catalog has never heard of."""
+
+KEPT_TITLE = "Also kept from your config"
+KEPT_NOTE = "The form has no field for these, so Save keeps them as they are."
+
+BOOL_WORDS = {"true": True, "false": False, "yes": True, "no": False}
+"""What a yes-or-no field reads, lower-cased. Anything else is refused, never guessed."""
+
+_NUMBER = re.compile(r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+
 
 class BindEditor(Adw.Dialog):
     """Add or edit one Bind. Calls `on_done` with the finished Bind, or never."""
@@ -89,6 +106,7 @@ class BindEditor(Adw.Dialog):
         self._submap = bind.submap if bind is not None else submap
         self._chosen: Dispatcher | None = None
         self._arg_entries: dict[str, Gtk.Widget] = {}
+        self._kept: dict[str, object] = {}
         self._flag_switches: dict[str, Adw.SwitchRow] = {}
 
         self._view = Adw.NavigationView()
@@ -99,7 +117,7 @@ class BindEditor(Adw.Dialog):
         else:
             path = bind.dispatcher.path if bind.dispatcher else EXEC_PATH
             self._chosen = lookup(path) or Dispatcher(
-                path=path, label=f"hl.dsp.{path}", free_form=True
+                path=path, label=f"hl.dsp.{path}", free_form_reason=UNKNOWN_ACTION
             )
             self._view.push(self._form_page())
 
@@ -184,7 +202,10 @@ class BindEditor(Adw.Dialog):
         trigger_group.add(self._description)
         box.append(trigger_group)
 
+        self._kept = self._kept_args(entry)
         box.append(self._args_group(entry))
+        if self._kept:
+            box.append(self._kept_group())
         box.append(self._flags_group())
 
         self._error = Gtk.Label(css_classes=["error"], visible=False, wrap=True)
@@ -209,16 +230,18 @@ class BindEditor(Adw.Dialog):
         existing = self._original.dispatcher if self._original else None
         group = Adw.PreferencesGroup(title="Action")
 
-        if entry is None or entry.free_form:
-            group.set_description(
-                "This action's arguments are not documented in a form this app can "
-                "generate, so they are entered as Lua-style key = value pairs, one per line."
-            )
+        if entry is None or entry.free_form_reason is not None:
+            reason = entry.free_form_reason if entry is not None else UNKNOWN_ACTION
+            group.set_description(f"{reason} {FREE_FORM_HOW}")
             view = Gtk.TextView(monospace=True, top_margin=6, bottom_margin=6, left_margin=6)
             view.set_size_request(-1, 96)
             if existing is not None:
                 view.get_buffer().set_text(
-                    "\n".join(f"{key} = {value}" for key, value in existing.args.items())
+                    "\n".join(
+                        f"{key} = {_free_text(value)}"
+                        for key, value in existing.args.items()
+                        if key not in self._kept
+                    )
                 )
             frame = Gtk.Frame(child=view)
             group.add(frame)
@@ -234,13 +257,48 @@ class BindEditor(Adw.Dialog):
                 current = existing.args.get(spec.name)
                 if current is None and existing.positional:
                     current = existing.positional[0]
-                if current is not None:
-                    row.set_text(str(current))
+                if _is_scalar(current):
+                    row.set_text(_field_text(current))
             self._arg_entries[spec.name] = row
             group.add(row)
 
         if not entry.args:
             group.set_description("This action takes no arguments.")
+        return group
+
+    def _kept_args(self, entry: Dispatcher | None) -> dict[str, object]:
+        """The saved keys of this action the form has no field for, to carry through Save.
+
+        A curated form rebuilds the call from its `ArgSpec` names, and the raw table can only
+        spell scalars, so without this a hand-written `layout_aware = true` on
+        `fullscreen_state`, or a nested table, would be lost on any Save, even an untouched
+        one (#126 owner call 4, decided 2026-10-02). They belong to the saved action: once
+        another one is picked they are not carried.
+        """
+        existing = self._original.dispatcher if self._original else None
+        if existing is None or entry is None or entry.path != existing.path:
+            return {}
+        if entry.positional:
+            return {}
+        fields = (
+            None if entry.free_form_reason is not None else {spec.name for spec in entry.args}
+        )
+        return {
+            key: value
+            for key, value in existing.args.items()
+            if not _is_scalar(value) or (fields is not None and key not in fields)
+        }
+
+    def _kept_group(self) -> Adw.PreferencesGroup:
+        """The kept keys, read-only, one `key = value` line each, as the file spells them."""
+        group = Adw.PreferencesGroup(title=KEPT_TITLE, description=KEPT_NOTE)
+        for key, value in self._kept.items():
+            row = Adw.ActionRow(
+                title=f"{table_key(key)}{lua_value(value)}",
+                use_markup=False,
+                css_classes=["monospace"],
+            )
+            group.add(row)
         return group
 
     def _flags_group(self) -> Adw.PreferencesGroup:
@@ -257,10 +315,10 @@ class BindEditor(Adw.Dialog):
 
     def _collect_args(self) -> tuple[dict[str, object], tuple[object, ...]]:
         entry = self._chosen
-        if entry is None or entry.free_form:
+        if entry is None or entry.free_form_reason is not None:
             view = self._arg_entries.get("__free__")
             if view is None:
-                return {}, ()
+                return self._with_kept({}), ()
             buffer = view.get_buffer()
             text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
             args: dict[str, object] = {}
@@ -269,7 +327,7 @@ class BindEditor(Adw.Dialog):
                     continue
                 key, _, value = line.partition("=")
                 args[key.strip()] = _coerce(value.strip())
-            return args, ()
+            return self._with_kept(args), ()
 
         # Typed, not stringly: `ArgSpec.type` exists so an int argument reaches Lua as `9`
         # rather than `"9"`. The catalog carries the type precisely because the compositor
@@ -287,7 +345,15 @@ class BindEditor(Adw.Dialog):
         if entry.positional:
             first = entry.args[0].name if entry.args else ""
             return {}, (values[first],) if first in values else ()
-        return values, ()
+        return self._with_kept(values), ()
+
+    def _with_kept(self, values: dict[str, object]) -> dict[str, object]:
+        """`values` plus the kept keys, in the saved call's key order; a typed key wins."""
+        if not self._kept or self._original is None or self._original.dispatcher is None:
+            return values
+        merged = {**self._kept, **values}
+        rank = {key: index for index, key in enumerate(self._original.dispatcher.args)}
+        return dict(sorted(merged.items(), key=lambda item: rank.get(item[0], len(rank))))
 
     def _in_submap(self) -> bool:
         """Whether `catchall` is a legal Trigger for this bind.
@@ -355,7 +421,12 @@ class BindEditor(Adw.Dialog):
             ):
                 return f"{left} and {right} cannot both be set."
         entry = self._chosen
-        if entry is not None and not entry.free_form:
+        if entry is not None and entry.free_form_reason is None:
+            for spec in entry.args:
+                row = self._arg_entries.get(spec.name)
+                text = row.get_text().strip() if isinstance(row, Adw.EntryRow) else ""
+                if text and (refusal := _type_refusal(spec.title(), spec.type, text)):
+                    return refusal
             args, positional = self._collect_args()
             for spec in entry.args:
                 if spec.required and spec.name not in args and not positional:
@@ -408,12 +479,25 @@ class BindEditor(Adw.Dialog):
         self.close()
 
 
+def _type_refusal(title: str, arg_type: str, text: str) -> str:
+    """Why `text` cannot be the field's type, or "" when it can.
+
+    Refused rather than guessed: `forward` typed into "Forwards" once saved as
+    `next = false`, the opposite of what was meant (#150 review, finding 11).
+    """
+    if arg_type == "bool" and text.lower() not in BOOL_WORDS:
+        return f"{title} must be true or false."
+    if arg_type == "int" and not re.fullmatch(r"-?\d+", text):
+        return f"{title} must be a whole number."
+    return ""
+
+
 def _typed(text: str, arg_type: str) -> object:
     """One form field's text as the type the catalog says the dispatcher wants.
 
-    A field the user left in a shape the type cannot take comes back as the string they
-    typed rather than raising: `_validate` has already run, and silently substituting `0`
-    for what someone wrote would emit a bind that works and does the wrong thing.
+    `_validate` has refused any text the type cannot take, so the fallback to the string
+    as typed is only a guard: silently substituting `0` or `false` for what someone wrote
+    would emit a bind that works and does the wrong thing.
     """
     if arg_type == "int":
         try:
@@ -421,8 +505,31 @@ def _typed(text: str, arg_type: str) -> object:
         except ValueError:
             return text
     if arg_type == "bool":
-        return text.strip().lower() in {"true", "yes", "1"}
+        return BOOL_WORDS.get(text.lower(), text)
     return text
+
+
+def _is_scalar(value: object) -> bool:
+    """A value one text field can show and read back: not a table, not missing."""
+    return isinstance(value, bool | int | float | str)
+
+
+def _field_text(value: object) -> str:
+    """A saved scalar as a typed form field shows it: Lua's `true`, never Python's `True`."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _free_text(value: object) -> str:
+    """A saved argument as the raw table shows it, such that `_coerce` reads back the same.
+
+    `str(False)` is `False`, which comes back as the string "False", and an unquoted `"3"`
+    comes back as the integer 3; either changes what Hyprland is told to do on Save.
+    """
+    if isinstance(value, str) and _coerce(value) != value:
+        return f'"{value}"'
+    return _field_text(value)
 
 
 def _coerce(text: str) -> object:
@@ -435,10 +542,9 @@ def _coerce(text: str) -> object:
         return text[1:-1]
     if text in {"true", "false"}:
         return text == "true"
-    try:
-        return int(text)
-    except ValueError:
-        return text
+    if _NUMBER.fullmatch(text):
+        return int(text) if text.lstrip("-").isdigit() else float(text)
+    return text
 
 
 def _dialog_body(child: Gtk.Widget) -> Gtk.Widget:

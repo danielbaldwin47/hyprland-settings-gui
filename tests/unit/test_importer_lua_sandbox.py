@@ -213,9 +213,11 @@ def test_a_config_that_never_finishes_is_cut_off(tmp_path, schema) -> None:  # t
     """A foreign config is a program, and a program can loop forever."""
     entry = write(tmp_path, "while true do end\n")
 
-    result = import_lua(entry, schema, consent=GRANTED, timeout=2.0)
+    result = import_lua(entry, schema, consent=GRANTED, timeout=0.5)
 
-    assert any("did not finish" in item.message for item in result.loss)
+    assert "Your config took longer than 0.5 seconds to run, so reading it was stopped." in [
+        item.message for item in result.loss
+    ]
 
 
 # --- the module system -------------------------------------------------------------------
@@ -262,6 +264,41 @@ def test_a_wildcard_require_cannot_smuggle_a_shell_command(tmp_path) -> None:  #
     evaluate(entry, consent=GRANTED)
 
     assert not target.exists(), "a crafted require name reached the shell"
+
+
+def test_a_config_dir_with_a_quote_in_its_name_runs_no_command(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The wildcard listing interpolates the config's own directory as well as the name.
+
+    A directory the user named `cfg'; touch pwned; echo '` must still be one quoted path:
+    the consent page promises that none of the config's commands run, and a quote in a
+    folder name is not consent.
+    """
+    root = tmp_path / "cfg'; touch pwned; echo '"
+    (root / "parts").mkdir(parents=True)
+    (root / "parts" / "one.lua").write_text(
+        "hl.config({ decoration = { rounding = 3 } })\n", encoding="utf-8"
+    )
+    entry = write(root, 'require("./parts/*")\n')
+
+    recording = evaluate(entry, consent=GRANTED)
+
+    assert not (root / "pwned").exists(), "a quote in the config dir reached the shell"
+    assert recording.calls, "the wildcard require loaded nothing from the quoted dir"
+
+
+def test_no_interpreter_says_what_to_install(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from hyprtweaker.engine.importer.lua import LuaUnavailable, sandbox
+
+    monkeypatch.setattr(sandbox, "lua_binary", lambda: None)
+    entry = write(tmp_path, "hl.config({})\n")
+
+    with pytest.raises(LuaUnavailable) as raised:
+        evaluate(entry, consent=GRANTED)
+
+    assert str(raised.value) == (
+        "Reading a Lua config needs Lua, which is not installed. Install Lua (lua5.5, "
+        "lua5.4, lua5.3, lua or luajit) and try again."
+    )
 
 
 def test_passthrough_really_does_let_an_effect_through(tmp_path) -> None:  # type: ignore[no-untyped-def]

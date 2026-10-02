@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, load_schema
 
@@ -35,15 +36,26 @@ PRESSURE_MIN = "input:tablettool:pressure_range_min"
 class FakeSession:
     """Everything `RowFactory` asks of a `Session`, over a real model and no sockets."""
 
-    def __init__(self, *, live: bool = True) -> None:
+    def __init__(self, *, live: bool = True, live_hyprland: LiveHyprland | None = None) -> None:
         self.schema: Schema = SCHEMA
         self.live = live
         self.pending_restart: frozenset[str] = frozenset()
         self.unapplied: frozenset[str] = frozenset()
         self.overridden: frozenset[str] = frozenset()
         self.device_overrides: dict[str, tuple[str, ...]] = {}
+        self.live_hyprland = live_hyprland
+        self.unknown: frozenset[str] = frozenset()
+        """What `unknown_to_version` answers: the Session's own rule is tested on a real
+        Session (`test_session_live_version.py`), so the fake holds the answer."""
+        self.retired: dict[str, str] = {}
         self.model = ConfigModel(SCHEMA)
         self.applied: list[str] = []
+
+    def unknown_to_version(self, option: ResolvedOption) -> bool:
+        return option.name in self.unknown
+
+    def retired_in(self, option: ResolvedOption) -> str | None:
+        return self.retired.get(option.name)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         return self.model.get(option.name)
@@ -296,6 +308,23 @@ def test_a_restart_flagged_row_swaps_its_pill_once_the_write_lands() -> None:
     row.chrome.refresh()
 
     assert row.chrome.pill_labels == ("Pending restart",)
+
+
+def test_a_row_the_running_hyprland_lacks_says_so_and_still_writes() -> None:
+    """#181: the pill informs, the control stays live, and an edit is written as before."""
+    live = LiveHyprland("0.56.0", tuple({"name": o.name} for o in SCHEMA if o.name != ROUNDING))
+    session = FakeSession(live_hyprland=live)
+    session.unknown = frozenset({ROUNDING})
+    row = build_row(ROUNDING, session)
+
+    assert row.chrome.pill_labels == ("Not in this Hyprland",)
+    assert row.control.get_sensitive()
+
+    row.control.set_value(9)
+
+    assert session.applied == [ROUNDING]
+    assert session.model.get(ROUNDING) == 9
+    assert build_row(GAPS_IN, session).chrome.pill_labels == ()
 
 
 # --- the help popover -------------------------------------------------------------------------

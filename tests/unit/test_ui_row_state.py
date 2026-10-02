@@ -17,6 +17,7 @@ from typing import Any
 
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
+from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import UNSET, ConfigModel, CssGaps, Gradient, OptionValue, Vec2
 from hyprtweaker.engine.schema import (
     ResolvedOption,
@@ -24,6 +25,7 @@ from hyprtweaker.engine.schema import (
     Visibility,
     Widget,
     load_schema,
+    supplement,
 )
 from hyprtweaker.ui.rows.state import (
     ADVANCED_PILL,
@@ -33,6 +35,7 @@ from hyprtweaker.ui.rows.state import (
     PENDING_RESTART_PILL,
     RESTART_PILL,
     UNAPPLIED_PILL,
+    Pill,
     default_label,
     help_content,
     no_value_label,
@@ -60,14 +63,26 @@ class FakeContext:
         unapplied: frozenset[str] = frozenset(),
         overridden: frozenset[str] = frozenset(),
         device_overrides: Mapping[str, tuple[str, ...]] | None = None,
+        live_hyprland: LiveHyprland | None = None,
+        retired: Mapping[str, str] | None = None,
+        schema: Schema = SCHEMA,
     ) -> None:
-        self.schema: Schema = SCHEMA
+        self.schema = schema
         self.live = live
         self.pending_restart = pending_restart
         self.unapplied = unapplied
         self.overridden = overridden
         self.device_overrides: Mapping[str, tuple[str, ...]] = device_overrides or {}
-        self.model = ConfigModel(SCHEMA)
+        self.live_hyprland = live_hyprland
+        self.retired: Mapping[str, str] = retired or {}
+        """Retired Option name -> the release that retired it."""
+        self.model = ConfigModel(schema)
+
+    def unknown_to_version(self, option: ResolvedOption) -> bool:
+        return self.live_hyprland is not None and option.name not in self.live_hyprland.names
+
+    def retired_in(self, option: ResolvedOption) -> str | None:
+        return self.retired.get(option.name)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         return self.model.get(option.name)
@@ -265,10 +280,168 @@ def test_a_device_override_does_not_dim_the_row_or_block_editing() -> None:
     assert state.dependency is None
 
 
-def test_an_advanced_restart_flagged_option_wears_both_pills_in_order() -> None:
-    option = SCHEMA["debug:gl_debugging"]
+def test_two_pills_show_in_rank_order_with_their_own_tooltips() -> None:
+    """Restart outranks Advanced: what the setting does beats why the Row is visible."""
+    pills = row_state(SCHEMA["debug:gl_debugging"], FakeContext()).pills
 
-    assert _pills(option, FakeContext()) == (ADVANCED_PILL, RESTART_PILL)
+    assert [pill.label for pill in pills] == ["Restart", "Advanced"]
+    assert pills[1].tooltip == "A low-level setting: shown only here, in the Config view."
+
+
+def _live_without(*missing: str, version: str = "0.56.0") -> LiveHyprland:
+    """A running Hyprland that describes every shipped Option except `missing`."""
+    return LiveHyprland(
+        version, tuple({"name": o.name} for o in SCHEMA if o.name not in missing)
+    )
+
+
+def test_an_option_the_running_hyprland_lacks_wears_the_not_in_this_hyprland_pill() -> None:
+    """#77: an older compositor degrades onto a newer Schema with unknown-to-this-version
+    Rows, so the user can tell an option their Hyprland ignores from one it obeys."""
+    context = FakeContext(live_hyprland=_live_without("decoration:rounding"))
+
+    (pill,) = row_state(SCHEMA["decoration:rounding"], context).pills
+
+    assert pill.label == "Not in this Hyprland"
+    assert pill.tooltip == (
+        "Hyprland 0.56.0 does not have this setting, so a change made here will not take "
+        "effect."
+    )
+    assert _pills(SCHEMA["general:gaps_in"], context) == (), "only the option it lacks"
+
+
+def test_a_retired_option_wears_its_release_in_place_of_not_in_this_hyprland() -> None:
+    """ADR-0012 "the Row is badged": a newer Hyprland dropped an Option the user set. Its
+    unset neighbour, equally absent, keeps #181's pill: nothing of the user's was retired."""
+    context = FakeContext(
+        live_hyprland=_live_without("decoration:rounding", "decoration:dim_strength"),
+        retired={"decoration:rounding": "0.57.0"},
+    )
+
+    assert row_state(SCHEMA["decoration:rounding"], context).pills == (
+        Pill(
+            "Retired in 0.57.0",
+            "Hyprland 0.57.0 removed this setting; your value is kept and comes back if the "
+            "setting returns.",
+        ),
+    )
+    assert _pills(SCHEMA["decoration:dim_strength"], context) == ("Not in this Hyprland",)
+
+
+def test_a_retired_pill_ranks_below_didn_t_apply_and_above_overridden() -> None:
+    option = SCHEMA["decoration:rounding"]
+    context = FakeContext(
+        unapplied=frozenset({option.name}),
+        overridden=frozenset({option.name}),
+        retired={option.name: "0.57.0"},
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Retired in 0.57.0")
+    assert second.tooltip.endswith("\nAlso: Overridden.")
+
+
+def test_no_running_hyprland_means_no_option_is_unknown_to_it() -> None:
+    assert _pills(SCHEMA["decoration:rounding"], FakeContext(live_hyprland=None)) == ()
+
+
+def test_an_option_unknown_to_the_running_hyprland_stays_editable() -> None:
+    """The pill informs; it does not lock. The write path is unchanged (#181)."""
+    context = FakeContext(live_hyprland=_live_without("decoration:rounding"))
+
+    state = row_state(SCHEMA["decoration:rounding"], context)
+
+    assert state.editable
+    assert state.resettable
+
+
+def test_a_row_matching_more_than_two_pills_shows_the_top_two_and_lists_the_rest() -> None:
+    """At most two pills (inbox #79); the second's tooltip names every other one, in rank
+    order, so nothing that applies is hidden from a user who hovers."""
+    option = SCHEMA["debug:gl_debugging"]  # Advanced and Restart before anything happens
+    context = FakeContext(
+        unapplied=frozenset({option.name}),
+        overridden=frozenset({option.name}),
+        live_hyprland=_live_without(option.name),
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Overridden")
+    assert first.tooltip == "This was written to your config, but Hyprland is not using it."
+    assert second.tooltip.endswith("\nAlso: Not in this Hyprland, Restart, Advanced.")
+    assert second.tooltip.startswith("Something loaded after the app's own settings")
+
+
+def _supplemented(record: dict[str, Any]) -> tuple[ResolvedOption, Schema]:
+    """An Option a newer Hyprland 0.58.0 described beyond the shipped Schema (#177)."""
+    schema = supplement(SCHEMA, (record,), version="0.58.0")
+    return schema[str(record["name"])], schema
+
+
+def test_an_option_only_a_newer_hyprland_has_wears_a_new_in_pill_and_stays_editable() -> None:
+    option, schema = _supplemented(
+        {"name": "general:snap_new", "description": "x", "default": False}
+    )
+    context = FakeContext(schema=schema)
+
+    state = row_state(option, context)
+
+    assert [(pill.label, pill.tooltip) for pill in state.pills] == [
+        (
+            "New in 0.58.0",
+            "Hyprland 0.58.0 added this setting after this version of the app was made, so it "
+            "gets a basic control until you update the app.",
+        )
+    ]
+    assert state.editable
+    assert _pills(SCHEMA["general:gaps_in"], context) == (), "a shipped option has none"
+
+
+def test_the_version_pills_speak_the_users_words_not_the_apps_internals() -> None:
+    """#150 review finding 3: a user knows Hyprland versions and settings; "schema" and
+    "release check" are the app's own machinery and mean nothing on a Row."""
+    newer, schema = _supplemented(
+        {"name": "general:snap_new", "description": "x", "default": False}
+    )
+    older = FakeContext(live_hyprland=_live_without("decoration:rounding"))
+
+    tooltips = [
+        *(pill.tooltip for pill in row_state(newer, FakeContext(schema=schema)).pills),
+        *(pill.tooltip for pill in row_state(SCHEMA["decoration:rounding"], older).pills),
+    ]
+
+    assert len(tooltips) == 2
+    for tooltip in tooltips:
+        assert "schema" not in tooltip.lower()
+        assert "release check" not in tooltip.lower()
+        assert tooltip.startswith("Hyprland 0.5")
+
+
+def test_the_new_in_pill_ranks_below_what_failed_and_above_advanced() -> None:
+    option, schema = _supplemented(
+        {"name": "debug:new_trace", "description": "x", "default": False}
+    )
+    context = FakeContext(unapplied=frozenset({option.name}), schema=schema)
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "New in 0.58.0")
+    assert second.tooltip.endswith("\nAlso: Advanced.")
+
+
+def test_a_pending_restart_replaces_the_restart_pill_rather_than_joining_it() -> None:
+    """Suppression is the table's: a suppressed pill is not shown and not listed."""
+    option = SCHEMA["debug:gl_debugging"]
+    context = FakeContext(
+        pending_restart=frozenset({option.name}), live_hyprland=_live_without(option.name)
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Not in this Hyprland", "Pending restart")
+    assert second.tooltip.endswith("\nAlso: Advanced.")
 
 
 # --- dependency badges ------------------------------------------------------------------------

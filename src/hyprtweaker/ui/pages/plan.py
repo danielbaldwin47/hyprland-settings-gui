@@ -22,7 +22,13 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, replace
 
-from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, humanise
+from hyprtweaker.engine.schema import (
+    ResolvedOption,
+    Schema,
+    SupplementKind,
+    Visibility,
+    humanise,
+)
 
 
 class View(enum.StrEnum):
@@ -162,6 +168,37 @@ class PagePlan:
         return sum(len(group.options) for group in self.groups)
 
 
+def new_in_group_title(version: str) -> str:
+    """The heading uncurated Options appear under (ADR-0012, #7), in either View.
+
+    Named for the Hyprland version rather than a bare "Other" because the version is the
+    actionable part: it tells the user these arrived with an upgrade, and it tells whoever
+    curates next exactly which release to diff.
+    """
+    return f"New in {version}"
+
+
+NEW_IN_GROUP_DESCRIPTION = (
+    "Settings this version of Hyprland has that the curated pages do not place yet. "
+    "They work exactly as they do in the Config view."
+)
+"""The Tasks view's flag, which #7 and ADR-0012 ask for ("appears ... flagged, until it is
+curated").
+
+The heading alone reads as *new*, which is not the same claim: it would leave a user to
+wonder whether an uncurated setting is half-supported. Saying it plainly is what makes the
+degradation legible rather than merely visible.
+"""
+
+SUPPLEMENTED_GROUP_DESCRIPTION = (
+    "Your Hyprland has these settings and this version of the app does not know them yet, "
+    "so each gets a basic control. They are saved like any other setting."
+)
+"""The Config view's flag on a `New in <version>` Group: Options a Hyprland newer than every
+shipped schema described, inferred from that description alone (ADR-0012 §Pinning). Says
+why the controls are plain, and that nothing about them is half-working."""
+
+
 def plan_section(
     schema: Schema,
     section: str,
@@ -173,17 +210,33 @@ def plan_section(
     their first Option is declared, and Options within a Group likewise. Upstream's grouping
     intent comes free with that order and no curation should silently rewrite it; a curated
     `order` is a position *within* a Group, which is why it only ever breaks the tie.
+
+    Options a newer Hyprland added beyond the shipped schema close the Page in their own
+    `New in <version>` Group rather than joining a sub-path Group, so they stand out as
+    flagged (ADR-0012 §Pinning).
     """
     options = schema.section(section)
     visible = [option for option in options if is_visible(option, disclosure)]
 
     grouped: dict[str, list[ResolvedOption]] = {}
+    newer: dict[str, list[ResolvedOption]] = {}
     for option in visible:
-        grouped.setdefault(group_title(option), []).append(option)
+        flag = option.supplement
+        if flag is not None and flag.kind is SupplementKind.NEWER_VERSION:
+            newer.setdefault(flag.version, []).append(option)
+        else:
+            grouped.setdefault(group_title(option), []).append(option)
 
     groups = tuple(
         GroupPlan(title=title, options=tuple(sorted(members, key=_within_group)))
         for title, members in sorted(grouped.items(), key=lambda item: item[1][0].order)
+    ) + tuple(
+        GroupPlan(
+            title=new_in_group_title(version),
+            options=tuple(members),
+            description=SUPPLEMENTED_GROUP_DESCRIPTION,
+        )
+        for version, members in newer.items()
     )
 
     return PagePlan(

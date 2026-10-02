@@ -11,9 +11,9 @@ Run from the checkout or worktree root, with the main checkout's venv:
 timeout 900 .venv/bin/pytest -q -n auto
 ```
 
-- `pytest` with no path runs the per-commit tiers (ADR-0011 tiers 1, 2 and 4) in `pyproject.toml` `testpaths` (unit, static, ui): 2245 passed, 12 skipped in about 12 s with `-n auto` (68 s serial) with #146. CI fails a run with more skips than `SKIP_CEILING` in `.github/workflows/ci.yml`; a ticket that adds or removes an intentional skip moves that number.
+- `pytest` with no path runs the per-commit tiers (ADR-0011 tiers 1, 2 and 4) in `pyproject.toml` `testpaths` (unit, static, ui): 2905 passed, 12 skipped in about 19 s with `-n auto` on 2026-10-02 (#150 review). CI fails a run with more skips than `SKIP_CEILING` in `.github/workflows/ci.yml`; a ticket that adds or removes an intentional skip moves that number.
 - **One pytest run at a time on the machine.** The controller takes a lock, `$XDG_RUNTIME_DIR/hyprtweaker-pytest.lock` (root `conftest.py`), before it collects. A run started while another holds it, from any checkout or worktree, prints `pytest: waiting for <lock>, held by PID <n> (<checkout>)` and queues, then `pytest: took <lock> after <s> s` when its turn comes; a run that gets the lock at once prints neither. The `timeout 900` counts the wait. xdist workers, pytest runs a test starts inside a locked run, and CI (`CI` set) take no lock.
-- `-n auto` is pytest-xdist, installed in the shared venv. It stays out of `addopts`: `meson test` runs the system pytest, which may lack xdist.
+- `-n auto` is pytest-xdist, installed in the shared venv, and means at most 8 workers (`MAX_WORKERS`, root `conftest.py`): uncapped on this 20-thread, 31 GB machine it started 20 workers at about 0.73 GB each plus 21 Xvfb, which is how systemd-oomd once killed the owner's terminal. It stays out of `addopts`: `meson test` runs the system pytest, which may lack xdist.
 - The UI tier draws on an Xvfb of its own in each pytest process and sandboxes the config dir per test (`tests/ui/conftest.py`), so it never reaches the desktop compositor. It skips without GTK or without `Xvfb`; `HYPRTWEAKER_REQUIRE_UI=1` makes that skip a failure. To watch it, set `HYPRTWEAKER_UI_HOST_DISPLAY=1`: its windows then map on the desktop session, and Hyprland may raise its "Application Not Responding" dialog over them.
 - `mypy` checks only the `files` list in `pyproject.toml` (the Engine and the gi-free modules above it, ADR-0011).
 
@@ -35,9 +35,32 @@ It starts a nested Hyprland with a fresh sandbox `$HOME`, launches the app insid
 
 - **Windowless.** By default the nested Hyprland runs on a spare card (§ Harness tier) with no host display, so nothing maps on the owner's desktop, on any workspace. Agents never pass `--window`; it is the owner's interactive mode, a host window on the focused workspace.
 - **Fenced.** The app runs non-unique, so concurrent sandboxes never hand their launch to each other, and a copied `--config` has its top-level `hl.exec_cmd(` and `hl.env(` lines commented out, so a rice's autostart never runs against the owner's session.
-- **A widget probe** reads properties, not pixels: build the window in-process the way the UI tier does (each `tests/ui/test_*_page.py` has a `build_window(tmp_path)`), drive it, and read the widget's properties and adjustments. Probe before any screenshot loop: a scroll bug once took ten screenshot cycles that two probes settled.
 - **Live probes** of compositor behaviour (`hyprctl keyword`, `hyprctl dispatch`, temporary binds, `hyprctl reload`) go to a nested instance, never the desktop session: the sandbox or the Harness tier's `NestedHyprland`.
 - Real monitors and input devices exist only on the desktop session; a nested instance shows one virtual output and the host's forwarded keyboard and pointer. A ticket whose proof needs real hardware says so, and the effort PR lists it for the owner (`implement-spec.md` step 8).
+
+### Widget probes
+
+A **widget probe** builds part of the app in-process the way the UI tier does (each `tests/ui/test_*_page.py` has a `build_window(tmp_path)`), drives it, and reads the widget's properties and adjustments. It reaches states the sandbox cannot, such as the Config view or an uncurated mapping. Probe before any screenshot loop: a scroll bug once took ten screenshot cycles that two probes settled.
+
+`tools/widget_probe.py` is the only way to run one, and its `shoot` the only way to screenshot one:
+
+```sh
+.venv/bin/python tools/widget_probe.py <scratch>/probe.py [args...]
+```
+
+```python
+import widget_probe  # the first line: before gi and before any hyprtweaker.ui import
+
+from gi.repository import Gtk
+
+...
+widget_probe.shoot(row.widget, "<scratch>/row.png")  # a PNG cropped to that widget
+```
+
+- **Private display.** The runner starts an Xvfb of its own (the UI tier's, `tests/ui/private_display.py`) and pins GTK to it over X11, with no Wayland or Hyprland session in reach and a throwaway config dir. It puts the worktree's `src` on the path and selects Gtk 4 and Adw 1, so a probe imports them as is.
+- **The import is the fence.** In a probe the runner did not start, `import widget_probe` exits before GTK starts, with `widget_probe: refusing to start GTK: <what it found>, so this probe could map on the desktop session; run it with .venv/bin/python tools/widget_probe.py <probe.py> [args...]`. A probe without that import has only this rule for a fence.
+- **Why `xvfb-run` is no fence.** The desktop session exports `GDK_BACKEND=wayland,x11,*` and `WAYLAND_DISPLAY=wayland-1`, and `xvfb-run` changes neither, so GTK opens on the desktop's Wayland first: on 2026-10-01 a probe mapped a window on the owner's desktop that way three times (#202). Unsetting `WAYLAND_DISPLAY` as well does not fence it: the Wayland backend then tries its default socket, and the x11 fallback finds the session's `DISPLAY=:0`, which is XWayland on the desktop.
+- **Screenshots.** `shoot(widget, path)` presents the widget's window, waits until the widget is laid out, and writes the pixels of the surface it is drawn on inside its bounds, background included. That surface is the window, or the popover for a widget in one: call `popover.popup()` first. `shoot` refuses a widget a ScrolledWindow shows only in part, naming how much is hidden: scroll its top into view through the ScrolledWindow's vertical adjustment, or enlarge the window. `margin=8` takes 8 px of the surface around the widget, for a group whose title glyphs reach above its box. `settle(seconds)` runs the main loop, for after a click or a page switch.
 
 ## Harness tier
 

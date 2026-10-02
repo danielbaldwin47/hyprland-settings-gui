@@ -1,10 +1,13 @@
 """The Manifest: what the app wrote, and proof of what it looked like (ADR-0005).
 
-`manifest.json` sits in the App dir and answers three questions nothing else can:
+`manifest.json` sits in the App dir and answers four questions nothing else can:
 
-- **Which Hyprland version's Schema produced these Modules?** A user who upgrades the
-  compositor needs the app to notice, so retired Options can be kept rather than dropped
-  (ADR-0012).
+- **Which Hyprland version's Schema produced these Modules?** Recorded on every write.
+- **What did the user set that a Hyprland release removed?** `retired` keeps each such
+  Option's value and the version that retired it, so the app stops emitting the key without
+  losing the value, and puts it back on a downgrade or a `renamed_from` rename (ADR-0012
+  §Retirement). Detection, capture and restore are `state/retirement.py`; this file only
+  stores the result, and `retired_notices` the releases whose one-time notice was seen.
 - **Did anyone hand-edit an app-owned file?** Each Module carries the SHA-256 of the bytes
   the app last wrote. A mismatch means an editor got there first, and the recovery is a
   banner offering restore-or-adopt -- *never* a silent overwrite (ADR-0016).
@@ -26,12 +29,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from ..paths import ENTRYPOINT_NAME, ConfigPaths
+from ..schema.resolve import version_key
 
 FORMAT_VERSION = 4
 """Bumped from 1 when `ModuleRecord`'s `bytes` key became `size` (#51, pre-release), from
@@ -45,6 +49,11 @@ and guessing "all of the Section's" is exactly the over-claim `options` exists t
 version 3 file cannot say which requires are quarantined, and reading it as "none are"
 would silently re-enable a `user.lua` the user disabled because it was breaking their
 config -- putting the error back without ever saying so.
+
+Not bumped for `retired` (#134), and not to be bumped for a key like it: a bump makes every
+existing Manifest read as damaged, so the Writer would treat every file as hand-edited and
+stop writing until each user answered the prompt. A key whose absence reads correctly as
+"none" is added optional and read defensively instead.
 """
 
 
@@ -121,6 +130,46 @@ class ModuleRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RetiredValue:
+    """One retired Option's kept value: what it was, and the release that removed it."""
+
+    retired_in: str
+    """The Hyprland version the Option was retired in -- the Row's `Retired in <ver>`."""
+
+    value: Any
+    """The value as the Lua importer reads it from the app's own Module: JSON-native, the
+    shape `parse_lua` takes (a gradient is `{"colors": [...], "angle": 45}`).
+
+    Raw rather than typed, because typing needs the Option's schema entry and a retired
+    Option may have none; restoring parses it against whichever Option takes it back."""
+
+    def as_json(self) -> dict[str, Any]:
+        return {"retired_in": self.retired_in, "value": self.value}
+
+
+def _retired_from_json(payload: Any) -> dict[str, RetiredValue]:
+    """The `retired` table, entry by entry: a malformed one is dropped, never fatal."""
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(name): RetiredValue(entry["retired_in"], entry["value"])
+        for name, entry in payload.items()
+        if isinstance(entry, dict)
+        and isinstance(entry.get("retired_in"), str)
+        and "value" in entry
+    }
+
+
+def _list(payload: Any) -> list[Any]:
+    return payload if isinstance(payload, list) else []
+
+
+def _releases(versions: Iterable[str]) -> tuple[str, ...]:
+    """Each release once, oldest first (`0.57.10` after `0.57.2`), so writes are stable."""
+    return tuple(sorted(set(versions), key=version_key))
+
+
+@dataclass(frozen=True, slots=True)
 class Manifest:
     """The App dir's record of itself."""
 
@@ -160,6 +209,26 @@ class Manifest:
     Only ever holds foreign requires. An app-owned Module is recovered by *fixing* it --
     Restore last good, or the next write -- and leaving out a Module the model still renders
     would put the model and the Entrypoint permanently at odds.
+    """
+
+    retired: dict[str, RetiredValue] = field(default_factory=dict)
+    """Values of Options the user set that a Hyprland release removed, by colon-form name.
+
+    ADR-0012 §Retirement: the app stops emitting a removed key (emitting it is a config
+    error under Lua) but keeps the value, so a downgrade or a `renamed_from` mapping can
+    put it back (`state/retirement.py`). Here rather than anywhere else because the value
+    has no other home once the Module is rewritten without it: the schema may no longer
+    describe the Option and the compositor answers `NoSuchOption` for it.
+    """
+
+    retired_notices: tuple[str, ...] = ()
+    """The releases whose Retired notice the user has seen, in release order.
+
+    ADR-0012's "a one-time notice lists the release's retired options": a release appears
+    here once its notice is dismissed, not when it is put on screen, so an app closed before
+    the user saw it says it again on the next start. Per release rather than a flag per
+    `retired` entry, because an entry leaves `retired` when its Option comes back, and a
+    release whose notice was shown stays shown.
     """
 
     @classmethod
@@ -206,6 +275,12 @@ class Manifest:
                 if isinstance(raw_quarantined, list)
                 else ()
             ),
+            retired=_retired_from_json(payload.get("retired")),
+            retired_notices=_releases(
+                version
+                for version in _list(payload.get("retired_notices"))
+                if isinstance(version, str)
+            ),
         )
 
     def as_json(self) -> dict[str, Any]:
@@ -219,6 +294,8 @@ class Manifest:
             },
             "unverified": list(self.unverified),
             "quarantined": list(self.quarantined),
+            "retired": {name: entry.as_json() for name, entry in sorted(self.retired.items())},
+            "retired_notices": list(self.retired_notices),
             "migration": self.migration,
         }
 
@@ -248,6 +325,14 @@ class Manifest:
     def with_quarantine(self, requires: Sequence[str]) -> Manifest:
         """The Manifest with exactly `requires` quarantined. Sorted, so writes are stable."""
         return replace(self, quarantined=tuple(sorted(set(requires))))
+
+    def with_retired(self, retired: Mapping[str, RetiredValue]) -> Manifest:
+        """The Manifest keeping exactly `retired` (ADR-0012; `state/retirement.py`)."""
+        return replace(self, retired=dict(retired))
+
+    def with_retired_notice(self, release: str) -> Manifest:
+        """The Manifest recording that `release`'s Retired notice was seen. Idempotent."""
+        return replace(self, retired_notices=_releases((*self.retired_notices, release)))
 
     def path_for(self, name: str, paths: ConfigPaths) -> Path:
         """Where a recorded name lives -- the Entrypoint is the one outside the App dir."""

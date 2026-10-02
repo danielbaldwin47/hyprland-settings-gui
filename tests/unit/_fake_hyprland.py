@@ -127,6 +127,22 @@ LAYERS = (
 `levels` object of arrays -- nested where `clients` is flat, which is why the client
 flattens it (#67, Pick a layer)."""
 
+WORKSPACE_RULES = (
+    "[{\n"
+    '    "workspaceString": "1",\n'
+    '    "enabled": true,\n'
+    '    "gapsIn": [3, 3, 3, 3]\n'
+    "},{\n"
+    '    "workspaceString": "2",\n'
+    '    "enabled": true,\n'
+    '    "gapsIn": [4, 4, 4, 4]\n'
+    "}]\n"
+)
+"""Captured off a live Hyprland 0.56.2 (nested, two `hl.workspace_rule` calls). A JSON
+**array**, one record per rule: the count is its length. This is the only rule listing the
+compositor offers -- `hyprctl` has no window-rule or layer-rule command and `hl.*` no
+getter for either (probed 2026-10-02, #101)."""
+
 OK = "ok"
 """From source: `reload` answers this unconditionally, and `eval` answers it on success."""
 
@@ -137,10 +153,49 @@ EVAL_UNSUPPORTED = UNSUPPORTED_EVAL
 """Captured -- from a hyprlang session, which refuses `eval` outright. Safe to provoke
 live precisely because the refusal happens before anything is evaluated."""
 
+VERSION = """{
+    "branch": "v0.56.2",
+    "commit": "efb50993780079460b0cbed1363e2166a2de1d9f",
+    "version": "0.56.2",
+    "dirty": false,
+    "tag": "v0.56.2",
+    "commits": "7661",
+    "flags": []
+}"""
+"""Captured off a live Hyprland 0.56.2 (trimmed: the `build*`/`system*` library versions
+and the commit message and date dropped). `version` is the bare release number; a git
+build's distance from its tag shows in `tag` and `commits`, not here."""
+
+DESCRIPTIONS = """[
+
+    {
+        "name": "general:border_size",
+        "description": "size of the border around windows",
+        "default": 1,
+        "current": 1,
+        "min": 0,
+        "max": 20,
+        "map": null
+    },
+    {
+        "name": "general:gaps_in",
+        "description": "gaps between windows",
+        "default": "5 5 5 5",
+        "current": "5 5 5 5",
+        "min": null,
+        "max": null
+    }
+]"""
+"""Captured off a live Hyprland 0.56.2 (trimmed to its first two of 353 records, blank line
+after the bracket included)."""
+
 CONVERSATION: Mapping[str, str] = {
+    "j/version": VERSION,
+    "j/descriptions": DESCRIPTIONS,
     "j/binds": BINDS,
     "j/clients": CLIENTS,
     "j/layers": LAYERS,
+    "j/workspacerules": WORKSPACE_RULES,
     "j/getoption general:gaps_in": GAPS_IN,
     "j/getoption general:layout": LAYOUT,
     "j/getoption misc:disable_autoreload": AUTORELOAD,

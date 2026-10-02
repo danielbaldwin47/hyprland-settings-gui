@@ -11,16 +11,17 @@ from __future__ import annotations
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
 from hyprtweaker.engine.entities_catalog import (
-    ANIMATION_LEAVES,
     BUILTIN_CURVES,
     DEVICE_FIELD_SPECS,
     DEVICE_ONLY_FIELDS,
     GESTURE_ACTIONS,
+    SHIPPED_ANIMATION_LEAVES,
     UNSET_ACTION,
     FieldSpec,
     FieldType,
     Finding,
     animation_findings,
+    animation_leaves,
     coerce,
     curve_findings,
     curve_usage,
@@ -45,9 +46,10 @@ from hyprtweaker.engine.model.entities import (
     EnvVar,
     Gesture,
 )
-from hyprtweaker.engine.schema import load_schema
+from hyprtweaker.engine.schema import Schema, load_schema
 
 SCHEMA = load_schema(SAMPLE_VERSION, SCHEMA_DIR)
+LEAVES = animation_leaves(SCHEMA)
 OPTION_NAMES = tuple(option.name for option in SCHEMA)
 
 
@@ -167,13 +169,14 @@ class TestFindings:
     def test_a_speed_outside_the_range_is_surfaced(self) -> None:
         ok = {"enabled": True, "bezier": "default"}
 
-        assert animation_findings(Animation("fade", {**ok, "speed": 500}))
-        assert animation_findings(Animation("fade", {**ok, "speed": 0}))
-        assert animation_findings(Animation("fade", {**ok, "speed": 4.1})) == ()
+        assert animation_findings(Animation("fade", {**ok, "speed": 500}), LEAVES)
+        assert animation_findings(Animation("fade", {**ok, "speed": 0}), LEAVES)
+        assert animation_findings(Animation("fade", {**ok, "speed": 4.1}), LEAVES) == ()
 
     def test_naming_both_a_bezier_and_a_spring_is_surfaced(self) -> None:
         findings = animation_findings(
-            Animation("fade", {"enabled": True, "speed": 3, "bezier": "a", "spring": "b"})
+            Animation("fade", {"enabled": True, "speed": 3, "bezier": "a", "spring": "b"}),
+            LEAVES,
         )
 
         assert findings
@@ -185,14 +188,16 @@ class TestFindings:
         Not a harmless no-op -- it is an error that takes the whole Module down, and it is
         what the Add form produced for anyone who saved without touching the switch.
         """
-        findings = animation_findings(Animation("fade", {}))
+        findings = animation_findings(Animation("fade", {}), LEAVES)
 
         assert findings
         assert "whether this animation is on" in findings[0].message
 
     def test_an_enabled_animation_must_have_a_speed(self) -> None:
         """Probed: with `enabled = true` and no speed, `missing required field "speed"`."""
-        findings = animation_findings(Animation("fade", {"enabled": True, "bezier": "default"}))
+        findings = animation_findings(
+            Animation("fade", {"enabled": True, "bezier": "default"}), LEAVES
+        )
 
         assert [f.message for f in findings] == [
             "Set a speed: Hyprland requires one to animate."
@@ -200,18 +205,38 @@ class TestFindings:
 
     def test_an_animation_that_is_merely_off_needs_nothing_else(self) -> None:
         """Probed: `{leaf, enabled=false}` alone is `config ok`."""
-        assert animation_findings(Animation("fade", {"enabled": False})) == ()
+        assert animation_findings(Animation("fade", {"enabled": False}), LEAVES) == ()
 
     def test_a_leaf_this_version_does_not_have_is_shown_rather_than_rejected(self) -> None:
         """The ADR-0012 degradation rule: show more, not less."""
         entities = _entities(animations=[Animation("brandNewLeaf", {"enabled": False})])
 
-        assert unknown_leaves(entities) == ("brandNewLeaf",)
-        assert animation_findings(Animation("brandNewLeaf", {}))
+        assert unknown_leaves(entities, LEAVES) == ("brandNewLeaf",)
+        assert animation_findings(Animation("brandNewLeaf", {}), LEAVES)
 
     def test_every_shipped_leaf_passes_its_own_check(self) -> None:
-        for leaf in ANIMATION_LEAVES:
-            assert animation_findings(Animation(leaf, {"enabled": False})) == (), leaf
+        for leaf in SHIPPED_ANIMATION_LEAVES:
+            assert animation_findings(Animation(leaf, {"enabled": False}), LEAVES) == (), leaf
+
+    def test_a_schema_with_the_block_serves_its_own_leaves(self) -> None:
+        """A newer release's leaf is offered and not flagged once its schema records it."""
+        schema = Schema("0.57.0", (), animation_leaves=("fade", "brandNewLeaf"))
+        leaves = animation_leaves(schema)
+        entities = _entities(animations=[Animation("brandNewLeaf", {"enabled": False})])
+
+        assert leaves == ("fade", "brandNewLeaf")
+        assert unknown_leaves(entities, leaves) == ()
+        assert animation_findings(Animation("brandNewLeaf", {"enabled": False}), leaves) == ()
+        # The shipped list is not mixed in: a leaf the schema omits is this tree's absence.
+        assert unknown_leaves(_entities(animations=[Animation("windowsIn", {})]), leaves) == (
+            "windowsIn",
+        )
+
+    def test_a_schema_without_the_block_falls_back_to_the_shipped_leaves(self) -> None:
+        schema = Schema("0.56.0", (), animation_leaves=None)
+
+        assert animation_leaves(schema) == SHIPPED_ANIMATION_LEAVES
+        assert len(animation_leaves(schema)) == 34
 
     def test_a_device_key_hyprland_has_no_field_for_is_surfaced(self) -> None:
         """`hl.device` raises "unknown field" and takes the Module down with it."""

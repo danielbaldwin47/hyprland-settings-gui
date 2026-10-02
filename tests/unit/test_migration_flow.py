@@ -13,17 +13,25 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Coroutine
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, TypeVar
 
 import pytest
 from _support import SAMPLE_APP_VERSION, sample_schema
 
-from hyprtweaker.engine.importer.loss import LossReport
+from hyprtweaker.engine.importer.loss import LossCode, LossReport
 from hyprtweaker.engine.importer.lua.sandbox import Consent, lua_binary
 from hyprtweaker.engine.migration import sentinel as sentinels
 from hyprtweaker.engine.migration.detect import ConfigKind
-from hyprtweaker.engine.migration.flow import Decision, MigrationFlow, Step, fresh_start
+from hyprtweaker.engine.migration.flow import (
+    Decision,
+    MigrationFlow,
+    Offered,
+    Step,
+    fresh_start,
+)
+from hyprtweaker.engine.model.values import CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
 from hyprtweaker.engine.state import Manifest
@@ -45,16 +53,36 @@ decoration {
 class FakeClient:
     """A compositor that says the config loaded cleanly, and counts what it was asked."""
 
-    def __init__(self, *, errors: tuple[str, ...] = (), binds: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        errors: tuple[str, ...] = (),
+        binds: int = 0,
+        workspace_rules: int = 0,
+        monitors: tuple[dict[str, Any], ...] = (),
+    ) -> None:
         self.errors = errors
         self.binds = binds
+        self.workspace_rules = workspace_rules
+        self.outputs = monitors
         self.full_resets = 0
+        self.reads: list[str] = []
 
     async def configerrors(self) -> tuple[str, ...]:
+        self.reads.append("configerrors")
         return self.errors
 
     async def bind_count(self) -> int:
+        self.reads.append("binds")
         return self.binds
+
+    async def workspace_rule_count(self) -> int:
+        self.reads.append("workspacerules")
+        return self.workspace_rules
+
+    async def monitors(self) -> tuple[dict[str, Any], ...]:
+        self.reads.append("monitors")
+        return self.outputs
 
     async def reload_full_reset(self) -> None:
         self.full_resets += 1
@@ -280,6 +308,171 @@ class TestSwitchOrdering:
 
         assert manifest.migration is not None
         assert manifest.migration["source"].endswith("hyprland.conf")
+
+
+ENTITY_CONF = """\
+bind = SUPER, Q, exec, kitty
+bind = SUPER, W, killactive
+workspace = 1, gapsin:3
+workspace = 2, gapsin:4
+monitor = DP-1, 1920x1080@60, 0x0, 1.5
+"""
+
+DISPLAY = {
+    "name": "DP-1",
+    "description": "Dell U2720Q",
+    "width": 1920,
+    "height": 1080,
+    "x": 0,
+    "y": 0,
+    "scale": 1.5,
+    "transform": 0,
+}
+
+
+class TestTheSwitchWritesTheEntities:
+    """Found while building the live checks: the wizard imported binds, rules and monitors and
+    wrote none of them, because the Writer renders `model.entities` and nothing adopted the
+    importer's. The count checks below compare against what is written, so this has to hold."""
+
+    def test_the_converted_tree_carries_the_binds_the_workspace_rules_and_the_monitors(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        paths.hyprland_conf.write_text(ENTITY_CONF, encoding="utf-8")
+        flow = flow_for(
+            paths, schema, FakeClient(binds=2, workspace_rules=2, monitors=(DISPLAY,))
+        )
+        flow.build_preview()
+        flow.back_up()
+
+        run(flow.switch())
+
+        written = {item.name for item in paths.app_dir.glob("*.lua")}
+        assert {"binds.lua", "monitors.lua", "workspace_rules.lua"} <= written
+        binds = (paths.app_dir / "binds.lua").read_text(encoding="utf-8")
+        assert 'hl.bind("SUPER + Q", hl.dsp.exec_cmd("kitty"))' in binds
+
+
+class TestLiveChecks:
+    """ADR-0009's live checks: what the compositor registered against what was imported."""
+
+    @pytest.fixture
+    def entities_conf(self, paths: ConfigPaths) -> ConfigPaths:
+        paths.hyprland_conf.write_text(ENTITY_CONF, encoding="utf-8")
+        return paths
+
+    def switch(self, paths: ConfigPaths, schema: Schema, client: FakeClient) -> Any:
+        flow = flow_for(paths, schema, client)
+        flow.build_preview()
+        flow.back_up()
+        return run(flow.switch())
+
+    def test_a_switch_that_registered_everything_passes_every_check(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        client = FakeClient(binds=2, workspace_rules=2, monitors=(DISPLAY,))
+
+        result = self.switch(entities_conf, schema, client)
+
+        assert result.ok
+        assert [check.name for check in result.checks] == [
+            "configerrors",
+            "binds",
+            "workspace rules",
+            "monitors",
+        ]
+        assert all(check.ok for check in result.checks)
+        assert client.reads == ["configerrors", "binds", "workspacerules", "monitors"]
+
+    def test_missing_binds_roll_the_switch_back(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        """A config that loads with no keybinds is the stranded user ADR-0016 exists for."""
+        result = self.switch(entities_conf, schema, FakeClient(binds=1, workspace_rules=2))
+
+        assert not result.ok
+        assert [check.detail for check in result.failures] == [
+            "Only 1 of the 2 keybinds in the new configuration are active."
+        ]
+
+    def test_extra_binds_from_a_script_or_legacy_file_are_not_a_failure(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        result = self.switch(entities_conf, schema, FakeClient(binds=9, workspace_rules=2))
+
+        assert result.ok
+
+    def test_a_bind_the_writer_never_emits_is_not_expected_live(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        """A disabled bind is a comment in `binds.lua`: counting it would roll back real
+        migrations over a bind that was never going to fire."""
+        flow = flow_for(entities_conf, schema, FakeClient(binds=1, workspace_rules=2))
+        preview = flow.build_preview()
+        binds = preview.result.entities.binds
+        binds[0] = replace(binds[0], enabled=False)
+        flow.back_up()
+
+        result = run(flow.switch())
+
+        assert result.ok
+
+    def test_a_missing_workspace_rule_is_reported_without_rolling_back(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        result = self.switch(entities_conf, schema, FakeClient(binds=2, workspace_rules=1))
+
+        assert result.ok
+        assert [check.detail for check in result.warnings] == [
+            "Only 1 of the 2 workspace rules in the new configuration are active."
+        ]
+
+    def test_a_display_that_differs_from_its_rule_is_reported_without_rolling_back(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        display = {**DISPLAY, "scale": 1.0}
+
+        result = self.switch(
+            entities_conf, schema, FakeClient(binds=2, workspace_rules=2, monitors=(display,))
+        )
+
+        assert result.ok
+        assert [check.detail for check in result.warnings] == [
+            "DP-1 is at scale 1, the configuration asks for 1.5"
+        ]
+
+    def test_a_config_with_no_entities_asks_only_for_configerrors(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        client = FakeClient()
+
+        result = self.switch(legacy, schema, client)
+
+        assert result.ok
+        assert client.reads == ["configerrors"]
+
+    def test_window_and_layer_rules_are_verified_by_configerrors_alone(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """Hyprland offers no listing of either, so there is nothing to count and no row to
+        show: a "could not confirm" line the user cannot act on is noise (ADR-0009)."""
+        paths.hyprland_conf.write_text(
+            "windowrule {\n    name = float-pavucontrol\n"
+            "    match:class = ^(pavucontrol)$\n    float = on\n}\n"
+            "layerrule {\n    name = blur-bar\n    match:namespace = bar\n    blur = on\n}\n",
+            encoding="utf-8",
+        )
+        client = FakeClient()
+        flow = flow_for(paths, schema, client)
+        entities = flow.build_preview().result.entities
+        assert entities.window_rules and entities.layer_rules  # the premise
+        flow.back_up()
+
+        result = run(flow.switch())
+
+        assert result.ok
+        assert [check.name for check in result.checks] == ["configerrors"]
+        assert client.reads == ["configerrors"]
 
 
 class TestCrashSafety:
@@ -668,3 +861,131 @@ class TestReloadSettling:
         flow.back_up()
 
         assert not run(flow.switch()).ok
+
+
+def _foreign_lua(paths: ConfigPaths, source: str) -> MigrationFlow:
+    paths.entrypoint.write_text(source, encoding="utf-8")
+    flow = flow_for(paths, sample_schema())
+    flow.detect()
+    return flow
+
+
+@pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter on this machine")
+class TestTheSecondOffer:
+    """After a blocked read that found nothing, the commands it would have run (#190).
+
+    Offered only when the blocked run came back empty or erroring *and* it tried to run a
+    command: a config that builds itself from shell output reads as nothing under `BLOCK`,
+    and running those commands for real is the only way to read it at all.
+    """
+
+    def test_a_config_built_from_a_pipe_offers_its_command(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(
+            paths,
+            'local f = io.popen("echo 5")\n'
+            'hl.config({ general = { gaps_in = tonumber(f:read("*a")) } })\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == (Offered("echo 5", "command"),)
+        assert preview.imported == 0
+
+    def test_a_blocked_run_that_errors_offers_what_it_ran_before_the_error(
+        self, paths: ConfigPaths
+    ) -> None:
+        flow = _foreign_lua(
+            paths,
+            'os.execute("hyprctl version")\n'
+            'local n = tonumber(io.popen("echo 5"):read("*a"))\n'
+            "hl.config({ general = { gaps_in = n + 1 } })\n"
+            'io.popen("never reached")\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == (
+            Offered("hyprctl version", "command"),
+            Offered("echo 5", "command"),
+        )
+
+    def test_file_operations_are_listed_and_repeats_counted(self, paths: ConfigPaths) -> None:
+        """Running for real runs everything the blocked read faked, file operations and
+        every repeat included, so the offer lists all of it: once each, with a count."""
+        flow = _foreign_lua(
+            paths,
+            'os.remove("stale")\nio.popen("echo 5")\nos.execute("echo 5")\n'
+            'os.rename("a.lua", "b.lua")\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == (
+            Offered("stale", "delete"),
+            Offered("echo 5", "command", times=2),
+            Offered("a.lua -> b.lua", "move"),
+        )
+
+    def test_file_operations_alone_offer_nothing(self, paths: ConfigPaths) -> None:
+        """Deleting a file never builds a setting: a config that only does that has
+        nothing to gain from running for real."""
+        flow = _foreign_lua(paths, 'os.remove("stale")\n')
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == ()
+
+    def test_an_erroring_read_counts_what_it_imported_before_the_error(
+        self, paths: ConfigPaths
+    ) -> None:
+        """The Commands page tells the user what they already have without running
+        anything (#150 review, owner call 2): Options plus Entities of the blocked read."""
+        flow = _foreign_lua(
+            paths,
+            "hl.config({ general = { gaps_in = 7, gaps_out = 9 } })\n"
+            'hl.bind("SUPER + Q", hl.dsp.exec_cmd("kitty"))\n'
+            'local n = tonumber(io.popen("echo 5"):read("*a"))\n'
+            "hl.config({ general = { border_size = n + 1 } })\n",
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == (Offered("echo 5", "command"),)
+        assert preview.imported == 3
+
+    def test_a_config_that_read_something_offers_nothing(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(
+            paths,
+            'io.popen("echo 5")\nhl.config({ general = { gaps_in = 7 } })\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert len(preview.model) == 1
+        assert preview.offered == ()
+
+    def test_an_error_with_no_command_offers_nothing(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(paths, 'error("broken")\n')
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert LossCode.EVAL_ERROR in preview.loss.code_counts()
+        assert preview.offered == ()
+
+    def test_running_them_for_real_reads_the_config_and_offers_nothing_more(
+        self, paths: ConfigPaths, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "ran"
+        flow = _foreign_lua(
+            paths,
+            f'local f = io.popen("touch {marker}; echo 5")\n'
+            'hl.config({ general = { gaps_in = tonumber(f:read("*a")) } })\n',
+        )
+        flow.build_preview(consent=Consent(evaluate=True))
+        assert not marker.exists()
+
+        preview = flow.build_preview(consent=Consent(evaluate=True, passthrough=True))
+
+        assert marker.exists()
+        assert preview.model.get("general:gaps_in") == CssGaps(5, 5, 5, 5)
+        assert preview.offered == ()

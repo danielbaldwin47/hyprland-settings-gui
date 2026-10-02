@@ -16,6 +16,7 @@ a script counted them -- which is exactly why this is a test and not a review ch
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import pytest
@@ -145,22 +146,48 @@ def test_every_option_resolves_to_widget_title_and_nullability(schema: Schema) -
         assert isinstance(option.visibility, Visibility), option.name
 
 
-def test_overlay_has_no_entries_for_options_that_do_not_exist(
-    generated: generated_module.GeneratedSchema, overlay: overlay_module.Overlay
-) -> None:
-    """A stale Overlay key is a rename nobody noticed, or a typo silently doing nothing.
+def stale_overlay_keys(
+    deprecated_in: Mapping[str, str | None], shipped: Iterable[Iterable[str]]
+) -> list[str]:
+    """Overlay keys no shipped schema has and no `deprecated_in` explains (#186).
 
-    The Overlay is version-independent and keeps entries for retired options on purpose
-    (`deprecated_in`), so only entries that were *never* valid are an error.
+    The Overlay is version-independent (ADR-0012): an entry for an Option the previous
+    release lacks, or the latest one dropped, is harmless. So "exists" is the union over
+    every shipped schema, and `deprecated_in` (removed in) stays unset for an Option a
+    later release *added*, where it would record a false fact.
     """
-    known = {option.name for option in generated.options}
-    stale = [
-        name
-        for name, entry in overlay.options.items()
-        if name not in known and entry.deprecated_in is None
+    known = {name for names in shipped for name in names}
+    return [
+        name for name, removed in deprecated_in.items() if name not in known and removed is None
     ]
+
+
+def test_an_overlay_key_is_stale_only_when_no_shipped_schema_has_it() -> None:
+    previous, latest = {"a:only_before", "a:both"}, {"a:both", "a:only_after"}
+    entries = {
+        "a:only_before": None,
+        "a:only_after": None,
+        "a:both": None,
+        "a:removed": "0.56.1",
+        "a:typo": None,
+    }
+
+    assert stale_overlay_keys(entries, (previous, latest)) == ["a:typo"]
+
+
+def test_overlay_has_no_entries_for_options_that_exist_in_no_shipped_schema(
+    overlay: overlay_module.Overlay,
+) -> None:
+    """A stale Overlay key is a rename nobody noticed, or a typo silently doing nothing."""
+    stale = stale_overlay_keys(
+        {name: entry.deprecated_in for name, entry in overlay.options.items()},
+        (
+            {o.name for o in generated_module.load(SCHEMA_DIR / f"hyprland-{v}.json").options}
+            for v in schema_versions()
+        ),
+    )
     assert not stale, (
-        f"overlay entries matching no option in this schema: {stale} "
+        f"overlay entries matching no option in any shipped schema: {stale} "
         "(set deprecated_in if the option was removed by a release)"
     )
 

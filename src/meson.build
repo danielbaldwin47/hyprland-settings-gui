@@ -66,6 +66,7 @@ package_sources = {
     'errors.py',
     'events.py',
     'instance.py',
+    'live.py',
   ],
   'hyprtweaker/engine/migration': [
     '__init__.py',
@@ -83,17 +84,20 @@ package_sources = {
   ],
   'hyprtweaker/engine/schema': [
     '__init__.py',
+    'diff.py',
     'generated.py',
     'infer.py',
     'overlay.py',
     'resolve.py',
     'sources.py',
+    'supplement.py',
     'types.py',
   ],
   'hyprtweaker/engine/state': [
     '__init__.py',
     'journal.py',
     'manifest.py',
+    'retirement.py',
   ],
   'hyprtweaker/engine/writer': [
     '__init__.py',
@@ -118,6 +122,7 @@ package_sources = {
     'declaration_editor.py',
     'errors.py',
     'migration.py',
+    'notices.py',
     'rule_editor.py',
     'submap_editor.py',
   ],

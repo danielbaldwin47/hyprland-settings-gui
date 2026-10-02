@@ -14,7 +14,7 @@ Generated schemas are produced at build time per supported release and shipped w
 
 ### Support window: latest + previous
 
-Each app release ships Generated schemas for the current and the previous Hyprland release. Older versions down to 0.56 (the Lua floor) get nearest-lower degradation, best-effort and untested. The Overlay stays version-independent; `deprecated_in` / `renamed_from` keep entries for retired options harmless across the window.
+Each app release ships Generated schemas for the current and the previous Hyprland release. Older versions down to 0.56 (the Lua floor) get nearest-lower degradation, best-effort and untested. One older than every shipped schema gets the oldest, whose options it lacks are marked *Not in this Hyprland*; below 0.56 the session is read-only and its Banner names the floor (#176). The Overlay stays version-independent; `deprecated_in` / `renamed_from` keep entries for retired options harmless across the window.
 
 ### Retirement: retire and keep
 
@@ -22,7 +22,7 @@ When a release removes an option the user has set, the app **stops emitting it a
 
 ### Trigger: watcher → agent → PR
 
-A scheduled watcher (weekly cron, e.g. a GitHub Action polling `hyprwm/Hyprland` releases) opens a `Release check: Hyprland <ver>` issue labelled `ready-for-agent` per release. An agent runs the protocol in `docs/agents/hyprland-release-check.md` — regenerate, three-layer diff (schema / stub API / wiki), curate, verify — and opens one PR. A human reviews and merges.
+A scheduled watcher (weekly cron, e.g. a GitHub Action polling `hyprwm/Hyprland` releases) opens a `Release check: Hyprland <ver>` issue labelled `ready-for-agent` per release. An agent runs the protocol in `docs/agents/hyprland-release-check.md` — regenerate, five-layer diff (schema / stub API / wiki / Entity catalogue / dispatcher catalogue), curate, verify — and opens one PR. A human reviews and merges.
 
 ### Done bar: CI completeness + reviewed diff
 

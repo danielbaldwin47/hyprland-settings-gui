@@ -67,6 +67,7 @@ class HyprtweakerApplication(Adw.Application):
         session.on_state_changed = window.sync
         session.on_applied = window.show_result
         session.on_reverted = window.show_revert
+        session.on_notice = window.show_notice
         session.on_recorded = window.offer_undo
 
         # Before the session goes live: which of ADR-0009's four cases this machine is in

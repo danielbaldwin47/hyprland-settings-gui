@@ -19,8 +19,11 @@ from typing import Any
 APP_VERSION = "0.0.0-test"
 
 
-def build_window(tmp_path: Path) -> Any:
+def build_window(tmp_path: Path, live_hyprland: Any = None) -> Any:
     """A window over a read-only session rooted in a throwaway directory.
+
+    `live_hyprland` poses as the Hyprland that is running (a `LiveHyprland`); by default
+    none was described.
 
     Switched to the Config view explicitly: since #71 the app opens in the curated Tasks
     view (#7), and every assertion in this file is about the *generated* arrangement -- one
@@ -44,6 +47,7 @@ def build_window(tmp_path: Path) -> Any:
         paths=ConfigPaths.rooted_at(tmp_path),
         app_version=APP_VERSION,
         connect=no_compositor,
+        read_live=lambda: live_hyprland,
     )
     app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
     window = MainWindow(session, application=app)
@@ -189,6 +193,30 @@ def test_a_restart_flagged_row_says_so_before_anything_is_written(tmp_path: Path
     row = page.row("xwayland:enabled")
     assert row is not None
     assert row.chrome.pill_labels == ("Restart",)
+
+
+def test_a_newer_hyprlands_own_options_render_flagged_in_a_new_in_group(
+    tmp_path: Path,
+) -> None:
+    """ADR-0012 §Pinning, end to end: a Hyprland newer than every shipped schema describes
+    an option the app has never seen, and its Section's Page closes on it, flagged."""
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.ipc import LiveHyprland
+
+    live = LiveHyprland(
+        "0.99.0",
+        ({"name": "decoration:new_glow", "description": "glow", "default": True},),
+    )
+    _session, window = build_window(tmp_path, live)
+
+    page = next(page for page in window.pages if page.plan.section == "decoration")
+    row = page.row("decoration:new_glow")
+    assert row is not None
+    assert row.chrome.pill_labels == ("New in 0.99.0",)
+    group = row.widget.get_ancestor(Adw.PreferencesGroup)
+    assert group.get_title() == "New in 0.99.0"
+    assert group.get_description().startswith("Your Hyprland has these settings")
 
 
 def _planned_options(plan: Any) -> list[Any]:
