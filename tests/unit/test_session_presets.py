@@ -550,3 +550,26 @@ def test_an_import_that_cannot_be_written_says_why_and_leaves_nothing(tmp_path: 
     assert isinstance(imported, PresetNotImported)
     assert imported.reason.startswith("The theme could not be added to your presets: ")
     assert tree(tmp_path) == before
+
+
+def test_a_live_no_value_reply_is_captured_as_no_value(tmp_path: Path) -> None:
+    """F17 of the #148 review: capture re-implemented the live read without its no-value
+    check, so a nullable setting answering `[[EMPTY]]` would be saved as that marker."""
+    from _fake_hyprland import option_reply
+
+    font = "misc:splash_font_family"
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        fake.conversation[f"j/getoption {font}"] = option_reply(
+            sample_schema()[font], "[[EMPTY]]"
+        )
+
+        results = save(session, "Plain", CaptureScope.FONTS_CURSOR)
+        await runner.settle()
+
+        assert [type(r) for r in results] == [PresetSaved]
+        assert preset_file(tmp_path, "plain")["options"] == {font: None}
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))

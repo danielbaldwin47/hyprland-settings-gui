@@ -65,7 +65,7 @@ from hyprtweaker.engine.apply import (
     plan,
     read_state,
 )
-from hyprtweaker.engine.apply.result import UNREADABLE, live_value
+from hyprtweaker.engine.apply.reread import Answer, classify_reply
 from hyprtweaker.engine.bridge import (
     REGISTRY,
     BridgeEntry,
@@ -2160,11 +2160,14 @@ class Session:
             if model is None:
                 values[option.name] = None
                 continue
-            if reply.set_by_user:
-                live = live_value(option, dict(reply.payload))
-                if live is not UNREADABLE:
-                    values[option.name] = stored_value(live)
-                    continue
+            # The re-read's own reading of a reply (F17 of the #148 review).
+            answer = classify_reply(option, reply)
+            if answer.kind is Answer.VALUE:
+                values[option.name] = stored_value(answer.value)
+                continue
+            if answer.kind is Answer.NO_VALUE:
+                values[option.name] = None
+                continue
             if model is not UNSET:
                 values[option.name] = stored_value(model)
         return values
