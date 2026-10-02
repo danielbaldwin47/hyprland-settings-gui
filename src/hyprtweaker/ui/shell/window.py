@@ -2114,7 +2114,7 @@ class MainWindow(Adw.ApplicationWindow):
         if row is None:
             self._entity_changed()
         else:
-            _scroll_into_view(row)
+            _scroll_when_laid_out(row)
         return False
 
     def _entity_row(self, kind: EntityKind, key: int | str) -> Gtk.Widget | None:
@@ -2339,6 +2339,28 @@ def _scroll_into_view(row: Gtk.Widget) -> None:
     target = adjustment.get_value() + point.y - _REVEAL_MARGIN
     highest = max(adjustment.get_upper() - adjustment.get_page_size(), adjustment.get_lower())
     adjustment.set_value(min(max(target, adjustment.get_lower()), highest))
+
+
+def _scroll_when_laid_out(row: Gtk.Widget) -> None:
+    """`_scroll_into_view`, once the row has been allocated.
+
+    An Entity Page shown for the first time has no geometry until the frame after the
+    switch, and an idle can run before that frame: the scroll then measures a zero-height
+    page and stays at the top while the flash plays off screen (probed over end-4's 197
+    binds). A row with a height has been laid out; one without waits for the frame clock,
+    which ticks only while the row is mapped -- on the Page the hit just opened.
+    """
+    if row.get_height() > 0:
+        _scroll_into_view(row)
+        return
+
+    def tick(widget: Gtk.Widget, _clock: object) -> bool:
+        if widget.get_height() == 0:
+            return GLib.SOURCE_CONTINUE
+        _scroll_into_view(widget)
+        return GLib.SOURCE_REMOVE
+
+    row.add_tick_callback(tick)
 
 
 def _dependents(schema: Schema) -> dict[str, tuple[str, ...]]:

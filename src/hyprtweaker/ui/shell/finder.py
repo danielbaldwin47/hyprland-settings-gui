@@ -301,17 +301,18 @@ def _entity_row(hit: EntityHit) -> Gtk.ListBoxRow:
     The kind's noun leads the subtitle because the group mixes kinds, and "SUPER + Q" or
     "DP-1" alone does not say which Page opening it lands on. The badge comes next, in the
     row's own words (#139), since a bind Hyprland cannot load is the salient fact about it;
-    then the row's detail line. Plain text, as the Pages' rows are: Triggers, commands and
+    then the row's detail line. The title may take three lines where an Option's takes one:
+    an unlabelled rule's title is its whole summary, and six pavucontrol rules cut at one line
+    all read "class ^(pavucontrol)$ → ..." -- the effect that tells them apart is at the end
+    (probed over end-4). Plain text, as the Pages' rows are: Triggers, commands and
     Match patterns are user text, and as Pango markup `A&B` renders blank.
     """
     subtitle = " · ".join(part for part in (hit.kind.noun, hit.badge, hit.subtitle) if part)
-    row = Adw.ActionRow(
-        title=hit.title,
-        subtitle=subtitle,
-        use_markup=False,
-        title_lines=1,
-        subtitle_lines=2,
-    )
+    # `use_markup` first and the texts after: given together to the constructor, the texts
+    # are parsed as markup before the flag lands, and GTK warns over every `&&` command.
+    row = Adw.ActionRow(use_markup=False, title_lines=3, subtitle_lines=2)
+    row.set_title(hit.title)
+    row.set_subtitle(subtitle)
     row.set_activatable(True)
     return row
 
