@@ -570,6 +570,166 @@ def test_the_page_hands_each_row_the_neighbours_it_is_shown_next_to(tmp_path: Pa
     assert [row.neighbours for row in page.rows] == [(None, 2), (0, None)]
 
 
+def press(widget: Any, accelerator: str) -> None:
+    """Fire `widget`'s shortcut for `accelerator`, as the key press would."""
+    from gi.repository import Gtk
+
+    for controller in widget.observe_controllers():
+        if isinstance(controller, Gtk.ShortcutController):
+            for each in controller:
+                if each.get_trigger().to_string() == accelerator:
+                    each.get_action().activate(Gtk.ShortcutActionFlags(0), widget, None)
+                    return
+    raise AssertionError(f"{widget!r} has no {accelerator} shortcut")
+
+
+def test_alt_down_twice_moves_the_same_rule_twice_and_focus_follows_it(tmp_path: Path) -> None:
+    """Review of #151, finding 11: the refresh rebuilds every row, so the moved rule's new
+    row takes the focus, or the second Alt+Down would land on nothing."""
+    import main_loop
+    from _live_window import live_entity_window
+
+    session, window, applier = live_entity_window(tmp_path)
+    session.model.entities.window_rules.extend(
+        window_rule(match={"class": name}, effects={"float": True}) for name in "abc"
+    )
+    page = window.window_rules_page
+    page.refresh()
+    window.present()
+    window._select_section(page.section)
+    main_loop.settle("the Rules page to map")
+    page.rows[0].widget.grab_focus()
+
+    press(window.get_focus(), "<Alt>Down")
+    applier.settle()
+    press(window.get_focus(), "<Alt>Down")
+    applier.settle()
+
+    assert [row.rule.match["class"] for row in page.rows] == ["b", "c", "a"]
+    assert window.get_focus() is page.rows[2].widget
+
+
+# --- chip overflow: one row per group, the rest behind "+N" (#113, review of #151) --------
+
+
+def crowded_rules_page(tmp_path: Path) -> Any:
+    """The Rules page over the 332-rule fixture (74 chips), shown and laid out."""
+    import main_loop
+    from _many_rules import many_rules
+
+    session, window = build_window(tmp_path)
+    session.model.entities.window_rules.extend(many_rules())
+    page = window.window_rules_page
+    page.refresh()
+    window.present()
+    window._select_section(page.section)
+    main_loop.settle("the Rules page to map")
+    settle_chips(page)
+    return page
+
+
+def row_chips(page: Any, group: str) -> list[Any]:
+    return [b for c, b in page.chip_buttons.items() if c.group.value == group]
+
+
+def settle_chips(page: Any) -> None:
+    """Run the loop until every chip is on its row or in its popover, not both or neither.
+
+    The fold is decided at allocation and reported from an idle, and a relabelled "+N"
+    chip can take another frame to refold, which an empty main loop does not wait for.
+    """
+    import time
+
+    import main_loop
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        main_loop.settle("the chip rows to fold")
+        if all(
+            sum(b.get_mapped() for b in row_chips(page, group.value))
+            + len(page.folded_buttons(group))
+            == len(row_chips(page, group.value))
+            for group in page.more_buttons
+        ):
+            return
+        time.sleep(0.02)
+    raise AssertionError("the chip rows did not settle into row and popover")
+
+
+def test_chips_past_one_row_fold_into_a_more_chip(tmp_path: Path) -> None:
+    from hyprtweaker.engine.rule_filter import ChipGroup
+
+    page = crowded_rules_page(tmp_path)
+
+    assert len(page.chip_buttons) == 74
+    for group, total in ((ChipGroup.MATCH, 17), (ChipGroup.EFFECT, 57)):
+        buttons = row_chips(page, group.value)
+        shown = [b for b in buttons if b.get_mapped()]
+        more = page.more_buttons[group]
+        assert 0 < len(shown) < total
+        assert shown == buttons[: len(shown)]  # the first chips stay, the rest fold
+        assert [b.get_label() for b in page.folded_buttons(group).values()] == [
+            b.get_label() for b in buttons[len(shown) :]
+        ]
+        assert more.get_mapped()
+        assert more.get_label() == f"+{total - len(shown)}"
+        assert more.get_tooltip_text() == f"Show {total - len(shown)} more filters"
+        tops = {b.compute_bounds(page.page)[1].get_y() for b in [*shown, more]}
+        assert len(tops) == 1  # one row
+
+
+def test_a_chip_chosen_in_the_more_popover_filters_like_any_other(tmp_path: Path) -> None:
+    import main_loop
+
+    from hyprtweaker.engine.rule_filter import ChipGroup
+
+    page = crowded_rules_page(tmp_path)
+    more = page.more_buttons[ChipGroup.EFFECT]
+    popover = page.more_popovers[ChipGroup.EFFECT]
+
+    more.emit("clicked")
+    main_loop.settle("the more popover to open")
+    xray = page.folded_buttons(ChipGroup.EFFECT)[chip("effect", "xray")]
+    assert popover.get_visible()
+    assert xray.get_label() == "Xray"
+
+    xray.set_active(True)
+
+    assert [row.index for row in page.rows] == [41, 98, 155, 212, 269, 326]
+    assert page.chip_buttons[chip("effect", "xray")].get_active()
+    assert more.get_active()  # the "+N" chip shows a folded chip is on
+    assert more.get_label() == f"+{len(page.folded_buttons(ChipGroup.EFFECT))} (1 on)"
+    settle_chips(page)  # "(1 on)" widens the chip, which may fold one more
+    assert page.folded_buttons(ChipGroup.EFFECT)[chip("effect", "xray")] is xray
+    assert more.get_label() == f"+{len(page.folded_buttons(ChipGroup.EFFECT))} (1 on)"
+    assert popover.get_visible()  # pick another without reopening
+
+    xray.set_active(False)
+
+    assert len(page.rows) == 332
+    assert not more.get_active()
+    assert more.get_label() == f"+{len(page.folded_buttons(ChipGroup.EFFECT))}"
+
+
+def test_clicking_the_more_chip_keeps_it_showing_the_folded_filter_state(
+    tmp_path: Path,
+) -> None:
+    """A toggle button flips on click; the "+N" chip's pressed look means "a folded chip
+    is on", so a click opens the popover and leaves that look alone."""
+    import main_loop
+
+    from hyprtweaker.engine.rule_filter import ChipGroup
+
+    page = crowded_rules_page(tmp_path)
+    more = page.more_buttons[ChipGroup.MATCH]
+
+    more.emit("clicked")
+    main_loop.settle("the more popover to open")
+
+    assert page.more_popovers[ChipGroup.MATCH].get_visible()
+    assert not more.get_active()
+
+
 # --- matches N, and the implicit anchors, in the editor (#113) ----------------------------
 
 

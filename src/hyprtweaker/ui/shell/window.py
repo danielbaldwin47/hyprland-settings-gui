@@ -1269,8 +1269,12 @@ class MainWindow(Adw.ApplicationWindow):
             self._refresh_rules(kind)
 
     def _move_rule(self, kind: str, index: int, to: int) -> None:
+        """The drag reorder, and Alt+Up/Down: focus follows the moved rule, as for binds."""
         if self._session.move_rule(kind, index, to):
             self._refresh_rules(kind)
+            page = self._rules_page(kind)
+            if page is not None:
+                page.reveal(to)
 
     def _refresh_rules(self, kind: str) -> None:
         page = self._rules_page(kind)
