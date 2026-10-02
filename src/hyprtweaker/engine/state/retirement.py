@@ -36,7 +36,7 @@ from typing import Any, Protocol
 
 from ..importer.lua.sandbox import Consent, LuaUnavailable, evaluate
 from ..model.values import parse_lua
-from ..schema import ResolvedOption, Schema
+from ..schema import ResolvedOption, Schema, is_plugin_option
 from ..schema.resolve import version_key
 from ..schema.sources import lua_key_for
 from .manifest import Manifest, RetiredValue, RetireReason
@@ -115,9 +115,15 @@ def reason_for(name: str, schema: Schema, live: LiveNames | None) -> RetireReaso
     missed a Hyprland newer than every shipped schema, so the supplement that would have
     held the name is not loaded (#214). The value is kept all the same, since the first
     write drops the key, and the next start that reads the compositor restores it.
+
+    A plugin's setting the compositor does not describe belongs to a plugin that is not
+    loaded (#175), or to one this start could not ask about: kept quietly either way, and
+    back on the first start that finds the plugin loaded.
     """
     if live is not None and name in live.names:
         return RetireReason.NOT_IN_SCHEMA
+    if is_plugin_option(name):
+        return RetireReason.PLUGIN_NOT_LOADED
     return RetireReason.REMOVED
 
 
@@ -321,7 +327,9 @@ def _config_tables(path: Path, timeout: float) -> tuple[Mapping[str, Any], ...]:
     if not path.is_file():
         return ()
     try:
-        recording = evaluate(path, consent=Consent(evaluate=True), timeout=timeout)
+        recording = evaluate(
+            path, consent=Consent(evaluate=True), timeout=timeout, assume_plugins_loaded=True
+        )
     except LuaUnavailable:
         return ()
     return tuple(
