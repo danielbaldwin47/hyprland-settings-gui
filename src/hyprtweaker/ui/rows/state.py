@@ -322,9 +322,16 @@ class RowState:
     `editable` in both directions.
 
     A dependency-disabled Row is still resettable -- the value is in the config either way,
-    unmet dependency or not, and taking it back out is a legitimate edit. A read-only
-    session is not: `Session._refuse` would drop the write, and an arrow that silently does
-    nothing is worse than one visibly greyed out beside a Banner saying why."""
+    unmet dependency or not, and taking it back out is a legitimate edit. So is a set Row
+    the running Hyprland lacks: its key is a config error there, and Reset is the way out
+    (#215). A read-only session is not, nor is a Retired Row: `Session._refuse` would drop
+    the write, and an arrow that silently does nothing is worse than one visibly greyed out
+    beside the words saying why."""
+
+    subtitle: str
+    """The Option's description, and under it, on a read-only Row, why it is read-only
+    and what the user can do (#215). In the subtitle rather than only a pill's tooltip,
+    because a tooltip is out of reach of the keyboard and of a screen reader."""
 
 
 class RowContext(Protocol):
@@ -366,6 +373,14 @@ class RowContext(Protocol):
         """The release that retired this Option while the user set it, or `None` (ADR-0012)."""
         ...
 
+    def kept_value(self, name: str) -> OptionValue:
+        """The value the Manifest keeps for this Option, typed, or `UNSET` (#215).
+
+        Every retirement reason, announced or quiet: a kept value makes the Row read-only
+        whether or not `retired_in` gives it a pill.
+        """
+        ...
+
     def value_of(self, option: ResolvedOption) -> OptionValue: ...
 
     def effective_value(self, option: ResolvedOption) -> Any: ...
@@ -373,20 +388,66 @@ class RowContext(Protocol):
     def is_modified(self, option: ResolvedOption) -> bool: ...
 
 
+def row_value(option: ResolvedOption, context: RowContext) -> OptionValue:
+    """The value a Row renders: the kept value of a Retired Option, else the model's.
+
+    A Retired Option is Unset in the model -- the app stopped writing it -- so rendering
+    the model would show Hyprland's default where the pill promises "your value is kept"
+    (#215). Every control and the Value summary read through here.
+    """
+    kept = context.kept_value(option.name)
+    return context.value_of(option) if kept is UNSET else kept
+
+
 def row_state(option: ResolvedOption, context: RowContext) -> RowState:
     """Everything the suffix strip shows for one Option, right now."""
     dependency = unmet_dependency(option, context)
+    summary = value_summary(option, row_value(option, context))
+    retired = context.kept_value(option.name) is not UNSET
+    why = _read_only_reason(option, context, summary)
     return RowState(
         pills=_pills(option, context),
-        summary=value_summary(option, context.value_of(option)),
+        summary=summary,
         dependency=dependency,
         modified=context.is_modified(option),
         reset_tooltip=f"Reset to default: {default_label(option)}",
-        # Two independent reasons to dim, and they compose: a read-only session (no
-        # compositor to apply to) and an unmet dependency.
-        editable=context.live and dependency is None,
-        resettable=context.live,
+        # Three independent reasons to dim, and they compose: a read-only session (no
+        # compositor to apply to), an unmet dependency, and an Option this Hyprland does not
+        # take (Retired, or Not in this Hyprland: every edit would be a config error).
+        editable=context.live and dependency is None and why is None,
+        resettable=context.live and not retired,
+        subtitle="\n".join(line for line in (option.description, why) if line),
     )
+
+
+def _read_only_reason(
+    option: ResolvedOption, context: RowContext, summary: ValueSummary | None
+) -> str | None:
+    """Why this Option's control is read-only and what the user can do, or `None` (#215).
+
+    Only the two reasons the Row alone can explain. A read-only session has the Banner, and
+    an unmet dependency has its badge.
+    """
+    kept = context.kept_value(option.name)
+    if kept is not UNSET:
+        # The summary's spelling on an expander, so the line and the collapsed Row agree.
+        value = summary.text if summary is not None else value_label(option, kept)
+        release = context.retired_in(option)
+        if release is None:
+            return f"Your value: {value}. It is kept for when Hyprland has this setting again."
+        return (
+            f"Your value: {value}. Hyprland {release} removed this setting; it is kept for "
+            "when the setting returns."
+        )
+    live = context.live_hyprland
+    if live is None or not context.unknown_to_version(option):
+        return None
+    if context.is_modified(option):
+        return (
+            f"Hyprland {live.version} does not have this setting. Reset removes it from your "
+            "config."
+        )
+    return f"Hyprland {live.version} does not have this setting, so it cannot be changed here."
 
 
 def help_content(option: ResolvedOption) -> HelpContent:
@@ -494,25 +555,27 @@ def _retired_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
         return None
     return Pill(
         RETIRED_PILL.format(release=release),
-        f"Hyprland {release} removed this setting; your value is kept and comes back if the "
-        "setting returns.",
+        f"Hyprland {release} removed this setting, so it cannot be changed here. Your value "
+        "is kept and comes back if the setting returns.",
     )
 
 
 def _not_in_hyprland_pill(option: ResolvedOption, context: RowContext) -> Pill | None:
     # The `unknown-to-this-version` Row state (CONTEXT.md, #77): the running compositor
     # was described and this Option is not among its own, because the app degraded onto
-    # a Schema newer than it (ADR-0012). Informative only -- the control stays editable
-    # and writes are unchanged. A *set* Option a newer release removed is Retired
-    # instead (#178), whose row in `PILL_PRECEDENCE` suppresses this one.
+    # a Schema newer than it (ADR-0012). The control is read-only (#215): every edit would
+    # be a config error and an auto-revert. A set one keeps its Reset, the way out of the
+    # error its key raises. A *set* Option a newer release removed is Retired instead
+    # (#178), whose row in `PILL_PRECEDENCE` suppresses this one.
     live = context.live_hyprland
     if live is None or not context.unknown_to_version(option):
         return None
-    return Pill(
-        NOT_IN_HYPRLAND_PILL,
-        f"Hyprland {live.version} does not have this setting, so a change made here will "
-        "not take effect.",
+    cannot = (
+        f"Hyprland {live.version} does not have this setting, so it cannot be changed here."
     )
+    if context.is_modified(option):
+        return Pill(NOT_IN_HYPRLAND_PILL, f"{cannot} Reset removes it from your config.")
+    return Pill(NOT_IN_HYPRLAND_PILL, cannot)
 
 
 def _pending_restart_pill(option: ResolvedOption, context: RowContext) -> Pill | None:

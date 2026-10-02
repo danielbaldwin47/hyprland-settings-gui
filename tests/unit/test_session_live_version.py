@@ -232,8 +232,48 @@ def test_a_row_names_the_option_the_running_hyprland_lacks(tmp_path: Path) -> No
     (pill,) = row_state(rounding, session).pills
     assert (pill.label, pill.tooltip) == (
         "Not in this Hyprland",
-        "Hyprland 0.56.0 does not have this setting, so a change made here will not take "
-        "effect.",
+        "Hyprland 0.56.0 does not have this setting, so it cannot be changed here.",
+    )
+
+
+def test_reset_takes_a_setting_the_running_hyprland_lacks_out_of_the_module(
+    tmp_path: Path,
+) -> None:
+    """#215: the key raises a config error on this Hyprland, and Reset is the way out."""
+    rounding = "decoration:rounding"
+    decoration = ConfigPaths.rooted_at(tmp_path).app_dir / "options" / "decoration.lua"
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        before = session_for(fake, tmp_path, runner, live_hyprland=_described_without(""))
+        before.start()
+        await runner.settle()
+        before.set_option(rounding, 8)
+        await before.aclose()
+        assert "rounding = 8" in decoration.read_text()
+
+        runner = Runner()
+        session = session_for(
+            fake, tmp_path, runner, live_hyprland=_described_without(rounding)
+        )
+        session.start()
+        await runner.settle()
+        option = session.schema[rounding]
+        assert session.unknown_to_version(option) and session.is_modified(option)
+        assert row_state(option, session).resettable
+
+        session.unset_option(rounding)
+        await runner.settle()
+        await session.aclose()
+
+        assert not session.is_modified(option)
+        assert "rounding" not in (decoration.read_text() if decoration.exists() else "")
+
+    run_with_fake(
+        scenario,
+        FakeHyprland(
+            section_conversation("decoration", **{rounding: 8}), reload_emits_event=True
+        ),
     )
 
 
