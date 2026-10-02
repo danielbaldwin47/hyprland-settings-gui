@@ -155,7 +155,7 @@ def _alive(pid: int) -> bool:
     """Whether `pid` runs: a zombie, or one gone between two reads, does not."""
     try:
         return "zombie" not in Path(f"/proc/{pid}/status").read_text().lower()
-    except FileNotFoundError:
+    except OSError:  # gone (ENOENT), or going (ESRCH) as it is read
         return False
 
 

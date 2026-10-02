@@ -7,6 +7,8 @@
   and refusing stand-ins for every theming tool and wallpaper daemon go first on `PATH`.
   That covers collection, wider-scoped fixtures, and GTK, which reads its user
   directories once, when the UI tier opens its display.
+  `HYPRLAND_INSTANCE_SIGNATURE` is dropped there too, and a stand-in run outside any test
+  fails the run at its end.
 - `hermetic_home`, autouse: the same variables under the test's `tmp_path`, and no
   `HYPRLAND_INSTANCE_SIGNATURE`. A test that ran a stand-in fails at teardown.
 
@@ -43,6 +45,22 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ.update(make_fence(root))
     install_refusals(root / "refuse")
     os.environ["PATH"] = os.pathsep.join([str(root / "refuse"), os.environ.get("PATH", "")])
+    # Collection and wider-scoped fixtures run before `hermetic_home`: they must not see
+    # the compositor the suite was started under either (finding 10 of the #153 review).
+    os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """A stand-in that ran outside any test -- at collection, or in a module or session
+    fixture -- logged to the process's own fence log, which no test reads: fail the run."""
+    root = session.config.stash.get(_PROCESS_FENCE, None)
+    if root is None:
+        return
+    if problem := refusals(root / "refused.log"):
+        reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        if reporter is not None:
+            reporter.write_line(f"outside any test, {problem}", red=True)
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
