@@ -91,6 +91,7 @@ package_sources = {
     'detect.py',
     'export.py',
     'flow.py',
+    'omarchy.py',
     'sentinel.py',
   ],
   'hyprtweaker/engine/model': [
