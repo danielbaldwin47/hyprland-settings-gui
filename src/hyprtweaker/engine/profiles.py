@@ -192,10 +192,10 @@ def _shape(
 # --- the store ---------------------------------------------------------------------------
 
 
-def slugify(name: str) -> str:
-    """The filename half of a profile name: lowered, dashed, never empty."""
+def slugify(name: str, *, fallback: str = "profile") -> str:
+    """The filename half of a profile (or Preset) name: lowered, dashed, never empty."""
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return slug or "profile"
+    return slug or fallback
 
 
 class ProfileStore:

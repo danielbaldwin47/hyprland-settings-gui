@@ -91,6 +91,9 @@ confusion with ADR-0014 Presets, which are look-and-feel bundles and never monit
 App-side data rather than a Module -- nothing requires it, and the writer's prune never
 touches files the Manifest does not claim.
 """
+PRESETS_DIR = "presets"
+"""Presets, one `<slug>.json` each, in the App dir (ADR-0014). App data, like
+`monitor-profiles/`: never required, never claimed by the Manifest, never pruned."""
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"
 REPORTS_DIR = "reports"
@@ -140,6 +143,10 @@ class ConfigPaths:
     @property
     def monitor_profiles_dir(self) -> Path:
         return self.app_dir / MONITOR_PROFILES_DIR
+
+    @property
+    def presets_dir(self) -> Path:
+        return self.app_dir / PRESETS_DIR
 
     @property
     def entrypoint(self) -> Path:
