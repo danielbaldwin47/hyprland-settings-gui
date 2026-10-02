@@ -26,7 +26,8 @@ back through `on_done`, exactly as `BindEditor` does with its `Bind`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from typing import Any
 
 import gi
 
@@ -37,8 +38,12 @@ from gi.repository import Adw, Gdk, Gtk  # noqa: E402
 
 from hyprtweaker.engine.triggers import (  # noqa: E402
     CaptureRecorder,
+    Severity,
     Trigger,
+    TriggerProblem,
     parse_trigger,
+    switch_trigger,
+    trigger_load_problem,
     validate_trigger,
 )
 
@@ -54,9 +59,38 @@ _SCROLL_NAMES: dict[Gdk.ScrollDirection, str] = {
     Gdk.ScrollDirection.RIGHT: "right",
 }
 
+#: The picker's first row, so the combo has an honest "nothing chosen" state.
+PICK_PROMPT = "Choose a switch…"
+#: What each qualifier row means, in the order of `_WHEN_PREFIX`.
+_WHEN_LABELS = ("Turns on", "Turns off", "Either way")
+_WHEN_PREFIX = ("on", "off", "")
+
+#: The picker group's description in each state. Every one says what the user can do next:
+#: an empty list with no explanation reads as a broken dialog. Adw reads a description as
+#: markup, so none holds `<` or `&`: `switch:<name>` once rendered as an unclosed tag.
+SWITCH_LOOKING = "Looking for switches…"
+SWITCH_OFFLINE = (
+    "Not connected to Hyprland, so its switches cannot be listed. "
+    'Type "switch:" and its name below, spelled exactly as your device list reports it.'
+)
+SWITCH_NONE = (
+    "Hyprland reports no lid or tablet-mode switch on this computer, so there is nothing to "
+    'pick. If you expect one, type "switch:" and its name below.'
+)
+SWITCH_LISTED = "Names are copied exactly as Hyprland reports them."
+
+#: A source of the compositor's switch devices: calls `done` once with the switches
+#: (`()` when it answered and has none) or `None` when nobody is there to ask.
+FetchSwitches = Callable[[Callable[[tuple[Mapping[str, Any], ...] | None], None]], None]
+
 
 class CaptureDialog(Adw.Dialog):
-    """Record one Trigger from real input. Calls `on_done` with the string, or never."""
+    """Record one Trigger from real input. Calls `on_done` with the string, or never.
+
+    `fetch_switches` lets the user pick a `switch:` trigger from the compositor's own device
+    list (#107), because GTK never delivers a switch event to capture. `None` means no
+    compositor is connected: the picker says so and manual entry stays.
+    """
 
     def __init__(
         self,
@@ -64,20 +98,24 @@ class CaptureDialog(Adw.Dialog):
         on_done: Callable[[str], None],
         initial: str = "",
         in_submap: bool = False,
+        fetch_switches: FetchSwitches | None = None,
     ) -> None:
-        super().__init__(title="Set keybind", content_width=460, content_height=340)
+        super().__init__(title="Set keybind", content_width=460, content_height=560)
         self._on_done = on_done
         self._in_submap = in_submap
         self._recorder = CaptureRecorder()
         self._initial = initial.strip()
         self._captured: Trigger | None = parse_trigger(self._initial) if self._initial else None
         self._inhibited = False
+        self._closed = False
+        self._pick_problem: TriggerProblem | None = None
 
         self.set_child(self._body())
         self._install_controllers()
         self.connect("unrealize", lambda _dialog: self._restore_shortcuts())
-        self.connect("closed", lambda _dialog: self._restore_shortcuts())
+        self.connect("closed", self._on_closed)
         self._refresh()
+        self._load_switches(fetch_switches)
 
     # --- layout -------------------------------------------------------------------------
 
@@ -130,18 +168,31 @@ class CaptureDialog(Adw.Dialog):
 
         content.append(self._surface)
 
-        # Manual entry stays reachable: capture cannot produce a `switch:` trigger, and a
-        # key this keyboard does not have still needs a way in (ADR-0007 keeps text entry
-        # as the fallback, not as a second-class path).
-        group = Adw.PreferencesGroup(
-            title="Or type it",
-            # Named explicitly because the limitation is invisible otherwise: GTK never
-            # delivers switch events to an application, so a lid or tablet-mode switch
-            # cannot be captured however hard the user presses it.
-            description=(
-                "Lid and tablet-mode switches cannot be captured -- type switch:<name> instead."
-            ),
+        # The switch picker. Named explicitly because the limitation is invisible
+        # otherwise: GTK never delivers switch events to an application, so a lid or
+        # tablet-mode switch cannot be captured however hard the user presses it.
+        self._switch_group = Adw.PreferencesGroup(
+            title="Or pick a lid or tablet-mode switch", description=SWITCH_LOOKING
         )
+        self._switch_names = Gtk.StringList.new([PICK_PROMPT])
+        self._switch_row = Adw.ComboRow(
+            title="Switch", model=self._switch_names, sensitive=False
+        )
+        self._switch_row.connect("notify::selected", self._switch_picked)
+        self._switch_group.add(self._switch_row)
+        self._when_row = Adw.ComboRow(
+            title="When",
+            model=Gtk.StringList.new(list(_WHEN_LABELS)),
+            sensitive=False,
+        )
+        self._when_row.connect("notify::selected", self._switch_picked)
+        self._switch_group.add(self._when_row)
+        content.append(self._switch_group)
+
+        # Manual entry stays reachable: a switch the picker cannot list, and a key this
+        # keyboard does not have, still need a way in (ADR-0007 keeps text entry as the
+        # fallback, not as a second-class path).
+        group = Adw.PreferencesGroup(title="Or type it")
         self._manual = Adw.EntryRow(title="Trigger")
         if self._initial:
             self._manual.set_text(self._initial)
@@ -233,12 +284,20 @@ class CaptureDialog(Adw.Dialog):
         return True
 
     def _typing_manually(self) -> bool:
-        """Whether focus is inside the manual entry, so keys belong to it and not to us."""
+        """Whether focus is in the manual entry or the switch picker, so keys belong to it.
+
+        The picker counts: arrow keys and Space move its combos, and recording them would
+        replace the picked switch with a stray key.
+        """
         root = self.get_root()
         focus = root.get_focus() if root is not None else None
-        if focus is None:
-            return False
-        return focus is self._manual or focus.is_ancestor(self._manual)
+        return focus is not None and self._owns_keys(focus)
+
+    def _owns_keys(self, widget: Gtk.Widget) -> bool:
+        return any(
+            widget is form or widget.is_ancestor(form)
+            for form in (self._manual, self._switch_group)
+        )
 
     def _on_key_released(
         self, _controller: Gtk.EventControllerKey, keyval: int, _keycode: int, _state: int
@@ -271,6 +330,7 @@ class CaptureDialog(Adw.Dialog):
 
     def _settle(self, trigger: Trigger) -> None:
         self._captured = trigger
+        self._pick_problem = None
         self._manual.handler_block_by_func(self._manual_changed_marshal)
         self._manual.set_text(str(trigger))
         self._manual.handler_unblock_by_func(self._manual_changed_marshal)
@@ -284,13 +344,85 @@ class CaptureDialog(Adw.Dialog):
     def _manual_changed(self) -> None:
         text = self._manual.get_text().strip()
         self._captured = parse_trigger(text) if text else None
+        self._pick_problem = None
         self._refresh()
 
     def _clear(self) -> None:
         self._captured = None
+        self._pick_problem = None
         self._recorder.reset()
         self._manual.set_text("")
         self._refresh()
+
+    # --- the switch picker (#107) -------------------------------------------------------
+
+    def _load_switches(self, fetch: FetchSwitches | None) -> None:
+        if fetch is None:
+            self._switch_group.set_description(SWITCH_OFFLINE)
+            return
+        fetch(self._switches_arrived)
+
+    def _switches_arrived(self, switches: tuple[Mapping[str, Any], ...] | None) -> None:
+        if self._closed:
+            return
+        if switches is None:
+            self._switch_group.set_description(SWITCH_OFFLINE)
+            return
+        names: list[str] = []
+        for switch in switches:
+            name = switch.get("name")
+            if isinstance(name, str) and name not in names:
+                names.append(name)
+        if not names:
+            self._switch_group.set_description(SWITCH_NONE)
+            return
+        self._switch_names.splice(1, 0, names)
+        self._switch_group.set_description(SWITCH_LISTED)
+        self._switch_row.set_sensitive(True)
+        self._when_row.set_sensitive(True)
+        self._preselect(names)
+
+    def _preselect(self, names: list[str]) -> None:
+        """Show an existing switch trigger's switch and qualifier, without rewriting it.
+
+        A trigger naming a switch the compositor does not list (unplugged, or typed wrong)
+        is left alone: the typed text is the user's and the picker stays on its prompt.
+        """
+        trigger = self._captured
+        if trigger is None or not trigger.key.lower().startswith("switch:"):
+            return
+        rest = trigger.key[len("switch:") :]
+        when = ""
+        for prefix in ("on", "off"):
+            if rest.lower().startswith(prefix + ":"):
+                when, rest = prefix, rest[len(prefix) + 1 :]
+                break
+        if rest not in names:
+            return
+        self._when_row.handler_block_by_func(self._switch_picked)
+        self._switch_row.handler_block_by_func(self._switch_picked)
+        self._when_row.set_selected(_WHEN_PREFIX.index(when))
+        self._switch_row.set_selected(1 + names.index(rest))
+        self._switch_row.handler_unblock_by_func(self._switch_picked)
+        self._when_row.handler_unblock_by_func(self._switch_picked)
+
+    def _switch_picked(self, *_args: object) -> None:
+        """A switch or qualifier was chosen: write its trigger, or say why it cannot be."""
+        index = self._switch_row.get_selected()
+        if index == 0:
+            return
+        name = self._switch_names.get_string(index) or ""
+        built = switch_trigger(name, _WHEN_PREFIX[self._when_row.get_selected()])
+        if isinstance(built, TriggerProblem):
+            self._captured = None
+            self._pick_problem = built
+            self._refresh()
+            return
+        self._settle(Trigger((), built))
+
+    def _on_closed(self, _dialog: Adw.Dialog) -> None:
+        self._closed = True
+        self._restore_shortcuts()
 
     def _keycode_hint(self, trigger: Trigger) -> str:
         """What a `code:N` trigger means on the layout in front of the user right now.
@@ -320,12 +452,22 @@ class CaptureDialog(Adw.Dialog):
         if trigger is None:
             pending = self._recorder.modifier_only()
             self._shortcut.set_text(f"{pending} + …" if pending else "")
-            self._problem.set_visible(False)
+            picked = self._pick_problem
+            self._problem.set_visible(picked is not None)
+            if picked is not None:
+                self._problem.set_text(picked.full_text())
+                self._problem.set_css_classes(["error"])
             self._confirm.set_sensitive(False)
             return
 
         self._shortcut.set_text(trigger.display())
         problem = validate_trigger(trigger, in_submap=self._in_submap)
+        if problem is None or not problem.blocking:
+            # The one predicate the Session enforces (#199) has the last word, so a trigger
+            # `validate_trigger` lets through but Hyprland could not load stays unconfirmable.
+            load = trigger_load_problem(str(trigger))
+            if load is not None:
+                problem = TriggerProblem(Severity.BLOCK, load.message)
         if problem is None:
             self._problem.set_visible(False)
             self._confirm.set_sensitive(True)
@@ -341,6 +483,9 @@ class CaptureDialog(Adw.Dialog):
     def _accept(self) -> None:
         trigger = self._captured
         if trigger is None:
+            return
+        if trigger_load_problem(str(trigger)) is not None:
+            self._refresh()
             return
         problem = validate_trigger(trigger, in_submap=self._in_submap)
         if problem is not None and problem.blocking:

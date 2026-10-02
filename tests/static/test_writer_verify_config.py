@@ -388,3 +388,33 @@ def test_which_multi_key_triggers_hyprland_loads(
         f"{keys!r}:\n{verified.stdout}\n{verified.stderr}"
     )
     assert ("config ok" in verified.stdout) is loads
+
+
+def test_the_switch_triggers_the_picker_writes_are_a_config_hyprland_accepts(
+    tmp_path: Path,
+) -> None:
+    """#107: `switch:on:`, `switch:off:` and the plain form, with a name holding spaces and
+    mixed case, written enabled. The picker only offers what this loads."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    call = DispatcherCall(path="exec_cmd", positional=("true",))
+    triggers = (
+        "switch:on:Lid Switch",
+        "switch:off:Lid Switch",
+        "switch:Tablet Mode Switch",
+    )
+    model.adopt_entities(
+        EntitySet(binds=[Bind(keys=keys, dispatcher=call) for keys in triggers])
+    )
+    Writer(paths, app_version="0.0.0-test").write(model)
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    verified = verify(paths.entrypoint, runtime_dir)
+
+    assert verified.returncode == 0, f"{verified.stdout}\n{verified.stderr}"
+    assert "config ok" in verified.stdout
+    written = (paths.app_dir / "binds.lua").read_text(encoding="utf-8")
+    for keys in triggers:
+        assert f'"{keys}"' in written

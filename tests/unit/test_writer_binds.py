@@ -238,6 +238,20 @@ class TestRoundTrip:
     def test_key_code_survives(self) -> None:
         self.assert_round_trips(EntitySet(binds=[exec_bind("SUPER + code:10", "x")]))
 
+    def test_switch_triggers_survive_with_the_exact_name(self) -> None:
+        """#107: the picker's three spellings, a name with inner spaces and mixed case, and
+        a switch bind next to a key bind (`switch:` binds are written like any other)."""
+        self.assert_round_trips(
+            EntitySet(
+                binds=[
+                    exec_bind("switch:on:Lid Switch", "lock"),
+                    exec_bind("switch:off:Lid Switch", "wake"),
+                    exec_bind("switch:Tablet  Mode switch", "rotate"),
+                    exec_bind("SUPER + Q", "kitty"),
+                ]
+            )
+        )
+
     def test_submap_membership_survives(self) -> None:
         self.assert_round_trips(
             EntitySet(

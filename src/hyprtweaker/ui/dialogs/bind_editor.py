@@ -42,7 +42,7 @@ from hyprtweaker.engine.triggers import (  # noqa: E402
 )
 from hyprtweaker.engine.writer.binds import lua_value  # noqa: E402
 from hyprtweaker.engine.writer.lua import table_key  # noqa: E402
-from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
+from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
 
 TRIGGER_HELP = "Modifiers and one key, joined by +. For example: SUPER + SHIFT + Q"
 
@@ -96,9 +96,12 @@ class BindEditor(Adw.Dialog):
         on_done: Callable[[Bind], None],
         bind: Bind | None = None,
         submap: str | None = None,
+        fetch_switches: FetchSwitches | None = None,
     ) -> None:
-        """`submap` is where a *new* bind will live (#66's per-submap add); an edited
-        bind keeps the submap it already has, and the parameter is ignored."""
+        """`fetch_switches` is the live switch list Capture's picker reads (#107), `None`
+        with no compositor connected. `submap` is where a *new* bind will live (#66's
+        per-submap add); an edited bind keeps the submap it already has, and the parameter
+        is ignored."""
         super().__init__(
             title="Edit keybind" if bind else "Add keybind",
             content_width=560,
@@ -107,6 +110,7 @@ class BindEditor(Adw.Dialog):
         self._on_done = on_done
         self._original = bind
         self._submap = bind.submap if bind is not None else submap
+        self._fetch_switches = fetch_switches
         self._chosen: Dispatcher | None = None
         self._arg_entries: dict[str, Gtk.Widget] = {}
         self._kept: dict[str, object] = {}
@@ -374,6 +378,7 @@ class BindEditor(Adw.Dialog):
             on_done=self._trigger.set_text,
             initial=self._trigger.get_text(),
             in_submap=self._in_submap(),
+            fetch_switches=self._fetch_switches,
         )
         dialog.present(self)
 
