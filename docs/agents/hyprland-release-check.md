@@ -4,7 +4,7 @@ The per-release protocol that keeps the Schema and the curated Tasks view from r
 
 The Config view regenerates itself from the Schema; this protocol exists because the Overlay and the Tasks placement are curated by hand and drift silently otherwise.
 
-**Deliverable:** one PR containing the new Generated schema and the Overlay updates, and a summary comment that carries the machine diff. The release is **handled** when the CI overlay completeness test passes on the new schema and a human has reviewed the diff via the PR — Tasks placement and `unit` are polish and may lag.
+**Deliverable:** one PR containing the new Generated schema and the Overlay updates, and a summary comment that carries the machine diff. The release is **handled** when the curation tests (§ 3) pass on the new schema and a human has reviewed the diff via the PR — Tasks placement and `unit` are polish and may lag.
 
 ## 1. Generate
 
@@ -51,15 +51,15 @@ Update `data/schema/overlay.json`:
 
 - **Added option** → the mandatory tier: `widget`, `nullable`/`null_label`, `title`; plus `labels` / `known_values` / `range` / `depends_on` / `visibility` wherever the coverage heuristics flag the option (map-less small-int, `[a/b/c]` description, sentinel default, vec2/css_gaps/font_weight, font/monitor/regex/file strings).
 - **Added option** → also its `group`, in the same release check: add it to a Group in `tools/overlay_groups.toml`, then run `tools/curate_overlay.py` (never edit `group` or `order` in `overlay.json`). The completeness test exempts an ungrouped option for the release that added it only, so an option left in *New in \<version\>* fails the next release's check.
-- **Added option** → also its Row text, in the same release check: `tools/seed_overlay_help.py` adds the option to `tools/overlay_help.toml` with its upstream and wiki lines in a comment; give it `help` (prose that replaces the upstream line, rules in `tools/overlay_help.py`) or a `skip` reason, then run `tools/curate_overlay.py`. `tests/unit/test_overlay_help.py` fails while an option is undecided.
-- **Renamed** → `renamed_from` on the new name (the app migrates the user's value silently, Info notice).
+- **Added option** → also its Row text, in the same release check: `tools/seed_overlay_help.py` adds the option to `tools/overlay_help.toml` with its upstream line in a comment (its `wiki:` line reads `(none)`, since the seed reads the static `docs/research/option-schema.coverage.json`: take the wiki text from layer 3's wiki diff); give it `help` (prose that replaces the upstream line, rules in `tools/overlay_help.py`) or a `skip` reason, then run `tools/curate_overlay.py`. `tests/unit/test_overlay_help.py` fails while an option is undecided.
+- **Renamed** → `renamed_from` on the new name (the app migrates the user's value silently, Info notice), and the name moved in both tables, `tools/overlay_groups.toml` and `tools/overlay_help.toml`, before `tools/curate_overlay.py` runs.
 - **Removed** → `deprecated_in: <ver>` on the old entry (kept — the Overlay is version-independent; the entry still serves older schemas in the support window).
 - **Restart-list change** → update `restart` fields, hand-verified against the wiki prose.
 - **Stub API changes** (new dispatcher, new match prop, new effect, changed arg table) → update the engine's typed tables. A **new entity kind** is out of this protocol's scope: open a `ready-for-human` issue for it and say so in the PR.
 - **Entity catalogue changes** → update `entities_catalog.py` in the same PR. A leaf or field the app does not know is not a cosmetic gap: an unknown `hl.device` key is a hard error that takes the whole Module down, and a leaf the catalogue lacks is one the user cannot set. Unknown values already degrade to *shown, flagged* (ADR-0012's rule for Options, applied to Entities), so the PR is a curation update, never a rescue.
 - **Dispatcher catalogue changes** → edit the entries layer 5 named in `dispatchers.py`, then rerun its command without `UPDATE_GOLDEN=1` until all three tests pass. A curated entry lists every key the probe saw the compositor read; a shape `ArgSpec` cannot state in full keeps the raw table, with a `free_form_reason` the bind editor shows the user as one plain sentence. Commit the new record.
 
-Done when the CI overlay completeness test passes against the new schema locally.
+Done when the curation tests pass against the new schema locally: `tests/unit/test_overlay_completeness.py`, `tests/unit/test_overlay_help.py` and `tests/unit/test_curate_overlay.py`.
 
 ## 4. Verify
 
