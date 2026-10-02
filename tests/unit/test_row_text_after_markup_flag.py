@@ -3,9 +3,9 @@
 Given to a constructor, `title` and `subtitle` are parsed as Pango markup before a
 `use_markup=False` beside them, or a `set_use_markup(False)` after, lands: GTK logs a
 warning for every `&` or `<` in user text (a `make && run` command, a `class a&b` rule),
-and the UI tier's log gate fails the test that shows one. Only a test that feeds such text trips the gate, so this scan holds the whole of
-`src/` to the pattern `shell/finder.py` uses: the flag in the constructor, the texts set
-after it.
+and the UI tier's log gate fails the test that shows one. Only a test that feeds such text
+trips the gate, so this scan holds the whole of `src/` to the pattern `shell/finder.py`
+uses: the flag in the constructor, the texts set after it.
 """
 
 from __future__ import annotations
