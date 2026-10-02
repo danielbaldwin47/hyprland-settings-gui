@@ -24,6 +24,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -342,13 +343,29 @@ class MigrationFlow:
         `source` overrides what detection found, which is what makes Import... at any later
         time the same wizard rather than a second one: point it at a file, get a preview.
         """
+        preview = self.read_preview(source, consent=consent)
+        self.hold(preview)
+        return preview
+
+    def read_preview(
+        self,
+        source: Path | None = None,
+        *,
+        consent: Consent | None = None,
+        cancel: threading.Event | None = None,
+    ) -> Preview:
+        """`build_preview`'s read, holding nothing: the flow is unchanged once detection ran.
+
+        The wizard runs this off the main loop and `hold`s the result back on it, so a read
+        the user cancelled (`cancel` set: `Cancelled` is raised) leaves no Preview (#216).
+        """
         detection = self.detection or self.detect()
         path = source or detection.source
         if path is None:
             raise ValueError("nothing to import: no source file was detected or given")
 
         if asks_consent(path):
-            result = import_lua(path, self.schema, consent=consent or Consent())
+            result = import_lua(path, self.schema, consent=consent or Consent(), cancel=cancel)
         else:
             result = import_config(path, self.schema)
 
@@ -357,9 +374,12 @@ class MigrationFlow:
         # around it, so the wizard stamps the answer on before the report is saved -- a
         # report read back months later still carries the rescue that fits it (#131).
         result.loss.restore_backup = _displaces_entrypoint(preview.detection)
+        return preview
+
+    def hold(self, preview: Preview) -> None:
+        """Make `preview` the one the later steps back up, stage and switch."""
         self.preview = preview
         self.step = Step.BACK_UP
-        return preview
 
     def save_report(self) -> Path:
         """Persist the Loss report so it outlives the wizard (ADR-0009).

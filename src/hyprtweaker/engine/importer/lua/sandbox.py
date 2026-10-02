@@ -16,11 +16,15 @@ Two things are worth stating plainly, because both are easy to get wrong later:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import threading
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -34,6 +38,9 @@ INTERPRETERS: tuple[str, ...] = ("lua5.5", "lua5.4", "lua5.3", "lua", "luajit")
 
 #: A foreign config is a program, and a program can loop forever.
 DEFAULT_TIMEOUT = 60.0
+
+#: How often a cancellable read looks at its cancel token while the config runs.
+CANCEL_POLL_SECONDS = 0.05
 
 #: Stripped from the child's environment even under passthrough: with these set, anything
 #: the config shells out to can reach the *running* compositor and reconfigure the session
@@ -76,6 +83,14 @@ class ConsentRequired(RuntimeError):
 
 class LuaUnavailable(RuntimeError):
     """No Lua interpreter to evaluate with -- an installation problem, not a config one."""
+
+
+class Cancelled(RuntimeError):
+    """The caller's cancel token was set: the read was stopped and there is no `Recording`.
+
+    Raised rather than returned as an `errors` entry, because a cancelled read has no
+    report to show -- the user asked for nothing to come of it (#216).
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +220,54 @@ def _child_env(env: dict[str, str] | None) -> dict[str, str]:
     return base
 
 
+def _run(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout: float,
+    cancel: threading.Event | None,
+) -> tuple[int, str, str] | None:
+    """`command`'s exit status, stdout and stderr; `None` when it overran `timeout`.
+
+    The child leads a new session, so stopping it is one `killpg` that also takes whatever
+    it started. Raises `Cancelled` once `cancel` is set, before the start or while it runs.
+    """
+    if cancel is not None and cancel.is_set():
+        raise Cancelled("the read was cancelled before it started")
+    deadline = time.monotonic() + timeout
+    with subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    ) as process:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _kill_group(process)
+                return None
+            wait = remaining if cancel is None else min(remaining, CANCEL_POLL_SECONDS)
+            try:
+                stdout, stderr = process.communicate(timeout=wait)
+            except subprocess.TimeoutExpired:
+                if cancel is not None and cancel.is_set():
+                    _kill_group(process)
+                    raise Cancelled("the read was cancelled") from None
+                continue
+            return process.returncode, stdout, stderr
+
+
+def _kill_group(process: subprocess.Popen[str]) -> None:
+    """Kill the session `process` leads and reap it. Its pipes close with the `with`."""
+    with contextlib.suppress(ProcessLookupError):  # it already ended, with everything in it
+        os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+
+
 def _upvalues(raw: Any) -> tuple[Upvalue, ...]:
     if not isinstance(raw, list):
         return ()
@@ -304,6 +367,7 @@ def evaluate(
     basedir: Path | None = None,
     run_handlers: bool = False,
     assume_plugins_loaded: bool = False,
+    cancel: threading.Event | None = None,
 ) -> Recording:
     """Run `entry` under the recording stub and report what it did.
 
@@ -311,6 +375,11 @@ def evaluate(
     `LuaUnavailable` when there is no interpreter. Everything else -- a syntax error, a
     config that raises, one that loops until the timeout -- comes back as an `errors`
     entry, because a failed import still has to produce a report the wizard can show.
+
+    `cancel` is set from another thread to stop the read (the wizard's Cancel and Close,
+    #216): the config's process group is killed and `Cancelled` raised. The config runs in
+    a session of its own, so the kill takes the commands a passthrough read started with
+    it, unless one detached itself; a timeout kills the same way.
 
     `run_handlers` enters `hl.on` handlers instead of only capturing them, bracketing what
     they declare with `on_enter`/`on_leave` calls. Off for every foreign config -- ADR-0009
@@ -349,17 +418,8 @@ def evaluate(
             "run" if run_handlers else "keep",
             "plugins-loaded" if assume_plugins_loaded else "plugins-as-engine",
         ]
-        try:
-            completed = subprocess.run(
-                command,
-                cwd=root,
-                env=_child_env(env),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
+        completed = _run(command, cwd=root, env=_child_env(env), timeout=timeout, cancel=cancel)
+        if completed is None:
             return Recording(
                 errors=(
                     f"Your config took longer than {timeout:g} seconds to run, so reading "
@@ -370,8 +430,9 @@ def evaluate(
             )
 
         if not out_path.is_file():
-            detail = (completed.stderr or completed.stdout or "").strip().splitlines()
-            reason = detail[-1] if detail else f"exit status {completed.returncode}"
+            returncode, stdout, stderr = completed
+            detail = (stderr or stdout or "").strip().splitlines()
+            reason = detail[-1] if detail else f"exit status {returncode}"
             return Recording(
                 errors=(f"evaluation produced nothing: {reason}",), policy=policy, basedir=root
             )

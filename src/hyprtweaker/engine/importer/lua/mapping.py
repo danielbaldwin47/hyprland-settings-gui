@@ -19,6 +19,7 @@ The three-way split ADR-0009 describes falls out here:
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -662,13 +663,15 @@ def import_lua(
     consent: Consent,
     env: dict[str, str] | None = None,
     timeout: float = DEFAULT_TIMEOUT,
+    cancel: threading.Event | None = None,
 ) -> ImportResult:
     """Evaluate a foreign `hyprland.lua` and map what it declared -- the wizard's entry.
 
     Mirrors `importer.import_config` for the hyprlang path, and reports through the same
     `LossReport`, so the wizard has one flow whichever kind of config it was handed.
+    Raises `Cancelled` when `cancel` is set during the read (`evaluate`).
     """
-    recording = evaluate(path, consent=consent, env=env, timeout=timeout)
+    recording = evaluate(path, consent=consent, env=env, timeout=timeout, cancel=cancel)
     return map_recording(recording, schema, source=path)
 
 

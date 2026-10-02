@@ -8,10 +8,17 @@ tried to write is asserted absent, not merely "reported".
 
 from __future__ import annotations
 
+import os
+import signal
+import threading
+import time
+from pathlib import Path
+
 import pytest
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
 from hyprtweaker.engine.importer.lua import (
+    Cancelled,
     Consent,
     ConsentRequired,
     Policy,
@@ -312,6 +319,65 @@ def test_passthrough_really_does_let_an_effect_through(tmp_path) -> None:  # typ
     assert target.exists(), "passthrough did not pass the effect through"
     assert recording.policy is Policy.PASSTHROUGH
     assert [w.path for w in recording.writes] == [str(target)]
+
+
+def _alive(pid: int) -> bool:
+    """`pid` is a process still running: not gone, and not a zombie waiting to be reaped."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] not in {"Z", "X"}
+
+
+def _within(seconds: float, condition, what: str) -> None:  # type: ignore[no-untyped-def]
+    deadline = time.monotonic() + seconds
+    while not condition():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"{what} did not happen within {seconds:g} s")
+        time.sleep(0.01)
+
+
+def test_a_cancelled_read_stops_the_config_and_the_commands_it_started(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Cancel in the wizard (#216) stops the read, not only the wait for it: the config's
+    process group is killed, which takes a command a passthrough read started with it."""
+    pidfile = tmp_path / "command.pid"
+    entry = write(tmp_path, f'os.execute("echo $$ > {pidfile}; exec sleep 600")\n')
+    cancel = threading.Event()
+    outcome: list[BaseException] = []
+
+    def read() -> None:
+        try:
+            evaluate(entry, consent=Consent(evaluate=True, passthrough=True), cancel=cancel)
+        except BaseException as error:
+            outcome.append(error)
+
+    worker = threading.Thread(target=read)
+    worker.start()
+    _within(10, lambda: pidfile.is_file() and pidfile.read_text().strip(), "the command start")
+    command = int(pidfile.read_text())
+    try:
+        cancel.set()
+        worker.join(10)
+
+        assert not worker.is_alive(), "evaluate kept running after its cancel was set"
+        assert [type(error) for error in outcome] == [Cancelled]
+        _within(10, lambda: not _alive(command), "the command's end")
+    finally:
+        if _alive(command):  # a failed run must not leave its `sleep` behind
+            os.kill(command, signal.SIGKILL)
+
+
+def test_a_read_cancelled_before_it_starts_runs_nothing(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    canary = tmp_path / "ran"
+    entry = write(tmp_path, f'io.open({str(canary)!r}, "w"):close()\n')
+    cancel = threading.Event()
+    cancel.set()
+
+    with pytest.raises(Cancelled):
+        evaluate(entry, consent=Consent(evaluate=True, passthrough=True), cancel=cancel)
+
+    assert not canary.exists()
 
 
 def test_the_wildcard_listing_is_recorded_even_though_it_is_ours(tmp_path) -> None:  # type: ignore[no-untyped-def]
