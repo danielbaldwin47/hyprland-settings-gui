@@ -7,12 +7,15 @@ the schema changes rewrites the Module without the key. So the sequence runs at 
 start, **before the first write**, in this order:
 
     found = detect(manifest, schema, live)
-    manifest = retire(manifest, found, capture(paths.app_dir, found))
-    manifest, restored = restore(manifest, schema, live)
-    writer.set_retired(model, manifest.retired)
+    kept = retire(manifest, found, capture(paths.app_dir, found))
+    remaining, restored = restore(kept, schema, live)
+    writer.set_retired(model, kept.retired)           # every value safe before any write
     for each in restored: model.set(each.option.name, each.value)
+    ... one write of the model ...
+    writer.set_retired(model, landed(<manifest on disk>, restored).retired)
 
-`detect`, `retire` and `restore` are pure over the Manifest; `capture` is the one reader.
+`Session._retire_and_restore` runs it. `detect`, `retire`, `restore` and `landed` are pure
+over the Manifest; `capture` is the one reader. `unannounced(remaining)` is the notice.
 A rename runs through the same pass: the old name is detected and retired, and `restore`
 hands its value straight to the Option that names it in `renamed_from` -- so a notice of
 "retired this release" lists `found` less what `restored` took back under a new name.
@@ -203,6 +206,63 @@ def _taker(
         return option if returned and emittable(name, schema, live) else None
     renamed = next((each for each in schema if each.renamed_from == name), None)
     return renamed if renamed is not None and emittable(renamed.name, schema, live) else None
+
+
+def landed(manifest: Manifest, restored: Sequence[Restoration]) -> Manifest:
+    """The Manifest no longer keeping the restored values a write has put in a Module.
+
+    `restore` hands the Session a Manifest without them, but saving that before the write
+    would leave a value nowhere if the app stopped in between -- not kept, and not in any
+    Module. So the Manifest keeps them until a Module records the Option that took them,
+    and a write that skipped it (a hand-edited Module) leaves them kept, to restore again.
+    """
+    written = {name for record in manifest.modules.values() for name in record.options}
+    done = {each.retired_name for each in restored if each.option.name in written}
+    return manifest.with_retired(
+        {name: entry for name, entry in manifest.retired.items() if name not in done}
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RetiredNotice:
+    """One release's one-time notice: the Options it removed whose values the app keeps."""
+
+    release: str
+    names: tuple[str, ...]
+    """Colon-form names, sorted. A name with no schema entry left has no label but this."""
+
+
+@dataclass(frozen=True, slots=True)
+class RenamedNotice:
+    """ADR-0012's Info notice for a rename: "renames migrate silently with an Info notice"."""
+
+    renames: tuple[tuple[str, str], ...]
+    """`(old name, new name)` per value that moved, sorted by old name."""
+
+    @classmethod
+    def of(cls, restored: Sequence[Restoration]) -> RenamedNotice | None:
+        """The notice for this start's renames, or `None` when nothing moved names."""
+        moved = tuple(
+            (each.retired_name, each.option.name) for each in restored if each.renamed
+        )
+        return cls(tuple(sorted(moved))) if moved else None
+
+
+def unannounced(manifest: Manifest) -> tuple[RetiredNotice, ...]:
+    """A notice per release the Manifest keeps values for and has not recorded as seen.
+
+    Read from `retired`, not from this start's `detect`: once the first write has dropped
+    the keys, `detect` finds nothing, and a notice the user closed the app before seeing
+    would never come back. Oldest release first.
+    """
+    by_release: dict[str, list[str]] = {}
+    for name, entry in manifest.retired.items():
+        if entry.retired_in not in manifest.retired_notices:
+            by_release.setdefault(entry.retired_in, []).append(name)
+    return tuple(
+        RetiredNotice(release, tuple(sorted(names)))
+        for release, names in sorted(by_release.items(), key=lambda item: version_key(item[0]))
+    )
 
 
 def _model_value(option: ResolvedOption, raw: Any) -> Any:

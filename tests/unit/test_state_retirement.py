@@ -11,18 +11,27 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
-from _support import SAMPLE_APP_VERSION, sample_model, sample_schema
+from _support import (
+    SAMPLE_APP_VERSION,
+    sample_model,
+    sample_schema,
+    schema_renaming,
+    schema_without,
+)
 
 from hyprtweaker.engine.model import ConfigModel
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
 from hyprtweaker.engine.state import Manifest, RetiredValue
 from hyprtweaker.engine.state.retirement import (
+    RetiredNotice,
     Retirement,
     capture,
     detect,
+    landed,
     restore,
     retire,
+    unannounced,
 )
 from hyprtweaker.engine.writer import Writer
 
@@ -40,32 +49,6 @@ class Live:
 
 def live(version: str, *, without: tuple[str, ...] = ()) -> Live:
     return Live(version, frozenset(o.name for o in sample_schema()) - set(without))
-
-
-def schema_without(*names: str, version: str) -> Schema:
-    """The sample Schema as a later release that removed `names` would ship it."""
-    base = sample_schema()
-    return Schema(
-        hyprland_version=version,
-        options=tuple(o for o in base if o.name not in names),
-        sections=base.sections,
-    )
-
-
-def schema_renaming(old: str, new: str, *, version: str) -> Schema:
-    """The sample Schema as a release that renamed `old` to `new` would ship it."""
-    base = sample_schema()
-    path = tuple(new.replace(":", ".").split("."))
-    return Schema(
-        hyprland_version=version,
-        options=tuple(
-            replace(o, name=new, lua_key=".".join(path), path=path, renamed_from=old)
-            if o.name == old
-            else o
-            for o in base
-        ),
-        sections=base.sections,
-    )
 
 
 @pytest.fixture
@@ -287,3 +270,56 @@ class TestRestore:
             "    float_gaps = -1,\n"
             in Writer(paths, SAMPLE_APP_VERSION).render_modules(model)["options/general.lua"]
         )
+
+
+class TestNotice:
+    """ADR-0012: "a one-time notice lists the release's retired options"."""
+
+    def test_each_unseen_release_lists_its_own_options(self) -> None:
+        manifest = kept(
+            decoration__rounding=RetiredValue("0.57.0", 10),
+            general__resize_on_border=RetiredValue("0.57.0", True),
+            misc__vfr=RetiredValue("0.58.0", False),
+        )
+
+        assert unannounced(manifest) == (
+            RetiredNotice("0.57.0", ("decoration:rounding", "general:resize_on_border")),
+            RetiredNotice("0.58.0", ("misc:vfr",)),
+        )
+
+    def test_a_seen_release_is_not_listed_again(self) -> None:
+        manifest = kept(
+            decoration__rounding=RetiredValue("0.57.0", 10),
+            misc__vfr=RetiredValue("0.58.0", False),
+        ).with_retired_notice("0.57.0")
+
+        assert unannounced(manifest) == (RetiredNotice("0.58.0", ("misc:vfr",)),)
+
+    def test_nothing_kept_is_nothing_to_say(self) -> None:
+        assert unannounced(kept().with_retired_notice("0.57.0")) == ()
+
+
+class TestLanded:
+    """A restored value leaves `retired` only once a write has put it in a Module."""
+
+    def test_a_value_the_write_recorded_is_no_longer_kept(self, paths: ConfigPaths) -> None:
+        manifest = replace(
+            load(paths), retired={"general:resize_on_border": RetiredValue("0.57.0", True)}
+        )
+        (restoration,) = restore(manifest, sample_schema(), live("0.57.1"))[1]
+
+        assert landed(manifest, (restoration,)).retired == {}
+
+    def test_a_value_no_module_records_stays_kept(self, paths: ConfigPaths) -> None:
+        """The write skipped the Module (a hand edit) or never ran: the value is still only
+        in the Manifest, and the next start restores it again."""
+        manifest = replace(
+            load(paths),
+            modules={},
+            retired={"general:resize_on_border": RetiredValue("0.57.0", True)},
+        )
+        (restoration,) = restore(manifest, sample_schema(), live("0.57.1"))[1]
+
+        assert landed(manifest, (restoration,)).retired == {
+            "general:resize_on_border": RetiredValue("0.57.0", True)
+        }

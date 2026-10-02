@@ -175,6 +175,54 @@ class TestRetiredValues:
         assert Manifest.load(path, **VERSIONS).retired == {}
 
 
+class TestRetiredNotices:
+    """ADR-0012: one notice per release; the Manifest remembers which releases were shown."""
+
+    def test_a_shown_release_survives_a_round_trip(self, tmp_path: Path) -> None:
+        manifest = Manifest(**VERSIONS).with_retired_notice("0.57.0")
+        path = tmp_path / "manifest.json"
+        path.write_text(manifest.render(), encoding="utf-8")
+
+        assert Manifest.load(path, **VERSIONS).retired_notices == ("0.57.0",)
+
+    def test_releases_are_kept_once_each_in_release_order(self) -> None:
+        manifest = (
+            Manifest(**VERSIONS)
+            .with_retired_notice("0.58.0")
+            .with_retired_notice("0.57.10")
+            .with_retired_notice("0.57.2")
+            .with_retired_notice("0.58.0")
+        )
+
+        assert manifest.as_json()["retired_notices"] == ["0.57.2", "0.57.10", "0.58.0"]
+
+    def test_a_manifest_written_before_notices_reads_with_none(self, tmp_path: Path) -> None:
+        """Additive key, no format bump (S4): an existing install shows what it never saw."""
+        path = tmp_path / "manifest.json"
+        path.write_text(f'{{"format_version": {FORMAT_VERSION}}}', encoding="utf-8")
+
+        assert Manifest.load(path, **VERSIONS).retired_notices == ()
+        assert not is_damaged(path)
+
+    def test_a_malformed_record_keeps_only_its_versions(self, tmp_path: Path) -> None:
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            f'{{"format_version": {FORMAT_VERSION}, "retired_notices": ["0.57.0", 5, null]}}',
+            encoding="utf-8",
+        )
+
+        assert Manifest.load(path, **VERSIONS).retired_notices == ("0.57.0",)
+
+    def test_a_record_of_the_wrong_type_reads_as_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            f'{{"format_version": {FORMAT_VERSION}, "retired_notices": "0.57.0"}}',
+            encoding="utf-8",
+        )
+
+        assert Manifest.load(path, **VERSIONS).retired_notices == ()
+
+
 class TestIsDamaged:
     """Absent and unreadable both `load` as empty, and mean opposite things to a writer."""
 

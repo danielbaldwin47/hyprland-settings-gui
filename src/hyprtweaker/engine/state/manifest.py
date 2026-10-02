@@ -7,7 +7,7 @@
   Option's value and the version that retired it, so the app stops emitting the key without
   losing the value, and puts it back on a downgrade or a `renamed_from` rename (ADR-0012
   §Retirement). Detection, capture and restore are `state/retirement.py`; this file only
-  stores the result.
+  stores the result, and `retired_notices` the releases whose one-time notice was seen.
 - **Did anyone hand-edit an app-owned file?** Each Module carries the SHA-256 of the bytes
   the app last wrote. A mismatch means an editor got there first, and the recovery is a
   banner offering restore-or-adopt -- *never* a silent overwrite (ADR-0016).
@@ -29,12 +29,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from ..paths import ENTRYPOINT_NAME, ConfigPaths
+from ..schema.resolve import version_key
 
 FORMAT_VERSION = 4
 """Bumped from 1 when `ModuleRecord`'s `bytes` key became `size` (#51, pre-release), from
@@ -159,6 +160,15 @@ def _retired_from_json(payload: Any) -> dict[str, RetiredValue]:
     }
 
 
+def _list(payload: Any) -> list[Any]:
+    return payload if isinstance(payload, list) else []
+
+
+def _releases(versions: Iterable[str]) -> tuple[str, ...]:
+    """Each release once, oldest first (`0.57.10` after `0.57.2`), so writes are stable."""
+    return tuple(sorted(set(versions), key=version_key))
+
+
 @dataclass(frozen=True, slots=True)
 class Manifest:
     """The App dir's record of itself."""
@@ -211,6 +221,16 @@ class Manifest:
     describe the Option and the compositor answers `NoSuchOption` for it.
     """
 
+    retired_notices: tuple[str, ...] = ()
+    """The releases whose Retired notice the user has seen, in release order.
+
+    ADR-0012's "a one-time notice lists the release's retired options": a release appears
+    here once its notice is dismissed, not when it is put on screen, so an app closed before
+    the user saw it says it again on the next start. Per release rather than a flag per
+    `retired` entry, because an entry leaves `retired` when its Option comes back, and a
+    release whose notice was shown stays shown.
+    """
+
     @classmethod
     def load(cls, path: Path, *, app_version: str, schema_version: str) -> Manifest:
         """Read the Manifest, or return an empty one when it is missing or unreadable.
@@ -256,6 +276,11 @@ class Manifest:
                 else ()
             ),
             retired=_retired_from_json(payload.get("retired")),
+            retired_notices=_releases(
+                version
+                for version in _list(payload.get("retired_notices"))
+                if isinstance(version, str)
+            ),
         )
 
     def as_json(self) -> dict[str, Any]:
@@ -270,6 +295,7 @@ class Manifest:
             "unverified": list(self.unverified),
             "quarantined": list(self.quarantined),
             "retired": {name: entry.as_json() for name, entry in sorted(self.retired.items())},
+            "retired_notices": list(self.retired_notices),
             "migration": self.migration,
         }
 
@@ -303,6 +329,10 @@ class Manifest:
     def with_retired(self, retired: Mapping[str, RetiredValue]) -> Manifest:
         """The Manifest keeping exactly `retired` (ADR-0012; `state/retirement.py`)."""
         return replace(self, retired=dict(retired))
+
+    def with_retired_notice(self, release: str) -> Manifest:
+        """The Manifest recording that `release`'s Retired notice was seen. Idempotent."""
+        return replace(self, retired_notices=_releases((*self.retired_notices, release)))
 
     def path_for(self, name: str, paths: ConfigPaths) -> Path:
         """Where a recorded name lives -- the Entrypoint is the one outside the App dir."""

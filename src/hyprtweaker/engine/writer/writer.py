@@ -544,6 +544,10 @@ class Writer:
         """
         self._save(self._manifest_for(model).with_retired(retired))
 
+    def record_retired_notice(self, model: ConfigModel, release: str) -> None:
+        """Record that the user saw `release`'s Retired notice (ADR-0012). Manifest only."""
+        self._save(self._manifest_for(model).with_retired_notice(release))
+
     # --- internals ----------------------------------------------------------------------
 
     def _manifest_for(self, model: ConfigModel) -> Manifest:

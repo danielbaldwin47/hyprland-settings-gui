@@ -105,6 +105,38 @@ def sample_schema() -> Schema:
     return load_schema(SAMPLE_VERSION, SCHEMA_DIR)
 
 
+def schema_without(*names: str, version: str) -> Schema:
+    """The sample Schema as a later release that removed `names` would ship it."""
+    from hyprtweaker.engine.schema import Schema
+
+    base = sample_schema()
+    return Schema(
+        hyprland_version=version,
+        options=tuple(o for o in base if o.name not in names),
+        sections=base.sections,
+    )
+
+
+def schema_renaming(old: str, new: str, *, version: str) -> Schema:
+    """The sample Schema as a release that renamed `old` to `new` would ship it."""
+    from dataclasses import replace
+
+    from hyprtweaker.engine.schema import Schema
+
+    base = sample_schema()
+    path = tuple(new.replace(":", ".").split("."))
+    return Schema(
+        hyprland_version=version,
+        options=tuple(
+            replace(o, name=new, lua_key=".".join(path), path=path, renamed_from=old)
+            if o.name == old
+            else o
+            for o in base
+        ),
+        sections=base.sections,
+    )
+
+
 def synthetic_schema_dir(directory: Path, *versions: str) -> Path:
     """A schema directory shipping exactly `versions`, one Option each, and an empty Overlay.
 
