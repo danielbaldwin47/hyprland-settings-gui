@@ -109,3 +109,8 @@ def test_the_desktop_entry_metainfo_and_both_icons_are_installed() -> None:
     assert sorted(named) == sorted(shipped)
     for name in shipped:
         assert (ROOT / "data" / name).is_file(), f"data/{name} is installed but missing"
+
+
+def test_the_pkgbuild_checks_with_jq_for_the_shell_fence_tests() -> None:
+    """F14 of the #148 review: check() failed in a clean chroot without jq."""
+    assert "jq" in pkgbuild_array("checkdepends")

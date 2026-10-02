@@ -21,7 +21,8 @@ license=(GPL-3.0-or-later)
 # libadwaita>=1.7: Adw.WrapBox (MINIMUM_LIBADWAITA; meson.build checks it too).
 depends=(python 'python-gobject>=3.50' gtk4 'libadwaita>=1.7' glib2 hicolor-icon-theme zstd lua)
 makedepends=(git meson)
-checkdepends=(python-pytest desktop-file-utils appstream)
+# jq: tests/unit/test_desktop_fence_hook.py runs the shell fence, which reads its input with jq.
+checkdepends=(python-pytest desktop-file-utils appstream jq)
 optdepends=('hyprland: the compositor being configured')
 source=("$_repo::${HYPRTWEAKER_SRC:-git+$url.git}")
 sha256sums=('SKIP')
