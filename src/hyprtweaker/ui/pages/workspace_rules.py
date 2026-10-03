@@ -157,7 +157,16 @@ class WorkspaceRulesPage:
             self._group.add(row.widget)
             self._listed.append(row.widget)
 
-        if not self._rows:
+        unreadable = self._session.entities_unreadable
+        if not self._rows and unreadable is not None:
+            # Not "none yet", and no Add: the file was never read (#269).
+            empty = Adw.ActionRow(
+                title="Workspace rules could not be read", subtitle=unreadable
+            )
+            self._empty_row = empty
+            self._group.add(empty)
+            self._listed.append(empty)
+        elif not self._rows:
             # A new button with each empty row: the refresh above releases the old row and
             # everything under it, so a button kept across refreshes would come back dead.
             add = Gtk.Button(label="Add rule", valign=Gtk.Align.CENTER, sensitive=editable)
