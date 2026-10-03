@@ -26,7 +26,7 @@ What has been checked before a public v1, at one frozen candidate, and what only
 
 ## Corpus evidence (#253)
 
-The three proofs are restated in `docs/adr/0009-migration-first-run-flow.md` § Corpus proofs; the README quotes #253's sentences. They were measured on Hyprland 0.56.2 at the #253 candidate `45fa4b7`, and `test_import_matches_port.py` and `test_migration_live_checks.py` passed again at `27544c6` (rows above). The 26.9% pixel difference found earlier is screen area painted in a different theme colour by the port's own theme module, not a loss rate: the imported end-4 is byte-identical to its port once the port uses the same three colours.
+The three proofs are restated in `docs/adr/0009-migration-first-run-flow.md` § Corpus proofs; the README quotes #253's sentences. They were measured on Hyprland 0.56.2 at the #253 candidate `45fa4b7`, and `test_import_matches_port.py` and `test_migration_live_checks.py` passed again at `27544c6` (rows above). The 26.9% pixel difference found earlier is screen area painted in a different theme colour by the port's own theme module, not a loss rate: the imported end-4 was measured byte-identical to its port (2026-10-02) once the port uses the same three colours, and the test holds it within 2/255 of blend rounding.
 
 ## Limits the tickets recorded
 

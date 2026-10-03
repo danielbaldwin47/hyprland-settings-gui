@@ -87,7 +87,7 @@ Conversion is not guaranteed lossless. The test corpus is seven public configura
 >
 > For end-4, the corpus rice that ships its own hand-written Lua port, every setting both configs set lands on the same live value, and keybinds, animations, curves, monitor rules, workspace rules and layers match except where the port itself changed a line.
 >
-> Rendered side by side with three test windows, the imported end-4 is byte-identical to that port once the port uses the same colour theme as the original config.
+> Rendered side by side with three test windows, the imported end-4 was measured byte-identical to that port on 2026-10-02 once the port uses the same colour theme as the original config; the test holds it within 2/255 of blend rounding.
 >
 > These proofs cover the corpus rices on Hyprland 0.56.2; they do not promise identical pixels for other configurations, for tools or external state a config drives, or for other Hyprland versions.
 

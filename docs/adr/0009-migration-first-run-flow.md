@@ -156,8 +156,9 @@ each claiming only what it measures. Measured on Hyprland 0.56.2, 2026-10-02 (#2
   does not reach them.
 - **Pixel** (`test_import_matches_port.py`,
   `test_the_imported_config_renders_the_same_screen_as_the_port`): end-4 again, three probe
-  windows (one translucent) tiled on a 1920x1080 headless output. The import's screenshot is
-  byte-identical to the port's once the port is given the `.conf`'s three theme colours. As
+  windows (one translucent) tiled on a 1920x1080 headless output. The import's screenshot
+  was measured byte-identical to the port's on 2026-10-02 once the port is given the
+  `.conf`'s three theme colours; the test holds it within 2/255 of blend rounding. As
   shipped, the port's theme module is a different colour scheme, and that is the whole
   difference: 26.9% of pixels at most 35/255 apart, the background in the gaps and behind
   the translucent window plus the border colours. That figure is screen area, not settings
