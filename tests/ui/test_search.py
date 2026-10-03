@@ -294,8 +294,9 @@ def entities(window: Any) -> Iterator[dict[str, Any]]:
     """One entity of each kind, seeded into the shared window's model and Pages, then removed.
 
     Seeded the way `test_binds_page.py` seeds: into the model's lists, then each Page
-    refreshed, as the window does after an edit. The profile and the Preset go through the
-    Session, which a read-only session allows (each is App-dir JSON, not a config write).
+    refreshed, as the window does after an edit. The Preset goes through the Session, which
+    a read-only session allows (App-dir JSON, not a config write); the profile straight into
+    its store, since a read-only session refuses to capture one (#269).
     A workspace rule and a Preset are seeded by the string that is their identity.
     """
     from hyprtweaker.engine.model.entities import (
@@ -307,6 +308,7 @@ def entities(window: Any) -> Iterator[dict[str, Any]]:
         WorkspaceRule,
     )
     from hyprtweaker.engine.presets import CaptureScope, PresetSaved
+    from hyprtweaker.engine.profiles import capture
 
     session = window._session
     model = session.model.entities
@@ -337,7 +339,9 @@ def entities(window: Any) -> Iterator[dict[str, Any]]:
     model.window_rules.append(seeded["window_rule"])
     model.layer_rules.append(seeded["layer_rule"])
     model.monitors.append(seeded["monitor_rule"])
-    seeded["profile"] = session.save_monitor_profile("Zz studio")
+    seeded["profile"] = session._profile_store.save(
+        capture("Zz studio", monitors=model.monitors, workspace_rules=model.workspace_rules)
+    )
     model.workspace_rules.append(WorkspaceRule(workspace="name:zzcode", fields={"gaps_in": 0}))
     seeded["workspace_rule"] = "name:zzcode"
     saved: list[Any] = []

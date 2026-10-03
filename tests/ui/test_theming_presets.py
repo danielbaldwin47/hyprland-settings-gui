@@ -232,7 +232,7 @@ def answer(dialog: Any, response: str) -> None:
 
 
 def test_an_empty_group_says_what_a_preset_is_and_how_to_save_the_first(tmp_path: Path) -> None:
-    _session, window = build(tmp_path)
+    _session, window = build(tmp_path, live=True)
     group = presets_of(window)
 
     assert group.group.get_title() == "Presets"
@@ -246,6 +246,63 @@ def test_an_empty_group_says_what_a_preset_is_and_how_to_save_the_first(tmp_path
     )
     assert group.save_button.get_label() == "Save current as preset…"
     assert group.save_button.get_visible()
+
+
+NO_LUA = (
+    "This app reads your settings with Lua, which is not installed. Install Lua (lua5.5, "
+    "lua5.4, lua5.3, lua or luajit) and open the app again."
+)
+CONVERT = "Your config has not been converted yet: use Convert... at the top of the window."
+
+
+def read_only_as(mode: str, session: Any, monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """Put an unstarted `build` session into one of the read-only modes #269 names."""
+    from hyprtweaker.ui.shell.window import CONVERT_SENTENCE, READ_ONLY_REASON
+
+    if mode == "no Lua":
+        monkeypatch.setenv("PATH", str(root / "no-bin"))
+        session.start()
+    elif mode == "import offered":
+        from hyprtweaker.engine.migration.detect import ConfigKind
+
+        session.set_read_only(
+            READ_ONLY_REASON[ConfigKind.LEGACY_CONF], sentence=CONVERT_SENTENCE
+        )
+    # "offline": `build`'s session never connects.
+
+
+@pytest.mark.parametrize(
+    ("mode", "cause"),
+    [
+        ("offline", "This app is not connected to Hyprland."),
+        ("no Lua", NO_LUA),
+        ("import offered", CONVERT),
+    ],
+)
+def test_while_save_is_off_the_empty_group_says_why_not_to_press_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, cause: str
+) -> None:
+    """#269: the empty state no longer tells the user to press a Save that is off, and Save
+    names the actual cause, not "open this app inside your Hyprland session"."""
+    session, window = build(tmp_path)
+    read_only_as(mode, session, monkeypatch, tmp_path)
+    window.theming_page.refresh()
+    group = presets_of(window)
+
+    assert group.save_button.get_sensitive() is False
+    assert group.save_button.get_tooltip_text() == (
+        f"Presets can be saved once this app can read your settings. {cause}"
+    )
+    assert group.others == (
+        (
+            "No presets yet",
+            "A preset keeps a look (colors, gaps, animation switches, fonts, wallpaper) so "
+            "you can switch back to it later. Presets can be saved once this app can read "
+            f"your settings. {cause}",
+        ),
+    )
+    # The cause once on the group, not twice: the empty row carries it.
+    assert group.group.get_description() == "Applying is off. You can still export and import."
 
 
 def test_a_row_names_what_a_preset_keeps_and_when(tmp_path: Path) -> None:
@@ -548,9 +605,8 @@ def test_a_read_only_session_cannot_apply_and_the_button_says_why(tmp_path: Path
     # Ruling A3 of the #148 review: presets are captured from the running Hyprland.
     assert group.save_button.get_sensitive() is False
     assert group.group.get_description() == (
-        "Applying is off. This app is not connected to Hyprland. Presets are captured from "
-        "the running Hyprland. Open this app inside your Hyprland session to save one. You "
-        "can still export and import."
+        "Applying is off. This app is not connected to Hyprland. You can still export and "
+        "import."
     )
 
 
@@ -874,6 +930,6 @@ def test_offline_save_is_insensitive_and_says_why(tmp_path: Path) -> None:
 
     assert group.save_button.get_sensitive() is False
     assert group.save_button.get_tooltip_text() == (
-        "Presets are captured from the running Hyprland. Open this app inside your Hyprland "
-        "session to save one."
+        "Presets can be saved once this app can read your settings. This app is not "
+        "connected to Hyprland."
     )

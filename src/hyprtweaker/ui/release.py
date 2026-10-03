@@ -57,6 +57,8 @@ def release(widget: Gtk.Widget) -> None:
             continue
         if isinstance(live, Adw.ComboRow):
             _unhook_combo_row(live)
+        elif isinstance(live, Adw.ToastOverlay):
+            _unhook_toast_overlay(live)
         else:
             live.run_dispose()
     for ref in held:
@@ -101,6 +103,17 @@ def _unhook_combo_row(row: Adw.ComboRow) -> None:
     row.set_list_factory(None)
     row.set_header_factory(None)
     row.set_model(None)
+
+
+def _unhook_toast_overlay(overlay: Adw.ToastOverlay) -> None:
+    """Let `overlay`'s child go, without disposing the overlay itself.
+
+    `Adw.ToastOverlay`'s dispose frees its queue of waiting toasts, and runs again when the
+    overlay is finalized: a window closed with two toasts up aborted on a double free
+    (libadwaita 1.9, found in #272). Its child is parentless then, and released in turn.
+    """
+    GObject.signal_handlers_destroy(overlay)
+    overlay.set_child(None)
 
 
 def _preorder(widget: Gtk.Widget) -> Iterator[Gtk.Widget]:

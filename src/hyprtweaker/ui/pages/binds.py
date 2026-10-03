@@ -626,6 +626,11 @@ class BindsPage:
         if rooted:
             for (index, bind), neighbours in zip(rooted, _neighbours(rooted), strict=True):
                 root.add(self._row(bind, index, editable, binds, conflicts, neighbours, empty))
+        elif (unreadable := self._session.entities_unreadable) is not None:
+            # Not "none yet": the file was never read (#269).
+            root.add(
+                Adw.ActionRow(title=f"{self.title} could not be read", subtitle=unreadable)
+            )
         else:
             root.add(
                 Adw.ActionRow(

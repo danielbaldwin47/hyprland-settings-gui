@@ -699,9 +699,10 @@ class Session:
 
         A Retired notice keeps coming, start after start, until `notice_seen` records it."""
 
-        self.on_refused: Callable[[str, str], None] | None = None
+        self.on_refused: Callable[[str | int, str], None] | None = None
         """Called with a change refused because the Module it belongs in was edited outside
-        the app (ADR-0005), and that Module: the model is as it was, and no undo step was
+        the app (ADR-0005), and that Module: the change's title, or how many changes the
+        Writer kept out of that file. The model is as it was, and no undo step was
         recorded. The user's ways on are `keep_edited_file`, `edited_file_path` and
         `replace_edited_file`; after a Replace they make the change again."""
 
@@ -958,6 +959,25 @@ class Session:
             # A reason the caller can say better: an import still on offer (F20).
             return self._offline_sentence
         return "This app is not connected to Hyprland."
+
+    @property
+    def entities_unreadable(self) -> str | None:
+        """Why the Entity lists are not shown, as the sentences an empty list says instead of
+        "none yet", or `None` when an empty list is the truth (#269).
+
+        Set when an app config exists to read (a Manifest or the App dir) and its lists were
+        not loaded: no Lua, a Hyprland too old to connect to, an import still on offer, or a
+        Module that would not load. `None` once they were read, live or off the files, on a
+        fresh install with nothing to read, and while connecting, when they are about to be.
+        """
+        if self._model.entities_loaded or self._offline_reason == _NOT_CONNECTED_YET:
+            return None
+        if not (self._paths.manifest.is_file() or self._paths.app_dir.is_dir()):
+            return None
+        cause = (
+            self.offline_sentence or "One of its files would not load, so it is left as it is."
+        )
+        return f"This app cannot read your settings right now. {cause}"
 
     @property
     def entrypoint_edited(self) -> bool:
@@ -2085,15 +2105,17 @@ class Session:
 
     def save_monitor_profile(
         self, name: str, connected: Sequence[Mapping[str, Any]] = ()
-    ) -> str:
+    ) -> str | None:
         """Capture the current display setup as a new profile, returning its slug.
 
-        Allowed on a read-only session -- a capture is a JSON file in the App dir, not a
-        config write, and "save what I have before experimenting" is most valuable
-        exactly when things are fragile. `connected` is the live `hyprctl -j monitors`
-        answer, helper data used as ADR-0008 allows: to fingerprint, never to
-        reconstruct rule state.
+        Refused (`None`) on a read-only session (#269): without Lua, behind an import offer
+        or on a Hyprland too old to connect to, the lists a capture is made of were never
+        read, and a profile of them would be an empty one standing in for the real setup.
+        `connected` is the live `hyprctl -j monitors` answer, helper data used as ADR-0008
+        allows: to fingerprint, never to reconstruct rule state.
         """
+        if not self.live:
+            return None
         return self._profile_store.save(
             capture(
                 name,
@@ -2181,10 +2203,11 @@ class Session:
 
         True exactly when activating the profile again would change something, so the
         badge clears on re-activation and on "Update profile", and a hand edit to
-        `monitors.lua` shows up the moment the file is re-read (ADR-0015).
+        `monitors.lua` shows up the moment the file is re-read (ADR-0015). Lists never
+        read are no evidence either way, so they do not drift (#269).
         """
         active = self.active_monitor_profile()
-        if active is None:
+        if active is None or not self._model.entities_loaded:
             return False
         _, profile = active
         return drift(
@@ -2196,9 +2219,11 @@ class Session:
     def update_monitor_profile(
         self, slug: str, connected: Sequence[Mapping[str, Any]] = ()
     ) -> bool:
-        """Recapture the current setup over an existing slug -- the drift badge's "Update"."""
+        """Recapture the current setup over an existing slug -- the drift badge's "Update".
+
+        Refused on a read-only session, as a new capture is (`save_monitor_profile`)."""
         existing = self._profile_store.load(slug)
-        if existing is None:
+        if existing is None or not self.live:
             return False
         self._profile_store.replace(
             slug,
@@ -2854,7 +2879,7 @@ class Session:
                 return module
         return None
 
-    def _say_refused(self, what: str, module: str, *, toast: bool = True) -> None:
+    def _say_refused(self, what: str | int, module: str, *, toast: bool = True) -> None:
         """Name the refused change and the file that stopped it; keep the file on the Banner."""
         _log.info("refused %s: %s was edited outside the app", what, module)
         if module not in self._edited_files:
@@ -4056,7 +4081,7 @@ class Session:
             delta = {**delta, **preset.before}
         undone = self._carried_undos(result.keys)
         stands = self._stands(result)
-        entity_steps, failed = self._settle_entities(result, stands=stands)
+        entity_steps, failed = self._settle_entities(result, stands=stands, refused=refused)
         activations = self._landed_activations(result)
         undos = self._landed_undos(result)
         if not stands:
@@ -4073,7 +4098,6 @@ class Session:
             self._previewed.difference_update(result.keys)
             return
 
-        entity_steps = self._take_back_entities(result, entity_steps, refused)
         self._take_back_activations(result, activations, refused)
         self._take_back_undos(result, undos, refused)
         # Its reload wiped every `eval`; one a refusal put back is re-previewed above.
@@ -4081,9 +4105,7 @@ class Session:
         self._forget_unedited()
         for module, titles in refused.items():
             # The Rows show the model, which just went back to what the file holds.
-            self._say_refused(
-                titles[0] if len(titles) == 1 else f"{len(titles)} changes", module
-            )
+            self._say_refused(titles[0] if len(titles) == 1 else len(titles), module)
 
         rewired = result.write is not None and result.write.entrypoint_written
         if self._client is not None and (rewired or any(p.source is not None for p in presets)):
@@ -4149,14 +4171,16 @@ class Session:
 
     def _take_back_entities(
         self, result: ApplyResult, steps: list[EntityStep], refused: dict[str, list[str]]
-    ) -> list[EntityStep]:
-        """`steps` less what a hand-edited Module kept off disk, which goes back out of the
-        model and joins `refused` under its own Module, as `_take_back_options` does. A step
-        over several lists keeps the lists that were written."""
+    ) -> list[EntityStep | None]:
+        """Each of `steps` less what a hand-edited Module kept off disk, `None` where that
+        was all of it: the rest goes back out of the model and joins `refused` under its own
+        Module, as `_take_back_options` does. A step over several lists keeps the lists that
+        were written."""
         skipped = set(result.skipped)
         if not skipped:
-            return steps
-        kept: list[EntityStep] = []
+            return list(steps)
+        kept: list[EntityStep | None] = []
+        taken: list[EntityStep] = []
         for step in steps:
             blocked = [e for e in step.edits if ENTITY_KIND_MODULES.get(e.kind) in skipped]
             if not blocked:
@@ -4164,10 +4188,11 @@ class Session:
                 continue
             for module in dict.fromkeys(ENTITY_KIND_MODULES[e.kind] for e in blocked):
                 refused.setdefault(module, []).append(step.title)
-            self._put_back(self._lists_before([EntityStep(tuple(blocked), step.title)]))
-            rest = EntityStep.of((e for e in step.edits if e not in blocked), step.title)
-            if rest is not None:
-                kept.append(rest)
+            taken.append(EntityStep(tuple(blocked), step.title))
+            kept.append(EntityStep.of((e for e in step.edits if e not in blocked), step.title))
+        # All at once: two edits to one list chain, and only the newest reads as the list
+        # does now, so one at a time put back the newest alone (#272).
+        self._put_back(self._lists_before(taken))
         return kept
 
     def _landed_activations(self, result: ApplyResult) -> list[_PendingActivation]:
@@ -4383,7 +4408,7 @@ class Session:
         return not self._own_write_errors(result)
 
     def _settle_entities(
-        self, result: ApplyResult, *, stands: bool
+        self, result: ApplyResult, *, stands: bool, refused: dict[str, list[str]]
     ) -> tuple[list[EntityStep], list[EntityStep]]:
         """The Entity steps this result lets stand, and the ones it failed.
 
@@ -4395,6 +4420,10 @@ class Session:
         disk accepted when it ends (#222). A group this result completes is
         merged here, and lands after the steps it was held beside. Both lists are in commit
         order.
+
+        A standing step loses first what a hand-edited Module kept off disk
+        (`_take_back_entities`), grouped or not: a countdown's Keep must not record, and
+        its Rows must not show, a display change the file never got (#272).
         """
         if result.entities is None:
             return [], []
@@ -4405,16 +4434,22 @@ class Session:
         steps: list[EntityStep] = []
         failed: list[EntityStep] = []
         groups: dict[int, UndoGroup] = {}
-        for pending in reported:
-            if pending.group is None:
-                (steps if stands else failed).append(pending.step)
+        each = [p.step for p in reported]
+        written = self._take_back_entities(result, each, refused) if stands else each
+        for pending, step in zip(reported, written, strict=True):
+            if pending.group is not None:
+                # Even for a step taken back whole: its group may be waiting on it to close.
+                groups[id(pending.group)] = pending.group
+            if step is None:
                 continue
-            groups[id(pending.group)] = pending.group
+            if pending.group is None:
+                (steps if stands else failed).append(step)
+                continue
             if stands:
-                pending.group.held.append(pending.step)
+                pending.group.held.append(step)
             else:
                 pending.group.failed = True
-                failed.append(pending.step)
+                failed.append(step)
         for group in groups.values():
             merged = self._close_group(group)
             if merged is not None:

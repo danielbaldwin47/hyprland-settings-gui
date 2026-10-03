@@ -88,6 +88,7 @@ from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
+from hyprtweaker.engine.writer import ENTITY_KIND_MODULES  # noqa: E402
 from hyprtweaker.session import (  # noqa: E402
     HELD_ENTRY_MOVED,
     AutoRevert,
@@ -272,6 +273,20 @@ SIDEBAR_TITLE = "Hyprland"
 NOT_SAVED_SENTENCE = "This change was not saved."
 """An editor's line for a refusal that said nothing of its own (a read-only session)."""
 
+KEPT_SENTENCE = (
+    "{name} was edited outside this app, so changes to it here are not saved until you "
+    "replace it"
+)
+"""The toast "Keep my file" leaves, since the Banner it dismisses said so until then."""
+
+
+def not_saved(what: str | int) -> str:
+    """A refusal's opening: "<what> was not saved", or "<n> changes were not saved"."""
+    return (
+        f"{what} changes were not saved" if isinstance(what, int) else f"{what} was not saved"
+    )
+
+
 SEVERE_BANNER_CLASS = "error"
 """libadwaita's own red styling, for ADR-0016's "Red Banner".
 
@@ -353,6 +368,9 @@ class MainWindow(Adw.ApplicationWindow):
     _refused_sentence: str | None = None
     """The last refusal, as an editor shows it (`_saved_or_why`)."""
 
+    _refused_toast: Adw.Toast | None = None
+    """The refusal toast still up, which a repeat of the same refusal keeps up (#272)."""
+
     def __init__(
         self,
         session: Session,
@@ -418,6 +436,9 @@ class MainWindow(Adw.ApplicationWindow):
         """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
         self._shown_live = False
         """Whether the Entity Pages last drew their rows editable."""
+        self._shown_causes: tuple[str | None, str | None] = (None, None)
+        """The read-only cause and the unreadable-lists sentence the Entity Pages last drew
+        their Save tooltips and empty states with (#269)."""
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -1375,6 +1396,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._shown_entities = self._entity_lists()
         self._shown_live = bool(self._session.live)
+        self._shown_causes = self._causes()
         self._fill_sidebar()
         self._select_section(self._restored(selected))
         self.sync()
@@ -1925,6 +1947,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self._countdown is not countdown:
             return True
         if opened:
+            countdown.shown = True
             countdown.dialog.present(self)
         else:
             countdown.dialog.restart()
@@ -1960,6 +1983,21 @@ class MainWindow(Adw.ApplicationWindow):
             )
         self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
         self._refresh_entity_pages(DISPLAY_KINDS)
+
+    def _end_countdown_over_nothing(self) -> None:
+        """Close the open countdown when a refusal took back all it was asking about (#272).
+
+        The display is as it was when the countdown opened: Keep would record nothing, and
+        Revert, a write into the file that refused, would be refused too. Answered as Keep,
+        so the dialog's own close is not read as a Revert.
+        """
+        countdown = self._countdown
+        if countdown is None or not countdown.shown:
+            return
+        if self._session.monitor_state_snapshot() != countdown.snapshot:
+            return
+        countdown.dialog.emit("response", "keep")
+        countdown.dialog.force_close()
 
     @property
     def display_confirm(self) -> ConfirmRevertDialog | None:
@@ -2050,8 +2088,13 @@ class MainWindow(Adw.ApplicationWindow):
         """Capture the current setup under `name` -- the save dialog's verb."""
         if self._monitors_page is None:
             return
-        self._session.save_monitor_profile(name, self._monitors_page.connected)
-        self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
+        if self._session.save_monitor_profile(name, self._monitors_page.connected) is None:
+            # Gone read-only while the name dialog was open: the button is off now.
+            self._toasts.add_toast(
+                plain_toast(f'Profile "{name}" was not saved: applying is off')
+            )
+        else:
+            self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
         self._refresh_monitors()
 
     def _activate_monitor_profile(self, slug: str) -> None:
@@ -2223,24 +2266,46 @@ class MainWindow(Adw.ApplicationWindow):
             )
         self._toasts.add_toast(toast)
 
-    def show_refused(self, what: str, module: str) -> Adw.Toast:
+    def show_refused(self, what: str | int, module: str) -> Adw.Toast:
         """A change refused because its file was edited outside the app (ADR-0005), named
-        with that file. Returned for tests.
+        with that file; `what` is the change's title, or how many changes. Returned for
+        tests.
 
         A toast because it answers the gesture just made, and the Banner stays up after it
         times out (`Health.edited_files`): every later change to that file is refused the
         same way until the user decides. Withdraws any undo offer: nothing here was saved.
+
+        One toast per gesture (#272): a slider drag or a held spin button is refused at
+        every tick, and each repeat of the refusal still on screen keeps that toast up
+        rather than queueing another behind it. The Pages showing the file's lists are
+        drawn again, since the control the user moved shows a change the model never took.
         """
         self._dismiss_undo()
+        kinds = frozenset(
+            kind for kind, owner in ENTITY_KIND_MODULES.items() if owner == module
+        )
+        self._draw_entity_pages(kinds)
+        if kinds & DISPLAY_KINDS:
+            self._end_countdown_over_nothing()
         self.sync_banner()
         name = module.rsplit("/", 1)[-1]
-        said = f"{what} was not saved: {name} was edited outside this app"
+        said = f"{not_saved(what)}: {name} was edited outside this app"
         self._refused_sentence = f"{said}. Cancel, then choose Details on the banner."
+        shown = self._refused_toast
+        if shown is not None and shown.get_title() == said:
+            self._toasts.add_toast(shown)  # already up: its timeout starts again
+            return shown
         toast = plain_toast(said, timeout=8)
         toast.set_button_label("Details")
         toast.connect("button-clicked", lambda *_: self.show_edited_file(module, what))
+        toast.connect("dismissed", self._on_refused_dismissed)
+        self._refused_toast = toast
         self._toasts.add_toast(toast)
         return toast
+
+    def _on_refused_dismissed(self, toast: Adw.Toast) -> None:
+        if self._refused_toast is toast:
+            self._refused_toast = None
 
     def show_not_saved(self, what: str, why: str) -> Adw.Toast:
         """An editor's save refused because the list moved under it (#225): `why` is the
@@ -2256,7 +2321,7 @@ class MainWindow(Adw.ApplicationWindow):
         return toast
 
     def show_edited_file(
-        self, module: str, what: str | None = None, *, then: tuple[str, ...] = ()
+        self, module: str, what: str | int | None = None, *, then: tuple[str, ...] = ()
     ) -> Adw.AlertDialog:
         """A file edited outside the app, and the three ways on. Returned for the UI tier.
 
@@ -2266,12 +2331,14 @@ class MainWindow(Adw.ApplicationWindow):
         offered in turn once this one is answered.
         """
         name = module.rsplit("/", 1)[-1]
-        refused = f"{what} was not saved" if what else "Changes to it are not saved"
+        refused = f"{not_saved(what)}. " if what is not None else ""
         copies = self._session.edited_copies_shown
         dialog = Adw.AlertDialog(
             heading=f"{name} was edited outside this app",
             body=(
-                f"This app does not overwrite a file you have edited yourself. {refused}.\n\n"
+                f"This app does not overwrite a file you have edited yourself. {refused}"
+                f"If you keep your file, changes to it here are not saved until you "
+                f"replace it.\n\n"
                 f"Replace the file with the app's version, then make the change again: "
                 f"replacing keeps a copy of your edited file in {copies}. Or open the file "
                 f"and make the change there."
@@ -2294,6 +2361,9 @@ class MainWindow(Adw.ApplicationWindow):
         # which offered the next file twice.
         _dialog.disconnect_by_func(self._on_edited_file_response)
         name = module.rsplit("/", 1)[-1]
+        if self._refused_toast is not None:
+            # Answered: the toast that asked would otherwise hold the answer's toast back.
+            self._refused_toast.dismiss()
         if response == "open":
             self._launch_file(self._session.edited_file_path(module))
         elif response == "replace":
@@ -2305,6 +2375,15 @@ class MainWindow(Adw.ApplicationWindow):
             self._toasts.add_toast(plain_toast(said, timeout=8))
         else:
             self._session.keep_edited_file(module)
+            # The Banner lets the file go, so this is the last word on it until the next
+            # change into it is refused (#272).
+            toast = plain_toast(KEPT_SENTENCE.format(name=name), timeout=8)
+            # A label of its own, which wraps: the title's ellipsis cut "until you replace
+            # it" off at the default width, the one part that says what to do.
+            toast.set_custom_title(
+                Gtk.Label(label=toast.get_title(), wrap=True, css_classes=["heading"])
+            )
+            self._toasts.add_toast(toast)
         self.sync_banner()
         if then:
             GLib.idle_add(lambda: self.show_edited_file(then[0], then=then[1:]) and False)
@@ -2724,13 +2803,17 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _moved_entities(self) -> frozenset[str]:
         """The Entity lists that differ from what their Pages last drew: every one when the
-        session went live or read-only since, since each row's controls follow that."""
+        session went live or read-only since, since each row's controls follow that, or the
+        cause the empty states and Save tooltips name moved (#269)."""
         lists = self._entity_lists()
-        if bool(self._session.live) != self._shown_live:
+        if bool(self._session.live) != self._shown_live or self._causes() != self._shown_causes:
             return frozenset(lists)
         return frozenset(
             kind for kind, items in lists.items() if self._shown_entities.get(kind) != items
         )
+
+    def _causes(self) -> tuple[str | None, str | None]:
+        return (self._session.offline_sentence, self._session.entities_unreadable)
 
     def _draw_entity_pages(self, kinds: frozenset[str]) -> None:
         """Rebuild the Pages showing `kinds` from the model, and every sidebar count.
@@ -2764,6 +2847,7 @@ class MainWindow(Adw.ApplicationWindow):
         lists = self._entity_lists()
         self._shown_entities.update((kind, lists[kind]) for kind in kinds if kind in lists)
         self._shown_live = bool(self._session.live)
+        self._shown_causes = self._causes()
         self._sync_entity_counts()
 
     def _entity_lists(self) -> dict[str, tuple[Any, ...]]:
@@ -3273,6 +3357,8 @@ class _DisplayCountdown:
     group: UndoGroup
     dialog: ConfirmRevertDialog
     includes_profile: bool = False
+    shown: bool = False
+    """Whether its dialog is up: one still being opened is `_behind_countdown`'s to settle."""
 
 
 def _breaks_display(step: Step | None) -> bool:
