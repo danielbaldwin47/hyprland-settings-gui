@@ -1517,6 +1517,27 @@ class TestRollBackKeepsAHandEdit(_AtHome):
         )
         assert _hypr_dir(paths) == before
 
+    def test_a_conf_entrypoint_rewritten_without_the_banner_is_kept_and_rolled_back(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """Review m1 F1: a hand edit that drops the app's banner is still the switch's file,
+        known by its hash; leaving it would keep it loading over hyprland.conf while the
+        wizard says nothing was kept."""
+        _legacy(paths, schema)
+        before = _hypr_dir(paths)
+        flow = _switched(paths, schema, None)
+        paths.entrypoint.write_text("-- my own config now" + MARK, encoding="utf-8")
+        edited = paths.entrypoint.read_bytes()
+
+        outcome = flow.roll_back()
+
+        assert outcome.complete
+        assert outcome.edited_copy is not None
+        assert outcome.edited_copy.read_bytes() == edited
+        assert not paths.entrypoint.exists()
+        assert not paths.sentinel.exists()
+        assert _hypr_dir(paths) == before
+
     def test_an_untouched_switch_keeps_no_copy(
         self, paths: ConfigPaths, schema: Schema
     ) -> None:

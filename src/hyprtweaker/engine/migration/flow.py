@@ -904,8 +904,13 @@ class MigrationFlow:
         """What Roll back does to the Entrypoint, decided before any byte changes."""
         entrypoint = self.paths.entrypoint
         if record is None or record.restore is None:
-            # The `.conf` path: nothing was displaced. Only a file this app generated goes;
-            # one without the banner is the user's own and stays.
+            # The `.conf` path: nothing was displaced, so whatever is there the switch wrote.
+            # Its hash says so even after a hand edit dropped the banner, which is copied
+            # first (review m1 F1). Only a marker without the hash falls back to the banner:
+            # a file without it is the user's own and stays.
+            if record is not None and record.generated_sha256 is not None:
+                present = entrypoint.is_file() or entrypoint.is_symlink()
+                return (_Put.DELETE if present else _Put.LEAVE), None
             return (_Put.DELETE if _generated_by_this_app(entrypoint) else _Put.LEAVE), None
         restore = Path(record.restore)
         in_backup = Path(record.backup) / entrypoint.name if record.backup else None
