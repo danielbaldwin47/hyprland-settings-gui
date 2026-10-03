@@ -1634,6 +1634,7 @@ class TestTheCountdownsEndingsAreTrue:
         which = "Keep" if answer == "kept" else "Roll back"
         assert _page_title(dialog) == "Stopped"
         assert dialog.get_can_close()
+        assert not dialog._view.get_visible_page().get_can_pop()
         assert _descriptions(dialog) == [
             f"{which} did not finish: [Errno 5] Input/output error\n\n"
             "The switch is still recorded as unfinished, so the app offers to roll it back "
@@ -1686,7 +1687,9 @@ class TestTheCountdownsEndingsAreTrue:
         assert said.startswith(
             "Nothing was rolled back: hyprland.lua has changed since the switch"
         )
-        assert said.endswith("TTY:\nrm ~/.config/hypr/hyprland.lua")
+        assert said.endswith(
+            "TTY:\nmv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+        )
         assert flow.pending_switch() is not None
         assert MARK_268 in paths.entrypoint.read_text(encoding="utf-8")
         _click(dialog, "Close")

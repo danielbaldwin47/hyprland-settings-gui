@@ -1495,7 +1495,10 @@ class TestRollBackKeepsAHandEdit(_AtHome):
             "Nothing was rolled back: hyprland.lua has changed since the switch, and a copy "
             "of it could not be kept ("
         )
-        assert outcome.rescue.endswith(
+        assert outcome.rescue.splitlines()[-1] == (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched && "
+            "mv ~/.config/hypr/hyprtweaker ~/.config/hypr/hyprtweaker.imported && "
+            "mv ~/.config/hypr/hyprtweaker.bak ~/.config/hypr/hyprtweaker && "
             "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua"
         )
 

@@ -727,7 +727,9 @@ class MigrationDialog(Adw.Dialog):
             )
             if part
         )
-        self._view.push(self._failed_page("The switch could not be finished", body))
+        page = self._failed_page("The switch could not be finished", body)
+        page.set_can_pop(False)  # back there, Keep and Roll back answer nothing any more
+        self._view.push(page)
         self.set_can_close(True)
         if self._on_finished is not None:
             self._on_finished(None)

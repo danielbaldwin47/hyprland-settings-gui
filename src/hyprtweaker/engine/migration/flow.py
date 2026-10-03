@@ -949,11 +949,16 @@ class MigrationFlow:
     def _no_copy_rescue(self, record: sentinels.Sentinel | None, error: OSError) -> str:
         name = self.paths.entrypoint.name
         reason = error.strerror or str(error)
+        # The edited file is moved aside first, never removed or written over: there is no
+        # copy of it anywhere else.
+        command = f"mv ~/.config/hypr/{name} ~/.config/hypr/{name}.switched"
+        if record is not None and record.restore is not None:
+            command += f" && {marker_rescue_command(self.paths, record)}"
         return (
             f"Nothing was rolled back: {name} has changed since the switch, and a copy of "
             f"it could not be kept ({reason}). The new configuration is still in place, and "
-            "the app offers this again at its next start. If you are locked out, from a "
-            f"TTY:\n{marker_rescue_command(self.paths, record)}"
+            "the app offers this again at its next start. If you are locked out, this keeps "
+            f"your edited file and puts the previous configuration back from a TTY:\n{command}"
         )
 
     def _disown_app_dir(self) -> Path | None:
