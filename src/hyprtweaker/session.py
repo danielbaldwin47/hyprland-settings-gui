@@ -4095,6 +4095,7 @@ class Session:
         if not skipped:
             return steps
         kept: list[EntityStep] = []
+        taken: list[EntityStep] = []
         for step in steps:
             blocked = [e for e in step.edits if ENTITY_KIND_MODULES.get(e.kind) in skipped]
             if not blocked:
@@ -4102,10 +4103,13 @@ class Session:
                 continue
             for module in dict.fromkeys(ENTITY_KIND_MODULES[e.kind] for e in blocked):
                 refused.setdefault(module, []).append(step.title)
-            self._put_back(self._lists_before([EntityStep(tuple(blocked), step.title)]))
+            taken.append(EntityStep(tuple(blocked), step.title))
             rest = EntityStep.of((e for e in step.edits if e not in blocked), step.title)
             if rest is not None:
                 kept.append(rest)
+        # All at once: two edits to one list chain, and only the newest reads as the list
+        # does now, so one at a time put back the newest alone (#272).
+        self._put_back(self._lists_before(taken))
         return kept
 
     def _landed_activations(self, result: ApplyResult) -> list[_PendingActivation]:
