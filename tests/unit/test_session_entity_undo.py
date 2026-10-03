@@ -165,7 +165,7 @@ def test_toast_titles_name_the_kind_and_what_happened(tmp_path: Path) -> None:
     gestures: list[Gesture] = [
         lambda s: s.add_bind(bind("SUPER + A")),
         lambda s: s.add_bind(bind("SUPER + B")),
-        lambda s: s.replace_bind(0, bind("SUPER + C")),
+        lambda s: s.replace_bind(0, bind("SUPER + C"), expected=s.model.entities.binds[0]),
         lambda s: s.set_bind_enabled(0, False),
         lambda s: s.set_bind_enabled(0, True),
         lambda s: s.swap_binds(0, 1),

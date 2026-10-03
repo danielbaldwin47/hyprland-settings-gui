@@ -62,7 +62,7 @@ class DeclarationEditor(Adw.Dialog):
         self,
         *,
         kind: str,
-        on_done: Callable[[Any], None],
+        on_done: Callable[[Any], str | None],
         entity: Any | None = None,
         curve_names: Sequence[str] = (),
         taken: Sequence[str] = (),
@@ -379,7 +379,11 @@ class DeclarationEditor(Adw.Dialog):
             self._error.set_label(problem)
             self._error.set_visible(True)
             return
-        self._on_done(self.build())
+        if why := self._on_done(self.build()):
+            # Refused: the draft stays, with the reason where the user is looking (#225).
+            self._error.set_label(why)
+            self._error.set_visible(True)
+            return
         self.close()
 
 
