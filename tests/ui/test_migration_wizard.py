@@ -1746,6 +1746,40 @@ class TestTheCountdownsEndingsAreTrue:
         _click(dialog, "Close")
 
 
+class TestASwitchThatFailsItsChecks:
+    """#268 AC1, review m1 F28: a switch that fails verification and then cannot be rolled
+    back never says the old configuration is back; it says what is left, and the rescue."""
+
+    def test_a_roll_back_that_could_not_finish_says_so(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        from gi.repository import Adw
+
+        from hyprtweaker.engine.migration.flow import RollBackOutcome
+
+        async def broken(_self: object) -> tuple[str, ...]:
+            return ("hyprland.lua:3: unknown keyword",)
+
+        monkeypatch.setattr(LiveClient, "configerrors", broken)
+        dialog, flow, _paths = _wizard(monkeypatch, stub_tool, ())
+        stuck = RollBackOutcome(
+            complete=False, rescue="Your hyprland.lua could not be put back."
+        )
+        monkeypatch.setattr(flow, "roll_back", lambda _marker=None: stuck)
+
+        _click(dialog, "Switch and verify")
+
+        assert _page_title(dialog) == "Stopped"
+        assert dialog.get_can_close()
+        (said,) = _descriptions(dialog)
+        assert said.startswith("Your hyprland.lua could not be put back.\n\n")
+        assert "You are back on the configuration" not in said
+        (group,) = _of_type(dialog, Adw.PreferencesGroup)
+        assert group.get_title() == (
+            "The new configuration did not load, and it could not be rolled back"
+        )
+
+
 class TestTheKeptPageNamesTheBackups:
     """#268 AC5, review m1 F11: a second migration finds the plain backup names taken, and
     the Kept page names the stamped ones it made, not the generic ones."""
