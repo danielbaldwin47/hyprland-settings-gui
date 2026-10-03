@@ -39,7 +39,7 @@ No confirmation — instant apply has no cancel, and the restored bytes are the 
 
 ### Last known good
 
-**Last known good** is per-Module: the newest Journal Snapshot whose transaction confirmed clean (empty `configerrors` + read-back ok). Journal entries gain a `confirmed` flag written after Read-back. **Restore last good** restores implicated Modules only — never the whole tree.
+**Last known good** is per-Module: the newest Journal Snapshot whose transaction confirmed clean (empty `configerrors` + read-back ok). Journal entries gain a `confirmed` flag written after Read-back. **Restore last good** restores implicated Modules only — never the whole tree. *Amended during #259.* A kept import is a boundary: Last known good never reaches past it, so a Module the import wrote offers the imported bytes when the Session's first read-back after Keep confirmed the whole import clean, and nothing otherwise.
 
 ### Quarantine (user.lua)
 
