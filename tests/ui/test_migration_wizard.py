@@ -968,8 +968,8 @@ class TestExport:
         folder.mkdir()
         target = folder / "hyprland.lua"
         target.write_text("-- the user's own config\n", encoding="utf-8")
-        toasts: list[str] = []
-        window._toasts.add_toast = lambda toast: toasts.append(toast.get_title())
+        toasts: list[Any] = []
+        window._toasts.add_toast = toasts.append
         folder.chmod(0o500)
         try:
             window._write_export(target)
@@ -977,9 +977,12 @@ class TestExport:
             folder.chmod(0o700)
 
         assert target.read_text(encoding="utf-8") == "-- the user's own config\n"
-        assert toasts == [
+        # Review m1 F7: a label that wraps, so "is unchanged" is never cut off.
+        (toast,) = toasts
+        assert toast.get_custom_title().get_wrap()
+        assert toast.get_custom_title().get_label() == (
             "The export was not written: permission denied. hyprland.lua is unchanged"
-        ]
+        )
 
     def test_an_export_to_a_new_file_that_cannot_be_written_says_so(
         self, tmp_path: Path
@@ -988,8 +991,10 @@ class TestExport:
         window.route_first_run()
         folder = tmp_path / "read-only"
         folder.mkdir()
+        from hyprtweaker.ui.shell.window import toast_text
+
         toasts: list[str] = []
-        window._toasts.add_toast = lambda toast: toasts.append(toast.get_title())
+        window._toasts.add_toast = lambda toast: toasts.append(toast_text(toast))
         folder.chmod(0o500)
         try:
             window._write_export(folder / "exported.lua")

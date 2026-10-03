@@ -1079,7 +1079,7 @@ class MainWindow(Adw.ApplicationWindow):
             note = f"The export was not written: {reason[:1].lower()}{reason[1:]}"
             if existed:
                 note += f". {target.name} is unchanged"
-            self._toasts.add_toast(plain_toast(note, timeout=8))
+            self._toasts.add_toast(plain_toast(note, timeout=8, wrap=True))
             return
         note = (
             f"Exported to {target.name}"
@@ -2292,10 +2292,10 @@ class MainWindow(Adw.ApplicationWindow):
         said = f"{not_saved(what)}: {name} was edited outside this app"
         self._refused_sentence = f"{said}. Cancel, then choose Details on the banner."
         shown = self._refused_toast
-        if shown is not None and shown.get_title() == said:
+        if shown is not None and toast_text(shown) == said:
             self._toasts.add_toast(shown)  # already up: its timeout starts again
             return shown
-        toast = plain_toast(said, timeout=8)
+        toast = plain_toast(said, timeout=8, wrap=True)  # the file's name is the point
         toast.set_button_label("Details")
         toast.connect("button-clicked", lambda *_: self.show_edited_file(module, what))
         toast.connect("dismissed", self._on_refused_dismissed)
@@ -2377,12 +2377,9 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.keep_edited_file(module)
             # The Banner lets the file go, so this is the last word on it until the next
             # change into it is refused (#272).
-            toast = plain_toast(KEPT_SENTENCE.format(name=name), timeout=8)
-            # A label of its own, which wraps: the title's ellipsis cut "until you replace
-            # it" off at the default width, the one part that says what to do.
-            toast.set_custom_title(
-                Gtk.Label(label=toast.get_title(), wrap=True, css_classes=["heading"])
-            )
+            # Wrapping: the title's ellipsis cut "until you replace it" off at the default
+            # width, the one part that says what to do.
+            toast = plain_toast(KEPT_SENTENCE.format(name=name), timeout=8, wrap=True)
             self._toasts.add_toast(toast)
         self.sync_banner()
         if then:
@@ -3470,17 +3467,32 @@ def _counted(count: int, verb: str) -> str:
     return f"{count} settings {plural}"
 
 
-def plain_toast(title: str, *, timeout: int = 5) -> Adw.Toast:
+def plain_toast(title: str, *, timeout: int = 5, wrap: bool = False) -> Adw.Toast:
     """A toast whose title is plain text, never Pango markup (F7 of the #148 review).
 
     `Adw.Toast` parses its title as markup by default, so a preset's name, a path or a
     tool's message holding `&` or `<` rendered blank or wrong. Markup goes off before the
     title is set, which is the order that never parses it (#228).
+
+    `wrap` shows the title in a label of its own that wraps, for a sentence whose end is
+    the point (a file's name, "is unchanged"): the title's own ellipsis cuts it at the
+    default width. A custom title clears the title, so `toast_text` reads what it says.
     """
     toast = Adw.Toast(timeout=timeout)
     toast.set_use_markup(False)
     toast.set_title(title)
+    if wrap:
+        label = Gtk.Label(label=title, wrap=True, max_width_chars=45, css_classes=["heading"])
+        toast.set_custom_title(label)
     return toast
+
+
+def toast_text(toast: Adw.Toast) -> str:
+    """What `toast` says: its wrapping label's text, or its title."""
+    custom = toast.get_custom_title()
+    if isinstance(custom, Gtk.Label):
+        return custom.get_label()
+    return toast.get_title() or ""
 
 
 def _result_summary(result: ApplyResult) -> str:

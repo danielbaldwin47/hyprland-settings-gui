@@ -140,6 +140,12 @@ def toasts(window: Any) -> list[Any]:
     return raised
 
 
+def toast_text(toast: Any) -> str:
+    from hyprtweaker.ui.shell.window import toast_text as said
+
+    return said(toast)
+
+
 def test_a_refused_slider_drag_says_so_once(tmp_path: Path) -> None:
     session, window, _applier = live_entity_window(tmp_path)
     session.on_refused = window.show_refused
@@ -150,7 +156,7 @@ def test_a_refused_slider_drag_says_so_once(tmp_path: Path) -> None:
         session.preview_option("decoration:rounding", tick)
     session.set_option("decoration:rounding", 8)  # and the release
 
-    assert [toast.get_title() for toast in raised] == [
+    assert [toast_text(toast) for toast in raised] == [
         "Corner rounding was not saved: decoration.lua was edited outside this app"
     ]
 
@@ -164,7 +170,7 @@ def test_a_held_spin_button_says_so_once(tmp_path: Path) -> None:
     for repeat in range(1, 12):  # a held arrow: each repeat refused, the Row put back
         session.touch_option("decoration:rounding", repeat)
 
-    assert [toast.get_title() for toast in raised] == [
+    assert [toast_text(toast) for toast in raised] == [
         "Corner rounding was not saved: decoration.lua was edited outside this app"
     ]
 
@@ -182,7 +188,7 @@ def test_another_refused_change_and_a_saved_one_each_say_so(tmp_path: Path) -> N
     session.add_rule("window", WindowRule(match={"class": "foot"}, effects={"float": True}))
     applier.settle()
 
-    assert [toast.get_title() for toast in raised] == [
+    assert [toast_text(toast) for toast in raised] == [
         "Corner rounding was not saved: decoration.lua was edited outside this app",
         "Active window opacity was not saved: decoration.lua was edited outside this app",
         "Window rule added",

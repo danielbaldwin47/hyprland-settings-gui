@@ -17,8 +17,9 @@ BINDS = "binds.lua"
 
 def shown_title(toast: Any) -> str:
     """What a toast says: its title, or its own wrapping label's."""
-    custom = toast.get_custom_title()
-    return custom.get_label() if custom is not None else toast.get_title()
+    from hyprtweaker.ui.shell.window import toast_text
+
+    return toast_text(toast)
 
 
 def held_back_bind(
@@ -98,9 +99,11 @@ def test_the_toast_names_the_change_and_the_file(tmp_path: Path) -> None:
 
     toast = window.show_refused("Corner rounding", "options/decoration.lua")
 
-    assert toast.get_title() == (
+    assert shown_title(toast) == (
         "Corner rounding was not saved: decoration.lua was edited outside this app"
     )
+    # Review m1 F6: a label that wraps, so the file's name is never cut off by an ellipsis.
+    assert toast.get_custom_title().get_wrap()
     assert toast.get_button_label() == "Details"
     assert session.can_undo is False
 
@@ -183,7 +186,7 @@ def test_a_refused_undo_says_only_the_refusal_and_keeps_the_step(tmp_path: Path)
     session._edited_module = lambda modules: BINDS if BINDS in set(modules) else None
     said: list[str] = []
     add_toast = window._toasts.add_toast
-    window._toasts.add_toast = lambda toast: (said.append(toast.get_title()), add_toast(toast))
+    window._toasts.add_toast = lambda toast: (said.append(shown_title(toast)), add_toast(toast))
 
     window._undo()
 
