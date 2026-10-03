@@ -1687,7 +1687,8 @@ class TestTheCountdownsEndingsAreTrue:
             f"{which} did not finish: [Errno 5] Input/output error\n\n"
             "The switch is still recorded as unfinished, so the app offers to roll it back "
             "the next time it starts.\n\n"
-            "If you are locked out, run this from a TTY:\nmv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            "If you are locked out, run this from a TTY:\n"
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
         ]
         _click(dialog, "Close")
 
