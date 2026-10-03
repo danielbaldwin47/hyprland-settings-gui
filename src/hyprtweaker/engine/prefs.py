@@ -21,11 +21,12 @@ recovery this would prompt them to do.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+from .files import write_atomic
 
 PREFS_FILENAME = "prefs.json"
 FORMAT_VERSION = 1
@@ -147,9 +148,9 @@ class PrefsStore:
     def save(self, prefs: Prefs) -> bool:
         """Store preferences durably. Returns whether the write actually landed.
 
-        Written to a temporary file and renamed, like the Journal: the app writes this on
-        every switch flip, and a half-written `prefs.json` from a crash mid-write would be
-        read back as a corrupt file and silently reset every preference at once.
+        Through `write_atomic` (#251): the app writes this on every switch flip, and a
+        half-written `prefs.json` from a crash mid-write would be read back as a corrupt
+        file and silently reset every preference at once.
         """
         payload = {
             "format_version": FORMAT_VERSION,
@@ -159,10 +160,7 @@ class PrefsStore:
             REMEMBERED_KEY: dict(prefs.remembered),
         }
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self._path.with_name(f".{PREFS_FILENAME}.tmp")
-            temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            os.replace(temporary, self._path)
+            write_atomic(self._path, json.dumps(payload, indent=2) + "\n")
         except OSError:
             return False
         return True
