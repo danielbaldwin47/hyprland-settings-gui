@@ -2352,6 +2352,9 @@ class MainWindow(Adw.ApplicationWindow):
         # which offered the next file twice.
         _dialog.disconnect_by_func(self._on_edited_file_response)
         name = module.rsplit("/", 1)[-1]
+        if self._refused_toast is not None:
+            # Answered: the toast that asked would otherwise hold the answer's toast back.
+            self._refused_toast.dismiss()
         if response == "open":
             self._launch_file(self._session.edited_file_path(module))
         elif response == "replace":
@@ -2365,8 +2368,13 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.keep_edited_file(module)
             # The Banner lets the file go, so this is the last word on it until the next
             # change into it is refused (#272).
-            kept = KEPT_SENTENCE.format(name=name)
-            self._toasts.add_toast(plain_toast(kept, timeout=8))
+            toast = plain_toast(KEPT_SENTENCE.format(name=name), timeout=8)
+            # A label of its own, which wraps: the title's ellipsis cut "until you replace
+            # it" off at the default width, the one part that says what to do.
+            toast.set_custom_title(
+                Gtk.Label(label=toast.get_title(), wrap=True, css_classes=["heading"])
+            )
+            self._toasts.add_toast(toast)
         self.sync_banner()
         if then:
             GLib.idle_add(lambda: self.show_edited_file(then[0], then=then[1:]) and False)

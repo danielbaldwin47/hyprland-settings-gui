@@ -15,6 +15,12 @@ from _live_window import live_entity_window
 BINDS = "binds.lua"
 
 
+def shown_title(toast: Any) -> str:
+    """What a toast says: its title, or its own wrapping label's."""
+    custom = toast.get_custom_title()
+    return custom.get_label() if custom is not None else toast.get_title()
+
+
 def held_back_bind(
     tmp_path: Path, keys: tuple[str, ...] = ("SUPER + B",), *, said: list[str] | None = None
 ) -> tuple[Any, Any]:
@@ -42,7 +48,7 @@ def held_back_bind(
     if said is not None:
         add_toast = window._toasts.add_toast
         window._toasts.add_toast = lambda toast: (
-            said.append(toast.get_title()),
+            said.append(shown_title(toast)),
             add_toast(toast),
         )
     applier.reported = applier.serial
@@ -109,19 +115,21 @@ def test_two_changes_held_back_from_one_file_say_so_in_one_toast(tmp_path: Path)
 
 
 def test_keep_my_file_says_later_changes_to_it_are_not_saved(tmp_path: Path) -> None:
-    session, window = held_back_bind(tmp_path)
     said: list[str] = []
-    add_toast = window._toasts.add_toast
-    window._toasts.add_toast = lambda toast: (said.append(toast.get_title()), add_toast(toast))
+    session, window = held_back_bind(tmp_path, said=said)
+    assert len(said) == 1
+    dismissed: list[bool] = []
+    window._refused_toast.connect("dismissed", lambda _toast: dismissed.append(True))
 
     dialog = window.show_edited_file(BINDS, "Keybind added")
     dialog.emit("response", "keep")
     dialog.force_close()
 
-    assert said == [
+    assert said[1:] == [
         "binds.lua was edited outside this app, so changes to it here are not saved until "
         "you replace it"
     ]
+    assert dismissed == [True], "the answered refusal held the answer's toast back"
     assert session.health.edited_files == ()
     assert not window._banner.get_revealed()
 
