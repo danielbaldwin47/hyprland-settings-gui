@@ -76,24 +76,21 @@ from hyprtweaker.ui.release import release  # noqa: E402
 
 TITLE = "Presets"
 DESCRIPTION = "Save your current look, switch back to it later, or share it as a theme file."
-SAVE_NEEDS_HYPRLAND = (
-    "Presets are captured from the running Hyprland. Open this app inside your Hyprland "
-    "session to save one."
-)
-"""Why Save is insensitive offline (#148 hand-test 12, ruling A3): a preset of the model alone
-would freeze what this app last wrote, not the look on screen."""
-READ_ONLY_DESCRIPTION = (
-    "Applying is off. {reason} " + SAVE_NEEDS_HYPRLAND + " You can still export and import."
-)
-"""Filled with `Session.offline_sentence`, which is true for an old Hyprland as well as for
-one this app cannot reach."""
+SAVE_UNAVAILABLE = "Presets can be saved once this app can read your settings."
+"""Why Save is insensitive read-only (#148 hand-test 12, ruling A3): a preset of the model
+alone would freeze what this app last wrote, not the look on screen. Always followed by
+`Session.offline_sentence`, the actual cause (#269): no Lua, an import on offer, an old
+Hyprland or one this app cannot reach."""
+READ_ONLY_DESCRIPTION = "Applying is off. {reason} You can still export and import."
+"""Filled with `Session.offline_sentence`."""
 SAVE_LABEL = "Save current as preset…"
 IMPORT_LABEL = "Import…"
 EMPTY_TITLE = "No presets yet"
 EMPTY_SUBTITLE = (
     "A preset keeps a look (colors, gaps, animation switches, fonts, wallpaper) so you can "
-    "switch back to it later. Press “Save current as preset” to keep this one."
+    "switch back to it later. {how}"
 )
+EMPTY_HOW = "Press “Save current as preset” to keep this one."
 COLORS_NEED_HYPRLAND = "Wallpaper colors can only be captured while applying is on"
 WALLPAPER_NEEDS_HYPRLAND = "The wallpaper can only be saved while applying is on"
 FORGET = "Forget"
@@ -255,9 +252,10 @@ class PresetsGroup:
         self._others = []
         self._buttons = {}
         live = self._session.live
+        save_off = f"{SAVE_UNAVAILABLE} {self._session.offline_sentence or ''}".rstrip()
         self.save_button.set_sensitive(live)
         self.save_button.set_tooltip_text(
-            "Keep the current look as a preset" if live else SAVE_NEEDS_HYPRLAND
+            "Keep the current look as a preset" if live else save_off
         )
         self.group.set_description(
             DESCRIPTION
@@ -275,7 +273,7 @@ class PresetsGroup:
             self.group.add(row)
             self._others.append(row)
         if not presets:
-            row = _row(EMPTY_TITLE, EMPTY_SUBTITLE)
+            row = _row(EMPTY_TITLE, EMPTY_SUBTITLE.format(how=EMPTY_HOW if live else save_off))
             self.group.add(row)
             self._others.append(row)
         for slug, preset in presets:
