@@ -185,7 +185,8 @@ class Applier:
         """Apply `names` ahead of anything waiting, and over those keys alone.
 
         ADR-0016's priority restore transaction. The recovery path only -- an ordinary edit
-        that jumped the queue would reorder the user's own changes behind their back.
+        that jumped the queue would reorder the user's own changes behind their back. The
+        result is returned to the caller and not passed to `on_result`.
         """
         return await self._queue.apply_now(*names)
 

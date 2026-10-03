@@ -749,7 +749,6 @@ class Session:
         The window's own undo, so an undo the window puts behind a countdown still goes
         there; without one the session undoes it itself."""
 
-        self._reverting = False
         self._recovery_halted = False
         self._recovery = Recovery()
         """What the last reload said was wrong, attributed. The Banner is a view of this.
@@ -3912,19 +3911,6 @@ class Session:
         Ctrl+Z should be able to take it back). A gesture can never be both, which is why the
         failed one is never pushed rather than pushed and popped.
         """
-        if self._reverting:
-            # The restore transaction's own result. It carries no gesture of the user's, and
-            # a second auto-revert on top of a failed one is the loop ADR-0016 forbids.
-            #
-            # A restore carries its own keys alone (`apply_now`), so an edit made in the
-            # ~25 ms it takes is still mid-gesture: its entry stays open in
-            # `_open_gestures`, and the next transaction records it from the value it really
-            # started at rather than from the one the revert put back.
-            self._recovery_result(result)
-            self._observe(result)
-            self._report(result)
-            return
-
         delta = self._close(result.keys)
         refused = self._take_back_options(result, delta)
         presets = self._carried_presets(result.keys)
@@ -4256,13 +4242,14 @@ class Session:
     def _settle_entities(
         self, result: ApplyResult, *, stands: bool
     ) -> tuple[list[EntityStep], list[EntityStep]]:
-        """The Entity steps this result lets stand, and the ungrouped ones it failed.
+        """The Entity steps this result lets stand, and the ones it failed.
 
         Every pending step with a serial up to `result.entities` was rendered by this
         transaction. Standing: it is recorded, or handed to its undo group. Not standing: it
-        is returned as failed for `_fell` to take out of the model, and a grouped one marks
-        its group failed -- ADR-0016's failed gesture, never on the stack; the group's owner
-        (a display countdown) puts its own lists back. A group this result completes is
+        is returned as failed for `_fell` to take out of the model, grouped or not, and a
+        grouped one also marks its group failed -- ADR-0016's failed gesture, never on the
+        stack. A countdown's Keep puts nothing back, so the model must already show what the
+        disk accepted when it ends (#222). A group this result completes is
         merged here, and lands after the steps it was held beside. Both lists are in commit
         order.
         """
@@ -4284,6 +4271,7 @@ class Session:
                 pending.group.held.append(pending.step)
             else:
                 pending.group.failed = True
+                failed.append(pending.step)
         for group in groups.values():
             merged = self._close_group(group)
             if merged is not None:
@@ -4863,14 +4851,19 @@ class Session:
         if applier is None:
             return
 
-        self._reverting = True
         try:
-            await applier.apply_now(*keys)
+            own = await applier.apply_now(*keys)
         except (IpcError, RuntimeError) as error:
             _log.error("could not re-apply after reverting: %s", error)
             self._recovery_halted = True
-        finally:
-            self._reverting = False
+        else:
+            # The restore's own result, which `apply_now` hands here and not to `_applied`
+            # (#222): it carries no gesture of the user's, and a second auto-revert on top
+            # of a failed one is the loop ADR-0016 forbids. An edit made while it ran is
+            # still open in `_open_gestures`, for the batch that carries it to record.
+            self._recovery_result(own)
+            self._observe(own)
+            self._report(own)
 
         restored = self._verify(expected)
         if self.on_reverted is not None:

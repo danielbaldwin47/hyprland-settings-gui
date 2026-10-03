@@ -89,8 +89,8 @@ class ApplyQueue:
 
         A debounced `touch` has no caller left to hand a result to by the time it applies,
         so the callback is the only way error surfacing hears about the apply that a
-        slider drag ended in. A `run_now` operation is not an Apply: its result goes to the
-        caller awaiting it, and to nobody else (#227).
+        slider drag ended in. A priority job is the exception: an `apply_now` or `run_now`
+        result goes to the caller awaiting it, and to nobody else (#227, #222).
         """
         self._transaction = transaction
         self._debounce = debounce
@@ -220,6 +220,10 @@ class ApplyQueue:
         that `apply` does not: it goes to the front, and it carries *only* these keys -- the
         dirty set is left for the batch behind it. Still serialized, because a reload is a
         reload: "priority" is about which transaction runs next, never about running two.
+
+        The result is the caller's alone, never `on_result`'s, as for `run_now`: a
+        subscriber cannot tell it from the batch beside it, and one that took a user's batch
+        for the restore would drop that batch's undo step (#222).
         """
         return await self._enqueue_priority(None, tuple(names))
 
@@ -348,7 +352,7 @@ class ApplyQueue:
             self._commit_now.clear()
         self._running_priority = True
         try:
-            await self._run_once(job.keys, [job.waiter], operation=job.operation)
+            await self._run_once(job.keys, [job.waiter], operation=job.operation, notify=False)
         finally:
             self._running_priority = False
 
@@ -359,6 +363,7 @@ class ApplyQueue:
         *,
         operation: Transaction | None = None,
         entities: int | None = None,
+        notify: bool = True,
     ) -> None:
         self._busy = True
         try:
@@ -386,7 +391,7 @@ class ApplyQueue:
         for waiter in waiters:
             if not waiter.done():
                 waiter.set_result(result)
-        if operation is None:
+        if notify:
             self._notify(result)
         # Last, so a `drain()` that returns has already seen every subscriber run.
         self._settle()
