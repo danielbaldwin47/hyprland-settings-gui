@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from _fake_hyprland import FakeHyprland, run_with_fake
 from _support import Runner, section_conversation, session_for
 
 from hyprtweaker.engine.apply import Step
-from hyprtweaker.engine.model import Bind, DispatcherCall
+from hyprtweaker.engine.model import UNSET, Bind, DispatcherCall
 from hyprtweaker.session import Session
 
 ROUNDING = "decoration:rounding"
@@ -340,5 +341,198 @@ def test_a_kept_import_into_a_live_session_is_what_the_next_edit_builds_on(
         await settle(session, runner)
         text = module(tmp_path, "binds.lua").read_text()
         assert "SUPER + Z" in text and "SUPER + B" in text and "SUPER + A" not in text
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+# --- #273: a hand edit between the gate and the write ------------------------------------
+#
+# The tests above edit before the gesture, so `_edited_module` refuses it. These edit after
+# the gesture returns -- the gate passed, the commit is only queued -- and before the queued
+# transaction writes, so the Writer is what finds the file edited and leaves it alone
+# (ADR-0005). Each expects what the gate-time refusal leaves: the file as edited, the model
+# and the pointer as the file has them, the undo still on the stack, the file named.
+
+DOCKED = (
+    {"name": "eDP-1", "description": "BOE 0x0791"},
+    {"name": "DP-3", "description": "Dell U2720Q"},
+)
+
+
+def refused_state(session: Session, refused: list[tuple[str, str]]) -> dict[str, object]:
+    """What the user is left with after the refusal, beside the file's bytes."""
+    active = session.active_monitor_profile()
+    return {
+        "monitor_rules": [(r.output, dict(r.fields)) for r in session.monitor_rules],
+        "rounding": session.model.get(ROUNDING),
+        "binds": [b.keys for b in session.model.entities.binds],
+        "active_profile": None if active is None else active[0],
+        "can_undo": session.can_undo,
+        "refused_files": [file for _, file in refused],
+        "banner_files": session.health.edited_files,
+    }
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="#273: the pointer moves at enqueue; a skipped activation write takes nothing back",
+)
+def test_a_hand_edit_after_the_gate_leaves_a_profile_activation_refused_whole(
+    tmp_path: Path,
+) -> None:
+    refused: list[tuple[str, str]] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_refused = lambda what, file: refused.append((what, file))
+        session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@60", "position": "0x0"})
+        await settle(session, runner)
+        slug = session.save_monitor_profile("Docked", DOCKED)
+        session.detach_monitor_profile()
+        session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@48"})
+        await settle(session, runner)
+
+        assert session.activate_monitor_profile(slug)  # the gate passed
+        edited = hand_edit(tmp_path, "monitors.lua")  # before the queued write runs
+        await settle(session, runner)
+
+        assert module(tmp_path, "monitors.lua").read_text() == edited
+        assert refused_state(session, refused) == {
+            "monitor_rules": [("eDP-1", {"mode": "1920x1080@48", "position": "0x0"})],
+            "rounding": UNSET,
+            "binds": [],
+            "active_profile": None,
+            "can_undo": False,  # the activation forgets the display steps at the gate
+            "refused_files": ["monitors.lua"],
+            "banner_files": ("monitors.lua",),
+        }
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="#273: undo pops before the write and a skipped Option undo takes nothing back",
+)
+def test_a_hand_edit_after_the_gate_leaves_an_option_undo_refused_and_undoable(
+    tmp_path: Path,
+) -> None:
+    refused: list[tuple[str, str]] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_refused = lambda what, file: refused.append((what, file))
+        session.set_option(ROUNDING, 18)
+        await settle(session, runner)
+        fake.conversation.update(conversation(**{ROUNDING: 11}))
+        session.set_option(ROUNDING, 11)
+        await settle(session, runner)
+        step = session.last_gesture
+
+        assert session.undo()  # the gate passed
+        edited = hand_edit(tmp_path, DECORATION)  # before the queued write runs
+        await settle(session, runner)
+
+        assert module(tmp_path, DECORATION).read_text() == edited
+        assert (refused_state(session, refused), session.last_gesture is step) == (
+            {
+                "monitor_rules": [],
+                "rounding": 11,
+                "binds": [],
+                "active_profile": None,
+                "can_undo": True,
+                "refused_files": [DECORATION],
+                "banner_files": (DECORATION,),
+            },
+            True,
+        )
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="#273: undo pops before the write and a skipped Entity undo takes nothing back",
+)
+def test_a_hand_edit_after_the_gate_leaves_an_entity_undo_refused_and_undoable(
+    tmp_path: Path,
+) -> None:
+    refused: list[tuple[str, str]] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_refused = lambda what, file: refused.append((what, file))
+        session.add_bind(bind("SUPER + A"))
+        await settle(session, runner)
+        session.add_bind(bind("SUPER + B"))
+        await settle(session, runner)
+        step = session.last_gesture
+
+        assert session.undo()  # the gate passed
+        edited = hand_edit(tmp_path, "binds.lua")  # before the queued write runs
+        await settle(session, runner)
+
+        assert module(tmp_path, "binds.lua").read_text() == edited
+        assert (refused_state(session, refused), session.last_gesture is step) == (
+            {
+                "monitor_rules": [],
+                "rounding": UNSET,
+                "binds": ["SUPER + A", "SUPER + B"],
+                "active_profile": None,
+                "can_undo": True,
+                "refused_files": ["binds.lua"],
+                "banner_files": ("binds.lua",),
+            },
+            True,
+        )
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="#273: a hand-edited Module the write would remove is kept but not named skipped",
+)
+def test_a_hand_edit_after_the_gate_leaves_an_undo_that_empties_its_module_refused(
+    tmp_path: Path,
+) -> None:
+    """The Writer keeps a hand-edited Module it would prune (`_prune`'s `off_limits`) but
+    leaves it out of `skipped`, so nothing after the write knows the change missed disk."""
+    refused: list[tuple[str, str]] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_refused = lambda what, file: refused.append((what, file))
+        session.add_bind(bind("SUPER + A"))
+        await settle(session, runner)
+        step = session.last_gesture
+
+        assert session.undo()  # the gate passed; the undo leaves binds.lua nothing to hold
+        edited = hand_edit(tmp_path, "binds.lua")  # before the queued write runs
+        await settle(session, runner)
+
+        assert module(tmp_path, "binds.lua").read_text() == edited
+        assert (refused_state(session, refused), session.last_gesture is step) == (
+            {
+                "monitor_rules": [],
+                "rounding": UNSET,
+                "binds": ["SUPER + A"],
+                "active_profile": None,
+                "can_undo": True,
+                "refused_files": ["binds.lua"],
+                "banner_files": ("binds.lua",),
+            },
+            True,
+        )
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
