@@ -474,6 +474,42 @@ class _AppliedPreset:
 
 
 @dataclass(frozen=True, slots=True)
+class _PendingActivation:
+    """A profile activation, or its revert, waiting for the verdict on its commit (#273).
+
+    The pointer moves only when that transaction stands with both lists on disk: the
+    profile store is outside the model, so nothing else would take a refused one back.
+    """
+
+    serial: int
+    """`commit_entities`'s serial, as for `_PendingEntityStep`."""
+    change: EntityStep | None
+    """The lists it moved, before to after; `None` when it moved none."""
+    active: str | None
+    """The pointer it sets once it stands."""
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingUndo:
+    """An undo waiting for the verdict on its write: the step comes back on the stack, and
+    the model goes back to the file, if a hand-edited Module kept it off disk (#273)."""
+
+    step: UndoStep | EntityStep
+    serial: int | None
+    """The Entity commit's serial for an `EntityStep`; `None` for an Option step, which the
+    transaction carrying its keys reports."""
+
+    def carried_by(self, result: ApplyResult) -> bool:
+        if isinstance(self.step, EntityStep):
+            return (
+                self.serial is not None
+                and result.entities is not None
+                and self.serial <= result.entities
+            )
+        return set(self.step.names) <= set(result.keys)
+
+
+@dataclass(frozen=True, slots=True)
 class _UndonePreset:
     """A Preset step whose Options are being put back: what follows once that stands."""
 
@@ -693,6 +729,13 @@ class Session:
         Built where the edit is made -- before and after are both known there -- and held
         until the transaction carrying the commit says whether it stood (`_applied`): a
         rejected entity write never reaches the stack, as ADR-0016 has it for Options."""
+
+        self._pending_activations: list[_PendingActivation] = []
+        """Profile activations and reverts whose commit has not reported yet, oldest first."""
+
+        self._pending_undos: list[_PendingUndo] = []
+        """Undos whose write has not reported yet, oldest first: popped off the stack, and
+        pushed back if a hand edit kept them off disk (#273)."""
 
         self._undo_group: UndoGroup | None = None
         """The open undo group, if any -- one at a time (`begin_undo_group`)."""
@@ -1992,8 +2035,10 @@ class Session:
     ) -> bool:
         """One transaction over both lists, then the pointer -- activation and its revert.
 
-        The pointer moves only after the commit is accepted, so a refused write never
-        claims a profile the files do not show.
+        The pointer moves only once that transaction stands with both lists on disk
+        (`_take_back_activations`), so a refused or failed write never claims a profile the
+        files do not show -- the gate below refuses at once, the Writer refuses a file
+        edited between the gate and the write (#273).
 
         The one Entity commit that records no undo step, and it forgets every step over
         the two lists, held ones included (#189). The pointer lives outside the model, so a
@@ -2014,11 +2059,20 @@ class Session:
             # Before the lists, the pointer or any countdown move (#148 review R6).
             self._say_refused("Display profile", edited)
             return False
+        change = EntityStep.of(
+            (
+                EntityEdit("monitors", tuple(entities.monitors), tuple(monitors)),
+                EntityEdit(
+                    "workspace_rules", tuple(entities.workspace_rules), tuple(workspaces)
+                ),
+            ),
+            "Display profile",
+        )
         self._model.entities.monitors[:] = list(monitors)
         self._model.entities.workspace_rules[:] = list(workspaces)
         self._forget_entities(DISPLAY_KINDS)
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        self._profile_store.set_active(active)
+        serial = self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it
+        self._pending_activations.append(_PendingActivation(serial, change, active))
         return True
 
     def active_monitor_profile(self) -> tuple[str, MonitorProfile] | None:
@@ -2777,6 +2831,7 @@ class Session:
             return self._undo_preset(step)
 
         self._restore({edit.name: edit.before for edit in step.edits})
+        self._pending_undos.append(_PendingUndo(step, None))
         self._applier.commit(*step.names)
         self._changed()
         return True
@@ -2904,7 +2959,8 @@ class Session:
             return False
         for edit in step.edits:
             getattr(entities, edit.kind)[:] = edit.before
-        self._applier.commit_entities()  # type: ignore[union-attr]  # undo checked it is here
+        serial = self._applier.commit_entities()  # type: ignore[union-attr]  # undo checked it
+        self._pending_undos.append(_PendingUndo(step, serial))
         self._changed()
         return True
 
@@ -3505,6 +3561,8 @@ class Session:
         self._undo = UndoStack()
         self._open_gestures.clear()
         self._pending_entities = []
+        self._pending_activations = []
+        self._pending_undos = []
         self._undo_group = None
         self._undo_waits_for = None
         self._edited_files.clear()
@@ -3878,6 +3936,8 @@ class Session:
         undone = self._carried_undos(result.keys)
         stands = self._stands(result)
         entity_steps, failed = self._settle_entities(result, stands=stands)
+        activations = self._landed_activations(result)
+        undos = self._landed_undos(result)
         if not stands:
             # The gate goes back first, so the auto-revert's write renders the Entrypoint
             # with the wallpaper's Bridge loading again (S6). Newest first: each one's
@@ -3892,6 +3952,8 @@ class Session:
             return
 
         entity_steps = self._take_back_entities(result, entity_steps, refused)
+        self._take_back_activations(result, activations, refused)
+        self._take_back_undos(result, undos, refused)
         self._forget_unedited()
         for module, titles in refused.items():
             # The Rows show the model, which just went back to what the file holds.
@@ -3982,6 +4044,88 @@ class Session:
             if rest is not None:
                 kept.append(rest)
         return kept
+
+    def _landed_activations(self, result: ApplyResult) -> list[_PendingActivation]:
+        """The activations `result` carries, taken, as `_settle_entities` takes steps."""
+        if result.entities is None:
+            return []
+        landed = [p for p in self._pending_activations if p.serial <= result.entities]
+        self._pending_activations = [
+            p for p in self._pending_activations if p.serial > result.entities
+        ]
+        return landed
+
+    def _landed_undos(self, result: ApplyResult) -> list[_PendingUndo]:
+        """The undos `result` carries, taken."""
+        landed = [p for p in self._pending_undos if p.carried_by(result)]
+        self._pending_undos = [p for p in self._pending_undos if p not in landed]
+        return landed
+
+    def _take_back_activations(
+        self,
+        result: ApplyResult,
+        activations: list[_PendingActivation],
+        refused: dict[str, list[str]],
+    ) -> None:
+        """Move the pointer for each activation whose lists reached disk; for one a hand edit
+        kept off disk, put the lists it could not write back and leave the pointer, as the
+        gate does (#273). A standing transaction only: one that fell moves no pointer."""
+        skipped = set(result.skipped)
+        for pending in activations:
+            edits = pending.change.edits if pending.change is not None else ()
+            blocked = [e for e in edits if ENTITY_KIND_MODULES[e.kind] in skipped]
+            if not blocked:
+                self._profile_store.set_active(pending.active)
+                continue
+            for module in dict.fromkeys(ENTITY_KIND_MODULES[e.kind] for e in blocked):
+                refused.setdefault(module, []).append("Display profile")
+            self._put_back(self._lists_before([EntityStep(tuple(blocked), "")]))
+
+    def _take_back_undos(
+        self, result: ApplyResult, undos: list[_PendingUndo], refused: dict[str, list[str]]
+    ) -> None:
+        """For each undo a hand-edited Module kept off disk: the model goes back to what the
+        file holds, the step back on the stack to undo once the file is settled, and the
+        Module joins `refused` -- what the gate does for an undo it refuses (#273). A step
+        over several lists or Options keeps only the part that was not written."""
+        skipped = set(result.skipped)
+        if not skipped:
+            return
+        for pending in undos:
+            step = pending.step
+            back: UndoStep | EntityStep
+            if isinstance(step, EntityStep):
+                lists = [e for e in step.edits if ENTITY_KIND_MODULES[e.kind] in skipped]
+                if not lists:
+                    continue
+                modules = [ENTITY_KIND_MODULES[e.kind] for e in lists]
+                undone = EntityStep(
+                    tuple(EntityEdit(e.kind, e.after, e.before) for e in lists), step.title
+                )
+                self._put_back(self._lists_before([undone]))
+                back = (
+                    step
+                    if len(lists) == len(step.edits)
+                    else EntityStep(tuple(lists), step.title)
+                )
+            else:
+                options = [
+                    (e, module_relpath(o))
+                    for e in step.edits
+                    if (o := self._schema.get(e.name)) is not None
+                    and module_relpath(o) in skipped
+                ]
+                if not options:
+                    continue
+                modules = [module for _, module in options]
+                for edit, _ in options:
+                    if self._model.get(edit.name) == edit.before:
+                        self._restore({edit.name: edit.after})
+                edits = tuple(e for e, _ in options)
+                back = step if len(edits) == len(step.edits) else UndoStep(edits)
+            for module in dict.fromkeys(modules):
+                refused.setdefault(module, []).append("Undo")
+            self._undo.record(back)
 
     @property
     def edited_copies_shown(self) -> str:

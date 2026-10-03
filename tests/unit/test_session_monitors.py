@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
 from hyprtweaker.engine.ipc import Instance, NoInstance
 from hyprtweaker.engine.model import UNSET
 from hyprtweaker.engine.model.entities import MonitorRule, WorkspaceRule
@@ -20,12 +21,18 @@ APP_VERSION = "0.0.0-test"
 
 
 class StubApplier:
-    def __init__(self) -> None:
+    def __init__(self, session: Session) -> None:
+        self.session = session
         self.commits = 0
 
     def commit_entities(self) -> int:
         self.commits += 1
         return self.commits
+
+    def land(self) -> None:
+        """Report every commit so far as one transaction that stood, as the queue would once
+        the files are written: an activation's pointer moves on that verdict (#273)."""
+        self.session._applied(ApplyResult(ApplyOutcome.OK, entities=self.commits))
 
 
 def live_session(tmp_path: Path) -> tuple[Session, StubApplier]:
@@ -40,7 +47,7 @@ def live_session(tmp_path: Path) -> tuple[Session, StubApplier]:
         app_version=APP_VERSION,
         connect=no_compositor,
     )
-    applier = StubApplier()
+    applier = StubApplier(session)
     session._applier = applier  # type: ignore[assignment]
     session._offline_reason = None
     return session, applier
@@ -265,13 +272,15 @@ class TestMonitorProfiles:
         assert session.active_monitor_profile() is None
 
         assert session.activate_monitor_profile(slug)
+        _applier.land()
         active = session.active_monitor_profile()
         assert active is not None and active[0] == slug
         assert not session.monitor_profile_drift()
 
     def test_an_edit_after_activation_drifts(self, tmp_path: Path) -> None:
-        session, _applier, slug = docked_session(tmp_path)
+        session, applier, slug = docked_session(tmp_path)
         session.activate_monitor_profile(slug)
+        applier.land()
 
         session.patch_monitor_rule("eDP-1", {"transform": 1})
         assert session.monitor_profile_drift()
@@ -355,8 +364,9 @@ class TestMonitorProfiles:
         reload plumbing has its own tiers -- what this asserts is that the file's truth
         replaces the model's and the active profile drifts on it.
         """
-        session, _applier, slug = docked_session(tmp_path)
+        session, applier, slug = docked_session(tmp_path)
         session.activate_monitor_profile(slug)
+        applier.land()
         assert not session.monitor_profile_drift()
 
         path = session.paths.app_dir / "monitors.lua"
