@@ -515,3 +515,98 @@ def test_a_hand_edit_after_the_gate_leaves_an_undo_that_empties_its_module_refus
         )
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+# --- #267: a refused drag leaves the compositor on the value the Row shows -------------------
+
+
+def evals(fake: FakeHyprland) -> list[str]:
+    return [request for request in fake.requests if request.startswith("eval ")]
+
+
+async def shown(session: Session, runner: Runner) -> None:
+    """`settle`, then until no `eval` is pending or on the socket."""
+    await settle(session, runner)
+    assert session._applier is not None
+    await session._applier.flush_previews()
+
+
+def test_a_drag_released_into_a_module_edited_mid_drag_shows_the_old_value_again(
+    tmp_path: Path,
+) -> None:
+    """#267: the drag's ticks put 25 on the desktop by `eval`; the file was hand-edited before
+    the release, which is refused. The model, the Row and the compositor all go back to 18,
+    and the file keeps the hand edit."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 18)
+        await shown(session, runner)
+        session.preview_option(ROUNDING, 25)
+        await shown(session, runner)
+        assert evals(fake)[-1] == "eval hl.config{decoration={rounding=25}}"
+        edited = hand_edit(tmp_path, DECORATION)
+
+        session.set_option(ROUNDING, 25)
+        await shown(session, runner)
+
+        assert session.model.get(ROUNDING) == 18
+        assert evals(fake)[-1] == "eval hl.config{decoration={rounding=18}}"
+        assert module(tmp_path, DECORATION).read_text() == edited
+        assert session.last_gesture is not None
+        assert session.last_gesture.edits[0].after == 18
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )
+
+
+def test_a_drag_whose_write_the_writer_skips_shows_the_old_value_again(tmp_path: Path) -> None:
+    """#267: the release passed the gate and the file was edited before the write, so the
+    Writer left it alone. The model goes back to 18 (#148 defect 13), and so does the
+    compositor, which the drag's `eval` had left on 25."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 18)
+        await shown(session, runner)
+        session.preview_option(ROUNDING, 25)
+        await shown(session, runner)
+
+        session.set_option(ROUNDING, 25)
+        edited = hand_edit(tmp_path, DECORATION)
+        await shown(session, runner)
+
+        assert session.model.get(ROUNDING) == 18
+        assert evals(fake)[-1] == "eval hl.config{decoration={rounding=18}}"
+        assert module(tmp_path, DECORATION).read_text() == edited
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )
+
+
+def test_a_drag_released_normally_sends_no_eval_after_its_write(tmp_path: Path) -> None:
+    """#267's other half: an accepted drag ends on its write, and nothing re-previews it."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 18)
+        await shown(session, runner)
+        session.preview_option(ROUNDING, 25)
+        await shown(session, runner)
+        fake.conversation.update(conversation(**{ROUNDING: 25}))
+
+        session.set_option(ROUNDING, 25)
+        await shown(session, runner)
+
+        assert session.model.get(ROUNDING) == 25
+        assert evals(fake) == ["eval hl.config{decoration={rounding=25}}"]
+        assert "rounding = 25" in module(tmp_path, DECORATION).read_text()
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )

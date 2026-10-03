@@ -721,6 +721,11 @@ class Session:
         key. Between those two moments the Option is mid-gesture, however many model writes
         the widget makes -- which is what turns fifty slider ticks into one undo step."""
 
+        self._previewed: set[str] = set()
+        """Options an `eval` preview may have left the compositor showing: added by a drag's
+        tick, dropped by the transaction that carries the key or a reload. A refusal that
+        puts one back re-previews it (`_show_restored`, #267)."""
+
         self._pending_entities: list[_PendingEntityStep] = []
         """Entity steps whose commit has not reported yet, oldest first (#189).
 
@@ -1358,6 +1363,7 @@ class Session:
         if self._refused_by_edit(name):
             return
         self._begin_edit(name)
+        self._previewed.add(name)
         self._model.set(name, value)
         self._applier.preview(name)  # type: ignore[union-attr]  # _refuse proved it is here
 
@@ -2706,6 +2712,11 @@ class Session:
         module = self._edited_module((module_relpath(option),))
         if module is None:
             return False
+        if name in self._previewed and name in self._open_gestures:
+            # A drag whose Module was edited after its first tick: the ticks moved the model
+            # and the compositor with nothing queued to take them back (#267).
+            self._restore({name: self._open_gestures[name]})
+            self._show_restored((name,))
         self._say_refused(option.title, module)
         return True
 
@@ -3002,6 +3013,17 @@ class Session:
             group.held = [step for step in group.held if not step.kinds & gone]
             # A dropped in-flight step may have been all an ended group was waiting for.
             self._announce(self._close_group(group))
+
+    def _show_restored(self, names: Iterable[str]) -> None:
+        """Preview again each of `names` a drag's `eval` may have left on the compositor,
+        now the model is put back: a refusal must leave the desktop showing what the Row and
+        the file say (#267). Sends the model's value, so an Unset one shows nothing new --
+        `eval` cannot unset -- until the next reload."""
+        shown = [name for name in names if name in self._previewed]
+        self._previewed.difference_update(shown)
+        if shown and self._applier is not None:
+            self._applier.forget_previews()
+            self._applier.preview(*shown)
 
     def _restore(self, values: Mapping[str, OptionValue]) -> None:
         """Put the model back to `values`, and forget any gesture open on those Options.
@@ -3515,6 +3537,7 @@ class Session:
         # spanning somebody else's reload. Entity steps over a list the re-read changes are
         # dropped there (`_reread_after_foreign_reload`).
         self._open_gestures.clear()
+        self._previewed.clear()
         self._spawn(self._reread_after_foreign_reload())
 
     def adopt_import(self) -> None:
@@ -3535,6 +3558,7 @@ class Session:
         self._model.clear()
         self._undo = UndoStack()
         self._open_gestures.clear()
+        self._previewed.clear()
         self._pending_entities = []
         self._pending_activations = []
         self._pending_undos = []
@@ -3940,11 +3964,14 @@ class Session:
                 if each.source is not None:
                     self._put_bridges(each.source.before, each.source.after)
             self._fell(result, delta, self._lists_before(failed))
+            self._previewed.difference_update(result.keys)
             return
 
         entity_steps = self._take_back_entities(result, entity_steps, refused)
         self._take_back_activations(result, activations, refused)
         self._take_back_undos(result, undos, refused)
+        # Its reload wiped every `eval`; one a refusal put back is re-previewed above.
+        self._previewed.difference_update(result.keys)
         self._forget_unedited()
         for module, titles in refused.items():
             # The Rows show the model, which just went back to what the file holds.
@@ -4011,6 +4038,7 @@ class Session:
                 continue
             refused.setdefault(module_relpath(option), []).append(option.title)
             self._restore({name: before})
+            self._show_restored((name,))
         return refused
 
     def _take_back_entities(
@@ -4323,6 +4351,7 @@ class Session:
         self._repoll_if_timed_out(result)
         if result.outcome is ApplyOutcome.ABORTED:
             self._restore(delta)
+            self._show_restored(delta)
             self._put_back(lists)
             self._finish_failed(result)
             self._changed()
