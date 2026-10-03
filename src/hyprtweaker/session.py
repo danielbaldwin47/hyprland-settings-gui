@@ -320,6 +320,10 @@ class Health:
     Journal **and reported in the Banner**". Quietly keeping a user's edit and quietly taking
     it are not the same promise, and only the second one needs announcing."""
 
+    rescued_uncopied: tuple[str, ...] = ()
+    """Of `rescued`, the Modules no copy of the hand edit could be kept of as a file (#266).
+    The Journal still holds the bytes; the Banner says the file copy is missing."""
+
     @property
     def unhealthy(self) -> bool:
         """Whether the Banner shows at all."""
@@ -376,9 +380,12 @@ class Health:
             # needs -- the alternative pairs a reassuring title with a Details button opening
             # a dialog full of errors it never mentioned.
             files = ", ".join(name.rsplit("/", 1)[-1] for name in self.rescued)
+            kept = (
+                ", but no copy of it could be kept as a file." if self.rescued_uncopied else "."
+            )
             return (
                 f"Restored {files} so your keybinds would load again. "
-                f"Your edited version is saved in this app's history."
+                f"Your edited version is saved in this app's history{kept}"
             )
         if self.unapplied:
             return f"{self._unapplied_summary} was written but did not take effect."
@@ -448,6 +455,27 @@ class Replaced(Enum):
 
     def __bool__(self) -> bool:
         return self is Replaced.DONE
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreStart:
+    """How `Session.restore_last_good` began (#266). Truthy only when the restore was
+    queued; what it then did arrives through its `done`.
+
+    The copies are made, and refused on, before anything is queued, so this is the whole
+    answer to "where is my edited file?" for the restore that follows.
+    """
+
+    queued: bool
+    copies: Mapping[str, Path] = field(default_factory=dict)
+    """Each hand-edited Module's copy, kept before its bytes are replaced, by Module."""
+    uncopied: tuple[str, ...] = ()
+    """Hand-edited Modules no copy could be kept of. A Restore the user chose is refused at
+    the first of them, before any write; the emergency restore goes on without it, the
+    Journal holding the bytes it replaces (ADR-0016 §Zero-binds)."""
+
+    def __bool__(self) -> bool:
+        return self.queued
 
 
 @dataclass(frozen=True, slots=True)
@@ -838,6 +866,8 @@ class Session:
         """Modules the emergency restore overwrote without asking, so the Banner can say so."""
 
         self._pending_rescue: tuple[str, ...] = ()
+        self._rescue_uncopied: tuple[str, ...] = ()
+        """The emergency restore's Modules no copy could be kept of (`Health.rescued_uncopied`)."""
         """A rescue announced only once its own restore has been observed -- see
         `_emergency_restore`, which explains why it cannot be announced any earlier."""
 
@@ -1234,6 +1264,7 @@ class Session:
             halted=self._recovery_halted,
             unapplied=self._unapplied,
             rescued=self._rescued,
+            rescued_uncopied=tuple(m for m in self._rescue_uncopied if m in self._rescued),
             edited_files=tuple(self._edited_files),
         )
 
@@ -4658,7 +4689,11 @@ class Session:
         # own reload observes the config afresh, and announcing before that would have the
         # notice wiped by the very transaction it describes.
         self._pending_rescue = tuple(modules)
-        if not self.restore_last_good(*modules):
+        # A copy that cannot be kept does not stop it (§Zero-binds): the Journal holds the
+        # bytes it replaces, and the Banner says no file copy was kept (#266).
+        start = self.restore_last_good(*modules, copy_required=False)
+        self._rescue_uncopied = start.uncopied
+        if not start:
             # Declined before anything ran -- no confirmed write to go back to. A notice
             # left pending would surface on the next restore the user chooses themselves.
             self._pending_rescue = ()
@@ -4684,17 +4719,23 @@ class Session:
         return self._journal.unverified_since_import(module)
 
     def restore_last_good(
-        self, *modules: str, done: Callable[[bool], None] | None = None
-    ) -> bool:
-        """Put `modules` back to their newest confirmed bytes. `False` if nothing can be.
+        self,
+        *modules: str,
+        done: Callable[[bool], None] | None = None,
+        copy_required: bool = True,
+    ) -> RestoreStart:
+        """Put `modules` back to their newest confirmed bytes, after keeping a copy of each
+        hand-edited one. Falsy if nothing was queued, and nothing was then written.
 
         ADR-0016's Restore last good, for both the classes that offer it: the hand-edited app
         Module the user chose it for, and the emergency that takes it without asking. The
         difference between those two is entirely in *who calls this* -- by the time it runs,
-        the decision is made.
+        the decision is made. The one thing that differs is a copy that cannot be kept: it
+        refuses the user's Restore (its dialog promised the copy), and only the emergency,
+        `copy_required=False`, goes on without it (§Zero-binds: the Journal keeps the bytes).
         """
         if not self.live or self._applier is None or self._restoring:
-            return False
+            return RestoreStart(queued=False)
 
         restores = [
             good
@@ -4703,13 +4744,28 @@ class Session:
         ]
         if not restores:
             _log.warning("nothing to restore: no confirmed write to %s", ", ".join(modules))
-            return False
+            return RestoreStart(queued=False)
 
+        # Every copy before the first byte moves, so a refusal leaves every file as it was.
+        # Only a hand edit needs one: bytes the app wrote are its own to replace.
+        copies: dict[str, Path] = {}
+        uncopied: list[str] = []
         for good in restores:
-            # The bytes being replaced, where the user can find them (#148 hand-test 17).
-            self._keep_edited_copy(good.module)
+            if self._edited_module((good.module,)) is None:
+                continue
+            source = self._paths.app_dir / good.module
+            try:
+                copy = keep_edited_copy(self._paths, source, good.module)
+            except OSError as error:
+                _log.warning("could not keep a copy of %s: %s", source, error)
+                uncopied.append(good.module)
+                if copy_required:
+                    return RestoreStart(queued=False, copies=copies, uncopied=(good.module,))
+                continue
+            if copy is not None:  # None: deleted by hand, nothing to copy
+                copies[good.module] = copy
         self._spawn(self._restore_transaction(restores, done))
-        return True
+        return RestoreStart(queued=True, copies=copies, uncopied=tuple(uncopied))
 
     async def _restore_transaction(
         self, restores: Sequence[LastKnownGood], done: Callable[[bool], None] | None = None
@@ -4721,8 +4777,9 @@ class Session:
             return
 
         self._restoring = True
+        transaction = applier.restore(restores)
         try:
-            result = await applier.restore_now(applier.restore(restores))
+            result = await applier.restore_now(transaction)
         except (IpcError, RuntimeError) as error:
             _log.error("the restore transaction failed: %s", error)
             self._recovery_halted = True
@@ -4754,9 +4811,15 @@ class Session:
             # restored key is still an override (F3, F4 of the #148 review).
             await self._scan_drift(self._client)
         self._repoll_if_timed_out(result)
+        # The Modules that landed are the app's own again, part-way or not: nothing about
+        # them is held as edited outside the app any more (#266).
+        self._not_known.difference_update(transaction.landed)
+        self._forget_unedited()
         # After the observation, which clears the field: this notice is about what the
         # restore just did, so it has to survive the restore's own reload and nothing later.
-        self._rescued, self._pending_rescue = self._pending_rescue, ()
+        # Only what it actually overwrote: a Module whose write never happened was not taken.
+        self._rescued = tuple(m for m in self._pending_rescue if m in transaction.landed)
+        self._pending_rescue = ()
         self._report(result)
         self._changed()
         if done is not None:
