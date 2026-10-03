@@ -598,6 +598,10 @@ class Session:
 
         self._edited_files: list[str] = []
         """Modules that refused a change and are still edited: `Health.edited_files`."""
+        self._adopted: set[str] = set()
+        """Entity Modules a foreign reload read a hand edit from (`_moved_on_disk`): the
+        model holds what the file said then, so the file back at the Manifest's hash is a
+        change to read too (#225)."""
         self._read_off_text: frozenset[str] = frozenset()
         self._not_known: set[str] = set()
         """Edited Modules whose values neither their text nor a Snapshot could give (R9)."""
@@ -3434,6 +3438,7 @@ class Session:
         self._undo_group = None
         self._undo_waits_for = None
         self._edited_files.clear()
+        self._adopted.clear()
         try:
             await self._recover(client)
         except IpcError as error:
@@ -3492,6 +3497,36 @@ class Session:
         self.load_new_user_lua()
         self._changed()
 
+    def _moved_on_disk(self, modules: Iterable[str]) -> bool:
+        """Whether any of `modules` says something the model does not: a foreign reload's
+        Entity gate, one for every `_reread_*`.
+
+        A file the app did not write (its hash is not the Manifest's) is a hand edit to
+        adopt. A file back at the Manifest's hash is one only if a re-read adopted a hand
+        edit from it since (`_adopted`): put back to the app's bytes -- an editor's undo, a
+        `git checkout` -- it no longer says what the model took from it, and skipping it
+        would leave the reverted edit in the model for the next write to put back (#225).
+        Bytes the app wrote and nobody touched still need no Lua evaluation.
+        """
+        manifest = self._manifest()
+        moved = False
+        for module in modules:
+            path = self._paths.app_dir / module
+            if not path.is_file():
+                continue
+            try:
+                current = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            record = manifest.modules.get(module)
+            if record is None or record.sha256 != content_hash(current):
+                self._adopted.add(module)
+                moved = True
+            elif module in self._adopted:
+                self._adopted.discard(module)
+                moved = True
+        return moved
+
     def _reread_binds(self) -> None:
         """Adopt a hand-edited `binds.lua` instead of overwriting it (ADR-0007).
 
@@ -3510,19 +3545,8 @@ class Session:
         any other, and throwing away the binds the model holds on the strength of a file
         that would not load would turn one broken reload into lost state.
         """
-        path = self._paths.app_dir / BINDS_MODULE
-        if not path.is_file():
-            return
-        try:
-            current = path.read_text(encoding="utf-8")
-        except OSError:
-            return
-
-        record = self._manifest().modules.get(BINDS_MODULE)
-        if record is not None and record.sha256 == content_hash(current):
-            return
-
-        self._load_binds()
+        if self._moved_on_disk((BINDS_MODULE,)):
+            self._load_binds()
 
     def _reread_rules(self) -> None:
         """Adopt hand-edited rule Modules, gated on the Manifest hash like binds.
@@ -3532,19 +3556,7 @@ class Session:
         them separately would let the un-edited file's stale parse overwrite the edited
         one's adoption.
         """
-        changed = False
-        for module in (WINDOW_RULES_MODULE, LAYER_RULES_MODULE):
-            path = self._paths.app_dir / module
-            if not path.is_file():
-                continue
-            try:
-                current = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            record = self._manifest().modules.get(module)
-            if record is None or record.sha256 != content_hash(current):
-                changed = True
-        if changed:
+        if self._moved_on_disk((WINDOW_RULES_MODULE, LAYER_RULES_MODULE)):
             self._load_rules()
 
     def _reread_monitors(self) -> None:
@@ -3556,19 +3568,7 @@ class Session:
         never lights. One gate over both files, one load for both, for `_reread_rules`'s
         reason: `_load_monitors` splices misfiled entities to the kind they are.
         """
-        changed = False
-        for module in (MONITORS_MODULE, WORKSPACE_RULES_MODULE):
-            path = self._paths.app_dir / module
-            if not path.is_file():
-                continue
-            try:
-                current = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            record = self._manifest().modules.get(module)
-            if record is None or record.sha256 != content_hash(current):
-                changed = True
-        if changed:
+        if self._moved_on_disk((MONITORS_MODULE, WORKSPACE_RULES_MODULE)):
             self._load_monitors()
 
     def _reread_declarations(self) -> None:
@@ -3579,19 +3579,7 @@ class Session:
         one file without the others would drop whatever it found belonging to a list the
         other six own.
         """
-        changed = False
-        for module in self.DECLARATION_MODULES:
-            path = self._paths.app_dir / module
-            if not path.is_file():
-                continue
-            try:
-                current = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            record = self._manifest().modules.get(module)
-            if record is None or record.sha256 != content_hash(current):
-                changed = True
-        if changed:
+        if self._moved_on_disk(self.DECLARATION_MODULES):
             self._load_declarations()
 
     def _load_entities(self) -> None:

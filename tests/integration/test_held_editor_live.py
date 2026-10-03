@@ -157,11 +157,6 @@ def test_a_held_editor_save_into_a_hand_reordered_file_is_refused(
     run(harness_home, artifacts, scenario)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#225: the reverted file reopens the write gate over a stale model, and "
-    "replace_bind's held index then lands on charlie",
-)
 def test_a_held_editor_save_after_a_reverted_hand_edit_keeps_every_other_bind(
     harness_home: Path, artifacts: Path
 ) -> None:

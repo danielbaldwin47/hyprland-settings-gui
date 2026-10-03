@@ -236,11 +236,6 @@ async def reorder_then_revert(
     return session
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#225 found: _reread_* skips a Module whose hash matches the Manifest again, "
-    "so the model keeps the hand edit the file no longer has",
-)
 @pytest.mark.parametrize("kind_name", KINDS)
 def test_a_hand_edit_put_back_to_the_apps_bytes_is_read_back_too(
     tmp_path: Path, kind_name: str
@@ -256,11 +251,6 @@ def test_a_hand_edit_put_back_to_the_apps_bytes_is_read_back_too(
     scenario_runner(scenario)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#225: the reverted file reopens the write gate over a stale model, and "
-    "replace_*'s held index then lands on charlie",
-)
 @pytest.mark.parametrize("kind_name", KINDS)
 def test_a_held_editor_save_after_a_reverted_hand_edit_never_writes_over_another_entry(
     tmp_path: Path, kind_name: str
