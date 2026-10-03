@@ -929,6 +929,25 @@ class Session:
         return "This app is not connected to Hyprland."
 
     @property
+    def entities_unreadable(self) -> str | None:
+        """Why the Entity lists are not shown, as the sentences an empty list says instead of
+        "none yet", or `None` when an empty list is the truth (#269).
+
+        Set when an app config exists to read (a Manifest or the App dir) and its lists were
+        not loaded: no Lua, a Hyprland too old to connect to, an import still on offer, or a
+        Module that would not load. `None` once they were read, live or off the files, on a
+        fresh install with nothing to read, and while connecting, when they are about to be.
+        """
+        if self._model.entities_loaded or self._offline_reason == _NOT_CONNECTED_YET:
+            return None
+        if not (self._paths.manifest.is_file() or self._paths.app_dir.is_dir()):
+            return None
+        cause = (
+            self.offline_sentence or "One of its files would not load, so it is left as it is."
+        )
+        return f"This app cannot read your settings right now. {cause}"
+
+    @property
     def entrypoint_edited(self) -> bool:
         """Whether `hyprland.lua` was edited outside this app (its bytes are not the
         Manifest's), which blocks every change to where colors come from."""
