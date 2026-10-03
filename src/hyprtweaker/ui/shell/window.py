@@ -2081,9 +2081,19 @@ class MainWindow(Adw.ApplicationWindow):
         self._profile_offered = (slug, fingerprint)
         if self._profile_toast is not None:
             self._profile_toast.dismiss()
-        toast = plain_toast(f'Displays match profile "{profile.name}"', timeout=10)
-        toast.set_button_label("Activate")
-        toast.connect("button-clicked", lambda _t: self._activate_monitor_profile(slug))
+        said = f'Displays match profile "{profile.name}"'
+        if self._session.live:
+            toast = plain_toast(said, timeout=10)
+            toast.set_button_label("Activate")
+            toast.connect(
+                "button-clicked", lambda _t: self._activate_from_toast(slug, profile.name)
+            )
+        else:
+            # Read-only (an import on offer, a stream lost): an Activate here did nothing
+            # (#281). The match is still news; the cause says when it can be activated.
+            cause = self._session.offline_sentence or ""
+            said = f"{said}, but it cannot be activated now. {cause}".rstrip()
+            toast = plain_toast(said, timeout=10, wrap=True)
         self._profile_toast = toast
         self._toasts.add_toast(toast)
 
@@ -2094,11 +2104,26 @@ class MainWindow(Adw.ApplicationWindow):
         if self._session.save_monitor_profile(name, self._monitors_page.connected) is None:
             # Gone read-only while the name dialog was open: the button is off now.
             self._toasts.add_toast(
-                plain_toast(f'Profile "{name}" was not saved: applying is off')
+                plain_toast(
+                    f'Profile "{name}" was not saved: {self._applying_off()}', wrap=True
+                )
             )
         else:
             self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
         self._refresh_monitors()
+
+    def _applying_off(self) -> str:
+        """ "applying is off", with the session's cause when it has one."""
+        return f"applying is off. {self._session.offline_sentence or ''}".rstrip()
+
+    def _activate_from_toast(self, slug: str, name: str) -> None:
+        """The match toast's Activate: refused, with why, if the session went read-only
+        while the toast was up (#281)."""
+        if not self._session.live:
+            said = f'Profile "{name}" was not activated: {self._applying_off()}'
+            self._toasts.add_toast(plain_toast(said, timeout=8, wrap=True))
+            return
+        self._activate_monitor_profile(slug)
 
     def _activate_monitor_profile(self, slug: str) -> None:
         """Activation: one transaction, behind the one countdown (ADR-0015).

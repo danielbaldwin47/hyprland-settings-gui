@@ -556,12 +556,17 @@ def test_live_with_no_displays_answered_says_hyprland_is_not_answering() -> None
 
 def test_a_save_that_lands_read_only_is_refused_and_says_so(tmp_path: Path) -> None:
     """The name dialog was open when the session went read-only: nothing is captured."""
+    from hyprtweaker.ui.shell.window import toast_text
+
     session, window = build_window(tmp_path)
     toasts: list[str] = []
-    window._toasts.add_toast = lambda toast: toasts.append(toast.get_title())
+    window._toasts.add_toast = lambda toast: toasts.append(toast_text(toast))
 
     window._save_monitor_profile("Docked")
-    assert toasts == ['Profile "Docked" was not saved: applying is off']
+    # With its cause, as every other "applying is off" surface says it (review m1 F19).
+    assert toasts == [
+        f'Profile "Docked" was not saved: applying is off. {session.offline_sentence}'
+    ]
     assert session.monitor_profiles() == ()
 
 
@@ -628,12 +633,56 @@ def seed_profile(session: Any, name: str) -> str:
     )
 
 
-def _window_with_docked_profile(tmp_path: Path) -> tuple[Any, Any]:
+def _window_with_docked_profile(tmp_path: Path, *, live: bool = True) -> tuple[Any, Any]:
     session, window = build_window(tmp_path)
     seed_profile(session, "Docked")
     # Diverge from the capture, so activating the profile would change something.
     session.monitor_rules.append(monitor_rule("eDP-1", mode="1920x1080@60"))
+    if live:
+        session._offline_reason = None  # a connected session, as the toast's fetch implies
     return session, window
+
+
+def test_a_read_only_session_is_told_the_match_without_a_dead_activate(
+    tmp_path: Path,
+) -> None:
+    """Hand-test 3 (#281): Activate on a read-only session did nothing. The toast says the
+    match and why it cannot be activated, and offers no button."""
+    from hyprtweaker.engine.migration.detect import ConfigKind
+    from hyprtweaker.ui.shell.window import CONVERT_SENTENCE, READ_ONLY_REASON, toast_text
+
+    session, window = _window_with_docked_profile(tmp_path, live=False)
+    session.set_read_only(READ_ONLY_REASON[ConfigKind.LEGACY_CONF], sentence=CONVERT_SENTENCE)
+
+    window._on_monitors_event(MONITORS)
+
+    toast = window.profile_toast
+    assert toast is not None
+    assert toast.get_button_label() is None
+    assert toast_text(toast) == (
+        'Displays match profile "Docked", but it cannot be activated now. Your config has '
+        "not been converted yet: use Convert... at the top of the window."
+    )
+
+
+def test_activate_pressed_after_the_session_went_read_only_says_why(tmp_path: Path) -> None:
+    from hyprtweaker.ui.shell.window import toast_text
+
+    session, window = _window_with_docked_profile(tmp_path)
+    window._on_monitors_event(MONITORS)
+    toast = window.profile_toast
+    assert toast is not None and toast.get_button_label() == "Activate"
+    session.set_read_only("Hyprland is not answering")
+    said: list[str] = []
+    window._toasts.add_toast = lambda each: said.append(toast_text(each))
+
+    toast.emit("button-clicked")
+
+    assert said == [
+        'Profile "Docked" was not activated: applying is off. This app is not connected '
+        "to Hyprland."
+    ]
+    assert session.active_monitor_profile() is None
 
 
 def test_profile_toast_offers_a_match_at_open(tmp_path: Path) -> None:
