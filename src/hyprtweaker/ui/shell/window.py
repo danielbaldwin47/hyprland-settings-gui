@@ -96,6 +96,7 @@ from hyprtweaker.session import (  # noqa: E402
     AutoRevert,
     Notice,
     Replaced,
+    RestoreRefusal,
     Session,
 )
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
@@ -2543,6 +2544,11 @@ class MainWindow(Adw.ApplicationWindow):
                     f"{name} was not restored: a copy of it could not be kept, "
                     f"so it was left as it is"
                 )
+            elif start.refusal is RestoreRefusal.RUNNING:
+                self._toast(f"{name} could not be restored yet: a restore is still running")
+            elif start.refusal is RestoreRefusal.READ_ONLY:
+                cause = (self._session.offline_sentence or "").rstrip(".")
+                self._toast(f"{name} could not be restored. {cause}".rstrip(". "))
             elif not start.queued:
                 self._toast(f"{name} could not be restored: there is no earlier version")
 

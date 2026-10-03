@@ -457,6 +457,19 @@ class Replaced(Enum):
         return self is Replaced.DONE
 
 
+class RestoreRefusal(Enum):
+    """Why `Session.restore_last_good` queued nothing (review addendum 3)."""
+
+    READ_ONLY = "read-only"
+    """The session cannot write: `offline_sentence` says why."""
+    RUNNING = "running"
+    """Another restore is still running."""
+    NO_EARLIER = "no earlier"
+    """No confirmed write of these Modules to go back to."""
+    NO_COPY = "no copy"
+    """A hand-edited Module's copy could not be kept: `uncopied` names it."""
+
+
 @dataclass(frozen=True, slots=True)
 class RestoreStart:
     """How `Session.restore_last_good` began (#266): `queued` says whether the restore
@@ -473,6 +486,8 @@ class RestoreStart:
     """Hand-edited Modules no copy could be kept of. A Restore the user chose is refused at
     the first of them, before any write; the emergency restore goes on without it, the
     Journal holding the bytes it replaces (ADR-0016 §Zero-binds)."""
+    refusal: RestoreRefusal | None = None
+    """Why nothing was queued; `None` when it was."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -4776,7 +4791,8 @@ class Session:
         copy_required: bool = True,
     ) -> RestoreStart:
         """Put `modules` back to their newest confirmed bytes, after keeping a copy of each
-        hand-edited one. Falsy if nothing was queued, and nothing was then written.
+        hand-edited one. `queued` False, with its `refusal`, when nothing was queued and
+        nothing was then written.
 
         ADR-0016's Restore last good, for both the classes that offer it: the hand-edited app
         Module the user chose it for, and the emergency that takes it without asking. The
@@ -4786,8 +4802,10 @@ class Session:
         `copy_required=False`, goes on without it (§Zero-binds: the Journal keeps the bytes).
         `done` is called once the queued restore has run, never before this returns.
         """
-        if not self.live or self._applier is None or self._restoring:
-            return RestoreStart(queued=False)
+        if not self.live or self._applier is None:
+            return RestoreStart(queued=False, refusal=RestoreRefusal.READ_ONLY)
+        if self._restoring:
+            return RestoreStart(queued=False, refusal=RestoreRefusal.RUNNING)
 
         restores = [
             good
@@ -4796,7 +4814,7 @@ class Session:
         ]
         if not restores:
             _log.warning("nothing to restore: no confirmed write to %s", ", ".join(modules))
-            return RestoreStart(queued=False)
+            return RestoreStart(queued=False, refusal=RestoreRefusal.NO_EARLIER)
 
         # Every copy before the first byte moves, so a refusal leaves every file as it was.
         # Only a hand edit needs one: bytes the app wrote are its own to replace.
@@ -4812,7 +4830,12 @@ class Session:
                 _log.warning("could not keep a copy of %s: %s", source, error)
                 uncopied.append(good.module)
                 if copy_required:
-                    return RestoreStart(queued=False, copies=copies, uncopied=(good.module,))
+                    return RestoreStart(
+                        queued=False,
+                        copies=copies,
+                        uncopied=(good.module,),
+                        refusal=RestoreRefusal.NO_COPY,
+                    )
                 continue
             if copy is not None:  # None: deleted by hand, nothing to copy
                 copies[good.module] = copy

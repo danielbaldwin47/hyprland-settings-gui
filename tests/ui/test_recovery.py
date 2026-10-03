@@ -406,6 +406,31 @@ def test_show_copy_that_cannot_open_a_folder_names_the_copy(
     assert toast.get_custom_title().get_wrap()
 
 
+@pytest.mark.parametrize(
+    ("refusal", "said"),
+    [
+        ("NO_EARLIER", "general.lua could not be restored: there is no earlier version"),
+        ("RUNNING", "general.lua could not be restored yet: a restore is still running"),
+        (
+            "READ_ONLY",
+            "general.lua could not be restored. This app is not connected to Hyprland",
+        ),
+    ],
+)
+def test_a_restore_that_was_not_queued_says_its_own_cause(
+    tmp_path: Path, refusal: str, said: str
+) -> None:
+    """Review addendum 3: "there is no earlier version" was said for all three causes."""
+    from hyprtweaker.session import RestoreRefusal, RestoreStart
+
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    session.restore_start = RestoreStart(queued=False, refusal=RestoreRefusal[refusal])
+
+    restore_through_dialog(window)
+
+    assert window._toast_log[-1] == said
+
+
 def test_a_restore_that_cannot_keep_a_copy_says_nothing_was_restored(tmp_path: Path) -> None:
     from hyprtweaker.session import RestoreStart
 
