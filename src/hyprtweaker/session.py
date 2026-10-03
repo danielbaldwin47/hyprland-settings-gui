@@ -4074,6 +4074,10 @@ class Session:
         Ctrl+Z should be able to take it back). A gesture can never be both, which is why the
         failed one is never pushed rather than pushed and popped.
         """
+        if result.write is not None:
+            # The app's own bytes now: nothing adopted from them is left to read back, so
+            # the next foreign reload spends no Lua evaluation on them (#225, review m1 F14).
+            self._adopted.difference_update(result.write.written)
         delta = self._close(result.keys)
         refused = self._take_back_options(result, delta)
         presets = self._carried_presets(result.keys)
