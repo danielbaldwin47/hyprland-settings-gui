@@ -26,6 +26,7 @@ auto-revert (ADR-0016), which is the only event the ADR reserves a toast for out
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -59,6 +60,7 @@ from hyprtweaker.engine.migration.flow import (  # noqa: E402
     MigrationFlow,
     asks_consent,
     fresh_start,
+    marker_rescue_command,
 )
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
@@ -86,7 +88,13 @@ from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
-from hyprtweaker.session import AutoRevert, Notice, Replaced, Session  # noqa: E402
+from hyprtweaker.session import (  # noqa: E402
+    HELD_ENTRY_MOVED,
+    AutoRevert,
+    Notice,
+    Replaced,
+    Session,
+)
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
 from hyprtweaker.ui.dialogs.colour_conflict import (  # noqa: E402
@@ -175,6 +183,8 @@ from hyprtweaker.ui.search import (  # noqa: E402
 )
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
 
+_log = logging.getLogger(__name__)
+
 ENTITY_CHANGED = "That item changed. Results updated."
 """The toast for a search hit whose entity was removed or rewritten since it was listed."""
 
@@ -259,6 +269,9 @@ of ours that would have to know which widgets count as text entries."""
 SIDEBAR_TITLE = "Hyprland"
 """What the sidebar header says when the finder is closed (ADR-0017 swaps it for the entry)."""
 
+NOT_SAVED_SENTENCE = "This change was not saved."
+"""An editor's line for a refusal that said nothing of its own (a read-only session)."""
+
 SEVERE_BANNER_CLASS = "error"
 """libadwaita's own red styling, for ADR-0016's "Red Banner".
 
@@ -336,6 +349,9 @@ nothing is remembered: the action is disabled then, and the menu item hides with
 
 class MainWindow(Adw.ApplicationWindow):
     """The Config view over one `Session`."""
+
+    _refused_sentence: str | None = None
+    """The last refusal, as an editor shows it (`_saved_or_why`)."""
 
     def __init__(
         self,
@@ -882,13 +898,27 @@ class MainWindow(Adw.ApplicationWindow):
         # Answered once: closing the dialog emits its close response ("roll-back") again,
         # and a second roll back used to delete the file the first put back (hand-test 19).
         _dialog.disconnect_by_func(self._on_rollback_response)
-        self._switch_offer_open = False
         flow = self.migration_flow()
         if response == "keep":
-            flow.keep()
-            self._start_held_session()
+            self._keep_pending(flow, pending)
             return
-        flow.roll_back(pending)
+        try:
+            outcome = flow.roll_back(pending)
+        except Exception as error:  # any failure must reach a dialog that can close
+            _log.warning("rolling back the unfinished switch failed", exc_info=True)
+            body = (
+                f"Roll back did not finish: {error}\n\nIf you are locked out, run this from "
+                f"a TTY:\n{marker_rescue_command(self._session.paths, pending)}"
+            )
+            GLib.idle_add(self._show_unfinished, pending, body)
+            return
+        if not outcome.complete:
+            # Nothing was changed and the marker stands: still unanswered, still read-only.
+            GLib.idle_add(
+                self._show_unfinished, pending, "\n\n".join((outcome.rescue, *outcome.notes))
+            )
+            return
+        self._switch_offer_open = False
         self._spawn(flow.reload_restored())
         # The user's own file is back, so the session must not write to the app's Modules
         # any more: the same offer a launch on that file makes (#148 hand-tests 19, 20).
@@ -904,7 +934,45 @@ class MainWindow(Adw.ApplicationWindow):
             self._start_held_session()
         # Said, as the wizard's own Roll back says it, with any theming tool's file left
         # as the user changed it or not put back (finding 21).
-        GLib.idle_add(self._show_rollback_notes, flow.rollback_notes)
+        GLib.idle_add(self._show_rollback_notes, outcome.notes)
+
+    def _keep_pending(self, flow: MigrationFlow, pending: Sentinel) -> None:
+        try:
+            flow.keep()
+        except Exception as error:  # any failure must reach a dialog that can close
+            _log.warning("keeping the unfinished switch failed", exc_info=True)
+            body = (
+                f"Keep did not finish: {error}\n\nIf you are locked out, run this from a "
+                f"TTY:\n{marker_rescue_command(self._session.paths, pending)}"
+            )
+            GLib.idle_add(self._show_unfinished, None, body)
+            return
+        self._switch_offer_open = False
+        self._start_held_session()
+
+    def _show_unfinished(self, pending: Sentinel | None, body: str) -> bool:
+        """The relaunch's Roll back or Keep could not finish (#268 AC1, AC4).
+
+        The app stays read-only and the switch unfinished, so the next start offers it
+        again; with a Roll back that stopped, Keep is offered here as the way forward.
+        """
+        dialog = Adw.AlertDialog(heading="The switch is still unfinished", body=body)
+        dialog.add_response("close", "Close")
+        if pending is not None:
+            dialog.add_response("keep", "Keep the new configuration")
+        dialog.set_default_response("close")
+        dialog.set_close_response("close")
+        if pending is not None:
+            dialog.connect("response", self._on_unfinished_response, pending)
+        dialog.present(self)
+        return GLib.SOURCE_REMOVE
+
+    def _on_unfinished_response(
+        self, dialog: Adw.AlertDialog, response: str, pending: Sentinel
+    ) -> None:
+        dialog.disconnect_by_func(self._on_unfinished_response)
+        if response == "keep":
+            self._keep_pending(self.migration_flow(), pending)
 
     def _show_rollback_notes(self, notes: tuple[str, ...]) -> bool:
         body = "\n\n".join(("You are on the configuration you had before the switch.", *notes))
@@ -981,7 +1049,17 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.paths,
             app_version=self._session.app_version,
         )
-        result.write(target)
+        existed = target.exists()
+        try:
+            result.write(target)
+        except OSError as error:
+            # The write is atomic (#251): a failure leaves whatever was at `target` as it was.
+            reason = error.strerror or str(error)
+            note = f"The export was not written: {reason[:1].lower()}{reason[1:]}"
+            if existed:
+                note += f". {target.name} is unchanged"
+            self._toasts.add_toast(plain_toast(note, timeout=8))
+            return
         note = (
             f"Exported to {target.name}"
             if not result.missing
@@ -1397,9 +1475,11 @@ class MainWindow(Adw.ApplicationWindow):
     # --- binds ---------------------------------------------------------------------------
 
     def _add_bind(self, submap: str | None = None) -> None:
-        def done(bind: Bind) -> None:
-            if self._session.add_bind(bind):
+        def done(bind: Bind) -> str | None:
+            why = self._saved_or_why(lambda: self._session.add_bind(bind))
+            if why is None:
                 self._refresh_binds()
+            return why
 
         BindEditor(on_done=done, submap=submap, fetch_switches=self._switch_fetch()).present(
             self
@@ -1412,13 +1492,30 @@ class MainWindow(Adw.ApplicationWindow):
         if not 0 <= index < len(binds):
             return
 
-        def done(bind: Bind) -> None:
-            if self._session.replace_bind(index, bind):
-                self._refresh_binds()
+        held = binds[index]
 
-        BindEditor(
-            on_done=done, bind=binds[index], fetch_switches=self._switch_fetch()
-        ).present(self)
+        def done(bind: Bind) -> str | None:
+            why = self._saved_or_why(
+                lambda: self._session.replace_bind(index, bind, expected=held)
+            )
+            if why is None:
+                self._refresh_binds()
+            return why
+
+        BindEditor(on_done=done, bind=held, fetch_switches=self._switch_fetch()).present(self)
+
+    def _saved_or_why(self, save: Callable[[], bool]) -> str | None:
+        """`None` once `save` is accepted; else why not, for the editor that asked (#225).
+
+        An editor shows the sentence above its Save and stays open with the draft, so a
+        refused save loses nothing. The sentence is the refusal's own (`show_refused`,
+        `show_not_saved`), with the way on, since the toast behind the dialog cannot be
+        acted on while it is open.
+        """
+        self._refused_sentence = None
+        if save():
+            return None
+        return self._refused_sentence or NOT_SAVED_SENTENCE
 
     def _switch_fetch(self) -> FetchSwitches | None:
         """The live switch list for Capture's picker, or `None` when nobody is answering.
@@ -1475,7 +1572,7 @@ class MainWindow(Adw.ApplicationWindow):
         def done(text: str) -> None:
             keys = str(parse_trigger(text.strip()))
             fixed = replace(bind, keys=keys, enabled=bind.enabled or enable)
-            if keys and self._session.replace_bind(index, fixed):
+            if keys and self._session.replace_bind(index, fixed, expected=bind):
                 self._refresh_binds()
 
         CaptureDialog(
@@ -1537,9 +1634,11 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_rule(self, kind: str) -> None:
-        def done(rule: WindowRule | LayerRule) -> None:
-            if self._session.add_rule(kind, rule):
+        def done(rule: WindowRule | LayerRule) -> str | None:
+            why = self._saved_or_why(lambda: self._session.add_rule(kind, rule))
+            if why is None:
                 self._refresh_rules(kind)
+            return why
 
         RuleEditor(
             kind=kind,
@@ -1553,14 +1652,20 @@ class MainWindow(Adw.ApplicationWindow):
         if not 0 <= index < len(rules):
             return
 
-        def done(rule: WindowRule | LayerRule) -> None:
-            if self._session.replace_rule(kind, index, rule):
+        held = rules[index]
+
+        def done(rule: WindowRule | LayerRule) -> str | None:
+            why = self._saved_or_why(
+                lambda: self._session.replace_rule(kind, index, rule, expected=held)
+            )
+            if why is None:
                 self._refresh_rules(kind)
+            return why
 
         RuleEditor(
             kind=kind,
             on_done=done,
-            rule=rules[index],
+            rule=held,
             taken_names=self._taken_rule_names(kind, besides=index),
             fetch_targets=self._rule_fetch(kind),
         ).present(self)
@@ -1649,7 +1754,7 @@ class MainWindow(Adw.ApplicationWindow):
         return tuple(curve.name for curve in self._session.curves if curve.name)
 
     def declaration_editor(
-        self, kind: str, *, on_done: Callable[[Any], None], index: int | None = None
+        self, kind: str, *, on_done: Callable[[Any], str | None], index: int | None = None
     ) -> DeclarationEditor:
         """The editor for a new entity of `kind`, or for the one at `index`."""
         entities = self._session.declarations(kind)
@@ -1664,19 +1769,27 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_declaration(self, kind: str) -> None:
-        def done(entity: Any) -> None:
-            if self._session.add_declaration(kind, entity):
+        def done(entity: Any) -> str | None:
+            why = self._saved_or_why(lambda: self._session.add_declaration(kind, entity))
+            if why is None:
                 self._refresh_declarations(kind)
+            return why
 
         self.declaration_editor(kind, on_done=done).present(self)
 
     def _edit_declaration(self, kind: str, index: int) -> None:
-        if not 0 <= index < len(self._session.declarations(kind)):
+        entities = self._session.declarations(kind)
+        if not 0 <= index < len(entities):
             return
+        held = entities[index]
 
-        def done(entity: Any) -> None:
-            if self._session.replace_declaration(kind, index, entity):
+        def done(entity: Any) -> str | None:
+            why = self._saved_or_why(
+                lambda: self._session.replace_declaration(kind, index, entity, expected=held)
+            )
+            if why is None:
                 self._refresh_declarations(kind)
+            return why
 
         self.declaration_editor(kind, on_done=done, index=index).present(self)
 
@@ -2121,11 +2234,24 @@ class MainWindow(Adw.ApplicationWindow):
         self._dismiss_undo()
         self.sync_banner()
         name = module.rsplit("/", 1)[-1]
-        toast = plain_toast(
-            f"{what} was not saved: {name} was edited outside this app", timeout=8
-        )
+        said = f"{what} was not saved: {name} was edited outside this app"
+        self._refused_sentence = f"{said}. Cancel, then choose Details on the banner."
+        toast = plain_toast(said, timeout=8)
         toast.set_button_label("Details")
         toast.connect("button-clicked", lambda *_: self.show_edited_file(module, what))
+        self._toasts.add_toast(toast)
+        return toast
+
+    def show_not_saved(self, what: str, why: str) -> Adw.Toast:
+        """An editor's save refused because the list moved under it (#225): `why` is the
+        session's clause. Returned for tests; withdraws any undo offer, as nothing was
+        saved."""
+        self._dismiss_undo()
+        said = f"{what} was not saved: {why}"
+        # The toast stays one line; the editor, where the user is, says when and what next.
+        moved = " while this editor was open. Cancel, then edit it again from the list"
+        self._refused_sentence = f"{said}{moved if why == HELD_ENTRY_MOVED else ''}."
+        toast = plain_toast(said, timeout=8)
         self._toasts.add_toast(toast)
         return toast
 

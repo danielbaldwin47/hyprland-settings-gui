@@ -111,12 +111,16 @@ _NUMBER = re.compile(r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
 
 class BindEditor(Adw.Dialog):
-    """Add or edit one Bind. Calls `on_done` with the finished Bind, or never."""
+    """Add or edit one Bind. Calls `on_done` with the finished Bind, or never.
+
+    `on_done` answers `None` once the Bind is saved, and the dialog closes; a sentence is
+    why it was not, and the dialog stays open with the draft, showing it (#225).
+    """
 
     def __init__(
         self,
         *,
-        on_done: Callable[[Bind], None],
+        on_done: Callable[[Bind], str | None],
         bind: Bind | None = None,
         submap: str | None = None,
         fetch_switches: FetchSwitches | None = None,
@@ -602,7 +606,7 @@ class BindEditor(Adw.Dialog):
             **{name: row.get_active() for name, row in self._flag_switches.items()},
         )
 
-        self._on_done(
+        why = self._on_done(
             Bind(
                 # Canonicalised on the way out: ADR-0007 requires the emitted string be
                 # the canonical `"SUPER + SHIFT + Q"` spelling, so `win + q` typed by hand
@@ -621,6 +625,11 @@ class BindEditor(Adw.Dialog):
                 origin=self._original.origin if self._original else "",
             )
         )
+        if why:
+            # Refused: the draft stays, with the reason where the user is looking (#225).
+            self._error.set_text(why)
+            self._error.set_visible(True)
+            return
         self.close()
 
 

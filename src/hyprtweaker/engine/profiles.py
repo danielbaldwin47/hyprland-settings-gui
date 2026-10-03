@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .files import write_atomic
 from .model.entities import MonitorRule, WorkspaceRule
 
 PIN_FIELD = "monitor"
@@ -259,13 +260,10 @@ class ProfileStore:
 
     def replace(self, slug: str, profile: MonitorProfile) -> None:
         """Write `profile` under an existing slug -- the "Update profile" verb."""
-        self._dir.mkdir(parents=True, exist_ok=True)
-        path = self._dir / f"{slug}.json"
-        scratch = path.with_name(f".{path.name}.tmp")
-        scratch.write_text(
-            json.dumps(_to_json(profile), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        write_atomic(
+            self._dir / f"{slug}.json",
+            json.dumps(_to_json(profile), indent=2, sort_keys=True) + "\n",
         )
-        scratch.replace(path)
         self._revision += 1
 
     def delete(self, slug: str) -> None:
@@ -293,8 +291,7 @@ class ProfileStore:
         if slug is None:
             path.unlink(missing_ok=True)
             return
-        self._dir.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"slug": slug}) + "\n", encoding="utf-8")
+        write_atomic(path, json.dumps({"slug": slug}) + "\n")
 
 
 # --- JSON shape --------------------------------------------------------------------------

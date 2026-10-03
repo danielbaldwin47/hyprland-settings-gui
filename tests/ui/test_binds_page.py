@@ -287,7 +287,9 @@ def test_fix_trigger_enables_the_bind_with_the_captured_key(
     replaced: list[tuple[int, Any]] = []
     monkeypatch.setattr(window_module, "CaptureDialog", FakeCapture)
     monkeypatch.setattr(
-        session, "replace_bind", lambda index, bind: replaced.append((index, bind)) or True
+        session,
+        "replace_bind",
+        lambda index, bind, expected: replaced.append((index, bind)) or True,
     )
 
     window.binds_page.rows[0].enable_button.emit("clicked")

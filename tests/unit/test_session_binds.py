@@ -86,10 +86,10 @@ class TestAddAndReplace:
         session, applier = live_session(tmp_path)
         assert session.add_bind(PLAIN)
 
-        assert session.replace_bind(0, bind) is False
+        assert session.replace_bind(0, bind, expected=PLAIN) is False
         assert session.model.entities.binds == [PLAIN]
 
-        assert session.replace_bind(0, disabled(bind)) is True
+        assert session.replace_bind(0, disabled(bind), expected=PLAIN) is True
         assert session.model.entities.binds == [disabled(bind)]
         assert applier.commits == 2
 

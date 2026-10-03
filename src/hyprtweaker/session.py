@@ -100,7 +100,7 @@ from hyprtweaker.engine.entities_catalog import (
     device_field_bounds,
     overridden_options,
 )
-from hyprtweaker.engine.files import write_atomic
+from hyprtweaker.engine.files import keep_edited_copy
 from hyprtweaker.engine.importer.lua.sandbox import LuaUnavailable, lua_missing_reason
 from hyprtweaker.engine.ipc import (
     MONITOR_ADDED,
@@ -542,6 +542,21 @@ class _UndonePreset:
     notes: tuple[str, ...]
 
 
+HELD_ENTRY_MOVED = "it changed outside this app"
+"""Why a held editor's save was refused when its entry is no longer where it opened (#225)."""
+
+
+def _same_entry(held: Any, current: Any) -> bool:
+    """Whether `current` is still the Entity an editor opened on as `held`.
+
+    `origin` is left out: it is the line a read found the entity on, and re-reading the
+    same file after a hand edit elsewhere in it moves that without changing the entity.
+    """
+    return type(held) is type(current) and replace(held, origin="") == replace(
+        current, origin=""
+    )
+
+
 def _gates(entries: Sequence[BridgeEntry]) -> tuple[tuple[str, str, object], ...]:
     """What the Color source is made of: each entry on or gated off, and by what. A tool's
     entry going from waiting to loaded is not the user changing where colors come from."""
@@ -655,8 +670,18 @@ class Session:
         recorded. The user's ways on are `keep_edited_file`, `edited_file_path` and
         `replace_edited_file`; after a Replace they make the change again."""
 
+        self.on_not_saved: Callable[[str, str], None] | None = None
+        """Called with an editor's save refused because the list moved under it (#225): the
+        change's title and why, a clause. The entry it opened on is gone from its position
+        (`HELD_ENTRY_MOVED`), or the identity it saves is another row's now. Nothing was
+        written; the editor keeps the draft."""
+
         self._edited_files: list[str] = []
         """Modules that refused a change and are still edited: `Health.edited_files`."""
+        self._adopted: set[str] = set()
+        """Entity Modules a foreign reload read a hand edit from (`_moved_on_disk`): the
+        model holds what the file said then, so the file back at the Manifest's hash is a
+        change to read too (#225)."""
         self._read_off_text: frozenset[str] = frozenset()
         self._not_known: set[str] = set()
         """Edited Modules whose values neither their text nor a Snapshot could give (R9)."""
@@ -752,7 +777,6 @@ class Session:
         The window's own undo, so an undo the window puts behind a countdown still goes
         there; without one the session undoes it itself."""
 
-        self._reverting = False
         self._recovery_halted = False
         self._recovery = Recovery()
         """What the last reload said was wrong, attributed. The Banner is a view of this.
@@ -1420,18 +1444,22 @@ class Session:
             lambda binds: binds.append(bind), title=entity_title("binds", "added")
         )
 
-    def replace_bind(self, index: int, bind: Bind) -> bool:
-        """Replace the Bind at `index`, keeping its position.
+    def replace_bind(self, index: int, bind: Bind, *, expected: Bind) -> bool:
+        """Replace the Bind at `index`, keeping its position, if it is still `expected`.
 
         In place rather than remove-and-append: position *is* identity, so a bind that
         jumped to the end of the list would change which of two duplicates fires first.
+        `expected` is the bind the editor opened on: a list that moved while it was open
+        holds another bind at `index`, which a save there would overwrite (#225).
         """
+        title = entity_title("binds", "changed")
+        if self._held_entry_gone("binds", index, expected, title):
+            return False
 
         def swap(binds: list[Bind]) -> None:
-            if 0 <= index < len(binds):
-                binds[index] = bind
+            binds[index] = bind
 
-        return self.edit_binds(swap, title=entity_title("binds", "changed"))
+        return self.edit_binds(swap, title=title)
 
     def remove_bind(self, index: int) -> bool:
         """Delete the Bind at `index`."""
@@ -1547,14 +1575,24 @@ class Session:
             kind, lambda rules: rules.append(rule), title=self._rule_title(kind, "added")
         )
 
-    def replace_rule(self, kind: str, index: int, rule: WindowRule | LayerRule) -> bool:
-        """Replace the Rule at `index`, keeping its position."""
+    def replace_rule(
+        self,
+        kind: str,
+        index: int,
+        rule: WindowRule | LayerRule,
+        *,
+        expected: WindowRule | LayerRule,
+    ) -> bool:
+        """Replace the Rule at `index`, keeping its position, if it is still `expected`
+        (the rule the editor opened on, as `replace_bind`)."""
+        title = self._rule_title(kind, "changed")
+        if self._held_entry_gone(f"{kind}_rules", index, expected, title):
+            return False
 
         def swap(rules: list[Any]) -> None:
-            if 0 <= index < len(rules):
-                rules[index] = rule
+            rules[index] = rule
 
-        return self.edit_rules(kind, swap, title=self._rule_title(kind, "changed"))
+        return self.edit_rules(kind, swap, title=title)
 
     def remove_rule(self, kind: str, index: int) -> bool:
         """Delete the Rule at `index`."""
@@ -1846,15 +1884,48 @@ class Session:
         attribute = IDENTITY_FIELD.get(kind)
         return None if attribute is None else str(getattr(entity, attribute))
 
-    def _identity_taken(self, kind: str, entity: Any, *, index: int | None) -> bool:
-        """Whether saving `entity` would give two rows the same identity."""
+    def _identity_taken(self, kind: str, entity: Any, *, index: int | None, title: str) -> bool:
+        """Whether saving `entity` would give two rows the same identity; says so when it
+        would. The editor refuses this itself against the list it opened on, so the session
+        meets it only when the list moved under the editor, and silence would be a save
+        that did nothing (#225)."""
         identity = self.identity_of(kind, entity)
         if identity is None:
             return False
-        return any(
+        taken = any(
             position != index and self.identity_of(kind, existing) == identity
             for position, existing in enumerate(self.declarations(kind))
         )
+        if taken:
+            self._say_not_saved(
+                title, f"there is already an entry for “{identity}”, so edit that one instead"
+            )
+        return taken
+
+    def _held_entry_gone(self, kind: str, index: int, expected: Any, title: str) -> bool:
+        """Whether the `kind` entry an editor opened on is gone from `index`; says why.
+
+        The list may have moved while the editor was open (a foreign reload re-read it,
+        #225). Writing the draft at `index` then would overwrite whichever entry is there
+        now, so the save is refused, never redirected. A hand-edited Module is the louder
+        reason and is said first, as every other change into it is (`_say_refused`).
+        """
+        items = getattr(self._model.entities, kind)
+        if 0 <= index < len(items) and _same_entry(expected, items[index]):
+            return False
+        if self._refuse(kind):
+            return True
+        edited = self._edited_module((ENTITY_KIND_MODULES[kind],))
+        if edited is not None:
+            self._say_refused(title, edited)
+        else:
+            self._say_not_saved(title, HELD_ENTRY_MOVED)
+        return True
+
+    def _say_not_saved(self, what: str, why: str) -> None:
+        _log.info("refused %s: %s", what, why)
+        if self.on_not_saved is not None:
+            self.on_not_saved(what, why)
 
     def add_declaration(self, kind: str, entity: Any) -> bool:
         """Append one entity, refusing an identity another row already holds.
@@ -1864,22 +1935,24 @@ class Session:
         list. The Page's move is to focus the existing row, exactly as `save_workspace_rule`
         expects of the Workspaces page.
         """
-        if self._identity_taken(kind, entity, index=None):
+        title = entity_title(kind, "added")
+        if self._identity_taken(kind, entity, index=None, title=title):
             return False
-        return self.edit_declarations(
-            kind, lambda items: items.append(entity), title=entity_title(kind, "added")
-        )
+        return self.edit_declarations(kind, lambda items: items.append(entity), title=title)
 
-    def replace_declaration(self, kind: str, index: int, entity: Any) -> bool:
-        """Replace the entity at `index`, keeping its position."""
-        if self._identity_taken(kind, entity, index=index):
+    def replace_declaration(self, kind: str, index: int, entity: Any, *, expected: Any) -> bool:
+        """Replace the entity at `index`, keeping its position, if it is still `expected`
+        (the entity the editor opened on, as `replace_bind`)."""
+        title = entity_title(kind, "changed")
+        if self._held_entry_gone(kind, index, expected, title):
+            return False
+        if self._identity_taken(kind, entity, index=index, title=title):
             return False
 
         def swap(items: list[Any]) -> None:
-            if 0 <= index < len(items):
-                items[index] = entity
+            items[index] = entity
 
-        return self.edit_declarations(kind, swap, title=entity_title(kind, "changed"))
+        return self.edit_declarations(kind, swap, title=title)
 
     def remove_declaration(self, kind: str, index: int) -> bool:
         """Delete the entity at `index`."""
@@ -3565,6 +3638,7 @@ class Session:
         self._undo_group = None
         self._undo_waits_for = None
         self._edited_files.clear()
+        self._adopted.clear()
         try:
             await self._recover(client)
         except IpcError as error:
@@ -3623,6 +3697,36 @@ class Session:
         self.load_new_user_lua()
         self._changed()
 
+    def _moved_on_disk(self, modules: Iterable[str]) -> bool:
+        """Whether any of `modules` says something the model does not: a foreign reload's
+        Entity gate, one for every `_reread_*`.
+
+        A file the app did not write (its hash is not the Manifest's) is a hand edit to
+        adopt. A file back at the Manifest's hash is one only if a re-read adopted a hand
+        edit from it since (`_adopted`): put back to the app's bytes -- an editor's undo, a
+        `git checkout` -- it no longer says what the model took from it, and skipping it
+        would leave the reverted edit in the model for the next write to put back (#225).
+        Bytes the app wrote and nobody touched still need no Lua evaluation.
+        """
+        manifest = self._manifest()
+        moved = False
+        for module in modules:
+            path = self._paths.app_dir / module
+            if not path.is_file():
+                continue
+            try:
+                current = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            record = manifest.modules.get(module)
+            if record is None or record.sha256 != content_hash(current):
+                self._adopted.add(module)
+                moved = True
+            elif module in self._adopted:
+                self._adopted.discard(module)
+                moved = True
+        return moved
+
     def _reread_binds(self) -> None:
         """Adopt a hand-edited `binds.lua` instead of overwriting it (ADR-0007).
 
@@ -3641,19 +3745,8 @@ class Session:
         any other, and throwing away the binds the model holds on the strength of a file
         that would not load would turn one broken reload into lost state.
         """
-        path = self._paths.app_dir / BINDS_MODULE
-        if not path.is_file():
-            return
-        try:
-            current = path.read_text(encoding="utf-8")
-        except OSError:
-            return
-
-        record = self._manifest().modules.get(BINDS_MODULE)
-        if record is not None and record.sha256 == content_hash(current):
-            return
-
-        self._load_binds()
+        if self._moved_on_disk((BINDS_MODULE,)):
+            self._load_binds()
 
     def _reread_rules(self) -> None:
         """Adopt hand-edited rule Modules, gated on the Manifest hash like binds.
@@ -3663,19 +3756,7 @@ class Session:
         them separately would let the un-edited file's stale parse overwrite the edited
         one's adoption.
         """
-        changed = False
-        for module in (WINDOW_RULES_MODULE, LAYER_RULES_MODULE):
-            path = self._paths.app_dir / module
-            if not path.is_file():
-                continue
-            try:
-                current = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            record = self._manifest().modules.get(module)
-            if record is None or record.sha256 != content_hash(current):
-                changed = True
-        if changed:
+        if self._moved_on_disk((WINDOW_RULES_MODULE, LAYER_RULES_MODULE)):
             self._load_rules()
 
     def _reread_monitors(self) -> None:
@@ -3687,19 +3768,7 @@ class Session:
         never lights. One gate over both files, one load for both, for `_reread_rules`'s
         reason: `_load_monitors` splices misfiled entities to the kind they are.
         """
-        changed = False
-        for module in (MONITORS_MODULE, WORKSPACE_RULES_MODULE):
-            path = self._paths.app_dir / module
-            if not path.is_file():
-                continue
-            try:
-                current = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            record = self._manifest().modules.get(module)
-            if record is None or record.sha256 != content_hash(current):
-                changed = True
-        if changed:
+        if self._moved_on_disk((MONITORS_MODULE, WORKSPACE_RULES_MODULE)):
             self._load_monitors()
 
     def _reread_declarations(self) -> None:
@@ -3710,19 +3779,7 @@ class Session:
         one file without the others would drop whatever it found belonging to a list the
         other six own.
         """
-        changed = False
-        for module in self.DECLARATION_MODULES:
-            path = self._paths.app_dir / module
-            if not path.is_file():
-                continue
-            try:
-                current = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            record = self._manifest().modules.get(module)
-            if record is None or record.sha256 != content_hash(current):
-                changed = True
-        if changed:
+        if self._moved_on_disk(self.DECLARATION_MODULES):
             self._load_declarations()
 
     def _load_entities(self) -> None:
@@ -3927,19 +3984,6 @@ class Session:
         Ctrl+Z should be able to take it back). A gesture can never be both, which is why the
         failed one is never pushed rather than pushed and popped.
         """
-        if self._reverting:
-            # The restore transaction's own result. It carries no gesture of the user's, and
-            # a second auto-revert on top of a failed one is the loop ADR-0016 forbids.
-            #
-            # A restore carries its own keys alone (`apply_now`), so an edit made in the
-            # ~25 ms it takes is still mid-gesture: its entry stays open in
-            # `_open_gestures`, and the next transaction records it from the value it really
-            # started at rather than from the one the revert put back.
-            self._recovery_result(result)
-            self._observe(result)
-            self._report(result)
-            return
-
         delta = self._close(result.keys)
         refused = self._take_back_options(result, delta)
         presets = self._carried_presets(result.keys)
@@ -4190,16 +4234,8 @@ class Session:
         a copy is whole or absent and a second one never lands on the first.
         """
         source = self._paths.app_dir / module
-        if not source.exists():
-            return True  # deleted by hand: there is nothing of the user's to copy
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        base = self._paths.edited_copies_dir / stamp
-        suffix = 1
-        while (base / module).exists():
-            suffix += 1
-            base = self._paths.edited_copies_dir / f"{stamp}-{suffix}"
         try:
-            write_atomic(base / module, source.read_bytes())
+            keep_edited_copy(self._paths, source, module)  # None: deleted by hand, no copy
         except OSError as error:
             _log.warning("could not keep a copy of %s: %s", source, error)
             return False
@@ -4283,13 +4319,14 @@ class Session:
     def _settle_entities(
         self, result: ApplyResult, *, stands: bool
     ) -> tuple[list[EntityStep], list[EntityStep]]:
-        """The Entity steps this result lets stand, and the ungrouped ones it failed.
+        """The Entity steps this result lets stand, and the ones it failed.
 
         Every pending step with a serial up to `result.entities` was rendered by this
         transaction. Standing: it is recorded, or handed to its undo group. Not standing: it
-        is returned as failed for `_fell` to take out of the model, and a grouped one marks
-        its group failed -- ADR-0016's failed gesture, never on the stack; the group's owner
-        (a display countdown) puts its own lists back. A group this result completes is
+        is returned as failed for `_fell` to take out of the model, grouped or not, and a
+        grouped one also marks its group failed -- ADR-0016's failed gesture, never on the
+        stack. A countdown's Keep puts nothing back, so the model must already show what the
+        disk accepted when it ends (#222). A group this result completes is
         merged here, and lands after the steps it was held beside. Both lists are in commit
         order.
         """
@@ -4311,6 +4348,7 @@ class Session:
                 pending.group.held.append(pending.step)
             else:
                 pending.group.failed = True
+                failed.append(pending.step)
         for group in groups.values():
             merged = self._close_group(group)
             if merged is not None:
@@ -4910,14 +4948,19 @@ class Session:
         if applier is None:
             return
 
-        self._reverting = True
         try:
-            await applier.apply_now(*keys)
+            own = await applier.apply_now(*keys)
         except (IpcError, RuntimeError) as error:
             _log.error("could not re-apply after reverting: %s", error)
             self._recovery_halted = True
-        finally:
-            self._reverting = False
+        else:
+            # The restore's own result, which `apply_now` hands here and not to `_applied`
+            # (#222): it carries no gesture of the user's, and a second auto-revert on top
+            # of a failed one is the loop ADR-0016 forbids. An edit made while it ran is
+            # still open in `_open_gestures`, for the batch that carries it to record.
+            self._recovery_result(own)
+            self._observe(own)
+            self._report(own)
 
         restored = self._verify(expected)
         if self.on_reverted is not None:
