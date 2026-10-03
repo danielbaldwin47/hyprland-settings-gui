@@ -38,7 +38,7 @@ from typing import Any, Literal, Protocol
 
 from ..bridge import REGISTRY, BridgeEntry
 from ..bridge.wire import WireConsent, shown
-from ..files import keep_edited_copy, write_atomic
+from ..files import failure_reason, keep_edited_copy, write_atomic
 from ..importer.loss import (
     APP_DIR_BACKUP_NAME,
     BACKUP_NAME,
@@ -971,7 +971,7 @@ class MigrationFlow:
 
     def _no_copy_rescue(self, record: sentinels.Sentinel | None, error: OSError) -> str:
         name = self.paths.entrypoint.name
-        reason = error.strerror or str(error)
+        reason = failure_reason(error)
         # The edited file is moved aside first, never removed or written over: there is no
         # copy of it anywhere else.
         command = f"mv ~/.config/hypr/{name} ~/.config/hypr/{name}.switched"

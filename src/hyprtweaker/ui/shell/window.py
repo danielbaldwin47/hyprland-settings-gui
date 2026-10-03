@@ -52,6 +52,7 @@ from hyprtweaker.engine.apply import (  # noqa: E402
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
 from hyprtweaker.engine.bridge.wire import shown as tilde_path  # noqa: E402
+from hyprtweaker.engine.files import failure_reason  # noqa: E402
 from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
 from hyprtweaker.engine.ipc import CommandClient, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
@@ -929,7 +930,8 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as error:  # any failure must reach a dialog that can close
             _log.warning("rolling back the unfinished switch failed", exc_info=True)
             body = (
-                f"Roll back did not finish: {error}\n\nIf you are locked out, run this from "
+                f"Roll back did not finish: {failure_reason(error)}\n\nIf you are locked out, "
+                "run this from "
                 f"a TTY:\n{marker_rescue_command(self._session.paths, pending)}"
             )
             GLib.idle_add(self._show_unfinished, pending, body)
@@ -964,7 +966,8 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as error:  # any failure must reach a dialog that can close
             _log.warning("keeping the unfinished switch failed", exc_info=True)
             body = (
-                f"Keep did not finish: {error}\n\nIf you are locked out, run this from a "
+                f"Keep did not finish: {failure_reason(error)}\n\nIf you are locked out, run "
+                "this from a "
                 f"TTY:\n{marker_rescue_command(self._session.paths, pending)}"
             )
             GLib.idle_add(self._show_unfinished, None, body)
@@ -1076,8 +1079,7 @@ class MainWindow(Adw.ApplicationWindow):
             result.write(target)
         except OSError as error:
             # The write is atomic (#251): a failure leaves whatever was at `target` as it was.
-            reason = error.strerror or str(error)
-            note = f"The export was not written: {reason[:1].lower()}{reason[1:]}"
+            note = f"The export was not written: {failure_reason(error)}"
             if existed:
                 note += f". {target.name} is unchanged"
             self._toasts.add_toast(plain_toast(note, timeout=8, wrap=True))

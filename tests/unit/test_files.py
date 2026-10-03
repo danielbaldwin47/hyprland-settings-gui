@@ -66,3 +66,20 @@ def test_a_copy_that_cannot_be_written_raises(paths: ConfigPaths) -> None:
 
     with pytest.raises(OSError):
         keep_edited_copy(paths, paths.entrypoint, "hyprland.lua")
+
+
+class TestFailureReason:
+    """Review m1 F12 (#282): what a failure page says, never Python's own spelling."""
+
+    def test_an_os_error_is_its_message_without_number_or_path(self) -> None:
+        from hyprtweaker.engine.files import failure_reason
+
+        error = PermissionError(13, "Permission denied", "/home/someone/.config/hypr/x")
+        assert failure_reason(error) == "permission denied"
+
+    def test_anything_else_is_a_plain_sentence(self) -> None:
+        from hyprtweaker.engine.files import failure_reason
+
+        assert failure_reason(ValueError("<frame 0x7f> unexpected")) == (
+            "something unexpected went wrong; the log has the details"
+        )

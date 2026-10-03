@@ -27,6 +27,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from ...engine.bridge.wire import WireConsent  # noqa: E402
+from ...engine.files import failure_reason  # noqa: E402
 from ...engine.importer.loss import CLASS_ORDER, CLASS_TITLES, LossReport  # noqa: E402
 from ...engine.importer.lua.sandbox import Cancelled, Consent  # noqa: E402
 from ...engine.migration.backup import Backup  # noqa: E402
@@ -721,7 +722,7 @@ class MigrationDialog(Adw.Dialog):
         body = "\n\n".join(
             part
             for part in (
-                f"{answer} did not finish: {error}",
+                f"{answer} did not finish: {failure_reason(error)}",
                 unfinished,
                 f"If you are locked out, run this from a TTY:\n{self._flow.rescue_command}",
             )

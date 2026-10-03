@@ -1686,7 +1686,7 @@ class TestTheCountdownsEndingsAreTrue:
         assert dialog.get_can_close()
         assert not dialog._view.get_visible_page().get_can_pop()
         assert _descriptions(dialog) == [
-            f"{which} did not finish: [Errno 5] Input/output error\n\n"
+            f"{which} did not finish: input/output error\n\n"
             "The switch is still recorded as unfinished, so the app offers to roll it back "
             "the next time it starts.\n\n"
             "If you are locked out, run this from a TTY:\n"
@@ -1835,9 +1835,20 @@ class TestTheRelaunchSaysWhatIsLeft:
         assert not paths.sentinel.exists()
         assert started == [True]
 
-    def test_a_roll_back_that_raises_ends_on_a_dialog_with_the_rescue(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ("response", "method", "which"),
+        [("roll-back", "roll_back", "Roll back"), ("keep", "keep", "Keep")],
+    )
+    def test_an_answer_that_raises_ends_on_a_dialog_with_the_rescue(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        response: str,
+        method: str,
+        which: str,
     ) -> None:
+        """The OS's words, not Python's "[Errno 5]" (review m1 F12, #282); Keep's failure
+        at relaunch says the same (F28)."""
         from hyprtweaker.engine.migration.flow import MigrationFlow
 
         window, session, offer = self._offered(tmp_path)
@@ -1845,15 +1856,15 @@ class TestTheRelaunchSaysWhatIsLeft:
         def fail(*_args: object) -> None:
             raise OSError(5, "Input/output error")
 
-        monkeypatch.setattr(MigrationFlow, "roll_back", fail)
-        offer.emit("response", "roll-back")
+        monkeypatch.setattr(MigrationFlow, method, fail)
+        offer.emit("response", response)
         offer.force_close()
         main_loop.settle("the unfinished dialog to show")
 
         said = window.get_visible_dialog()
         assert said.get_heading() == "The switch is still unfinished"
         assert said.get_body() == (
-            "Roll back did not finish: [Errno 5] Input/output error\n\n"
+            f"{which} did not finish: input/output error\n\n"
             "If you are locked out, run this from a TTY:\n"
             "mv ~/.config/hypr/hyprtweaker ~/.config/hypr/hyprtweaker.imported && "
             "mv ~/.config/hypr/hyprtweaker.bak ~/.config/hypr/hyprtweaker && "

@@ -20,6 +20,15 @@ from pathlib import Path
 from .paths import ConfigPaths
 
 
+def failure_reason(error: BaseException) -> str:
+    """Why something failed, in words for the user: an `OSError`'s message without its
+    number or path ("permission denied"), else a plain sentence. Python's own spelling
+    ("[Errno 5] Input/output error") belongs in the log (review m1 F12, #282)."""
+    if isinstance(error, OSError) and error.strerror:
+        return error.strerror[:1].lower() + error.strerror[1:]
+    return "something unexpected went wrong; the log has the details"
+
+
 def write_atomic(path: Path, content: str | bytes) -> None:
     """Write `content` to `path` through a temporary beside it, then one rename.
 
