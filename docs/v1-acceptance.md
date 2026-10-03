@@ -26,7 +26,7 @@ What has been checked before a public v1, at one frozen candidate, and what only
 
 ## Corpus evidence (#253)
 
-The three proofs are restated in `docs/adr/0009-migration-first-run-flow.md` § Corpus proofs; the README quotes #253's sentences. They were measured on Hyprland 0.56.2 at the #253 candidate `45fa4b7`, and `test_import_matches_port.py` and `test_migration_live_checks.py` passed again at `27544c6` (rows above). The 26.9% pixel difference found earlier is screen area painted in a different theme colour by the port's own theme module, not a loss rate: the imported end-4 was measured byte-identical to its port (2026-10-02) once the port uses the same three colours, and the test holds it within 2/255 of blend rounding.
+The three proofs are restated in `docs/adr/0009-migration-first-run-flow.md` § Corpus proofs; the README restates #253's sentences. They were measured on Hyprland 0.56.2 at the #253 candidate `45fa4b7`, and `test_import_matches_port.py` and `test_migration_live_checks.py` passed again at `27544c6` (rows above). The 26.9% pixel difference found earlier is screen area painted in a different theme colour by the port's own theme module, not a loss rate: the imported end-4 was measured byte-identical to its port (2026-10-02) once the port uses the same three colours, and the test holds it within 2/255 of blend rounding.
 
 ## Limits the tickets recorded
 
@@ -35,6 +35,7 @@ The three proofs are restated in `docs/adr/0009-migration-first-run-flow.md` § 
 - After a refused monitor-profile activation the Keep-or-revert countdown can still open, and Revert is then refused (#273, reduced by #272, which closes the countdown as Keep when there is nothing to confirm).
 - `hyprctl binds` reads keycode binds (`code:82`) back without their code, so the state proof cannot tell two of them apart (#253).
 - Hyprland 0.56.2 reports no plugin settings, so a plugin gets no setting rows; and cannot list window rules or layer rules, so a switch confirms those only by the absence of a config error.
+- A symlinked `~/.config/hypr/hyprland.lua` (a dotfiles manager's link) is replaced by a regular file the first time the app writes or exports it; the link's target keeps its old contents. Writing through the link is #293.
 - Not in v1: Omarchy theme-switch continuity, an AUR package, a Flatpak, plugin settings as rows.
 - Deferred as `post-v1`: the future-release retirement fix named in #273's comment (`src/hyprtweaker/engine/state/retirement.py:150-153`), tracked as #276.
 

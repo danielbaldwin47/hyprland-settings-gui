@@ -83,13 +83,13 @@ If Hyprland will not start at all, from a TTY, for a Lua source: `mv ~/.config/h
 
 Conversion is not guaranteed lossless. The test corpus is seven public configurations; the evidence is on Hyprland 0.56.2 and says:
 
-> Every rice in the test corpus (7 configurations) imports to a config that Hyprland 0.56.2 loads with no errors, and the first-run switch's live checks pass on each.
+> Every configuration in the test corpus (7) imports to a config that Hyprland 0.56.2 loads with no errors, and the first-run switch's live checks pass on each.
 >
-> For end-4, the corpus rice that ships its own hand-written Lua port, every setting both configs set lands on the same live value, and keybinds, animations, curves, monitor rules, workspace rules and layers match except where the port itself changed a line.
+> For end-4, the corpus configuration that ships its own hand-written Lua port, every setting both configs set lands on the same live value, and keybinds, animations, curves, monitor rules, workspace rules and layers match except where the port itself changed a line.
 >
 > Rendered side by side with three test windows, the imported end-4 was measured byte-identical to that port on 2026-10-02 once the port uses the same colour theme as the original config; the test holds it within 2/255 of blend rounding.
 >
-> These proofs cover the corpus rices on Hyprland 0.56.2; they do not promise identical pixels for other configurations, for tools or external state a config drives, or for other Hyprland versions.
+> These proofs cover the corpus configurations on Hyprland 0.56.2; they do not promise identical pixels for other configurations, for tools or external state a config drives, or for other Hyprland versions.
 
 Read the loss report before you press Keep.
 
@@ -130,6 +130,7 @@ Converting an Omarchy config works, but afterwards Omarchy's theme menu and Omar
 - **Untested on real hardware or tools.** HDR, real plugins, real multi-monitor setups, the real `matugen`, `wallust`, `awww` and `swww`, and an installed package on a clean machine have not been run. The record lists each as an owner check with the commands. Nothing here claims them.
 - **Plugins.** The Scripting page edits your plugin load list. Hyprland 0.56.2 does not describe a plugin's own settings, so a plugin gets no setting rows.
 - **A refused drag of an unset setting** leaves the compositor showing the dragged value until the next reload.
+- **A symlinked `hyprland.lua`** (for example from a dotfiles manager) is replaced by a regular file the first time the app writes or exports it; the link's target keeps its old contents.
 - **Not in v1:** Omarchy theme-switch continuity, an AUR package, a Flatpak, plugin settings as rows.
 - **More limits** that the tickets recorded, such as a crash during a theming tool's Remove, are listed in [the acceptance record](docs/v1-acceptance.md#limits-the-tickets-recorded).
 
