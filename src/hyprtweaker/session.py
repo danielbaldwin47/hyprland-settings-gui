@@ -2072,15 +2072,17 @@ class Session:
 
     def save_monitor_profile(
         self, name: str, connected: Sequence[Mapping[str, Any]] = ()
-    ) -> str:
+    ) -> str | None:
         """Capture the current display setup as a new profile, returning its slug.
 
-        Allowed on a read-only session -- a capture is a JSON file in the App dir, not a
-        config write, and "save what I have before experimenting" is most valuable
-        exactly when things are fragile. `connected` is the live `hyprctl -j monitors`
-        answer, helper data used as ADR-0008 allows: to fingerprint, never to
-        reconstruct rule state.
+        Refused (`None`) on a read-only session (#269): without Lua, behind an import offer
+        or on a Hyprland too old to connect to, the lists a capture is made of were never
+        read, and a profile of them would be an empty one standing in for the real setup.
+        `connected` is the live `hyprctl -j monitors` answer, helper data used as ADR-0008
+        allows: to fingerprint, never to reconstruct rule state.
         """
+        if not self.live:
+            return None
         return self._profile_store.save(
             capture(
                 name,
@@ -2168,10 +2170,11 @@ class Session:
 
         True exactly when activating the profile again would change something, so the
         badge clears on re-activation and on "Update profile", and a hand edit to
-        `monitors.lua` shows up the moment the file is re-read (ADR-0015).
+        `monitors.lua` shows up the moment the file is re-read (ADR-0015). Lists never
+        read are no evidence either way, so they do not drift (#269).
         """
         active = self.active_monitor_profile()
-        if active is None:
+        if active is None or not self._model.entities_loaded:
             return False
         _, profile = active
         return drift(
@@ -2183,9 +2186,11 @@ class Session:
     def update_monitor_profile(
         self, slug: str, connected: Sequence[Mapping[str, Any]] = ()
     ) -> bool:
-        """Recapture the current setup over an existing slug -- the drift badge's "Update"."""
+        """Recapture the current setup over an existing slug -- the drift badge's "Update".
+
+        Refused on a read-only session, as a new capture is (`save_monitor_profile`)."""
         existing = self._profile_store.load(slug)
-        if existing is None:
+        if existing is None or not self.live:
             return False
         self._profile_store.replace(
             slug,

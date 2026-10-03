@@ -473,9 +473,27 @@ def test_save_dialog_cancel_saves_nothing() -> None:
     assert saved == []
 
 
+def seed_profile(session: Any, name: str) -> str:
+    """A profile on disk as a live session would have captured it: `build_window`'s session
+    is read-only, and refuses the capture gesture itself (#269)."""
+    from hyprtweaker.engine.profiles import capture, connected_outputs
+
+    entities = session.model.entities
+    return str(
+        session._profile_store.save(
+            capture(
+                name,
+                monitors=entities.monitors,
+                workspace_rules=entities.workspace_rules,
+                connected=connected_outputs(MONITORS),
+            )
+        )
+    )
+
+
 def _window_with_docked_profile(tmp_path: Path) -> tuple[Any, Any]:
     session, window = build_window(tmp_path)
-    session.save_monitor_profile("Docked", MONITORS)
+    seed_profile(session, "Docked")
     # Diverge from the capture, so activating the profile would change something.
     session.monitor_rules.append(monitor_rule("eDP-1", mode="1920x1080@60"))
     return session, window
@@ -526,7 +544,7 @@ def test_no_toast_when_nothing_would_change(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
     # The profile equals the current (empty) setup: activating it is a no-op, so the
     # toast must stay quiet however well the connected set matches.
-    session.save_monitor_profile("Empty", MONITORS)
+    seed_profile(session, "Empty")
     for rule in list(session.monitor_rules):
         session.monitor_rules.remove(rule)
 
