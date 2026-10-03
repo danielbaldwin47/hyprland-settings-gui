@@ -6,7 +6,7 @@ Change Hyprland settings without editing config files. Hyprtweaker shows Hyprlan
 
 *The General page, built by a widget probe with no compositor attached, so every value is Hyprland's default.*
 
-Hyprtweaker 0.1.0 has no public release yet. You install it from this repository, and what has and has not been checked on a real machine is in [docs/v1-acceptance.md](docs/v1-acceptance.md).
+Hyprtweaker 0.1.0 is not published yet: there is no release download and no package repository. You install it from this repository, and what has and has not been checked on a real machine is in [docs/v1-acceptance.md](docs/v1-acceptance.md).
 
 ## What you need
 
@@ -131,6 +131,7 @@ Converting an Omarchy config works, but afterwards Omarchy's theme menu and Omar
 - **Plugins.** The Scripting page edits your plugin load list. Hyprland 0.56.2 does not describe a plugin's own settings, so a plugin gets no setting rows.
 - **A refused drag of an unset setting** leaves the compositor showing the dragged value until the next reload.
 - **Not in v1:** Omarchy theme-switch continuity, an AUR package, a Flatpak, plugin settings as rows.
+- **More limits** that the tickets recorded, such as a crash during a theming tool's Remove, are listed in [the acceptance record](docs/v1-acceptance.md#limits-the-tickets-recorded).
 
 ## Report a problem
 
