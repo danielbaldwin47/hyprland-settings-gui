@@ -953,7 +953,7 @@ class MigrationFlow:
             f"Nothing was rolled back: {name} has changed since the switch, and a copy of "
             f"it could not be kept ({reason}). The new configuration is still in place, and "
             "the app offers this again at its next start. If you are locked out, from a "
-            f"TTY:\n{marker_rescue_command(record)}"
+            f"TTY:\n{marker_rescue_command(self.paths, record)}"
         )
 
     def _disown_app_dir(self) -> Path | None:
@@ -1032,6 +1032,24 @@ class MigrationFlow:
         name is the honest answer there (#131).
         """
         return self._restore.name if self._restore is not None else BACKUP_NAME
+
+    @property
+    def moved_aside(self) -> str | None:
+        """Where this switch moved what it displaced, by the exact names it made (#268).
+
+        `None` before the switch, or when it displaced nothing. A repeated migration's
+        names are stamped, so the Done page names them rather than the generic ones the
+        Preview could only promise.
+        """
+        kept = [
+            f"{what} as {shown(path, self.paths)}"
+            for what, path in (
+                (f"your previous {self.paths.entrypoint.name}", self._restore),
+                ("the app's previous folder", self._restore_app_dir),
+            )
+            if path is not None and path.exists()
+        ]
+        return f"Kept {' and '.join(kept)}." if kept else None
 
     @property
     def app_data_note(self) -> str | None:
@@ -1345,17 +1363,20 @@ class _Put(StrEnum):
     """Neither copy exists: Roll back changes nothing and says so."""
 
 
-def marker_rescue_command(marker: sentinels.Sentinel | None) -> str:
+def marker_rescue_command(paths: ConfigPaths, marker: sentinels.Sentinel | None) -> str:
     """The TTY rescue for the switch `marker` records, with the names it made (#268).
 
-    What a relaunched app, which has no Preview, shows beside a Roll back that failed.
+    What a relaunched app, which has no Preview, shows beside a Roll back that failed. The
+    imported App dir's destination is a name free now, so the rescue never moves into one.
     """
     if marker is None or not marker.known:
         return rescue_command(None)
+    stamp = datetime.now(UTC).strftime(backups.STAMP_FORMAT)
     return rescue_command(
         marker.restore is not None,
         backup=Path(marker.restore).name if marker.restore else BACKUP_NAME,
         app_dir_backup=Path(marker.restore_app_dir).name if marker.restore_app_dir else None,
+        imported=_free_beside(paths.app_dir, IMPORTED_NAME, stamp).name,
     )
 
 

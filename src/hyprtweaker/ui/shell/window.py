@@ -26,6 +26,7 @@ auto-revert (ADR-0016), which is the only event the ADR reserves a toast for out
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -59,6 +60,7 @@ from hyprtweaker.engine.migration.flow import (  # noqa: E402
     MigrationFlow,
     asks_consent,
     fresh_start,
+    marker_rescue_command,
 )
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
@@ -174,6 +176,8 @@ from hyprtweaker.ui.search import (  # noqa: E402
     resolve,
 )
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
+
+_log = logging.getLogger(__name__)
 
 ENTITY_CHANGED = "That item changed. Results updated."
 """The toast for a search hit whose entity was removed or rewritten since it was listed."""
@@ -882,13 +886,27 @@ class MainWindow(Adw.ApplicationWindow):
         # Answered once: closing the dialog emits its close response ("roll-back") again,
         # and a second roll back used to delete the file the first put back (hand-test 19).
         _dialog.disconnect_by_func(self._on_rollback_response)
-        self._switch_offer_open = False
         flow = self.migration_flow()
         if response == "keep":
-            flow.keep()
-            self._start_held_session()
+            self._keep_pending(flow, pending)
             return
-        flow.roll_back(pending)
+        try:
+            outcome = flow.roll_back(pending)
+        except Exception as error:  # any failure must reach a dialog that can close
+            _log.warning("rolling back the unfinished switch failed", exc_info=True)
+            body = (
+                f"Roll back did not finish: {error}\n\nIf you are locked out, run this from "
+                f"a TTY:\n{marker_rescue_command(self._session.paths, pending)}"
+            )
+            GLib.idle_add(self._show_unfinished, pending, body)
+            return
+        if not outcome.complete:
+            # Nothing was changed and the marker stands: still unanswered, still read-only.
+            GLib.idle_add(
+                self._show_unfinished, pending, "\n\n".join((outcome.rescue, *outcome.notes))
+            )
+            return
+        self._switch_offer_open = False
         self._spawn(flow.reload_restored())
         # The user's own file is back, so the session must not write to the app's Modules
         # any more: the same offer a launch on that file makes (#148 hand-tests 19, 20).
@@ -904,7 +922,45 @@ class MainWindow(Adw.ApplicationWindow):
             self._start_held_session()
         # Said, as the wizard's own Roll back says it, with any theming tool's file left
         # as the user changed it or not put back (finding 21).
-        GLib.idle_add(self._show_rollback_notes, flow.rollback_notes)
+        GLib.idle_add(self._show_rollback_notes, outcome.notes)
+
+    def _keep_pending(self, flow: MigrationFlow, pending: Sentinel) -> None:
+        try:
+            flow.keep()
+        except Exception as error:  # any failure must reach a dialog that can close
+            _log.warning("keeping the unfinished switch failed", exc_info=True)
+            body = (
+                f"Keep did not finish: {error}\n\nIf you are locked out, run this from a "
+                f"TTY:\n{marker_rescue_command(self._session.paths, pending)}"
+            )
+            GLib.idle_add(self._show_unfinished, None, body)
+            return
+        self._switch_offer_open = False
+        self._start_held_session()
+
+    def _show_unfinished(self, pending: Sentinel | None, body: str) -> bool:
+        """The relaunch's Roll back or Keep could not finish (#268 AC1, AC4).
+
+        The app stays read-only and the switch unfinished, so the next start offers it
+        again; with a Roll back that stopped, Keep is offered here as the way forward.
+        """
+        dialog = Adw.AlertDialog(heading="The switch is still unfinished", body=body)
+        dialog.add_response("close", "Close")
+        if pending is not None:
+            dialog.add_response("keep", "Keep the new configuration")
+        dialog.set_default_response("close")
+        dialog.set_close_response("close")
+        if pending is not None:
+            dialog.connect("response", self._on_unfinished_response, pending)
+        dialog.present(self)
+        return GLib.SOURCE_REMOVE
+
+    def _on_unfinished_response(
+        self, dialog: Adw.AlertDialog, response: str, pending: Sentinel
+    ) -> None:
+        dialog.disconnect_by_func(self._on_unfinished_response)
+        if response == "keep":
+            self._keep_pending(self.migration_flow(), pending)
 
     def _show_rollback_notes(self, notes: tuple[str, ...]) -> bool:
         body = "\n\n".join(("You are on the configuration you had before the switch.", *notes))

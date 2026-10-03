@@ -12,6 +12,7 @@ and a double-click on "Convert" would start a second migration over the first on
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -37,11 +38,14 @@ from ...engine.migration.flow import (  # noqa: E402
     MigrationFlow,
     Offered,
     Preview,
+    RollBackOutcome,
     SwitchResult,
     asks_consent,
 )
 from ...engine.migration.omarchy import is_omarchy_source  # noqa: E402
 from .wire_consent import ConsentDialog  # noqa: E402
+
+_log = logging.getLogger(__name__)
 
 Spawn = Callable[[Any], None]
 
@@ -156,6 +160,7 @@ class MigrationDialog(Adw.Dialog):
         self._source = source
         """The file Import... chose, read instead of the detected one; `None` on first run."""
         self._decision: Decision | None = None
+        self._answered: Decision | None = None
         self._countdown_label: Gtk.Label | None = None
         self._defaults: dict[Adw.NavigationPage, Gtk.Widget] = {}
         """Each page's safe button, made the dialog's default while that page shows."""
@@ -601,17 +606,18 @@ class MigrationDialog(Adw.Dialog):
     async def _switch_and_say(self) -> None:
         result = await self._flow.switch()
         if not result.ok:
-            await self._flow.roll_back_live()
-            detail = "\n".join(
-                [
-                    *(check.detail for check in result.failures if check.detail),
-                    *self._flow.rollback_notes,
-                ]
-            )
+            outcome = await self._flow.roll_back_live()
+            failures = "\n".join(check.detail for check in result.failures if check.detail)
+            if outcome.complete:
+                title = "The new configuration did not load, so it was rolled back"
+                said = "You are back on the configuration you started with."
+            else:
+                title = "The new configuration did not load, and it could not be rolled back"
+                said = outcome.rescue
             self._view.push(
                 self._failed_page(
-                    "The new configuration did not load, so it was rolled back",
-                    "You are back on the configuration you started with.\n\n" + detail,
+                    title,
+                    "\n\n".join(part for part in (said, failures, *outcome.notes) if part),
                 )
             )
             self.set_can_close(True)
@@ -680,26 +686,58 @@ class MigrationDialog(Adw.Dialog):
         return page
 
     async def _countdown(self) -> None:
-        decision = await self._flow.decide(on_tick=self._tick)
+        try:
+            decision = await self._flow.decide(on_tick=self._tick)
+        except Exception as error:  # any failure must reach a page that can close
+            _log.warning("the switch's ending failed", exc_info=True)
+            self._ending_failed(error)
+            return
         self._decision = decision
         if decision is Decision.KEPT:
-            self._finish(
-                "Kept",
-                "Your settings are now set up here. Your old configuration is backed up.",
+            kept = "Your settings are now set up here. Your old configuration is backed up."
+            self._finish("Kept", " ".join(filter(None, (kept, self._flow.moved_aside))))
+            return
+        outcome = self._flow.rollback
+        if outcome is not None and not outcome.complete:
+            self._finish("Not rolled back", _incomplete_text(outcome))
+            return
+        said = (
+            "Nothing was kept. You are on the configuration you started with."
+            if decision is Decision.ROLLED_BACK
+            else "Nobody confirmed the switch, so it was rolled back automatically."
+        )
+        notes = outcome.notes if outcome is not None else ()
+        self._finish("Rolled back", "\n\n".join([said, *notes]))
+
+    def _ending_failed(self, error: Exception) -> None:
+        """Keep or Roll back raised: a page that can close, saying what is left (#268 AC4)."""
+        which = "Keep" if self._answered is Decision.KEPT else "Roll back"
+        unfinished = (
+            "The switch is still recorded as unfinished, so the app offers to roll it back "
+            "the next time it starts."
+            if self._flow.pending_switch() is not None
+            else ""
+        )
+        body = "\n\n".join(
+            part
+            for part in (
+                f"{which} did not finish: {error}",
+                unfinished,
+                f"If you are locked out, run this from a TTY:\n{self._flow.rescue_command}",
             )
-        else:
-            said = (
-                "Nothing was kept. You are on the configuration you started with."
-                if decision is Decision.ROLLED_BACK
-                else "Nobody confirmed the switch, so it was rolled back automatically."
-            )
-            self._finish("Rolled back", "\n\n".join([said, *self._flow.rollback_notes]))
+            if part
+        )
+        self._view.push(self._failed_page("The switch could not be finished", body))
+        self.set_can_close(True)
+        if self._on_finished is not None:
+            self._on_finished(None)
 
     def _tick(self, remaining: float) -> None:
         if self._countdown_label is not None:
             self._countdown_label.set_label(_countdown_text(remaining))
 
     def _answer(self, decision: Decision) -> None:
+        self._answered = decision
         self._flow.answer(decision)
 
     def _finish(self, title: str, body: str) -> None:
@@ -735,6 +773,11 @@ class MigrationDialog(Adw.Dialog):
 
 
 # --- construction helpers ------------------------------------------------------------------
+
+
+def _incomplete_text(outcome: RollBackOutcome) -> str:
+    """A Roll back that could not finish, said as what is still in place (#268 AC1)."""
+    return "\n\n".join([outcome.rescue, *outcome.notes])
 
 
 def _page(title: str) -> Adw.NavigationPage:
