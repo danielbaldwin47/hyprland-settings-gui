@@ -436,6 +436,9 @@ class MainWindow(Adw.ApplicationWindow):
         """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
         self._shown_live = False
         """Whether the Entity Pages last drew their rows editable."""
+        self._shown_causes: tuple[str | None, str | None] = (None, None)
+        """The read-only cause and the unreadable-lists sentence the Entity Pages last drew
+        their Save tooltips and empty states with (#269)."""
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -1393,6 +1396,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._shown_entities = self._entity_lists()
         self._shown_live = bool(self._session.live)
+        self._shown_causes = self._causes()
         self._fill_sidebar()
         self._select_section(self._restored(selected))
         self.sync()
@@ -2084,8 +2088,13 @@ class MainWindow(Adw.ApplicationWindow):
         """Capture the current setup under `name` -- the save dialog's verb."""
         if self._monitors_page is None:
             return
-        self._session.save_monitor_profile(name, self._monitors_page.connected)
-        self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
+        if self._session.save_monitor_profile(name, self._monitors_page.connected) is None:
+            # Gone read-only while the name dialog was open: the button is off now.
+            self._toasts.add_toast(
+                plain_toast(f'Profile "{name}" was not saved: applying is off')
+            )
+        else:
+            self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
         self._refresh_monitors()
 
     def _activate_monitor_profile(self, slug: str) -> None:
@@ -2433,6 +2442,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.recovery,
             on_action=self._on_recovery_action,
             restorable=self._session.restorable,
+            unverified_import=self._session.unverified_since_import,
         )
 
     def _on_recovery_action(self, action: Action, problem: Problem) -> None:
@@ -2772,13 +2782,17 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _moved_entities(self) -> frozenset[str]:
         """The Entity lists that differ from what their Pages last drew: every one when the
-        session went live or read-only since, since each row's controls follow that."""
+        session went live or read-only since, since each row's controls follow that, or the
+        cause the empty states and Save tooltips name moved (#269)."""
         lists = self._entity_lists()
-        if bool(self._session.live) != self._shown_live:
+        if bool(self._session.live) != self._shown_live or self._causes() != self._shown_causes:
             return frozenset(lists)
         return frozenset(
             kind for kind, items in lists.items() if self._shown_entities.get(kind) != items
         )
+
+    def _causes(self) -> tuple[str | None, str | None]:
+        return (self._session.offline_sentence, self._session.entities_unreadable)
 
     def _draw_entity_pages(self, kinds: frozenset[str]) -> None:
         """Rebuild the Pages showing `kinds` from the model, and every sidebar count.
@@ -2812,6 +2826,7 @@ class MainWindow(Adw.ApplicationWindow):
         lists = self._entity_lists()
         self._shown_entities.update((kind, lists[kind]) for kind in kinds if kind in lists)
         self._shown_live = bool(self._session.live)
+        self._shown_causes = self._causes()
         self._sync_entity_counts()
 
     def _entity_lists(self) -> dict[str, tuple[Any, ...]]:

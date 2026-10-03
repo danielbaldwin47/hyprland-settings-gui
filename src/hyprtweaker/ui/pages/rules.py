@@ -658,6 +658,11 @@ class RulesPage:
                     title="No rules match this filter",
                     subtitle="Clear the search or chips to see all rules.",
                 )
+            elif (unreadable := self._session.entities_unreadable) is not None:
+                # Not "none yet": the file was never read (#269).
+                empty = Adw.ActionRow(
+                    title=f"{self.title} could not be read", subtitle=unreadable
+                )
             else:
                 empty = Adw.ActionRow(
                     title=f"No {self.title.lower()} yet", subtitle=self.empty_hint

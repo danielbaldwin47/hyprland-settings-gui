@@ -50,6 +50,7 @@ def live_session(tmp_path: Path) -> tuple[Session, StubApplier]:
     applier = StubApplier(session)
     session._applier = applier  # type: ignore[assignment]
     session._offline_reason = None
+    session.model.mark_entities_loaded()  # `_go_live` reads the Entity Modules first
     return session, applier
 
 
@@ -285,6 +286,19 @@ class TestMonitorProfiles:
         session.patch_monitor_rule("eDP-1", {"transform": 1})
         assert session.monitor_profile_drift()
 
+    def test_unread_lists_are_no_evidence_of_drift(self, tmp_path: Path) -> None:
+        """A session that never read `monitors.lua` holds no rules; that is not the setup
+        having moved away from the profile, so no "Changed since capture" (#269)."""
+        session, applier, slug = docked_session(tmp_path)
+        session.activate_monitor_profile(slug)
+        applier.land()
+
+        readonly = read_only_session(tmp_path)
+        active = readonly.active_monitor_profile()
+        assert active is not None and active[0] == slug
+        assert list(readonly.monitor_rules) == []
+        assert not readonly.monitor_profile_drift()
+
     def test_update_recaptures_and_clears_drift(self, tmp_path: Path) -> None:
         session, _applier, slug = docked_session(tmp_path)
         session.activate_monitor_profile(slug)
@@ -312,11 +326,16 @@ class TestMonitorProfiles:
         assert session.monitor_profiles() == ()
         assert session.active_monitor_profile() is None
 
-    def test_read_only_refuses_activation_but_allows_capture(self, tmp_path: Path) -> None:
-        _live, _applier, _slug = docked_session(tmp_path)
+    def test_read_only_refuses_activation_capture_and_recapture(self, tmp_path: Path) -> None:
+        """A read-only session may not have read the lists a capture is made of: a profile
+        captured or updated from it could be empty, standing in for a real setup (#269)."""
+        _live, _applier, slug = docked_session(tmp_path)
         readonly = read_only_session(tmp_path)
-        slug = readonly.save_monitor_profile("Before experimenting", CONNECTED)
-        assert readonly._profile_store.load(slug) is not None
+        saved = readonly.monitor_profiles()
+
+        assert readonly.save_monitor_profile("Before experimenting", CONNECTED) is None
+        assert not readonly.update_monitor_profile(slug, CONNECTED)
+        assert readonly.monitor_profiles() == saved
 
         assert not readonly.activate_monitor_profile(slug)
         assert readonly.active_monitor_profile() is None

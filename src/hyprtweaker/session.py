@@ -194,7 +194,14 @@ from hyprtweaker.engine.schema import (
     newer_than_shipped,
     supplement,
 )
-from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash, retirement
+from hyprtweaker.engine.state import (
+    Journal,
+    LastKnownGood,
+    Manifest,
+    content_hash,
+    kept_import,
+    retirement,
+)
 from hyprtweaker.engine.state.retirement import (
     RenamedNotice,
     Restoration,
@@ -921,6 +928,25 @@ class Session:
             # A reason the caller can say better: an import still on offer (F20).
             return self._offline_sentence
         return "This app is not connected to Hyprland."
+
+    @property
+    def entities_unreadable(self) -> str | None:
+        """Why the Entity lists are not shown, as the sentences an empty list says instead of
+        "none yet", or `None` when an empty list is the truth (#269).
+
+        Set when an app config exists to read (a Manifest or the App dir) and its lists were
+        not loaded: no Lua, a Hyprland too old to connect to, an import still on offer, or a
+        Module that would not load. `None` once they were read, live or off the files, on a
+        fresh install with nothing to read, and while connecting, when they are about to be.
+        """
+        if self._model.entities_loaded or self._offline_reason == _NOT_CONNECTED_YET:
+            return None
+        if not (self._paths.manifest.is_file() or self._paths.app_dir.is_dir()):
+            return None
+        cause = (
+            self.offline_sentence or "One of its files would not load, so it is left as it is."
+        )
+        return f"This app cannot read your settings right now. {cause}"
 
     @property
     def entrypoint_edited(self) -> bool:
@@ -2047,15 +2073,17 @@ class Session:
 
     def save_monitor_profile(
         self, name: str, connected: Sequence[Mapping[str, Any]] = ()
-    ) -> str:
+    ) -> str | None:
         """Capture the current display setup as a new profile, returning its slug.
 
-        Allowed on a read-only session -- a capture is a JSON file in the App dir, not a
-        config write, and "save what I have before experimenting" is most valuable
-        exactly when things are fragile. `connected` is the live `hyprctl -j monitors`
-        answer, helper data used as ADR-0008 allows: to fingerprint, never to
-        reconstruct rule state.
+        Refused (`None`) on a read-only session (#269): without Lua, behind an import offer
+        or on a Hyprland too old to connect to, the lists a capture is made of were never
+        read, and a profile of them would be an empty one standing in for the real setup.
+        `connected` is the live `hyprctl -j monitors` answer, helper data used as ADR-0008
+        allows: to fingerprint, never to reconstruct rule state.
         """
+        if not self.live:
+            return None
         return self._profile_store.save(
             capture(
                 name,
@@ -2143,10 +2171,11 @@ class Session:
 
         True exactly when activating the profile again would change something, so the
         badge clears on re-activation and on "Update profile", and a hand edit to
-        `monitors.lua` shows up the moment the file is re-read (ADR-0015).
+        `monitors.lua` shows up the moment the file is re-read (ADR-0015). Lists never
+        read are no evidence either way, so they do not drift (#269).
         """
         active = self.active_monitor_profile()
-        if active is None:
+        if active is None or not self._model.entities_loaded:
             return False
         _, profile = active
         return drift(
@@ -2158,9 +2187,11 @@ class Session:
     def update_monitor_profile(
         self, slug: str, connected: Sequence[Mapping[str, Any]] = ()
     ) -> bool:
-        """Recapture the current setup over an existing slug -- the drift badge's "Update"."""
+        """Recapture the current setup over an existing slug -- the drift badge's "Update".
+
+        Refused on a read-only session, as a new capture is (`save_monitor_profile`)."""
         existing = self._profile_store.load(slug)
-        if existing is None:
+        if existing is None or not self.live:
             return False
         self._profile_store.replace(
             slug,
@@ -3315,8 +3346,29 @@ class Session:
         # "On launch ... the full re-read + drift scan attributes any errors and raises the
         # same Banner" (ADR-0016 §Surfacing). Breakage that happened while the app was closed
         # is not a lesser kind of breakage, and the app has to open saying so.
-        await self._scan(client)
+        errors = await self._scan(client)
+        self._seed_kept_import(result, errors)
         return result
+
+    def _seed_kept_import(self, read: ReRead, errors: tuple[str, ...] | None) -> None:
+        """Journal a kept import as the restore boundary, at its first read-back (#259).
+
+        Confirmed by ADR-0016's rule applied to the whole import: no config errors and every
+        Option read back. A record beside a migration sentinel is a Keep that never finished:
+        it waits for the relaunch's offer to be answered, and a Roll back drops it.
+        """
+        record = kept_import.read(self._paths)
+        if record is None or self._paths.sentinel.exists():
+            return
+        confirmed = errors == () and not read.unreadable and not read.unknown
+        kept_import.seed(
+            self._journal,
+            self._paths,
+            record,
+            self._manifest(),
+            confirmed=confirmed,
+            outcome=str(ApplyOutcome.CONFIG_ERRORS if errors else ApplyOutcome.OK),
+        )
 
     async def _read_files(self) -> None:
         """With no compositor to ask, read the App dir's own Modules, read-only.
@@ -3473,21 +3525,23 @@ class Session:
         record = self._manifest().modules.get(module)
         return self._journal.snapshot(record.sha256) if record is not None else None
 
-    async def _scan(self, client: CommandClient) -> None:
+    async def _scan(self, client: CommandClient) -> tuple[str, ...] | None:
         """Read what the live config is complaining about, and raise the Banner for it.
 
         For the two reloads the app did not perform: the one before it started, and any
         foreign one since. Failures are swallowed -- a session that could not read
         `configerrors` has learned nothing, and refusing to start over it would turn a
-        transient socket hiccup into an app that will not open.
+        transient socket hiccup into an app that will not open. Returns the errors read,
+        or `None` when they could not be.
         """
         try:
             errors = await client.configerrors()
             binds = await client.bind_count() if errors else None
         except IpcError as error:
             _log.warning("could not read the config's health: %s", error)
-            return
+            return None
         self._observe_foreign(errors, binds)
+        return errors
 
     async def _rescan_drift(self, client: CommandClient) -> None:
         """A drift scan on its own, then the Rows told: the callers of `_scan_drift` that
@@ -4658,6 +4712,11 @@ class Session:
     def restorable(self, module: str) -> bool:
         """Whether `module` has a restore point: a version a confirmed write left."""
         return self._journal.last_known_good(module) is not None
+
+    def unverified_since_import(self, module: str) -> bool:
+        """Whether `module` has no restore point because the import that wrote it could not
+        all be read back when it was kept (#259): what the Restore offer says instead."""
+        return self._journal.unverified_since_import(module)
 
     def restore_last_good(
         self, *modules: str, done: Callable[[bool], None] | None = None

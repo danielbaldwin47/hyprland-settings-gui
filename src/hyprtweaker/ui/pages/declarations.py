@@ -254,6 +254,11 @@ class DeclarationsPage:
                     title="Nothing matches this filter",
                     subtitle="Clear the filter to see everything.",
                 )
+            elif (unreadable := self._session.entities_unreadable) is not None:
+                # Not "none yet": the file was never read (#269).
+                empty = Adw.ActionRow(
+                    title=f"{self._descriptor.title} could not be read", subtitle=unreadable
+                )
             else:
                 empty = Adw.ActionRow(
                     title=f"No {self._descriptor.title.lower()} yet",
