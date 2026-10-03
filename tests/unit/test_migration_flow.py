@@ -704,9 +704,12 @@ class TestForeignLuaPath:
         relaunched = flow_for(paths, schema, FakeClient())
         pending = relaunched.pending_switch()
         relaunched.roll_back(pending)
-        relaunched.roll_back(pending)
+        second = relaunched.roll_back(pending)
 
         assert paths.entrypoint.read_text(encoding="utf-8") == original
+        # Left in place, not put back from the full backup (review m1 F27).
+        assert second.edited_copy is None
+        assert not any("was missing" in note for note in second.notes)
 
     def test_a_roll_back_leaves_no_app_dir_claiming_the_config(
         self, paths: ConfigPaths, schema: Schema
@@ -1437,6 +1440,9 @@ class TestTheSwitchRecordsBeforeItMoves(_AtHome):
         assert outcome.complete
         assert _hypr_dir(paths) == before
         assert not paths.sentinel.exists()
+        # Nothing was put back from the full backup, nor copied (review m1 F27).
+        assert outcome.edited_copy is None
+        assert not any("was missing" in note for note in outcome.notes)
 
 
 MARK = "\n-- hand edit during the countdown: marker-268-6f1c\n"
