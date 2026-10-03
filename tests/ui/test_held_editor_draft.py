@@ -9,17 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from _live_window import APP_VERSION, live_entity_window
 
 BINDS = "binds.lua"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#225: BindEditor._save closes the dialog whatever on_done answers, so a "
-    "refused save loses the draft",
-)
 def test_a_refused_save_from_a_held_editor_keeps_the_dialog_and_the_draft(
     tmp_path: Path,
 ) -> None:
@@ -78,3 +72,8 @@ def test_a_refused_save_from_a_held_editor_keeps_the_dialog_and_the_draft(
     assert module.read_text(encoding="utf-8") == hand
     assert window.get_visible_dialog() is dialog
     assert dialog._description.get_text() == "my draft"
+    assert dialog._error.get_visible()
+    assert dialog._error.get_text() == (
+        "Keybind changed was not saved: binds.lua was edited outside this app. "
+        "Cancel, then choose Details on the banner."
+    )

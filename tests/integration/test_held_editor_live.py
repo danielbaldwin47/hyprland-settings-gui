@@ -1,9 +1,10 @@
 """A bind editor held open across a foreign reload, against a real compositor (#225).
 
 The editor captures a list index when it opens and saves through `Session.replace_bind`
-at that index. `tests/unit/test_session_held_editor.py` proves both halves against a
-scripted socket; this is the one nested run the diagnosis rests on: the real Writer,
-Applier, Manifest gate and `configreloaded` from a `hyprctl reload` somebody else issued.
+at that index, naming the bind it opened on. `tests/unit/test_session_held_editor.py`
+covers both halves against a scripted socket; this is the nested run the diagnosis rests
+on: the real Writer, Applier, Manifest gate and `configreloaded` from a `hyprctl reload`
+somebody else issued.
 
     HARNESS_DRM_CARD=/dev/dri/card0 pytest tests/integration/test_held_editor_live.py
 """
@@ -146,7 +147,7 @@ def test_a_held_editor_save_into_a_hand_reordered_file_is_refused(
         assert commands(session.model.entities.binds) == ["alpha", "charlie", "bravo"]
         before = (paths.app_dir / BINDS).read_bytes()
 
-        assert session.replace_bind(1, DRAFT) is False
+        assert session.replace_bind(1, DRAFT, expected=B) is False
         await settle()
 
         record(artifacts, "a-refused", nested, paths)
@@ -175,7 +176,7 @@ def test_a_held_editor_save_after_a_reverted_hand_edit_keeps_every_other_bind(
         await settle()
         record(artifacts, "b-reverted", nested, paths)
 
-        assert session.replace_bind(1, DRAFT)
+        assert session.replace_bind(1, DRAFT, expected=B)
         await settle()
 
         record(artifacts, "b-saved", nested, paths)

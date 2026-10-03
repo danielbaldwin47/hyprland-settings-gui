@@ -1,13 +1,13 @@
-"""An editor held open across a list change saves by the position it opened at (#225).
+"""An editor held open across a list change saves only onto the entry it opened on (#225).
 
 Bind, rule and declaration editors capture a list index when they open, and their save
-calls `replace_*(index, entity)`, which writes `items[index]` with no identity check. These
-drive a whole `Session` through the sequences the diagnosis names: three distinguishable
-entries alpha, bravo, charlie, an editor opened on bravo (index 1), the list changed
-underneath it by somebody else's edit and `hyprctl reload`, then the editor's save. The
-draft changes bravo's identity (keys, match, name), as a user's edit may.
+calls `replace_*(index, entity, expected=...)`. These drive a whole `Session` through the
+sequences the diagnosis named: three distinguishable entries alpha, bravo, charlie, an
+editor opened on bravo (index 1), the list changed underneath it by somebody else's edit
+and `hyprctl reload`, then the editor's save. The draft changes bravo's identity (keys,
+match, name), as a user's edit may. Before the fix the held index wrote over charlie.
 
-The UI half (what the dialog does with a refused save) is
+The UI half (a refused save keeps the dialog and the draft) is
 `tests/ui/test_held_editor_draft.py`; the nested run is
 `tests/integration/test_held_editor_live.py`.
 """
@@ -46,7 +46,8 @@ class Kind:
     draft: Any
     """What the user saved from the editor opened on bravo."""
     add: Callable[[Session, Any], bool]
-    replace: Callable[[Session, int, Any], bool]
+    replace: Callable[[Session, int, Any, Any], bool]
+    """`(session, index, entity, expected)`: the editor's save."""
     items: Callable[[Session], list[Any]]
     render: Callable[[list[Any]], str | None]
     refused_title: str
@@ -68,7 +69,7 @@ KINDS = {
         charlie=exec_bind("SUPER + C", "charlie"),
         draft=exec_bind("SUPER + D", "bravo-edited"),
         add=lambda s, e: s.add_bind(e),
-        replace=lambda s, i, e: s.replace_bind(i, e),
+        replace=lambda s, i, e, x: s.replace_bind(i, e, expected=x),
         items=lambda s: s.model.entities.binds,
         render=lambda items: render_binds_module(EntitySet(binds=items), app_version="by-hand"),
         refused_title="Keybind changed",
@@ -81,7 +82,7 @@ KINDS = {
         charlie=WindowRule(match={"class": "charlie"}, effects={"float": True}),
         draft=WindowRule(match={"class": "delta"}, effects={"float": True}),
         add=lambda s, e: s.add_rule("window", e),
-        replace=lambda s, i, e: s.replace_rule("window", i, e),
+        replace=lambda s, i, e, x: s.replace_rule("window", i, e, expected=x),
         items=lambda s: s.model.entities.window_rules,
         render=lambda items: render_window_rules_module(items, app_version="by-hand"),
         refused_title="Window rule changed",
@@ -94,7 +95,7 @@ KINDS = {
         charlie=EnvVar("CHARLIE", "3"),
         draft=EnvVar("DELTA", "2"),
         add=lambda s, e: s.add_declaration("env", e),
-        replace=lambda s, i, e: s.replace_declaration("env", i, e),
+        replace=lambda s, i, e, x: s.replace_declaration("env", i, e, expected=x),
         items=lambda s: s.model.entities.env,
         render=lambda items: render_env_module(items, app_version="by-hand"),
         refused_title="Variable changed",
@@ -182,7 +183,7 @@ def test_a_held_editor_save_into_the_hand_edited_file_is_refused_and_writes_noth
         session.on_refused = lambda what, file: refused.append((what, file))
         before = module_file(tmp_path, kind).read_bytes()
 
-        assert kind.replace(session, HELD, kind.draft) is False
+        assert kind.replace(session, HELD, kind.draft, kind.bravo) is False
         await settle(session, runner)
 
         assert module_file(tmp_path, kind).read_bytes() == before
@@ -192,11 +193,6 @@ def test_a_held_editor_save_into_the_hand_edited_file_is_refused_and_writes_noth
     scenario_runner(scenario)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#225: replace_* writes items[index] with no identity check, so a held "
-    "editor's index lands on whichever entry moved into that position",
-)
 @pytest.mark.parametrize("change", FOREIGN_CHANGES)
 @pytest.mark.parametrize("kind_name", KINDS)
 def test_a_held_editor_save_after_replace_never_writes_over_another_entry(
@@ -205,8 +201,9 @@ def test_a_held_editor_save_after_replace_never_writes_over_another_entry(
     """Half (b), at the Session: Replace opens the gate (the file is the app's again,
     holding the adopted list), and the held editor then saves. Not reachable from the
     window today, whose dialog blocks the Banner while it is open; this pins the index
-    itself. Charlie must survive: bravo changed where it now is, or the save refused."""
+    itself. Bravo is no longer at index 1, so the save is refused and says why."""
     kind = KINDS[kind_name]
+    not_saved: list[tuple[str, str]] = []
 
     async def scenario(fake: FakeHyprland) -> None:
         runner = Runner()
@@ -214,11 +211,15 @@ def test_a_held_editor_save_after_replace_never_writes_over_another_entry(
         await hand_edit(fake, tmp_path, runner, session, kind, FOREIGN_CHANGES[change])
         assert session.replace_edited_file(kind.module)
         await settle(session, runner)
+        session.on_not_saved = lambda what, why: not_saved.append((what, why))
+        written = module_file(tmp_path, kind).read_bytes()
 
-        kind.replace(session, HELD, kind.draft)
+        assert kind.replace(session, HELD, kind.draft, kind.bravo) is False
         await settle(session, runner)
 
-        assert "charlie" in kind.names(session)
+        assert kind.names(session) == list(FOREIGN_CHANGES[change])
+        assert module_file(tmp_path, kind).read_bytes() == written
+        assert not_saved == [(kind.refused_title, "it changed outside this app")]
 
     scenario_runner(scenario)
 
@@ -263,7 +264,7 @@ def test_a_held_editor_save_after_a_reverted_hand_edit_never_writes_over_another
         runner = Runner()
         session = await reorder_then_revert(fake, tmp_path, runner, kind)
 
-        assert kind.replace(session, HELD, kind.draft)
+        assert kind.replace(session, HELD, kind.draft, kind.bravo)
         await settle(session, runner)
 
         assert kind.names(session) == ["alpha", kind.label(kind.draft), "charlie"]

@@ -483,6 +483,21 @@ class _UndonePreset:
     notes: tuple[str, ...]
 
 
+HELD_ENTRY_MOVED = "it changed outside this app"
+"""Why a held editor's save was refused when its entry is no longer where it opened (#225)."""
+
+
+def _same_entry(held: Any, current: Any) -> bool:
+    """Whether `current` is still the Entity an editor opened on as `held`.
+
+    `origin` is left out: it is the line a read found the entity on, and re-reading the
+    same file after a hand edit elsewhere in it moves that without changing the entity.
+    """
+    return type(held) is type(current) and replace(held, origin="") == replace(
+        current, origin=""
+    )
+
+
 def _gates(entries: Sequence[BridgeEntry]) -> tuple[tuple[str, str, object], ...]:
     """What the Color source is made of: each entry on or gated off, and by what. A tool's
     entry going from waiting to loaded is not the user changing where colors come from."""
@@ -595,6 +610,12 @@ class Session:
         the app (ADR-0005), and that Module: the model is as it was, and no undo step was
         recorded. The user's ways on are `keep_edited_file`, `edited_file_path` and
         `replace_edited_file`; after a Replace they make the change again."""
+
+        self.on_not_saved: Callable[[str, str], None] | None = None
+        """Called with an editor's save refused because the list moved under it (#225): the
+        change's title and why, a clause. The entry it opened on is gone from its position
+        (`HELD_ENTRY_MOVED`), or the identity it saves is another row's now. Nothing was
+        written; the editor keeps the draft."""
 
         self._edited_files: list[str] = []
         """Modules that refused a change and are still edited: `Health.edited_files`."""
@@ -1326,18 +1347,22 @@ class Session:
             lambda binds: binds.append(bind), title=entity_title("binds", "added")
         )
 
-    def replace_bind(self, index: int, bind: Bind) -> bool:
-        """Replace the Bind at `index`, keeping its position.
+    def replace_bind(self, index: int, bind: Bind, *, expected: Bind) -> bool:
+        """Replace the Bind at `index`, keeping its position, if it is still `expected`.
 
         In place rather than remove-and-append: position *is* identity, so a bind that
         jumped to the end of the list would change which of two duplicates fires first.
+        `expected` is the bind the editor opened on: a list that moved while it was open
+        holds another bind at `index`, which a save there would overwrite (#225).
         """
+        title = entity_title("binds", "changed")
+        if self._held_entry_gone("binds", index, expected, title):
+            return False
 
         def swap(binds: list[Bind]) -> None:
-            if 0 <= index < len(binds):
-                binds[index] = bind
+            binds[index] = bind
 
-        return self.edit_binds(swap, title=entity_title("binds", "changed"))
+        return self.edit_binds(swap, title=title)
 
     def remove_bind(self, index: int) -> bool:
         """Delete the Bind at `index`."""
@@ -1453,14 +1478,24 @@ class Session:
             kind, lambda rules: rules.append(rule), title=self._rule_title(kind, "added")
         )
 
-    def replace_rule(self, kind: str, index: int, rule: WindowRule | LayerRule) -> bool:
-        """Replace the Rule at `index`, keeping its position."""
+    def replace_rule(
+        self,
+        kind: str,
+        index: int,
+        rule: WindowRule | LayerRule,
+        *,
+        expected: WindowRule | LayerRule,
+    ) -> bool:
+        """Replace the Rule at `index`, keeping its position, if it is still `expected`
+        (the rule the editor opened on, as `replace_bind`)."""
+        title = self._rule_title(kind, "changed")
+        if self._held_entry_gone(f"{kind}_rules", index, expected, title):
+            return False
 
         def swap(rules: list[Any]) -> None:
-            if 0 <= index < len(rules):
-                rules[index] = rule
+            rules[index] = rule
 
-        return self.edit_rules(kind, swap, title=self._rule_title(kind, "changed"))
+        return self.edit_rules(kind, swap, title=title)
 
     def remove_rule(self, kind: str, index: int) -> bool:
         """Delete the Rule at `index`."""
@@ -1752,15 +1787,48 @@ class Session:
         attribute = IDENTITY_FIELD.get(kind)
         return None if attribute is None else str(getattr(entity, attribute))
 
-    def _identity_taken(self, kind: str, entity: Any, *, index: int | None) -> bool:
-        """Whether saving `entity` would give two rows the same identity."""
+    def _identity_taken(self, kind: str, entity: Any, *, index: int | None, title: str) -> bool:
+        """Whether saving `entity` would give two rows the same identity; says so when it
+        would. The editor refuses this itself against the list it opened on, so the session
+        meets it only when the list moved under the editor, and silence would be a save
+        that did nothing (#225)."""
         identity = self.identity_of(kind, entity)
         if identity is None:
             return False
-        return any(
+        taken = any(
             position != index and self.identity_of(kind, existing) == identity
             for position, existing in enumerate(self.declarations(kind))
         )
+        if taken:
+            self._say_not_saved(
+                title, f"there is already an entry for “{identity}”, so edit that one instead"
+            )
+        return taken
+
+    def _held_entry_gone(self, kind: str, index: int, expected: Any, title: str) -> bool:
+        """Whether the `kind` entry an editor opened on is gone from `index`; says why.
+
+        The list may have moved while the editor was open (a foreign reload re-read it,
+        #225). Writing the draft at `index` then would overwrite whichever entry is there
+        now, so the save is refused, never redirected. A hand-edited Module is the louder
+        reason and is said first, as every other change into it is (`_say_refused`).
+        """
+        items = getattr(self._model.entities, kind)
+        if 0 <= index < len(items) and _same_entry(expected, items[index]):
+            return False
+        if self._refuse(kind):
+            return True
+        edited = self._edited_module((ENTITY_KIND_MODULES[kind],))
+        if edited is not None:
+            self._say_refused(title, edited)
+        else:
+            self._say_not_saved(title, HELD_ENTRY_MOVED)
+        return True
+
+    def _say_not_saved(self, what: str, why: str) -> None:
+        _log.info("refused %s: %s", what, why)
+        if self.on_not_saved is not None:
+            self.on_not_saved(what, why)
 
     def add_declaration(self, kind: str, entity: Any) -> bool:
         """Append one entity, refusing an identity another row already holds.
@@ -1770,22 +1838,24 @@ class Session:
         list. The Page's move is to focus the existing row, exactly as `save_workspace_rule`
         expects of the Workspaces page.
         """
-        if self._identity_taken(kind, entity, index=None):
+        title = entity_title(kind, "added")
+        if self._identity_taken(kind, entity, index=None, title=title):
             return False
-        return self.edit_declarations(
-            kind, lambda items: items.append(entity), title=entity_title(kind, "added")
-        )
+        return self.edit_declarations(kind, lambda items: items.append(entity), title=title)
 
-    def replace_declaration(self, kind: str, index: int, entity: Any) -> bool:
-        """Replace the entity at `index`, keeping its position."""
-        if self._identity_taken(kind, entity, index=index):
+    def replace_declaration(self, kind: str, index: int, entity: Any, *, expected: Any) -> bool:
+        """Replace the entity at `index`, keeping its position, if it is still `expected`
+        (the entity the editor opened on, as `replace_bind`)."""
+        title = entity_title(kind, "changed")
+        if self._held_entry_gone(kind, index, expected, title):
+            return False
+        if self._identity_taken(kind, entity, index=index, title=title):
             return False
 
         def swap(items: list[Any]) -> None:
-            if 0 <= index < len(items):
-                items[index] = entity
+            items[index] = entity
 
-        return self.edit_declarations(kind, swap, title=entity_title(kind, "changed"))
+        return self.edit_declarations(kind, swap, title=title)
 
     def remove_declaration(self, kind: str, index: int) -> bool:
         """Delete the entity at `index`."""

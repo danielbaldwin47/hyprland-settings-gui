@@ -113,7 +113,9 @@ class TestTheEnvelope:
         session.add_declaration("startup", StartupCommand("a"))
         session.add_declaration("startup", StartupCommand("b"))
 
-        assert session.replace_declaration("startup", 0, StartupCommand("c"))
+        assert session.replace_declaration(
+            "startup", 0, StartupCommand("c"), expected=session.declarations("startup")[0]
+        )
 
         assert [item.command for item in session.declarations("startup")] == ["c", "b"]
         assert applier.commits == 3
@@ -172,7 +174,9 @@ class TestIdentity:
         session, _ = live_session(tmp_path)
         session.add_declaration("curves", Curve("easy", {"type": "bezier"}))
 
-        assert session.replace_declaration("curves", 0, Curve("easy", {"type": "spring"}))
+        assert session.replace_declaration(
+            "curves", 0, Curve("easy", {"type": "spring"}), expected=session.curves[0]
+        )
 
         assert session.curves[0].spec["type"] == "spring"
 
@@ -181,9 +185,17 @@ class TestIdentity:
         session.add_declaration("curves", Curve("a", {"type": "bezier"}))
         session.add_declaration("curves", Curve("b", {"type": "bezier"}))
 
-        assert not session.replace_declaration("curves", 1, Curve("a", {"type": "spring"}))
+        not_saved: list[tuple[str, str]] = []
+        session.on_not_saved = lambda what, why: not_saved.append((what, why))
+
+        assert not session.replace_declaration(
+            "curves", 1, Curve("a", {"type": "spring"}), expected=session.curves[1]
+        )
 
         assert [curve.name for curve in session.curves] == ["a", "b"]
+        assert not_saved == [
+            ("Curve changed", "there is already an entry for “a”, so edit that one instead")
+        ]
 
     @pytest.mark.parametrize("kind", ["gestures", "permissions", "startup"])
     def test_the_unkeyed_kinds_keep_taking_duplicates(self, kind: str, tmp_path: Path) -> None:

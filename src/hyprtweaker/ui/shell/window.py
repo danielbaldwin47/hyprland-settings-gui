@@ -86,7 +86,13 @@ from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
-from hyprtweaker.session import AutoRevert, Notice, Replaced, Session  # noqa: E402
+from hyprtweaker.session import (  # noqa: E402
+    HELD_ENTRY_MOVED,
+    AutoRevert,
+    Notice,
+    Replaced,
+    Session,
+)
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
 from hyprtweaker.ui.dialogs.colour_conflict import (  # noqa: E402
@@ -259,6 +265,9 @@ of ours that would have to know which widgets count as text entries."""
 SIDEBAR_TITLE = "Hyprland"
 """What the sidebar header says when the finder is closed (ADR-0017 swaps it for the entry)."""
 
+NOT_SAVED_SENTENCE = "This change was not saved."
+"""An editor's line for a refusal that said nothing of its own (a read-only session)."""
+
 SEVERE_BANNER_CLASS = "error"
 """libadwaita's own red styling, for ADR-0016's "Red Banner".
 
@@ -336,6 +345,9 @@ nothing is remembered: the action is disabled then, and the menu item hides with
 
 class MainWindow(Adw.ApplicationWindow):
     """The Config view over one `Session`."""
+
+    _refused_sentence: str | None = None
+    """The last refusal, as an editor shows it (`_saved_or_why`)."""
 
     def __init__(
         self,
@@ -1397,9 +1409,11 @@ class MainWindow(Adw.ApplicationWindow):
     # --- binds ---------------------------------------------------------------------------
 
     def _add_bind(self, submap: str | None = None) -> None:
-        def done(bind: Bind) -> None:
-            if self._session.add_bind(bind):
+        def done(bind: Bind) -> str | None:
+            why = self._saved_or_why(lambda: self._session.add_bind(bind))
+            if why is None:
                 self._refresh_binds()
+            return why
 
         BindEditor(on_done=done, submap=submap, fetch_switches=self._switch_fetch()).present(
             self
@@ -1412,13 +1426,30 @@ class MainWindow(Adw.ApplicationWindow):
         if not 0 <= index < len(binds):
             return
 
-        def done(bind: Bind) -> None:
-            if self._session.replace_bind(index, bind):
-                self._refresh_binds()
+        held = binds[index]
 
-        BindEditor(
-            on_done=done, bind=binds[index], fetch_switches=self._switch_fetch()
-        ).present(self)
+        def done(bind: Bind) -> str | None:
+            why = self._saved_or_why(
+                lambda: self._session.replace_bind(index, bind, expected=held)
+            )
+            if why is None:
+                self._refresh_binds()
+            return why
+
+        BindEditor(on_done=done, bind=held, fetch_switches=self._switch_fetch()).present(self)
+
+    def _saved_or_why(self, save: Callable[[], bool]) -> str | None:
+        """`None` once `save` is accepted; else why not, for the editor that asked (#225).
+
+        An editor shows the sentence above its Save and stays open with the draft, so a
+        refused save loses nothing. The sentence is the refusal's own (`show_refused`,
+        `show_not_saved`), with the way on, since the toast behind the dialog cannot be
+        acted on while it is open.
+        """
+        self._refused_sentence = None
+        if save():
+            return None
+        return self._refused_sentence or NOT_SAVED_SENTENCE
 
     def _switch_fetch(self) -> FetchSwitches | None:
         """The live switch list for Capture's picker, or `None` when nobody is answering.
@@ -1475,7 +1506,7 @@ class MainWindow(Adw.ApplicationWindow):
         def done(text: str) -> None:
             keys = str(parse_trigger(text.strip()))
             fixed = replace(bind, keys=keys, enabled=bind.enabled or enable)
-            if keys and self._session.replace_bind(index, fixed):
+            if keys and self._session.replace_bind(index, fixed, expected=bind):
                 self._refresh_binds()
 
         CaptureDialog(
@@ -1537,9 +1568,11 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_rule(self, kind: str) -> None:
-        def done(rule: WindowRule | LayerRule) -> None:
-            if self._session.add_rule(kind, rule):
+        def done(rule: WindowRule | LayerRule) -> str | None:
+            why = self._saved_or_why(lambda: self._session.add_rule(kind, rule))
+            if why is None:
                 self._refresh_rules(kind)
+            return why
 
         RuleEditor(
             kind=kind,
@@ -1553,14 +1586,20 @@ class MainWindow(Adw.ApplicationWindow):
         if not 0 <= index < len(rules):
             return
 
-        def done(rule: WindowRule | LayerRule) -> None:
-            if self._session.replace_rule(kind, index, rule):
+        held = rules[index]
+
+        def done(rule: WindowRule | LayerRule) -> str | None:
+            why = self._saved_or_why(
+                lambda: self._session.replace_rule(kind, index, rule, expected=held)
+            )
+            if why is None:
                 self._refresh_rules(kind)
+            return why
 
         RuleEditor(
             kind=kind,
             on_done=done,
-            rule=rules[index],
+            rule=held,
             taken_names=self._taken_rule_names(kind, besides=index),
             fetch_targets=self._rule_fetch(kind),
         ).present(self)
@@ -1649,7 +1688,7 @@ class MainWindow(Adw.ApplicationWindow):
         return tuple(curve.name for curve in self._session.curves if curve.name)
 
     def declaration_editor(
-        self, kind: str, *, on_done: Callable[[Any], None], index: int | None = None
+        self, kind: str, *, on_done: Callable[[Any], str | None], index: int | None = None
     ) -> DeclarationEditor:
         """The editor for a new entity of `kind`, or for the one at `index`."""
         entities = self._session.declarations(kind)
@@ -1664,19 +1703,27 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_declaration(self, kind: str) -> None:
-        def done(entity: Any) -> None:
-            if self._session.add_declaration(kind, entity):
+        def done(entity: Any) -> str | None:
+            why = self._saved_or_why(lambda: self._session.add_declaration(kind, entity))
+            if why is None:
                 self._refresh_declarations(kind)
+            return why
 
         self.declaration_editor(kind, on_done=done).present(self)
 
     def _edit_declaration(self, kind: str, index: int) -> None:
-        if not 0 <= index < len(self._session.declarations(kind)):
+        entities = self._session.declarations(kind)
+        if not 0 <= index < len(entities):
             return
+        held = entities[index]
 
-        def done(entity: Any) -> None:
-            if self._session.replace_declaration(kind, index, entity):
+        def done(entity: Any) -> str | None:
+            why = self._saved_or_why(
+                lambda: self._session.replace_declaration(kind, index, entity, expected=held)
+            )
+            if why is None:
                 self._refresh_declarations(kind)
+            return why
 
         self.declaration_editor(kind, on_done=done, index=index).present(self)
 
@@ -2121,11 +2168,24 @@ class MainWindow(Adw.ApplicationWindow):
         self._dismiss_undo()
         self.sync_banner()
         name = module.rsplit("/", 1)[-1]
-        toast = plain_toast(
-            f"{what} was not saved: {name} was edited outside this app", timeout=8
-        )
+        said = f"{what} was not saved: {name} was edited outside this app"
+        self._refused_sentence = f"{said}. Cancel, then choose Details on the banner."
+        toast = plain_toast(said, timeout=8)
         toast.set_button_label("Details")
         toast.connect("button-clicked", lambda *_: self.show_edited_file(module, what))
+        self._toasts.add_toast(toast)
+        return toast
+
+    def show_not_saved(self, what: str, why: str) -> Adw.Toast:
+        """An editor's save refused because the list moved under it (#225): `why` is the
+        session's clause. Returned for tests; withdraws any undo offer, as nothing was
+        saved."""
+        self._dismiss_undo()
+        said = f"{what} was not saved: {why}"
+        # The toast stays one line; the editor, where the user is, says when and what next.
+        moved = " while this editor was open. Cancel, then edit it again from the list"
+        self._refused_sentence = f"{said}{moved if why == HELD_ENTRY_MOVED else ''}."
+        toast = plain_toast(said, timeout=8)
         self._toasts.add_toast(toast)
         return toast
 
