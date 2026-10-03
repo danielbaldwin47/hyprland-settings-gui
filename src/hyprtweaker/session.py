@@ -3994,7 +3994,7 @@ class Session:
             delta = {**delta, **preset.before}
         undone = self._carried_undos(result.keys)
         stands = self._stands(result)
-        entity_steps, failed = self._settle_entities(result, stands=stands)
+        entity_steps, failed = self._settle_entities(result, stands=stands, refused=refused)
         activations = self._landed_activations(result)
         undos = self._landed_undos(result)
         if not stands:
@@ -4011,7 +4011,6 @@ class Session:
             self._previewed.difference_update(result.keys)
             return
 
-        entity_steps = self._take_back_entities(result, entity_steps, refused)
         self._take_back_activations(result, activations, refused)
         self._take_back_undos(result, undos, refused)
         # Its reload wiped every `eval`; one a refusal put back is re-previewed above.
@@ -4087,14 +4086,15 @@ class Session:
 
     def _take_back_entities(
         self, result: ApplyResult, steps: list[EntityStep], refused: dict[str, list[str]]
-    ) -> list[EntityStep]:
-        """`steps` less what a hand-edited Module kept off disk, which goes back out of the
-        model and joins `refused` under its own Module, as `_take_back_options` does. A step
-        over several lists keeps the lists that were written."""
+    ) -> list[EntityStep | None]:
+        """Each of `steps` less what a hand-edited Module kept off disk, `None` where that
+        was all of it: the rest goes back out of the model and joins `refused` under its own
+        Module, as `_take_back_options` does. A step over several lists keeps the lists that
+        were written."""
         skipped = set(result.skipped)
         if not skipped:
-            return steps
-        kept: list[EntityStep] = []
+            return list(steps)
+        kept: list[EntityStep | None] = []
         taken: list[EntityStep] = []
         for step in steps:
             blocked = [e for e in step.edits if ENTITY_KIND_MODULES.get(e.kind) in skipped]
@@ -4104,9 +4104,7 @@ class Session:
             for module in dict.fromkeys(ENTITY_KIND_MODULES[e.kind] for e in blocked):
                 refused.setdefault(module, []).append(step.title)
             taken.append(EntityStep(tuple(blocked), step.title))
-            rest = EntityStep.of((e for e in step.edits if e not in blocked), step.title)
-            if rest is not None:
-                kept.append(rest)
+            kept.append(EntityStep.of((e for e in step.edits if e not in blocked), step.title))
         # All at once: two edits to one list chain, and only the newest reads as the list
         # does now, so one at a time put back the newest alone (#272).
         self._put_back(self._lists_before(taken))
@@ -4321,7 +4319,7 @@ class Session:
         return not self._own_write_errors(result)
 
     def _settle_entities(
-        self, result: ApplyResult, *, stands: bool
+        self, result: ApplyResult, *, stands: bool, refused: dict[str, list[str]]
     ) -> tuple[list[EntityStep], list[EntityStep]]:
         """The Entity steps this result lets stand, and the ones it failed.
 
@@ -4333,6 +4331,10 @@ class Session:
         disk accepted when it ends (#222). A group this result completes is
         merged here, and lands after the steps it was held beside. Both lists are in commit
         order.
+
+        A standing step loses first what a hand-edited Module kept off disk
+        (`_take_back_entities`), grouped or not: a countdown's Keep must not record, and
+        its Rows must not show, a display change the file never got (#272).
         """
         if result.entities is None:
             return [], []
@@ -4343,16 +4345,22 @@ class Session:
         steps: list[EntityStep] = []
         failed: list[EntityStep] = []
         groups: dict[int, UndoGroup] = {}
-        for pending in reported:
-            if pending.group is None:
-                (steps if stands else failed).append(pending.step)
+        each = [p.step for p in reported]
+        written = self._take_back_entities(result, each, refused) if stands else each
+        for pending, step in zip(reported, written, strict=True):
+            if pending.group is not None:
+                # Even for a step taken back whole: its group may be waiting on it to close.
+                groups[id(pending.group)] = pending.group
+            if step is None:
                 continue
-            groups[id(pending.group)] = pending.group
+            if pending.group is None:
+                (steps if stands else failed).append(step)
+                continue
             if stands:
-                pending.group.held.append(pending.step)
+                pending.group.held.append(step)
             else:
                 pending.group.failed = True
-                failed.append(pending.step)
+                failed.append(step)
         for group in groups.values():
             merged = self._close_group(group)
             if merged is not None:
