@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..files import write_atomic
 from ..model import ConfigModel
 from ..paths import ConfigPaths
 from ..schema import MINIMUM_HYPRLAND
@@ -74,8 +75,12 @@ class ExportResult:
     """
 
     def write(self, path: Path) -> Path:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.text, encoding="utf-8")
+        """Write the export to `path` whole, or leave what was there untouched (#251).
+
+        `path` may be the user's own Entrypoint, so a half-written export would be a
+        broken config. Raises `OSError`.
+        """
+        write_atomic(path, self.text)
         return path
 
 

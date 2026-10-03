@@ -1049,7 +1049,17 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.paths,
             app_version=self._session.app_version,
         )
-        result.write(target)
+        existed = target.exists()
+        try:
+            result.write(target)
+        except OSError as error:
+            # The write is atomic (#251): a failure leaves whatever was at `target` as it was.
+            reason = error.strerror or str(error)
+            note = f"The export was not written: {reason[:1].lower()}{reason[1:]}"
+            if existed:
+                note += f". {target.name} is unchanged"
+            self._toasts.add_toast(plain_toast(note, timeout=8))
+            return
         note = (
             f"Exported to {target.name}"
             if not result.missing
