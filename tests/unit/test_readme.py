@@ -102,16 +102,19 @@ def test_the_readme_links_the_acceptance_record() -> None:
 
 def test_the_readme_promises_nothing_the_evidence_does_not_hold() -> None:
     """#253 proves one rice byte-identical to its own port, not a pixel-lossless conversion;
-    #257 puts the AUR out of scope; ADR-0019 defers Flatpak."""
+    #257 puts the AUR out of scope; ADR-0019 defers Flatpak. Each banned promise is paired
+    with the sentence that says the truth instead, so an empty README fails (review m1
+    F18)."""
     text = readme().lower()
-    for claim in (
-        "pixel-lossless",
-        "lossless conversion",
-        "yay -s",
-        "paru -s",
-        "flatpak install",
+    for claim, truth in (
+        ("pixel-lossless", "conversion is not guaranteed lossless."),
+        ("lossless conversion", "conversion is not guaranteed lossless."),
+        ("yay -s", "there is no aur package"),
+        ("paru -s", "there is no aur package"),
+        ("flatpak install", "and no flatpak."),
     ):
         assert claim not in text, f"the README promises {claim!r}"
+        assert truth in text, f"the README no longer says {truth!r}"
 
 
 def test_the_record_has_one_row_per_check_with_a_result_that_is_never_invented() -> None:
@@ -125,8 +128,11 @@ def test_the_record_has_one_row_per_check_with_a_result_that_is_never_invented()
         assert found, f"the record has no row for {check!r}"
     for name, row in rows.items():
         cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
-        who, result = cells[2], cells[4]
+        who, result, date = cells[2], cells[4], cells[5]
         if who == "owner":
-            assert result.startswith("Not yet run"), (
-                f"{name}: an owner check carries {result!r}"
+            # The owner replaces "Not yet run" with the result and the date (the record's
+            # own instruction, review m1 F16); an agent never fills an owner row.
+            filled = re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) is not None
+            assert result.startswith("Not yet run") or filled, (
+                f"{name}: an owner check carries {result!r} with no date"
             )
