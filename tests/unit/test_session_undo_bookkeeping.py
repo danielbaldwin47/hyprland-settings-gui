@@ -194,13 +194,6 @@ async def failed_inside_a_countdown(
 
 
 @pytest.mark.parametrize("failure", list(FAILURES))
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "#222: `_settle_entities` marks a failed grouped step only `group.failed`, so "
-        "`_fell` gets no lists to put back or revert, and the model keeps the failed edit"
-    ),
-)
 def test_a_failed_commit_inside_a_display_countdown_leaves_the_accepted_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:

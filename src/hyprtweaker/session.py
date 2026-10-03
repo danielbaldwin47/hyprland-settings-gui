@@ -4256,13 +4256,14 @@ class Session:
     def _settle_entities(
         self, result: ApplyResult, *, stands: bool
     ) -> tuple[list[EntityStep], list[EntityStep]]:
-        """The Entity steps this result lets stand, and the ungrouped ones it failed.
+        """The Entity steps this result lets stand, and the ones it failed.
 
         Every pending step with a serial up to `result.entities` was rendered by this
         transaction. Standing: it is recorded, or handed to its undo group. Not standing: it
-        is returned as failed for `_fell` to take out of the model, and a grouped one marks
-        its group failed -- ADR-0016's failed gesture, never on the stack; the group's owner
-        (a display countdown) puts its own lists back. A group this result completes is
+        is returned as failed for `_fell` to take out of the model, grouped or not, and a
+        grouped one also marks its group failed -- ADR-0016's failed gesture, never on the
+        stack. A countdown's Keep puts nothing back, so the model must already show what the
+        disk accepted when it ends (#222). A group this result completes is
         merged here, and lands after the steps it was held beside. Both lists are in commit
         order.
         """
@@ -4284,6 +4285,7 @@ class Session:
                 pending.group.held.append(pending.step)
             else:
                 pending.group.failed = True
+                failed.append(pending.step)
         for group in groups.values():
             merged = self._close_group(group)
             if merged is not None:
