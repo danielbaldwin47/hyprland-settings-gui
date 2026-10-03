@@ -8,12 +8,17 @@ because those are what a user is left holding when a recovery goes half right.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 from _fake_hyprland import NO_BINDS, FakeHyprland, run_with_fake
 from _support import Runner, drain_events, section_conversation, session_for
 
+from hyprtweaker.engine.apply import overrides
+from hyprtweaker.engine.model import Bind, DispatcherCall
 from hyprtweaker.engine.writer import Writer
 from hyprtweaker.session import Session
 
@@ -73,6 +78,10 @@ async def foreign_reload(fake: FakeHyprland, session: Session, runner: Runner) -
     await fake.emit("configreloaded")
     await drain_events(runner)
     await settle(session, runner)
+
+
+def bind(keys: str) -> Bind:
+    return Bind(keys=keys, dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
 
 
 def block_copies(root: Path) -> None:
@@ -261,6 +270,131 @@ def test_a_file_the_app_wrote_is_restored_with_no_copy_to_keep(tmp_path: Path) -
         assert (start.copies, start.uncopied) == ({}, ())
         assert module(tmp_path, GENERAL_MODULE).read_bytes() == good
         assert session.model.get(BORDER_SIZE) == 3
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+# --- races the ticket inferred (AC5): injected, and pinned as they came out -----------------
+
+
+def test_an_import_adopted_while_a_restore_reloads_leaves_the_model_on_the_disk(
+    tmp_path: Path,
+) -> None:
+    """`adopt_import` has no `_restoring` check. Injected: it starts as the restore's own
+    reload is asked for. Expected, stated before the run: general.lua holds the restored
+    bytes, the model holds what they say, nothing is on the Banner, and the next edit in
+    the Module keeps the restored value."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        good = module(tmp_path, GENERAL_MODULE).read_bytes()
+        edit_by_hand(tmp_path, GENERAL_MODULE, "border_size = 3,", "border_size = 7,")
+        fake.conversation.update(getoption(BORDER_SIZE, 7))
+        await foreign_reload(fake, session, runner)
+        assert session.model.get(BORDER_SIZE) == 7, "the precondition"
+
+        fake.conversation.update(getoption(BORDER_SIZE, 3))
+        adopted: list[int] = []
+
+        def adopt_during_reload(request: str, _seen: int) -> None:
+            if request == "reload" and not adopted:
+                adopted.append(1)
+                session.adopt_import()
+
+        fake.on_request = adopt_during_reload
+        assert session.restore_last_good(GENERAL_MODULE)
+        await settle(session, runner)
+        fake.on_request = None
+
+        assert adopted == [1]
+        assert module(tmp_path, GENERAL_MODULE).read_bytes() == good
+        assert session.model.get(BORDER_SIZE) == 3
+        assert session.health.edited_files == ()
+        session.set_option("general:gaps_workspaces", 7)
+        await settle(session, runner)
+        text = module(tmp_path, GENERAL_MODULE).read_text()
+        assert "border_size = 3," in text and "gaps_workspaces = 7," in text
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+@pytest.mark.parametrize("at", ["before the lists", "after the lists"])
+def test_a_restore_of_the_binds_during_a_foreign_re_read_leaves_the_restored_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, at: str
+) -> None:
+    """`_reread_after_foreign_reload` has no guard against a restore, and it re-reads the
+    Entity lists between awaits. Injected: the user's Restore of binds.lua lands while
+    somebody else's reload is being re-read -- before the lists, while the re-read reads a
+    hand-edited general.lua off its text in a worker thread; and after them, while its scan
+    waits for `configerrors`. Expected, stated before the run: binds.lua holds the restored
+    bytes, the model's binds are the restored list, and the next bind added is written
+    beside it without the hand-edited bind coming back."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        loop = asyncio.get_running_loop()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        session.add_bind(bind("SUPER + A"))
+        await settle(session, runner)
+        good = module(tmp_path, "binds.lua").read_bytes()
+        text = good.decode()
+        line = next(each for each in text.splitlines() if "SUPER + A" in each)
+        module(tmp_path, "binds.lua").write_text(
+            text.replace(line, line + "\n" + line.replace("SUPER + A", "SUPER + H"))
+        )
+        edit_by_hand(tmp_path, GENERAL_MODULE, "border_size = 3,", "border_size = 7,")
+        fake.conversation.update(getoption(BORDER_SIZE, 7))
+        await foreign_reload(fake, session, runner)
+        assert [b.keys for b in session.model.entities.binds] == ["SUPER + A", "SUPER + H"]
+
+        started: list[bool] = []
+
+        def restore() -> None:
+            started.append(bool(session.restore_last_good("binds.lua")))
+
+        if at == "before the lists":
+            real = overrides.module_values
+
+            def restore_while_reading(*args: Any, **kwargs: Any) -> Any:
+                if not started:
+                    loop.call_soon_threadsafe(restore)
+                    for _ in range(200):  # the worker waits until the restore has written
+                        if module(tmp_path, "binds.lua").read_bytes() == good:
+                            break
+                        time.sleep(0.005)
+                return real(*args, **kwargs)
+
+            monkeypatch.setattr(overrides, "module_values", restore_while_reading)
+        else:
+
+            def restore_during_scan(request: str, _seen: int) -> None:
+                fake.reply_delay = 0.0
+                if request == "j/configerrors" and not started:
+                    restore()
+                    fake.reply_delay = 0.05  # held: the restore runs while the scan waits
+
+            fake.on_request = restore_during_scan
+
+        await foreign_reload(fake, session, runner)
+        await settle(session, runner)
+        fake.on_request = None
+        monkeypatch.undo()
+
+        assert started == [True]
+        assert module(tmp_path, "binds.lua").read_bytes() == good
+        assert [b.keys for b in session.model.entities.binds] == ["SUPER + A"]
+        assert session.add_bind(bind("SUPER + B"))
+        await settle(session, runner)
+        text = module(tmp_path, "binds.lua").read_text()
+        assert "SUPER + A" in text and "SUPER + B" in text and "SUPER + H" not in text
 
     run_with_fake(
         scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
