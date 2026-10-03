@@ -2050,8 +2050,13 @@ class MainWindow(Adw.ApplicationWindow):
         """Capture the current setup under `name` -- the save dialog's verb."""
         if self._monitors_page is None:
             return
-        self._session.save_monitor_profile(name, self._monitors_page.connected)
-        self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
+        if self._session.save_monitor_profile(name, self._monitors_page.connected) is None:
+            # Gone read-only while the name dialog was open: the button is off now.
+            self._toasts.add_toast(
+                plain_toast(f'Profile "{name}" was not saved: applying is off')
+            )
+        else:
+            self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
         self._refresh_monitors()
 
     def _activate_monitor_profile(self, slug: str) -> None:

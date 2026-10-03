@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
@@ -82,9 +83,13 @@ class FakeSession:
         profiles: tuple[tuple[str, Any], ...] = (),
         active: tuple[str, Any] | None = None,
         drifted: bool = False,
+        offline_sentence: str | None = None,
+        entities_unreadable: str | None = None,
     ) -> None:
         self.monitor_rules = rules
         self.live = live
+        self.offline_sentence = offline_sentence
+        self.entities_unreadable = entities_unreadable
         self._profiles = profiles
         self._active = active
         self._drifted = drifted
@@ -442,6 +447,101 @@ def test_activation_needs_a_live_session() -> None:
 
     activate, _trash = _buttons(page.profile_rows[0])
     assert not activate.get_sensitive()
+
+
+NOT_CONNECTED = "This app is not connected to Hyprland."
+NO_LUA = (
+    "This app reads your settings with Lua, which is not installed. Install Lua (lua5.5, "
+    "lua5.4, lua5.3, lua or luajit) and open the app again."
+)
+
+
+def test_save_current_captures_while_live() -> None:
+    page, _recorder = build_page([])
+
+    assert page.save_button.get_sensitive()
+    assert page.save_button.get_tooltip_text() == "Capture the current setup as a new profile"
+    assert page.profiles_empty_row is not None
+    assert page.profiles_empty_row.get_subtitle() == (
+        "Save the current setup to switch between arrangements later."
+    )
+
+
+@pytest.mark.parametrize("cause", [NOT_CONNECTED, NO_LUA])
+def test_save_current_is_off_read_only_and_says_why(cause: str) -> None:
+    """#269: no profile is captured from a session that may not have read the setup, and
+    the empty state does not tell the user to press a button that is off."""
+    page, _recorder = build_page([], FakeSession([], live=False, offline_sentence=cause))
+
+    expected = f"Profiles can be saved once this app can read your settings. {cause}"
+    assert not page.save_button.get_sensitive()
+    assert page.save_button.get_tooltip_text() == expected
+    assert page.profiles_empty_row is not None
+    assert page.profiles_empty_row.get_title() == "No profiles yet"
+    assert page.profiles_empty_row.get_subtitle() == expected
+
+
+def test_save_current_follows_the_session_into_read_only() -> None:
+    session = FakeSession([])
+    page, _recorder = build_page([], session)
+    session.live = False
+    session.offline_sentence = NOT_CONNECTED
+    page.refresh()
+    assert not page.save_button.get_sensitive()
+
+
+def test_a_drifted_profile_cannot_be_recaptured_read_only() -> None:
+    docked = _profile("Docked")
+    session = FakeSession(
+        [],
+        live=False,
+        offline_sentence=NOT_CONNECTED,
+        profiles=(("docked", docked),),
+        active=("docked", docked),
+        drifted=True,
+    )
+    page, _recorder = build_page([], session)
+
+    update, detach, _trash = _buttons(page.profile_rows[0])
+    assert not update.get_sensitive()
+    assert update.get_tooltip_text() == (
+        f"Profiles can be saved once this app can read your settings. {NOT_CONNECTED}"
+    )
+    assert detach.get_sensitive()
+
+
+def test_unread_display_rules_are_not_called_saved_ones() -> None:
+    unreadable = f"This app cannot read your settings right now. {NO_LUA}"
+    session = FakeSession(
+        [], live=False, offline_sentence=NO_LUA, entities_unreadable=unreadable
+    )
+    page, _recorder = build_page([], session)
+
+    assert page.connected_empty_row is not None
+    assert page.connected_empty_row.get_title() == "Display rules could not be read"
+    assert page.connected_empty_row.get_subtitle() == unreadable
+
+
+def test_offline_with_rules_read_lists_the_saved_ones() -> None:
+    session = FakeSession([], live=False, offline_sentence=NOT_CONNECTED)
+    page, _recorder = build_page([], session)
+
+    assert page.connected_empty_row is not None
+    assert page.connected_empty_row.get_title() == "No connected displays to show"
+    assert page.connected_empty_row.get_subtitle() == (
+        "Hyprland is not answering, so only saved rules are listed."
+    )
+
+
+def test_a_save_that_lands_read_only_is_refused_and_says_so(tmp_path: Path) -> None:
+    """The name dialog was open when the session went read-only: nothing is captured."""
+    session, window = build_window(tmp_path)
+    toasts: list[str] = []
+    window._toasts.add_toast = lambda toast: toasts.append(toast.get_title())
+
+    window._save_monitor_profile("Docked")
+    assert toasts == ['Profile "Docked" was not saved: applying is off']
+    assert session.monitor_profiles() == ()
 
 
 def test_save_dialog_hands_over_the_name() -> None:
