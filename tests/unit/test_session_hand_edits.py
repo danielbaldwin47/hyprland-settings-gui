@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from _fake_hyprland import FakeHyprland, run_with_fake
 from _support import Runner, section_conversation, session_for
 
@@ -373,11 +372,6 @@ def refused_state(session: Session, refused: list[tuple[str, str]]) -> dict[str,
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#273: the pointer moves at enqueue; a skipped activation write takes nothing back",
-)
 def test_a_hand_edit_after_the_gate_leaves_a_profile_activation_refused_whole(
     tmp_path: Path,
 ) -> None:
@@ -412,11 +406,6 @@ def test_a_hand_edit_after_the_gate_leaves_a_profile_activation_refused_whole(
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#273: undo pops before the write and a skipped Option undo takes nothing back",
-)
 def test_a_hand_edit_after_the_gate_leaves_an_option_undo_refused_and_undoable(
     tmp_path: Path,
 ) -> None:
@@ -456,11 +445,6 @@ def test_a_hand_edit_after_the_gate_leaves_an_option_undo_refused_and_undoable(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#273: undo pops before the write and a skipped Entity undo takes nothing back",
-)
 def test_a_hand_edit_after_the_gate_leaves_an_entity_undo_refused_and_undoable(
     tmp_path: Path,
 ) -> None:
@@ -497,11 +481,6 @@ def test_a_hand_edit_after_the_gate_leaves_an_entity_undo_refused_and_undoable(
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#273: a hand-edited Module the write would remove is kept but not named skipped",
-)
 def test_a_hand_edit_after_the_gate_leaves_an_undo_that_empties_its_module_refused(
     tmp_path: Path,
 ) -> None:

@@ -536,6 +536,8 @@ def test_no_toast_when_nothing_would_change(tmp_path: Path) -> None:
 
 def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None:
     """The window half of AC 2: activation stands behind the countdown, revert undoes it."""
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+
     session, window = build_window(tmp_path)
 
     class StubApplier:
@@ -552,6 +554,8 @@ def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None
     session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@48"})
 
     window._activate_monitor_profile(slug)
+    # The write lands: the pointer moves on a transaction that stood (#273).
+    session._applied(ApplyResult(ApplyOutcome.OK, entities=session._applier.serial))
     dialog = window.display_confirm
     assert dialog is not None
     assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@60"]
@@ -559,6 +563,7 @@ def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None
     assert active is not None and active[0] == slug
 
     dialog._on_response(dialog, "revert")
+    session._applied(ApplyResult(ApplyOutcome.OK, entities=session._applier.serial))
     assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@48"]
     assert session.active_monitor_profile() is None
 
