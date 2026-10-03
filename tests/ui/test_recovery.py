@@ -84,7 +84,7 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
             start = self.restore_start
             if start is None:
                 start = RestoreStart(queued=True)
-            if start and done is not None and self.restore_ends is not None:
+            if start.queued and done is not None and self.restore_ends is not None:
                 # After the answer, as the real one's spawned transaction is.
                 GLib.idle_add(lambda: done(self.restore_ends) and False)
             return start

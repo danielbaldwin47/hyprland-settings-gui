@@ -378,7 +378,7 @@ def _nothing_to_do(_monkeypatch: pytest.MonkeyPatch, session: Session) -> None:
 
 def _restore_write_fails(monkeypatch: pytest.MonkeyPatch, session: Session) -> None:
     fail_once(monkeypatch, session._writer, "restore", OSError(28, "No space left on device"))
-    assert session.restore_last_good(DECORATION_MODULE)
+    assert session.restore_last_good(DECORATION_MODULE).queued
 
 
 NO_RELOAD: dict[str, Callable[[pytest.MonkeyPatch, Session], None]] = {

@@ -119,7 +119,7 @@ def test_restore_keeps_the_hand_edit_and_agrees_on_disk_in_the_model_and_live(
         paths.edited_copies_dir.write_text("in the way")
         refused = session.restore_last_good(GENERAL)
         await settled(session, loop)
-        assert not refused and refused.uncopied == (GENERAL,)
+        assert not refused.queued and refused.uncopied == (GENERAL,)
         assert paths.file_for(GENERAL).read_bytes() == edited
         assert session.model.get(BORDER_SIZE) == 7
         assert live_border(nested, 7) == 7
@@ -130,7 +130,7 @@ def test_restore_keeps_the_hand_edit_and_agrees_on_disk_in_the_model_and_live(
         outcomes: list[bool] = []
         start = session.restore_last_good(GENERAL, done=outcomes.append)
         await settled(session, loop)
-        assert start and outcomes == [True]
+        assert start.queued and outcomes == [True]
         assert start.copies[GENERAL].read_bytes() == edited
         assert paths.file_for(GENERAL).read_bytes() == good
         assert session.model.get(BORDER_SIZE) == 4

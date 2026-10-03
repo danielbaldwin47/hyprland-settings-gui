@@ -127,7 +127,7 @@ def test_restore_after_a_kept_import_agrees_on_disk_in_the_model_and_live(
         good = session.last_good_for(GENERAL)
         assert good is not None and good.data == imported, "offered the pre-import bytes"
         outcomes: list[bool] = []
-        assert session.restore_last_good(GENERAL, done=outcomes.append)
+        assert session.restore_last_good(GENERAL, done=outcomes.append).queued
         await settled(session, loop)
 
         assert outcomes == [True]

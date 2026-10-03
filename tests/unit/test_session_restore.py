@@ -112,7 +112,7 @@ def test_a_restore_whose_edited_copy_cannot_be_kept_writes_nothing_and_says_so(
         start = session.restore_last_good(GENERAL_MODULE)
         await settle(session, runner)
 
-        assert not start
+        assert not start.queued
         assert start.uncopied == (GENERAL_MODULE,)
         assert module(tmp_path, GENERAL_MODULE).read_bytes() == edited
         assert len(session.journal.entries()) == entries
@@ -169,7 +169,7 @@ def test_a_restore_takes_the_file_off_the_banner_and_names_its_copy(tmp_path: Pa
         start = session.restore_last_good(GENERAL_MODULE)
         await settle(session, runner)
 
-        assert start
+        assert start.queued
         assert start.copies[GENERAL_MODULE].read_bytes() == edited
         assert start.copies[GENERAL_MODULE].name == "general.lua"
         assert session.health.edited_files == ()
@@ -225,7 +225,7 @@ def test_a_restore_that_fails_part_way_leaves_the_landed_module_in_the_model(
         monkeypatch.setattr(Writer, "restore", second_fails)
         fake.conversation.update(getoption(BORDER_SIZE, 3))
 
-        assert session.restore_last_good(GENERAL_MODULE, DECORATION_MODULE)
+        assert session.restore_last_good(GENERAL_MODULE, DECORATION_MODULE).queued
         await settle(session, runner)
         monkeypatch.setattr(Writer, "restore", real)
 
@@ -266,7 +266,7 @@ def test_a_file_the_app_wrote_is_restored_with_no_copy_to_keep(tmp_path: Path) -
         start = session.restore_last_good(GENERAL_MODULE)
         await settle(session, runner)
 
-        assert start
+        assert start.queued
         assert (start.copies, start.uncopied) == ({}, ())
         assert module(tmp_path, GENERAL_MODULE).read_bytes() == good
         assert session.model.get(BORDER_SIZE) == 3
@@ -307,7 +307,7 @@ def test_an_import_adopted_while_a_restore_reloads_leaves_the_model_on_the_disk(
                 session.adopt_import()
 
         fake.on_request = adopt_during_reload
-        assert session.restore_last_good(GENERAL_MODULE)
+        assert session.restore_last_good(GENERAL_MODULE).queued
         await settle(session, runner)
         fake.on_request = None
 
@@ -358,7 +358,7 @@ def test_a_restore_of_the_binds_during_a_foreign_re_read_leaves_the_restored_lis
         started: list[bool] = []
 
         def restore() -> None:
-            started.append(bool(session.restore_last_good("binds.lua")))
+            started.append(session.restore_last_good("binds.lua").queued)
 
         if at == "before the lists":
             real = overrides.module_values

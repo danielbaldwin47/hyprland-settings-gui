@@ -77,7 +77,7 @@ def test_a_kept_fresh_import_is_restored_to_its_imported_bytes(tmp_path: Path) -
         session = await live_session(fake, tmp_path, runner)
 
         general(tmp_path).write_bytes(b"-- hand edited\n")
-        assert session.restore_last_good(GENERAL_MODULE)
+        assert session.restore_last_good(GENERAL_MODULE).queued
         await settle(session, runner)
 
         assert general(tmp_path).read_bytes() == imported
@@ -108,7 +108,7 @@ def test_a_kept_menu_import_restores_imported_bytes_not_the_config_before_it(
         general(tmp_path).write_bytes(b"-- hand edited\n")
         good = session.last_good_for(GENERAL_MODULE)
         assert good is not None and good.data == imported
-        assert session.restore_last_good(GENERAL_MODULE)
+        assert session.restore_last_good(GENERAL_MODULE).queued
         await settle(session, runner)
         assert general(tmp_path).read_bytes() == imported
         assert session.model.get(BORDER_SIZE) == 5
@@ -139,7 +139,7 @@ def test_an_import_read_back_unconfirmed_offers_no_restore_point_and_says_why(
         assert session.last_good_for(GENERAL_MODULE) is None
         assert not session.restorable(GENERAL_MODULE)
         assert session.unverified_since_import(GENERAL_MODULE)
-        assert not session.restore_last_good(GENERAL_MODULE)
+        assert not session.restore_last_good(GENERAL_MODULE).queued
         assert general(tmp_path).read_bytes() == b"-- hand edited\n"
         assert len(session.journal.entries()) == history + 1, "older history is kept"
 

@@ -459,8 +459,8 @@ class Replaced(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RestoreStart:
-    """How `Session.restore_last_good` began (#266). Truthy only when the restore was
-    queued; what it then did arrives through its `done`.
+    """How `Session.restore_last_good` began (#266): `queued` says whether the restore
+    was queued; what it then did arrives through its `done`.
 
     The copies are made, and refused on, before anything is queued, so this is the whole
     answer to "where is my edited file?" for the restore that follows.
@@ -473,9 +473,6 @@ class RestoreStart:
     """Hand-edited Modules no copy could be kept of. A Restore the user chose is refused at
     the first of them, before any write; the emergency restore goes on without it, the
     Journal holding the bytes it replaces (ADR-0016 §Zero-binds)."""
-
-    def __bool__(self) -> bool:
-        return self.queued
 
 
 @dataclass(frozen=True, slots=True)
@@ -4243,7 +4240,7 @@ class Session:
                 continue
             for module in dict.fromkeys(ENTITY_KIND_MODULES[e.kind] for e in blocked):
                 refused.setdefault(module, []).append("Display profile")
-            self._put_back(self._lists_before([EntityStep(tuple(blocked), "")]))
+            self._put_back(self._lists_before([EntityStep(tuple(blocked), "Display profile")]))
 
     def _take_back_undos(
         self, result: ApplyResult, undos: list[_PendingUndo], refused: dict[str, list[str]]
@@ -4747,7 +4744,7 @@ class Session:
         # bytes it replaces, and the Banner says no file copy was kept (#266).
         start = self.restore_last_good(*modules, copy_required=False)
         self._rescue_uncopied = start.uncopied
-        if not start:
+        if not start.queued:
             # Declined before anything ran -- no confirmed write to go back to. A notice
             # left pending would surface on the next restore the user chooses themselves.
             self._pending_rescue = ()

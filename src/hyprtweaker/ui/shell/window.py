@@ -2539,7 +2539,7 @@ class MainWindow(Adw.ApplicationWindow):
                     f"{name} was not restored: a copy of it could not be kept, "
                     f"so it was left as it is"
                 )
-            elif not start:
+            elif not start.queued:
                 self._toast(f"{name} could not be restored: there is no earlier version")
 
         dialog.connect("response", answered)
