@@ -55,6 +55,10 @@ def run(
     command: list[str], tmp_path: Path, **env: str | None
 ) -> subprocess.CompletedProcess[str]:
     child_env = {key: value for key, value in os.environ.items() if key not in env}
+    # Python 3.13+ colours a traceback on stderr when FORCE_COLOR is set, as an agent's
+    # shell sets it and CI does not: the asserted last line then carried escape codes, and
+    # the test failed locally only (review m1 F15). PYTHON_COLORS outranks FORCE_COLOR.
+    child_env["PYTHON_COLORS"] = "0"
     child_env.update({key: value for key, value in env.items() if value is not None})
     return subprocess.run(
         command, cwd=tmp_path, env=child_env, capture_output=True, text=True, timeout=120
