@@ -1259,10 +1259,12 @@ def _wizard(  # type: ignore[no-untyped-def]
     tools: tuple[str, ...],
     *,
     live: bool = True,
+    source: Path | None = None,
 ):
     """The wizard over a `hyprland.conf` in the fenced home, with `tools` installed (stubs
     on the fenced tool path, never run) and matugen's and wallust's configs present. The
-    static gate is stood in for: `test_bridge_verify_config.py` runs the real one."""
+    static gate is stood in for: `test_bridge_verify_config.py` runs the real one. `source`
+    is a file Import... chose instead."""
     import subprocess
 
     from hyprtweaker.engine.migration import flow as flow_module
@@ -1298,7 +1300,7 @@ def _wizard(  # type: ignore[no-untyped-def]
     started_application()
     from started_app import presented
 
-    dialog = presented(MigrationDialog(flow, spawn=_run_the_switch_only))
+    dialog = presented(MigrationDialog(flow, spawn=_run_the_switch_only, source=source))
     _click(dialog, "Convert...")
     _click(dialog, "Back up and convert")
     return dialog, flow, paths
@@ -1741,6 +1743,51 @@ class TestTheCountdownsEndingsAreTrue:
         )
         assert flow.pending_switch() is not None
         assert MARK_268 in paths.entrypoint.read_text(encoding="utf-8")
+        _click(dialog, "Close")
+
+
+class TestTheKeptPageNamesTheBackups:
+    """#268 AC5, review m1 F11: a second migration finds the plain backup names taken, and
+    the Kept page names the stamped ones it made, not the generic ones."""
+
+    def test_keep_names_the_stamped_backups(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        from gi.repository import GLib
+
+        from hyprtweaker.engine.migration.flow import Decision, fresh_start
+        from hyprtweaker.engine.paths import ConfigPaths
+        from hyprtweaker.engine.schema import load_schema
+        from hyprtweaker.engine.writer import Writer
+
+        paths = ConfigPaths.default()
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        schema = load_schema("0.56.2", ROOT / "data" / "schema")
+        Writer(paths, app_version=APP_VERSION).write(
+            fresh_start(paths, schema, app_version=APP_VERSION)
+        )
+        (paths.hypr_dir / "hyprland.lua.bak").write_text("-- an older one\n")
+        (paths.hypr_dir / "hyprtweaker.bak").mkdir()
+        other = paths.config_home / "other.conf"
+        other.write_text(CONF, encoding="utf-8")
+
+        dialog, _flow, _paths = _wizard(monkeypatch, stub_tool, (), source=other)
+        _click(dialog, "Switch and verify")
+        _answer_during_countdown(dialog, Decision.KEPT)
+
+        (lua,) = paths.hypr_dir.glob("hyprland.lua.bak.*")
+        (folder,) = paths.hypr_dir.glob("hyprtweaker.bak.*")
+        assert lua.name.removeprefix("hyprland.lua.bak.") == folder.name.removeprefix(
+            "hyprtweaker.bak."
+        ), "one stamp, the switch's"
+        assert _page_title(dialog) == "Kept"
+        assert _descriptions(dialog) == [
+            GLib.markup_escape_text(
+                "Your settings are now set up here. Your old configuration is backed up. "
+                f"Kept your previous hyprland.lua as ~/.config/hypr/{lua.name} and the "
+                f"app's previous folder as ~/.config/hypr/{folder.name}."
+            )
+        ]
         _click(dialog, "Close")
 
 
