@@ -101,9 +101,7 @@ def seed(
         each.matches(paths.file_for(name)) for name, each in modules.items()
     )
     known = {name for entry in journal.entries() for name in entry.modules}
-    deleted = sorted(
-        name for name in known - set(modules) if journal.read_module(name) is None
-    )
+    deleted = sorted(name for name in known - set(modules) if journal.read_module(name) is None)
     names = [*modules, *deleted]
     draft = journal.begin(names)
     entry = draft.commit(

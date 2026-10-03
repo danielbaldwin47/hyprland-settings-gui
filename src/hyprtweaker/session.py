@@ -186,7 +186,14 @@ from hyprtweaker.engine.schema import (
     newer_than_shipped,
     supplement,
 )
-from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash, retirement
+from hyprtweaker.engine.state import (
+    Journal,
+    LastKnownGood,
+    Manifest,
+    content_hash,
+    kept_import,
+    retirement,
+)
 from hyprtweaker.engine.state.retirement import (
     RenamedNotice,
     Restoration,
@@ -3244,8 +3251,29 @@ class Session:
         # "On launch ... the full re-read + drift scan attributes any errors and raises the
         # same Banner" (ADR-0016 §Surfacing). Breakage that happened while the app was closed
         # is not a lesser kind of breakage, and the app has to open saying so.
-        await self._scan(client)
+        errors = await self._scan(client)
+        self._seed_kept_import(result, errors)
         return result
+
+    def _seed_kept_import(self, read: ReRead, errors: tuple[str, ...] | None) -> None:
+        """Journal a kept import as the restore boundary, at its first read-back (#259).
+
+        Confirmed by ADR-0016's rule applied to the whole import: no config errors and every
+        Option read back. A record beside a migration sentinel is a Keep that never finished:
+        it waits for the relaunch's offer to be answered, and a Roll back drops it.
+        """
+        record = kept_import.read(self._paths)
+        if record is None or self._paths.sentinel.exists():
+            return
+        confirmed = errors == () and not read.unreadable and not read.unknown
+        kept_import.seed(
+            self._journal,
+            self._paths,
+            record,
+            self._manifest(),
+            confirmed=confirmed,
+            outcome=str(ApplyOutcome.CONFIG_ERRORS if errors else ApplyOutcome.OK),
+        )
 
     async def _read_files(self) -> None:
         """With no compositor to ask, read the App dir's own Modules, read-only.
@@ -3402,21 +3430,23 @@ class Session:
         record = self._manifest().modules.get(module)
         return self._journal.snapshot(record.sha256) if record is not None else None
 
-    async def _scan(self, client: CommandClient) -> None:
+    async def _scan(self, client: CommandClient) -> tuple[str, ...] | None:
         """Read what the live config is complaining about, and raise the Banner for it.
 
         For the two reloads the app did not perform: the one before it started, and any
         foreign one since. Failures are swallowed -- a session that could not read
         `configerrors` has learned nothing, and refusing to start over it would turn a
-        transient socket hiccup into an app that will not open.
+        transient socket hiccup into an app that will not open. Returns the errors read,
+        or `None` when they could not be.
         """
         try:
             errors = await client.configerrors()
             binds = await client.bind_count() if errors else None
         except IpcError as error:
             _log.warning("could not read the config's health: %s", error)
-            return
+            return None
         self._observe_foreign(errors, binds)
+        return errors
 
     async def _rescan_drift(self, client: CommandClient) -> None:
         """A drift scan on its own, then the Rows told: the callers of `_scan_drift` that
@@ -4581,6 +4611,11 @@ class Session:
     def restorable(self, module: str) -> bool:
         """Whether `module` has a restore point: a version a confirmed write left."""
         return self._journal.last_known_good(module) is not None
+
+    def unverified_since_import(self, module: str) -> bool:
+        """Whether `module` has no restore point because the import that wrote it could not
+        all be read back when it was kept (#259): what the Restore offer says instead."""
+        return self._journal.unverified_since_import(module)
 
     def restore_last_good(
         self, *modules: str, done: Callable[[bool], None] | None = None
