@@ -31,9 +31,8 @@ from hyprtweaker.session import Session
 needs_lua = pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter installed")
 
 NO_LUA = (
-    "This app cannot read your settings right now. This app reads your settings with Lua, "
-    "which is not installed. Install Lua (lua5.5, lua5.4, lua5.3, lua or luajit) and open "
-    "the app again."
+    "This app reads your settings with Lua, which is not installed. Install Lua (lua5.5, "
+    "lua5.4, lua5.3, lua or luajit) and open the app again."
 )
 
 

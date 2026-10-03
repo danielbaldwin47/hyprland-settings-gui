@@ -564,13 +564,19 @@ class MonitorsPage:
             self._connected_group.add(row)
             self._connected_rows.append(row)
             self._listed.setdefault(self._connected_group, []).append(row)
+        # Read-only with nothing listed, the Connected row says the cause; the Profiles
+        # hint below then leaves it out rather than repeat it (review m1 F5).
+        cause_shown = not monitors and self._session.offline_sentence is not None
         if not monitors:
             unreadable = self._session.entities_unreadable
             empty = Adw.ActionRow(
                 title="No connected displays to show"
                 if unreadable is None
                 else "Display rules could not be read",
+                # Read-only, the session's cause is what is true; "not answering" only for
+                # a live session whose fetch has not answered (review m1 F4).
                 subtitle=unreadable
+                or self._session.offline_sentence
                 or "Hyprland is not answering, so only saved rules are listed.",
             )
             self._connected_empty = empty
@@ -622,7 +628,7 @@ class MonitorsPage:
                 title="No profiles yet",
                 subtitle="Save the current setup to switch between arrangements later."
                 if editable
-                else self._capture_off(),
+                else self._capture_off(cause=not cause_shown),
             )
             self._profiles_empty = hint
             self._profiles_group.add(hint)
@@ -758,10 +764,10 @@ class MonitorsPage:
         row.add_suffix(remove)
         return row
 
-    def _capture_off(self) -> str:
+    def _capture_off(self, *, cause: bool = True) -> str:
+        offline = self._session.offline_sentence if cause else None
         return (
-            "Profiles can be saved once this app can read your settings. "
-            f"{self._session.offline_sentence or ''}"
+            f"Profiles can be saved once this app can read your settings. {offline or ''}"
         ).rstrip()
 
     def _on_save_profile_clicked(self, _button: Gtk.Button) -> None:

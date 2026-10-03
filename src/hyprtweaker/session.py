@@ -977,6 +977,9 @@ class Session:
         cause = (
             self.offline_sentence or "One of its files would not load, so it is left as it is."
         )
+        if cause.startswith("This app"):
+            # Already about this app reading them: the prefix would say "This app" twice.
+            return cause
         return f"This app cannot read your settings right now. {cause}"
 
     @property

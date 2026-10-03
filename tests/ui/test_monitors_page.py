@@ -478,7 +478,10 @@ def test_save_current_is_off_read_only_and_says_why(cause: str) -> None:
     assert page.save_button.get_tooltip_text() == expected
     assert page.profiles_empty_row is not None
     assert page.profiles_empty_row.get_title() == "No profiles yet"
-    assert page.profiles_empty_row.get_subtitle() == expected
+    # The Connected row above already says the cause, with no display listed.
+    assert page.profiles_empty_row.get_subtitle() == (
+        "Profiles can be saved once this app can read your settings."
+    )
 
 
 def test_save_current_follows_the_session_into_read_only() -> None:
@@ -511,23 +514,41 @@ def test_a_drifted_profile_cannot_be_recaptured_read_only() -> None:
 
 
 def test_unread_display_rules_are_not_called_saved_ones() -> None:
-    unreadable = f"This app cannot read your settings right now. {NO_LUA}"
-    session = FakeSession(
-        [], live=False, offline_sentence=NO_LUA, entities_unreadable=unreadable
-    )
+    session = FakeSession([], live=False, offline_sentence=NO_LUA, entities_unreadable=NO_LUA)
     page, _recorder = build_page([], session)
 
     assert page.connected_empty_row is not None
     assert page.connected_empty_row.get_title() == "Display rules could not be read"
-    assert page.connected_empty_row.get_subtitle() == unreadable
+    assert page.connected_empty_row.get_subtitle() == NO_LUA
+    # Said once on the page (review m1 F5): the Profiles hint below does not repeat it.
+    assert page.profiles_empty_row is not None
+    assert page.profiles_empty_row.get_subtitle() == (
+        "Profiles can be saved once this app can read your settings."
+    )
 
 
-def test_offline_with_rules_read_lists_the_saved_ones() -> None:
-    session = FakeSession([], live=False, offline_sentence=NOT_CONNECTED)
+IMPORT_OFFERED = (
+    "Your config has not been converted yet: use Convert... at the top of the window."
+)
+TOO_OLD = "Hyprland 0.54.0 is running, and this app needs Hyprland 0.56 or newer."
+
+
+@pytest.mark.parametrize("cause", [NOT_CONNECTED, IMPORT_OFFERED, TOO_OLD])
+def test_read_only_with_no_displays_says_why_none_are_shown(cause: str) -> None:
+    """Review m1 F4: "Hyprland is not answering" was false behind an import offer and on a
+    too-old Hyprland. The read-only cause is what is true in each state."""
+    session = FakeSession([], live=False, offline_sentence=cause)
     page, _recorder = build_page([], session)
 
     assert page.connected_empty_row is not None
     assert page.connected_empty_row.get_title() == "No connected displays to show"
+    assert page.connected_empty_row.get_subtitle() == cause
+
+
+def test_live_with_no_displays_answered_says_hyprland_is_not_answering() -> None:
+    page, _recorder = build_page([], FakeSession([]))
+
+    assert page.connected_empty_row is not None
     assert page.connected_empty_row.get_subtitle() == (
         "Hyprland is not answering, so only saved rules are listed."
     )
