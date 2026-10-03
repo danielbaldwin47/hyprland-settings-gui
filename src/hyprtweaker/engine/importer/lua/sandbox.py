@@ -9,6 +9,10 @@ Two things are worth stating plainly, because both are easy to get wrong later:
 * **Evaluating at all needs consent.** ADR-0009 puts import behind the Migration wizard,
   and `Consent.evaluate` is that gate expressed in the type system -- there is no way to
   reach `evaluate()` from a default-constructed `Consent`.
+* **A read is bounded.** It ends at the timeout, on cancel, at app exit, and once it has
+  written `OUTPUT_LIMIT_BYTES` to stdout and stderr together or printed that much itself:
+  each ends the config's whole process group, and the read comes back as an error, never as
+  partial data.
 * **Side effects need consent separately.** The default policy fakes them. Passthrough is
   a second, narrower grant for configs that produce nothing useful without it, and it is
   never inferred from the first.
@@ -20,6 +24,7 @@ import atexit
 import contextlib
 import json
 import os
+import selectors
 import shutil
 import signal
 import subprocess
@@ -42,6 +47,22 @@ DEFAULT_TIMEOUT = 60.0
 
 #: How often a cancellable read looks at its cancel token while the config runs.
 CANCEL_POLL_SECONDS = 0.05
+
+#: What one read may write to its stdout and stderr together before it is stopped. A
+#: well-behaved read writes nothing there: `print` and `io.write` go into the record, so only
+#: a Lua error's traceback (about a kilobyte) or a passthrough command's own output ever
+#: reaches either pipe (0 bytes on both rice corpora, a few hundred for a failing config,
+#: measured for #242). 1 MiB is three orders above that, and is reached in milliseconds by a
+#: config that writes in a loop: before the bound, 400 MB written by a passthrough command
+#: took the app to a 1.2 GB peak, and a loop would have gone on to the timeout.
+OUTPUT_LIMIT_BYTES = 1024 * 1024
+
+#: The status `runner.lua` exits with when the config's own `print` and `io.write` pass the
+#: same budget. Those never reach a pipe -- the runner records them -- so the pipes' budget
+#: cannot see them, and a printing loop would fill the runner's memory until the timeout.
+OUTPUT_LIMIT_EXIT = 77
+
+_CHUNK = 64 * 1024
 
 #: Stripped from the child's environment even under passthrough: with these set, anything
 #: the config shells out to can reach the *running* compositor and reconfigure the session
@@ -89,6 +110,11 @@ class ConsentRequired(RuntimeError):
 
 class LuaUnavailable(RuntimeError):
     """No Lua interpreter to evaluate with -- an installation problem, not a config one."""
+
+
+class OutputLimitExceeded(RuntimeError):
+    """The config wrote more than `OUTPUT_LIMIT_BYTES` to stdout and stderr: its process
+    group was killed and reaped, and what it wrote is dropped (#242)."""
 
 
 class Cancelled(RuntimeError):
@@ -243,7 +269,8 @@ def _run(
     """`command`'s exit status, stdout and stderr; `None` when it overran `timeout`.
 
     The child leads a new session, so stopping it is one `killpg` that also takes whatever
-    it started. Raises `Cancelled` once `cancel` is set, before the start or while it runs.
+    it started. Raises `Cancelled` once `cancel` is set, before the start or while it runs,
+    and `OutputLimitExceeded` once it has written `OUTPUT_LIMIT_BYTES` to the two pipes.
     """
     if cancel is not None and cancel.is_set():
         raise Cancelled("the read was cancelled before it started")
@@ -258,7 +285,6 @@ def _run(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
             start_new_session=True,
         )
         _running.add(process)
@@ -271,25 +297,60 @@ def _run(
 
 
 def _wait(
-    process: subprocess.Popen[str], deadline: float, cancel: threading.Event | None
+    process: subprocess.Popen[bytes], deadline: float, cancel: threading.Event | None
 ) -> tuple[int, str, str] | None:
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            _kill_group(process)
-            return None
-        wait = remaining if cancel is None else min(remaining, CANCEL_POLL_SECONDS)
-        try:
-            stdout, stderr = process.communicate(timeout=wait)
-        except subprocess.TimeoutExpired:
+    """Drain both pipes as the child writes, then its exit status.
+
+    One `select` loop rather than `communicate`, which holds all of a child's output until it
+    ends: here the bytes held stop at `OUTPUT_LIMIT_BYTES` in all, and the child that passes
+    it is killed and reaped.
+    """
+    assert process.stdout is not None and process.stderr is not None
+    chunks: dict[int, list[bytes]] = {process.stdout.fileno(): [], process.stderr.fileno(): []}
+    held = 0
+    with selectors.DefaultSelector() as pipes:
+        for fd in chunks:
+            os.set_blocking(fd, False)
+            pipes.register(fd, selectors.EVENT_READ)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _kill_group(process)
+                return None
+            wait = remaining if cancel is None else min(remaining, CANCEL_POLL_SECONDS)
+            if pipes.get_map():
+                for key, _ in pipes.select(wait):
+                    try:
+                        chunk = os.read(key.fd, _CHUNK)
+                    except BlockingIOError:  # woken with nothing to read: wait again
+                        continue
+                    if not chunk:
+                        pipes.unregister(key.fd)
+                        continue
+                    held += len(chunk)
+                    if held > OUTPUT_LIMIT_BYTES:
+                        _kill_group(process)
+                        raise OutputLimitExceeded(
+                            f"the read wrote more than {OUTPUT_LIMIT_BYTES} bytes to its output"
+                        )
+                    chunks[key.fd].append(chunk)
+            else:
+                try:
+                    process.wait(timeout=wait)
+                except subprocess.TimeoutExpired:
+                    pass
+                else:
+                    stdout, stderr = (
+                        b"".join(parts).decode("utf-8", errors="replace")
+                        for parts in chunks.values()
+                    )
+                    return process.returncode, stdout, stderr
             if cancel is not None and cancel.is_set():
                 _kill_group(process)
-                raise Cancelled("the read was cancelled") from None
-            continue
-        return process.returncode, stdout, stderr
+                raise Cancelled("the read was cancelled")
 
 
-_running: set[subprocess.Popen[str]] = set()
+_running: set[subprocess.Popen[bytes]] = set()
 """Reads in flight. A worker thread dies with the app, and the config, in a session of
 its own, would then run on with nothing left to time it out (#216)."""
 _running_lock = threading.Lock()
@@ -304,7 +365,7 @@ def _stop_running() -> None:
                 os.killpg(process.pid, signal.SIGKILL)
 
 
-def _kill_group(process: subprocess.Popen[str]) -> None:
+def _kill_group(process: subprocess.Popen[bytes]) -> None:
     """Kill the session `process` leads and reap it. Its pipes close with the `with`."""
     with contextlib.suppress(ProcessLookupError):  # it already ended, with everything in it
         os.killpg(process.pid, signal.SIGKILL)
@@ -416,7 +477,9 @@ def evaluate(
 
     Raises `ConsentRequired` when the user has not agreed to evaluation, and
     `LuaUnavailable` when there is no interpreter. Everything else -- a syntax error, a
-    config that raises, one that loops until the timeout -- comes back as an `errors`
+    config that raises, one that loops until the timeout, one that writes more than
+    `OUTPUT_LIMIT_BYTES` (to stdout and stderr, or through its own `print`; its process
+    group is killed and reaped, and what it wrote is dropped) -- comes back as an `errors`
     entry, because a failed import still has to produce a report the wizard can show.
 
     `cancel` is set from another thread to stop the read (the wizard's Cancel and Close,
@@ -460,8 +523,14 @@ def evaluate(
             str(policy),
             "run" if run_handlers else "keep",
             "plugins-loaded" if assume_plugins_loaded else "plugins-as-engine",
+            str(OUTPUT_LIMIT_BYTES),
         ]
-        completed = _run(command, cwd=root, env=_child_env(env), timeout=timeout, cancel=cancel)
+        try:
+            completed = _run(
+                command, cwd=root, env=_child_env(env), timeout=timeout, cancel=cancel
+            )
+        except OutputLimitExceeded:
+            return _too_much_output(policy, root)
         if completed is None:
             return Recording(
                 errors=(
@@ -474,6 +543,8 @@ def evaluate(
 
         if not out_path.is_file():
             returncode, stdout, stderr = completed
+            if returncode == OUTPUT_LIMIT_EXIT:
+                return _too_much_output(policy, root)
             detail = (stderr or stdout or "").strip().splitlines()
             reason = detail[-1] if detail else f"exit status {returncode}"
             return Recording(
@@ -494,6 +565,17 @@ def evaluate(
     return _decode(payload, policy=policy, basedir=root)
 
 
+def _too_much_output(policy: Policy, root: Path) -> Recording:
+    return Recording(
+        errors=(
+            f"Your config printed more than {OUTPUT_LIMIT_BYTES // (1024 * 1024)} MiB while "
+            "it was read, so reading it was stopped.",
+        ),
+        policy=policy,
+        basedir=root,
+    )
+
+
 _ABSENT = object()
 
 
@@ -504,7 +586,9 @@ def config_values(
 
     Evaluated with consent granted, which is defensible only because of what the file is:
     the app's own output, already required by the Entrypoint on every reload (the footing
-    `writer/binds.py` reads `binds.lua` back on). Never a foreign config. Plugin guards
+    `writer/binds.py` reads `binds.lua` back on). Never a foreign config. The sandbox's
+    guarantees hold for it as for any read: no write or command under `Policy.BLOCK`, a
+    timeout, and the output budget. Plugin guards
     answer as if the plugin were loaded, because the app wrote every plugin setting behind
     one (#175).
 

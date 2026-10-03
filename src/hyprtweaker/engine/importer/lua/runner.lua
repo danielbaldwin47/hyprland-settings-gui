@@ -1,7 +1,8 @@
 -- The recording stub ADR-0009 specifies: a foreign hyprland.lua evaluated under a
 -- fake `hl` and a stdlib that refuses to touch the world, dumping what it saw as JSON.
 --
--- Usage: lua5.5 runner.lua <entry.lua> <basedir> <out.json> <policy>
+-- Usage: lua5.5 runner.lua <entry.lua> <basedir> <out.json> <policy> <run|keep> <plugins>
+--                          <print-limit-bytes>
 --   policy "block"       -- side effects intercepted and faked; the default
 --   policy "passthrough" -- side effects really happen, and are still recorded
 --
@@ -33,6 +34,11 @@ local run_handlers = (arg[5] == "run")
 -- not whether the plugin happens to be loaded.
 local assume_plugins_loaded = (arg[6] == "plugins-loaded")
 local passthrough = policy == "passthrough"
+-- What the config's own `print` and `io.write` may add up to before the read is abandoned
+-- (the sandbox's `OUTPUT_LIMIT_BYTES`, #242). They are recorded here rather than written to
+-- stdout, so a printing loop would otherwise fill this process's memory until the timeout.
+local print_limit = tonumber(arg[7])
+local PRINT_LIMIT_EXIT = 77 -- the sandbox's `OUTPUT_LIMIT_EXIT`
 
 ----------------------------------------------------------------------
 -- record state
@@ -50,6 +56,16 @@ local record = {
   exited = false, -- the config called os.exit and we trapped it
   policy = policy,
 }
+
+local printed = 0
+local function note_print(text)
+  printed = printed + #text
+  if print_limit and printed > print_limit then
+    -- The real `os`, which the config never reaches: it cannot catch this or fake it.
+    os.exit(PRINT_LIMIT_EXIT, true)
+  end
+  record.prints[#record.prints + 1] = text
+end
 
 local script_id = 0
 local current_submap = nil
@@ -425,14 +441,14 @@ local sandbox_io = {
   end,
   lines = function(...) return real_io.lines(...) end,
   read = function() return nil end,
-  write = function(...) record.prints[#record.prints + 1] = table.concat({ ... }, "") return sandbox_io end,
+  write = function(...) note_print(table.concat({ ... }, "")) return sandbox_io end,
   popen = function(cmd, mode)
     note_shell("io.popen", cmd)
     if passthrough then return real_io.popen(cmd, mode) end
     return fake_pipe("")
   end,
-  stderr = { write = function(_, ...) record.prints[#record.prints + 1] = table.concat({ ... }, "") return sandbox_io.stderr end },
-  stdout = { write = function(_, ...) record.prints[#record.prints + 1] = table.concat({ ... }, "") return sandbox_io.stdout end },
+  stderr = { write = function(_, ...) note_print(table.concat({ ... }, "")) return sandbox_io.stderr end },
+  stdout = { write = function(_, ...) note_print(table.concat({ ... }, "")) return sandbox_io.stdout end },
 }
 
 ----------------------------------------------------------------------
@@ -545,7 +561,7 @@ ENV = {
   print = function(...)
     local parts = {}
     for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
-    record.prints[#record.prints + 1] = table.concat(parts, "\t")
+    note_print(table.concat(parts, "\t"))
   end,
   string = string, table = table, math = math, utf8 = utf8, coroutine = coroutine,
   ipairs = ipairs, pairs = pairs, next = next, type = type, tostring = tostring,

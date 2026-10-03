@@ -28,6 +28,7 @@ from hyprtweaker.engine.importer.lua import (
     evaluate,
     import_lua,
     lua_binary,
+    sandbox,
 )
 from hyprtweaker.engine.schema import load_schema
 
@@ -228,6 +229,136 @@ def test_a_config_that_never_finishes_is_cut_off(tmp_path, schema) -> None:  # t
     assert "Your config took longer than 0.5 seconds to run, so reading it was stopped." in [
         item.message for item in result.loss
     ]
+
+
+# --- output bound (#242) ------------------------------------------------------------------
+
+
+def _zombie_children() -> list[int]:
+    """Our children that ended and were never waited for: a read that was not reaped."""
+    found = []
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat.read_text(encoding="utf-8").rsplit(")", 1)[1].split()
+        except OSError:
+            continue
+        if fields[0] == "Z" and int(fields[1]) == os.getpid():
+            found.append(int(stat.parent.name))
+    return found
+
+
+def _printing_config(tmp_path, stream: str):  # type: ignore[no-untyped-def]
+    """A passthrough config whose command writes to `stream` for ever, naming its pid."""
+    pidfile = tmp_path / "command.pid"
+    redirect = " >&2" if stream == "stderr" else ""
+    entry = write(tmp_path, f'os.execute("echo $$ > {pidfile}; exec yes{redirect}")\n')
+    return entry, pidfile
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_a_config_that_prints_for_ever_is_stopped_at_the_output_budget(
+    tmp_path, stream
+) -> None:  # type: ignore[no-untyped-def]
+    """The unbounded `communicate` held every byte until the timeout (400 MB written was a
+    1.2 GB peak in the app). Now the read ends at the budget, long before the timeout, says
+    why, and leaves neither the command nor a zombie behind."""
+    entry, pidfile = _printing_config(tmp_path, stream)
+    started = time.monotonic()
+    try:
+        recording = evaluate(
+            entry, consent=Consent(evaluate=True, passthrough=True), timeout=30
+        )
+
+        assert time.monotonic() - started < 15, "the read ran on towards its timeout"
+        assert recording.errors == (
+            "Your config printed more than 1 MiB while it was read, so reading it was stopped.",
+        )
+        assert not recording.calls
+        pid = int(pidfile.read_text())
+        _within(10, lambda: not _alive(pid), "the command's end")
+        assert _zombie_children() == []
+    finally:
+        if pidfile.is_file() and Path(f"/proc/{int(pidfile.read_text())}/cmdline").is_file():
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)  # only ever our own `yes`
+
+
+@pytest.mark.parametrize(
+    "printer",
+    [
+        'print("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")',
+        'io.write("xxxxxxxxxxxxxxxxxxxxxxxx")',
+    ],
+)
+def test_a_config_that_prints_through_lua_is_stopped_at_the_budget(tmp_path, printer) -> None:  # type: ignore[no-untyped-def]
+    """`print` never reaches a pipe: the runner records it, so a loop of them filled the
+    runner's memory (about 40 MB a second) until the timeout. Even under the default policy."""
+    entry = write(tmp_path, f"while true do {printer} end\n")
+    started = time.monotonic()
+
+    recording = evaluate(entry, consent=GRANTED, timeout=30)
+
+    assert time.monotonic() - started < 15, "the read ran on towards its timeout"
+    assert recording.errors == (
+        "Your config printed more than 1 MiB while it was read, so reading it was stopped.",
+    )
+    assert _zombie_children() == []
+
+
+def test_a_config_cannot_fake_or_catch_the_output_stop(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The stop is the runner's own exit, outside the config's reach: `pcall` does not
+    swallow it and the config's `os.exit` is the trapped one."""
+    entry = write(
+        tmp_path,
+        'while true do pcall(print, string.rep("x", 4096)) end\n',
+    )
+
+    recording = evaluate(entry, consent=GRANTED, timeout=30)
+
+    assert recording.errors and "printed more than" in recording.errors[0]
+
+
+def _write_both(each: int) -> list[str]:
+    return [
+        sys.executable,
+        "-c",
+        "import sys\n"
+        f"sys.stdout.buffer.write(b'o' * {each}); sys.stdout.flush()\n"
+        f"sys.stderr.buffer.write(b'e' * {each}); sys.stderr.flush()\n",
+    ]
+
+
+def _run_it(command: list[str], tmp_path):  # type: ignore[no-untyped-def]
+    return sandbox._run(command, cwd=tmp_path, env=dict(os.environ), timeout=30, cancel=None)
+
+
+def test_the_budget_is_for_both_streams_together(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Neither stream alone is over the budget, together they are."""
+    half = sandbox.OUTPUT_LIMIT_BYTES // 2 + 1
+
+    with pytest.raises(sandbox.OutputLimitExceeded):
+        _run_it(_write_both(half), tmp_path)
+
+
+def test_output_exactly_at_the_budget_is_kept_whole(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    each = sandbox.OUTPUT_LIMIT_BYTES // 2
+
+    status, stdout, stderr = _run_it(_write_both(each), tmp_path)  # type: ignore[misc]
+
+    assert (status, len(stdout), len(stderr)) == (0, each, each)
+
+
+def test_a_read_that_writes_a_little_keeps_its_result(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The valid-read fixture the budget was chosen against: output on both pipes, far
+    under it, and the record still comes back whole."""
+    entry = write(
+        tmp_path,
+        'os.execute("echo out; echo err >&2")\nhl.config({ general = { gaps_in = 3 } })\n',
+    )
+
+    recording = evaluate(entry, consent=Consent(evaluate=True, passthrough=True))
+
+    assert recording.ok, recording.errors
+    assert [call.name for call in recording.calls] == ["config"]
 
 
 # --- the module system -------------------------------------------------------------------
