@@ -2353,6 +2353,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.recovery,
             on_action=self._on_recovery_action,
             restorable=self._session.restorable,
+            unverified_import=self._session.unverified_since_import,
         )
 
     def _on_recovery_action(self, action: Action, problem: Problem) -> None:

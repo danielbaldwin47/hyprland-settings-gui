@@ -62,6 +62,11 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
         def restorable(self, module: str) -> bool:
             return self.can_restore
 
+        unverified_import = False
+
+        def unverified_since_import(self, module: str) -> bool:
+            return self.unverified_import
+
         def restore_last_good(self, *modules: str, done: Any = None) -> bool:
             self.calls.append(("restore", modules[0]))
             if done is not None:
@@ -472,6 +477,25 @@ def test_restore_is_not_offered_without_a_restore_point(tmp_path: Path) -> None:
     assert (
         "This app has no earlier version of general.lua that Hyprland accepted, so there is "
         "nothing to restore. Open the file to fix the error."
+    ) in _labels(dialog.get_extra_child())
+
+
+def test_an_import_kept_unverified_says_why_there_is_no_restore_point(
+    tmp_path: Path,
+) -> None:
+    """#259 AC4: not "no earlier version" -- there are older ones, and none is offered."""
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    session.can_restore = False
+    session.unverified_import = True
+
+    dialog = window.show_errors()
+
+    labels = {button.get_label() for button in buttons(dialog.get_extra_child())}
+    assert labels == {"Open file"}
+    assert (
+        "There is no verified restore point for general.lua since the import, because its "
+        "settings could not all be read back when it was kept. Open the file to fix the "
+        "error."
     ) in _labels(dialog.get_extra_child())
 
 
