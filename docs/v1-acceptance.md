@@ -36,7 +36,7 @@ The three proofs are restated in `docs/adr/0009-migration-first-run-flow.md` § 
 - `hyprctl binds` reads keycode binds (`code:82`) back without their code, so the state proof cannot tell two of them apart (#253).
 - Hyprland 0.56.2 reports no plugin settings, so a plugin gets no setting rows; and cannot list window rules or layer rules, so a switch confirms those only by the absence of a config error.
 - Not in v1: Omarchy theme-switch continuity, an AUR package, a Flatpak, plugin settings as rows.
-- Deferred as `post-v1`: the future-release retirement fix named in #273's comment (`src/hyprtweaker/engine/state/retirement.py:150-153`).
+- Deferred as `post-v1`: the future-release retirement fix named in #273's comment (`src/hyprtweaker/engine/state/retirement.py:150-153`), tracked as #276.
 
 ## Notes
 
