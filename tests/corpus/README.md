@@ -8,6 +8,9 @@ lines are absolute (`~/.config/hypr/...`, `$HOME/...`, `$XDG_*`) carry a `ROOT` 
 describing the mapping; by convention `~/.config/hypr → <rice>/` and any other
 home-relative path → `<rice>/_home/<path>`.
 
+What the Harness proves with these rices (verify, state and pixel, each with its limits) is
+ADR-0009 § Corpus proofs (`docs/adr/0009-migration-first-run-flow.md`).
+
 Reproduce with `tests/corpus/fetch.sh` (pins live in `corpus.lock.json`, see below).
 Total size ≈ 2.2 MB / ~420 files. Wallpapers, images, files > 200 KB and the
 hyprlock/hypridle/hyprpaper/hyprsunset confs (never sourced from `hyprland.conf`) are
