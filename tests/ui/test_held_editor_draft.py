@@ -75,5 +75,24 @@ def test_a_refused_save_from_a_held_editor_keeps_the_dialog_and_the_draft(
     assert dialog._error.get_visible()
     assert dialog._error.get_text() == (
         "Keybind changed was not saved: binds.lua was edited outside this app. "
-        "Cancel, then choose Details on the banner."
+        "Close this editor, then choose Details on the banner."
+    )
+
+
+def test_a_save_refused_because_the_entry_moved_names_a_control_the_editor_has(
+    tmp_path: Path,
+) -> None:
+    """Hand-test 4 (#279): the bind and rule editors have no Cancel button, only the
+    header's close; the way on names that."""
+    from hyprtweaker.session import HELD_ENTRY_MOVED
+
+    _session, window, _applier = live_entity_window(tmp_path)
+
+    def refused() -> bool:
+        window.show_not_saved("Keybind changed", HELD_ENTRY_MOVED)
+        return False
+
+    assert window._saved_or_why(refused) == (
+        "Keybind changed was not saved: it changed outside this app while this editor was "
+        "open. Close this editor, then edit it again from the list."
     )

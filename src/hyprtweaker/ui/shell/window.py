@@ -2318,7 +2318,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.sync_banner()
         name = module.rsplit("/", 1)[-1]
         said = f"{not_saved(what)}: {name} was edited outside this app"
-        self._refused_sentence = f"{said}. Cancel, then choose Details on the banner."
+        self._refused_sentence = (
+            f"{said}. Close this editor, then choose Details on the banner."
+        )
         shown = self._refused_toast
         if shown is not None and toast_text(shown) == said:
             self._toasts.add_toast(shown)  # already up: its timeout starts again
@@ -2342,7 +2344,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._dismiss_undo()
         said = f"{what} was not saved: {why}"
         # The toast stays one line; the editor, where the user is, says when and what next.
-        moved = " while this editor was open. Cancel, then edit it again from the list"
+        moved = (
+            " while this editor was open. Close this editor, then edit it again from the list"
+        )
         self._refused_sentence = f"{said}{moved if why == HELD_ENTRY_MOVED else ''}."
         toast = plain_toast(said, timeout=8)
         self._toasts.add_toast(toast)
