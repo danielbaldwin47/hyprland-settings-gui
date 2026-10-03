@@ -32,7 +32,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Collection, Coroutine, Iterable, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Collection,
+    Coroutine,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -85,7 +93,7 @@ from hyprtweaker.engine.bridge import (
     owners,
     with_presence,
 )
-from hyprtweaker.engine.bridge.wire import bridge_output
+from hyprtweaker.engine.bridge.wire import NOT_UPDATED, OutputAside, bridge_output
 from hyprtweaker.engine.bridge.wire import shown as tilde_path
 from hyprtweaker.engine.entities_catalog import (
     IDENTITY_FIELD,
@@ -458,6 +466,21 @@ class _WallpaperOrder:
 
     daemon: Daemon
     image: Path
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeRemoved:
+    """`remove_bridge`'s answer once the Entrypoint that no longer loads the tool stands: its
+    output in the bridge folder is gone, and its own files may go back (`finish_unwire`)."""
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeNotRemoved:
+    """`remove_bridge`'s answer when hyprland.lua still loads the tool: its output and
+    entries are as they were (#267)."""
+
+    reason: str
+    """Why, as a sentence for the user."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1048,31 +1071,55 @@ class Session:
         """The Manifest as it is on disk now: what #166's `detect` and `unwire` take."""
         return self._manifest()
 
-    def remove_bridge(self, tool: str) -> bool:
+    def remove_bridge(
+        self,
+        tool: str,
+        *,
+        done: Callable[[BridgeRemoved | BridgeNotRemoved], None] | None = None,
+    ) -> bool:
         """Take `tool`'s Bridge entries and lines out: what #166's `unwire` calls first.
 
         `True` with nothing done when the tool has no entry, so an `unwire` that converges
-        after a crash never costs a reload.
+        after a crash never costs a reload. Otherwise `True` once the Entrypoint write is
+        queued, and `done`, if given, hears once that write and its reload have answered --
+        or at once, when this refuses (#267). The tool's output in the bridge folder is set
+        aside inside the write and deleted only when it stands; one that fails puts it back.
         """
         manifest = self._manifest()
         output = bridge_output(tool, self._paths)
         if not output and not any(entry.tool == tool for entry in manifest.bridges):
+            if done is not None:
+                done(BridgeRemoved())
             return True
-        if self.color_source_blocked is not None:
+        if (blocked := self.color_source_blocked) is not None:
+            if done is not None:
+                done(BridgeNotRemoved(blocked))
             return False
+        # Before the Entrypoint is rendered: a file left in the bridge folder loads with no
+        # entry at all, which kept a removed tool loading (#148 hand-test 1).
+        aside = OutputAside(tool, self._paths)
 
-        def delete_output() -> None:
-            # Before the Entrypoint is rendered: a file left in the bridge folder loads with
-            # no entry at all, which kept a removed tool loading (#148 hand-test 1).
-            for path in bridge_output(tool, self._paths):
-                path.unlink(missing_ok=True)
+        def answered(reason: str | None) -> None:
+            try:
+                if reason is None:
+                    aside.drop()
+                else:
+                    aside.put_back()
+            except OSError as error:
+                _log.error("could not settle the set-aside output of %s: %s", tool, error)
+            if done is not None:
+                done(BridgeRemoved() if reason is None else BridgeNotRemoved(reason))
 
-        return self._set_bridges(
+        queued = self._set_bridges(
             lambda current: [entry for entry in current if entry.tool != tool],
             manifest.remove_bridge(tool),
             f"remove {REGISTRY[tool].title if tool in REGISTRY else tool}",
-            first=delete_output,
+            first=aside.move,
+            answered=answered,
         )
+        if not queued and done is not None:
+            done(BridgeNotRemoved(NOT_UPDATED))
+        return queued
 
     def _module_files_present(self, spec: ToolSpec) -> frozenset[str]:
         return files_present(self._paths.hypr_dir, (each.file for each in spec.modules))
@@ -1084,10 +1131,11 @@ class Session:
         what: str,
         *,
         first: Callable[[], None] | None = None,
+        answered: Callable[[str | None], None] | None = None,
     ) -> bool:
         """Rewrite the Entrypoint with `change` applied to the Manifest's entries as they are
         when the queued write runs, so a change landing in between is built on, not lost.
-        `first` runs in the queued write, just before it."""
+        `first` runs in the queued write, just before it; `answered` as `_recovery_write`."""
 
         def write(before: BeforeReplace | None) -> bool:
             if first is not None:
@@ -1101,6 +1149,7 @@ class Session:
             prospective,
             what,
             exclude=tuple(owners(prospective.bridges, quarantined=prospective.quarantined)),
+            answered=answered,
         )
 
     def _bridge_files_present(self, entries: Sequence[BridgeEntry]) -> frozenset[str]:
@@ -4694,6 +4743,7 @@ class Session:
         prospective: Manifest,
         what: str,
         exclude: Sequence[str] = (),
+        answered: Callable[[str | None], None] | None = None,
     ) -> bool:
         """Rewrite the Entrypoint out of band, then reload. `False` if it could not be done.
 
@@ -4707,7 +4757,8 @@ class Session:
         here, so a recovery the gate refuses answers `False` and leaves the Banner as it is.
         `exclude` names owned Options the re-read leaves alone. The write
         itself runs queued (`EntrypointTransaction`): its Journal draft stays open until the
-        reload answers, and nothing else may open one meanwhile.
+        reload answers, and nothing else may open one meanwhile. A queued write calls
+        `answered` once it is over: `None` when the Entrypoint was written, else why not.
         """
         if not self.live or self._applier is None:
             return False
@@ -4716,16 +4767,31 @@ class Session:
         except (LuaSyntaxError, ValueError) as error:
             _log.error("could not %s: %s", what, error)
             return False
-        self._spawn(self._recover_entrypoint(write, what, exclude))
+        self._spawn(
+            self._answer_after(self._recover_entrypoint(write, what, exclude), answered)
+        )
         return True
+
+    @staticmethod
+    async def _answer_after(
+        recovery: Awaitable[bool], answered: Callable[[str | None], None] | None
+    ) -> None:
+        """Run `recovery`, then tell `answered` once, however it ended (#267)."""
+        written = False
+        try:
+            written = await recovery
+        finally:
+            if answered is not None:
+                answered(None if written else NOT_UPDATED)
 
     async def _recover_entrypoint(
         self,
         write: Callable[[BeforeReplace | None], bool],
         what: str,
         exclude: Sequence[str] = (),
-    ) -> None:
-        """Rewrite the Entrypoint, reload, and re-read what the config now says.
+    ) -> bool:
+        """Rewrite the Entrypoint, reload, and re-read what the config now says. `True` when
+        the Entrypoint was written, whatever the reload then found.
 
         A plain apply would do the wrong thing here: it renders the model over the App dir,
         and the file that changes is the one file the model does not describe. So this
@@ -4733,7 +4799,7 @@ class Session:
         """
         applier = self._applier
         if applier is None:
-            return
+            return False
         # Every owned Option, not a narrow set: quarantining `user.lua` changes the value of
         # everything that file was overriding, and the app cannot know which those were
         # without asking about all of them.
@@ -4756,9 +4822,10 @@ class Session:
         except (IpcError, RuntimeError) as error:
             _log.error("could not reload after a recovery: %s", error)
             self._changed()
-            return
+            return False
         await self._read_off_text_of(edited, texts)
-        if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+        written = result.outcome not in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED)
+        if not written:
             _log.error("could not %s: %s", what, result.detail)
         self._observe(result)
         if self._client is not None and result.reloaded:
@@ -4768,6 +4835,7 @@ class Session:
         self._repoll_if_timed_out(result)
         self._report(result)
         self._changed()
+        return written
 
     # --- auto-revert (ADR-0016) ---------------------------------------------------------------
 

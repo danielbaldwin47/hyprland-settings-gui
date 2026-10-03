@@ -24,10 +24,11 @@ from hyprtweaker.engine.bridge import (
     ToolSpec,
     Wallpaper,
 )
+from hyprtweaker.engine.bridge.wire import NOT_UPDATED
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.state import Manifest
 from hyprtweaker.engine.writer import Writer
-from hyprtweaker.session import Session
+from hyprtweaker.session import ENTRYPOINT_EDITED, BridgeNotRemoved, BridgeRemoved, Session
 
 BORDER_SIZE = "general:border_size"
 INACTIVE = "general:col.inactive_border"
@@ -513,6 +514,92 @@ def test_a_tool_still_loading_with_no_entry_is_removed_by_remove(tmp_path: Path)
 
         assert bridge_lines(tmp_path) == []
         assert session.color_source() == ManualColors()
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def _no_space(*_args: object, **_kwargs: object) -> bool:
+    raise OSError(28, "No space left on device")
+
+
+def test_a_remove_whose_entrypoint_write_fails_keeps_the_tool_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#267: the output used to be deleted inside the queued write, before the Entrypoint was
+    written, so a write that failed left the tool loading nothing until it ran again. Now it
+    is set aside and put back, byte for byte, and the caller hears that it was not removed."""
+    colours = 'return { general = { col = { inactive_border = "rgba(ff0000ff)" } } }\n'
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        output = put(tmp_path, "hyprtweaker/bridge/matugen.lua", colours)
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        wire(session, MATUGEN)
+        assert session.set_color_source(Wallpaper("matugen"))
+        await settle(session, runner)
+        heard: list[BridgeRemoved | BridgeNotRemoved] = []
+
+        monkeypatch.setattr(Writer, "set_bridges", _no_space)
+        assert session.remove_bridge("matugen", done=heard.append)
+        await settle(session, runner)
+
+        assert output.read_text(encoding="utf-8") == colours
+        assert sorted(p.name for p in output.parent.iterdir()) == ["matugen.lua"]
+        assert bridge_lines(tmp_path) == ['require("hyprtweaker/bridge/matugen")']
+        assert heard == [BridgeNotRemoved(NOT_UPDATED)]
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_a_remove_that_stands_deletes_the_output_and_says_so(tmp_path: Path) -> None:
+    """#267: the output goes once the Entrypoint that no longer loads it stands, and the
+    caller is told then, not when the write was queued."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        output = put(tmp_path, "hyprtweaker/bridge/matugen.lua")
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        wire(session, MATUGEN)
+        heard: list[BridgeRemoved | BridgeNotRemoved] = []
+
+        assert session.remove_bridge("matugen", done=heard.append)
+        assert heard == []
+        await settle(session, runner)
+
+        assert heard == [BridgeRemoved()]
+        assert not output.parent.exists() or list(output.parent.iterdir()) == []
+        assert bridge_lines(tmp_path) == []
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
+def test_a_remove_refused_before_queueing_answers_at_once(tmp_path: Path) -> None:
+    """#267: a session that cannot write the Entrypoint says why straight away."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        output = put(tmp_path, "hyprtweaker/bridge/matugen.lua")
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        wire(session, MATUGEN)
+        paths_of(tmp_path).entrypoint.write_text("-- edited by hand\n", encoding="utf-8")
+        heard: list[BridgeRemoved | BridgeNotRemoved] = []
+
+        assert not session.remove_bridge("matugen", done=heard.append)
+
+        assert heard == [BridgeNotRemoved(ENTRYPOINT_EDITED)]
+        assert output.is_file()
 
     run_with_fake(
         scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
