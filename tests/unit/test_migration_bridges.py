@@ -450,11 +450,14 @@ class TestRollBack:
         run(flow.switch())
         assert tool_files(two_tools) != before
 
-        flow.roll_back()
+        outcome = flow.roll_back()
 
         assert tool_files(two_tools) == before
         assert bridges(two_tools) == []
-        assert flow.rollback_notes == ()
+        assert [note.split(" kept in ")[0] for note in outcome.notes] == [
+            "What the switch wrote, with the presets and display profiles in it, is",
+            "A full copy of your config from before the switch is",
+        ]
 
     def test_a_relaunched_app_rolls_back_the_tools_the_sentinel_names(
         self, two_tools: ConfigPaths
@@ -488,15 +491,15 @@ class TestRollBack:
         edited = config.read_text(encoding="utf-8") + "# the user's edit\n"
         config.write_text(edited, encoding="utf-8")
 
-        flow.roll_back()
+        outcome = flow.roll_back()
 
         assert config.read_text(encoding="utf-8") == edited
         assert not two_tools.entrypoint.exists()
         assert bridges(two_tools) == []
-        assert flow.rollback_notes == (
+        assert outcome.notes[0] == (
             "~/.config/matugen/config.toml changed after matugen was set up, so it was left "
             "as it is. The copy from before setup is in "
-            "~/.local/state/hyprtweaker/bridge-backups/.",
+            "~/.local/state/hyprtweaker/bridge-backups/."
         )
 
     @pytest.mark.parametrize("relaunched", [False, True])

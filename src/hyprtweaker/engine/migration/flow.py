@@ -20,6 +20,8 @@ rather than one procedure:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import logging
 import os
 import shutil
 import subprocess
@@ -35,11 +37,12 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from ..bridge import REGISTRY, BridgeEntry
-from ..bridge.wire import WireConsent
-from ..files import write_atomic
+from ..bridge.wire import WireConsent, shown
+from ..files import keep_edited_copy, write_atomic
 from ..importer.loss import (
     APP_DIR_BACKUP_NAME,
     BACKUP_NAME,
+    IMPORTED_NAME,
     LossCode,
     LossReport,
     rescue_command,
@@ -64,6 +67,8 @@ from . import bridge_setup
 from . import sentinel as sentinels
 from .detect import ConfigKind, Detection, detect
 from .export import render as export_render
+
+_log = logging.getLogger(__name__)
 
 ROLLBACK_SECONDS = 60.0
 """How long Keep-or-roll-back waits before rolling back on its own (ADR-0009).
@@ -311,6 +316,24 @@ class SwitchResult:
         return tuple(check for check in self.checks if not check.ok and not check.hard)
 
 
+@dataclass(frozen=True, slots=True)
+class RollBackOutcome:
+    """What a Roll back did, and when it could not finish, what remains (#268).
+
+    Incomplete means the switch is still unfinished: its marker stays, so the next start
+    offers Roll back again, and nothing says "you are on the configuration you had before".
+    """
+
+    complete: bool
+    edited_copy: Path | None = None
+    """Where a changed Entrypoint was copied before Roll back replaced or removed it."""
+    notes: tuple[str, ...] = ()
+    """One sentence each: the copy kept, where the switch's own files went, what a theming
+    tool could not put back (#187)."""
+    rescue: str = ""
+    """Why it stopped, what is still in place and how to recover; empty when complete."""
+
+
 @dataclass
 class MigrationFlow:
     """One run of the wizard, from detection to a config the user decided to keep."""
@@ -329,16 +352,19 @@ class MigrationFlow:
     backup: backups.Backup | None = None
     report_path: Path | None = None
     _restore: Path | None = field(default=None, repr=False)
-    """Where a displaced `hyprland.lua` was renamed to, once the switch has renamed it --
-    the file the rescue line has to name (#131)."""
+    """Where the switch moves a displaced `hyprland.lua`, chosen before its marker is
+    written -- the file the rescue line has to name (#131, #268)."""
     _restore_app_dir: Path | None = field(default=None, repr=False)
-    """Where the App dir found before the switch was renamed to, once the switch has."""
+    """Where the switch moves the App dir it found, chosen with `_restore`."""
+    _imported: Path | None = field(default=None, repr=False)
+    """Where the rescue moves the imported App dir out of the way: a name free at switch
+    time, so a repeated migration's rescue never moves into an earlier one (#268)."""
     _answer: asyncio.Event | None = field(default=None, repr=False)
     _decision: Decision | None = field(default=None, repr=False)
     _consents: dict[str, WireConsent] = field(default_factory=dict, repr=False)
     """The theming tools the user agreed to set up, by tool: wired at Switch, never before."""
-    rollback_notes: tuple[str, ...] = ()
-    """What the last rollback could not put back, one sentence per tool (#187)."""
+    rollback: RollBackOutcome | None = None
+    """What the last Roll back did, for the page that reports it."""
 
     # --- 1. detect ----------------------------------------------------------------------
 
@@ -527,8 +553,11 @@ class MigrationFlow:
         """Write the new config, make the live session read it, and check that it did.
 
         The order is load-bearing and is the reason this is not three calls from the UI:
-        sentinel, then files, then `reload full-reset`, then verification. A failure at any
-        point after the sentinel leaves a marker that the next start knows how to undo.
+        the backup names are chosen, the sentinel records them with the original
+        Entrypoint's hash, the originals move, the tree is written, the sentinel is
+        rewritten with the generated Entrypoint's hash, then `reload full-reset`, then
+        verification. Nothing moves before the marker is on disk, so a failure at any point
+        leaves either nothing changed or a marker the next start knows how to undo (#268).
         """
         preview = self._require_preview()
         self.step = Step.SWITCH
@@ -553,20 +582,29 @@ class MigrationFlow:
 
         # Read while the Manifest and Entrypoint that record them are still in place.
         entries = self._bridge_entries()
-        restore = self._preserve_entrypoint(preview)
-        self._restore = restore
-        self._restore_app_dir = self._preserve_app_dir(entries)
+        self._choose_backup_names(preview)
         consents = self.consents
-        sentinels.write(
-            self.paths,
-            kind=preview.detection.kind.value,
-            source=preview.detection.source,
-            backup=self.backup.path if self.backup else None,
-            restore=restore,
-            restore_app_dir=self._restore_app_dir,
-            bridge_tools=tuple(consent.plan.tool for consent in consents),
-            now=self.now(),
-        )
+        started = self.now()
+
+        def record(generated: str | None = None) -> None:
+            sentinels.write(
+                self.paths,
+                kind=preview.detection.kind.value,
+                source=preview.detection.source,
+                backup=self.backup.path if self.backup else None,
+                restore=self._restore,
+                restore_app_dir=self._restore_app_dir,
+                bridge_tools=tuple(consent.plan.tool for consent in consents),
+                original_sha256=original,
+                generated_sha256=generated,
+                now=started,
+            )
+
+        original = _sha256(self.paths.entrypoint)
+        record()
+        self._preserve_entrypoint()
+        self._preserve_app_dir(entries)
+        self._resave_report(preview)
 
         # The tree, Entrypoint included, lands before any tool file: noctalia, once its
         # template is on, appends its own `require` to a `hyprland.lua` that lacks one, and
@@ -581,6 +619,12 @@ class MigrationFlow:
             hypr_dir=self.paths.hypr_dir,
         )
         self._record_provenance(preview)
+        try:
+            record(_sha256(self.paths.entrypoint))
+        except OSError as error:
+            # The first marker stands: Roll back then copies any Entrypoint that is not the
+            # original before replacing it, which costs a needless copy, never a file.
+            _log.warning("could not record the generated Entrypoint's hash: %s", error)
 
         await self.client.reload_full_reset()
         checks = await self.verify_live(preview)
@@ -737,74 +781,208 @@ class MigrationFlow:
         sentinels.clear(self.paths)
         self.step = Step.DONE
 
-    def roll_back(self, marker: sentinels.Sentinel | None = None) -> None:
-        """Put the previous engine back.
+    def roll_back(self, marker: sentinels.Sentinel | None = None) -> RollBackOutcome:
+        """Put the previous engine back, or say exactly what is still in place (#268).
 
         Deleting the Entrypoint is the whole rollback on the `.conf` path -- `hyprland.conf`
         was never touched, so Hyprland picks it up again by itself. On the `.lua` path the
-        original is moved back from `hyprland.lua.bak` over the generated file.
+        original is moved back from `hyprland.lua.bak` over the generated file, or copied
+        from the full-tree backup when that file is gone.
 
         Takes an optional sentinel so a *relaunched* app can roll back a switch this object
         never made: after a crash the marker on disk is the only thing that remembers what
-        the previous config was.
+        the previous config was. Decided by bytes, not by which step the switch reached: an
+        Entrypoint that hashes as the original stays, a named backup is trusted only once it
+        exists.
 
-        Idempotent, and it only ever deletes an Entrypoint this app generated: a second call
-        finds the `.bak` already moved back and the user's own file in place, and leaves it.
+        Idempotent: a second call finds the original in place and leaves it. Nothing the user
+        wrote is lost: an Entrypoint that is neither the original nor what the switch wrote
+        is copied to `edited-copies` first, and a copy that fails stops Roll back before any
+        byte changes. The marker is cleared only when Roll back completes.
 
         Each theming tool the switch wired is unwired first, while the Entrypoint still has
-        its line (#187). One that cannot be put back is said in `rollback_notes` and does
-        not stop the rest: the user is never stranded on the new config for a tool's sake.
+        its line (#187). One that cannot be put back is said in the notes and does not stop
+        the rest: the user is never stranded on the new config for a tool's sake.
         """
         record = marker or sentinels.read(self.paths)
-        self.rollback_notes = bridge_setup.unwire_all(
-            record.bridge_tools if record else (),
-            paths=self.paths,
-            manifest=self._manifest,
-            unregister=self._forget_bridge,
+        outcome = self._roll_back(record)
+        self.rollback = outcome
+        if outcome.complete:
+            sentinels.clear(self.paths)
+        self.step = Step.DONE
+        return outcome
+
+    def _roll_back(self, record: sentinels.Sentinel | None) -> RollBackOutcome:
+        if record is not None and not record.known:
+            return RollBackOutcome(complete=False, rescue=self._unreadable_rescue())
+        entrypoint = self.paths.entrypoint
+        how, source = self._entrypoint_plan(record)
+        if how is _Put.STUCK:
+            assert record is not None and record.restore is not None
+            return RollBackOutcome(complete=False, rescue=self._stuck_rescue(record))
+
+        edited: Path | None = None
+        if how is not _Put.LEAVE and self._changed_since_switch(record):
+            try:
+                edited = keep_edited_copy(self.paths, entrypoint, entrypoint.name)
+            except OSError as error:
+                return RollBackOutcome(
+                    complete=False, rescue=self._no_copy_rescue(record, error)
+                )
+
+        notes: list[str] = []
+        if edited is not None:
+            notes.append(
+                f"{entrypoint.name} had changed since the switch, so that version is kept "
+                f"as {shown(edited, self.paths)}."
+            )
+        notes.extend(
+            bridge_setup.unwire_all(
+                record.bridge_tools if record else (),
+                paths=self.paths,
+                manifest=self._manifest,
+                unregister=self._forget_bridge,
+            )
         )
-        restore = Path(record.restore) if record and record.restore else None
 
-        if restore is not None:
-            # Missing: an earlier call of this put it back (a second answer to the relaunch
-            # offer, #148 hand-test 19), and the Entrypoint is the user's own again -- even
-            # when it carries the app's banner, as an app user's does (#148 review R1).
-            if restore.is_file():
-                os.replace(restore, self.paths.entrypoint)
-        elif _generated_by_this_app(self.paths.entrypoint):
-            self.paths.entrypoint.unlink()
+        if how is _Put.MOVE_BACK:
+            assert source is not None
+            os.replace(source, entrypoint)
+        elif how is _Put.FROM_BACKUP:
+            assert source is not None and record is not None and record.backup is not None
+            _copy_into_place(source, entrypoint)
+            notes.append(
+                f"{Path(record.restore or BACKUP_NAME).name} was missing, so your "
+                f"{entrypoint.name} was put back from the backup made before the switch."
+            )
+        elif how is _Put.DELETE:
+            entrypoint.unlink()
 
+        disowned: Path | None = None
         if record and record.restore_app_dir:
             # The App dir the user had is moved back, the switch's own moved out of its way
-            # (#148 review R1). Missing: an earlier call already did, and both stay put.
+            # (#148 review R1). Missing: the switch stopped before moving it, or an earlier
+            # call already moved it back; either way the App dir in place is the user's.
             kept = Path(record.restore_app_dir)
             if kept.is_dir():
-                self._disown_app_dir()
+                disowned = self._disown_app_dir()
                 os.replace(kept, self.paths.app_dir)
-        elif not _generated_by_this_app(self.paths.entrypoint):
-            self._disown_app_dir()
+        elif not _generated_by_this_app(entrypoint):
+            disowned = self._disown_app_dir()
 
-        sentinels.clear(self.paths)
-        self.step = Step.DONE
+        if disowned is not None:
+            notes.append(
+                "What the switch wrote, with the presets and display profiles in it, is "
+                f"kept in {shown(disowned.parent, self.paths)}."
+            )
+        if record and record.backup and Path(record.backup).is_dir():
+            notes.append(
+                "A full copy of your config from before the switch is kept in "
+                f"{shown(Path(record.backup), self.paths)}."
+            )
+        return RollBackOutcome(complete=True, edited_copy=edited, notes=tuple(notes))
 
-    def _disown_app_dir(self) -> None:
+    def _entrypoint_plan(self, record: sentinels.Sentinel | None) -> tuple[_Put, Path | None]:
+        """What Roll back does to the Entrypoint, decided before any byte changes."""
+        entrypoint = self.paths.entrypoint
+        if record is None or record.restore is None:
+            # The `.conf` path: nothing was displaced. Only a file this app generated goes;
+            # one without the banner is the user's own and stays.
+            return (_Put.DELETE if _generated_by_this_app(entrypoint) else _Put.LEAVE), None
+        restore = Path(record.restore)
+        in_backup = Path(record.backup) / entrypoint.name if record.backup else None
+        original = record.original_sha256 or (
+            _sha256(in_backup) if in_backup is not None else None
+        )
+        if original is not None and _sha256(entrypoint) == original:
+            # The switch stopped before moving it, or an earlier Roll back put it back
+            # (#148 hand-test 19): the user's own file is in place, even with the app's
+            # banner, as an app user's carries (#148 review R1).
+            return _Put.LEAVE, None
+        if restore.is_file() or restore.is_symlink():
+            return _Put.MOVE_BACK, restore
+        if in_backup is not None and (in_backup.is_file() or in_backup.is_symlink()):
+            return _Put.FROM_BACKUP, in_backup
+        return _Put.STUCK, None
+
+    def _changed_since_switch(self, record: sentinels.Sentinel | None) -> bool:
+        """Whether the Entrypoint holds bytes the switch did not write: a hand edit during
+        the countdown, or a switch that stopped before recording what it wrote."""
+        current = _sha256(self.paths.entrypoint)
+        if current is None:
+            return False
+        if record is not None and record.generated_sha256 is not None:
+            return current != record.generated_sha256
+        return current != (record.original_sha256 if record else None)
+
+    def _unreadable_rescue(self) -> str:
+        latest = backups.latest(self.paths)
+        where = (
+            f" The backup made before the switch is in {shown(latest.path, self.paths)}."
+            if latest is not None
+            else ""
+        )
+        return (
+            "The record of this switch could not be read, so nothing was rolled back and "
+            f"the new configuration is still in place.{where} If {BACKUP_NAME} is in "
+            "~/.config/hypr, this puts it back from a TTY:\n"
+            f"{rescue_command(True)}"
+        )
+
+    def _stuck_rescue(self, record: sentinels.Sentinel) -> str:
+        name = self.paths.entrypoint.name
+        backup = Path(record.backup) if record.backup else None
+        where = (
+            f" The backup made before the switch is in {shown(backup, self.paths)}, without "
+            f"a {name}."
+            if backup is not None and backup.is_dir()
+            else " There is no backup from before the switch to put it back from."
+        )
+        return (
+            f"Your {name} could not be put back: {Path(record.restore or BACKUP_NAME).name} "
+            f"is missing.{where} Nothing was changed, so the new configuration is still in "
+            "place, and the app offers this again at its next start. If you are locked out, "
+            "this moves the new file aside from a TTY, so Hyprland starts on its own "
+            f"default:\nmv ~/.config/hypr/{name} ~/.config/hypr/{name}.switched"
+        )
+
+    def _no_copy_rescue(self, record: sentinels.Sentinel | None, error: OSError) -> str:
+        name = self.paths.entrypoint.name
+        reason = error.strerror or str(error)
+        return (
+            f"Nothing was rolled back: {name} has changed since the switch, and a copy of "
+            f"it could not be kept ({reason}). The new configuration is still in place, and "
+            "the app offers this again at its next start. If you are locked out, from a "
+            f"TTY:\n{marker_rescue_command(record)}"
+        )
+
+    def _disown_app_dir(self) -> Path | None:
         """Move the App dir the rolled-back switch wrote into the state directory.
 
         Nothing loads it now, and left in place its Manifest claimed the user's own config
         for the app: the next launch wrote edits into Modules nothing loads (#148 hand-tests
-        20, 25). Moved, never deleted: presets or profiles in it stay in reach.
+        20, 25). Moved, never deleted: presets or profiles in it stay in reach. A folder of
+        its own per Roll back, so two in one second never meet (#268). Returns where it went.
         """
         app_dir = self.paths.app_dir
         if not app_dir.is_dir():
-            return
+            return None
         stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        target = self.paths.state_dir / ROLLED_BACK_DIR / stamp
-        target.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(app_dir), str(target / app_dir.name))
+        base = self.paths.state_dir / ROLLED_BACK_DIR / stamp
+        suffix = 1
+        while (base / app_dir.name).exists():
+            suffix += 1
+            base = self.paths.state_dir / ROLLED_BACK_DIR / f"{stamp}-{suffix}"
+        base.mkdir(parents=True, exist_ok=True)
+        target = base / app_dir.name
+        shutil.move(str(app_dir), str(target))
+        return target
 
-    async def roll_back_live(self, marker: sentinels.Sentinel | None = None) -> None:
+    async def roll_back_live(self, marker: sentinels.Sentinel | None = None) -> RollBackOutcome:
         """Roll back and make the running session read the restored config."""
-        self.roll_back(marker)
+        outcome = self.roll_back(marker)
         await self.reload_restored()
+        return outcome
 
     async def reload_restored(self) -> None:
         """Make the running session read the config a rollback put back."""
@@ -827,6 +1005,7 @@ class MigrationFlow:
             self._restores_backup(),
             backup=self._backup_name(),
             app_dir_backup=self._app_dir_backup_name(),
+            imported=self._imported.name if self._imported is not None else IMPORTED_NAME,
         )
 
     @property
@@ -841,6 +1020,7 @@ class MigrationFlow:
             self._restores_backup(),
             backup=self._backup_name(),
             app_dir_backup=self._app_dir_backup_name(),
+            imported=self._imported.name if self._imported is not None else IMPORTED_NAME,
         )
 
     def _backup_name(self) -> str:
@@ -869,13 +1049,29 @@ class MigrationFlow:
         )
         said = [f"Kept from the app: {kept}."]
         if (self.paths.monitor_profiles_dir / ACTIVE_NAME).is_file():
+            # The pointer never carries over; the reason is only true of an import that
+            # sets the displays itself (#268 comment 2).
+            sets_displays = self.preview is not None and bool(
+                self.preview.result.entities.monitors
+            )
             said.append(
                 "None of the profiles stays marked active, because the imported config "
                 "sets your displays."
+                if sets_displays
+                else "None of the profiles stays marked active; choose one on the Displays "
+                "page to use it again."
             )
-        said.append(
-            f"The app's previous folder is kept as ~/.config/hypr/{APP_DIR_BACKUP_NAME}."
-        )
+        if (self.paths.hypr_dir / APP_DIR_BACKUP_NAME).exists():
+            # The switch stamps the name then; the Done page and the re-saved report give
+            # the exact one, which is not known until the switch picks its stamp.
+            said.append(
+                "The app's previous folder is kept in ~/.config/hypr under a dated name, "
+                f"since {APP_DIR_BACKUP_NAME} is taken by an earlier import."
+            )
+        else:
+            said.append(
+                f"The app's previous folder is kept as ~/.config/hypr/{APP_DIR_BACKUP_NAME}."
+            )
         return " ".join(said)
 
     @staticmethod
@@ -940,28 +1136,56 @@ class MigrationFlow:
             raise RuntimeError("no preview yet: call build_preview() first")
         return self.preview
 
-    def _preserve_entrypoint(self, preview: Preview) -> Path | None:
+    def _choose_backup_names(self, preview: Preview) -> None:
+        """Name, once, where the switch moves what it displaces (#268).
+
+        Chosen before the sentinel is written so the marker can name them before anything
+        moves; a reader checks a named backup exists before trusting it. A name an earlier
+        migration already claimed gets the switch's stamp: keep both, the older one may be
+        the user's only copy of a config from before that migration.
+        """
+        stamp = self.now().strftime(backups.STAMP_FORMAT)
+        entrypoint = self.paths.entrypoint
+        self._restore = (
+            _free_beside(entrypoint, entrypoint.name + BACKUP_SUFFIX, stamp)
+            if _displaces_entrypoint(preview.detection) and entrypoint.is_file()
+            else None
+        )
+        app_dir = self.paths.app_dir
+        self._restore_app_dir = (
+            _free_beside(app_dir, APP_DIR_BACKUP_NAME, stamp) if app_dir.is_dir() else None
+        )
+        self._imported = _free_beside(app_dir, IMPORTED_NAME, stamp)
+
+    def _preserve_entrypoint(self) -> None:
         """Rename an existing `hyprland.lua` aside, since the new one contests its name.
 
-        A rename, never a delete (ADR-0009), and it happens before the sentinel records it
-        so the marker can never name a backup that was not made.
+        A rename, never a delete (ADR-0009), to the name the sentinel already recorded.
         """
-        if not _displaces_entrypoint(preview.detection):
-            return None
-        entrypoint = self.paths.entrypoint
-        if not entrypoint.is_file():
-            return None
+        if self._restore is not None:
+            os.replace(self.paths.entrypoint, self._restore)
 
-        target = entrypoint.with_name(entrypoint.name + BACKUP_SUFFIX)
-        stamp = self.now().strftime(backups.STAMP_FORMAT)
-        if target.exists():
-            # An earlier migration already claimed the name. Keep both: the older one may
-            # be the user's only copy of a config from before that migration.
-            target = entrypoint.with_name(f"{entrypoint.name}{BACKUP_SUFFIX}.{stamp}")
-        os.replace(entrypoint, target)
-        return target
+    def _resave_report(self, preview: Preview) -> None:
+        """Re-save the Preview's report with the backups this switch made (#268, ADR-0009).
 
-    def _preserve_app_dir(self, bridges: Sequence[BridgeEntry]) -> Path | None:
+        Same file, so a report read back later names the files of *this* switch rather than
+        the generic ones. A report that cannot be re-saved never fails the switch: the
+        wizard's pages show the exact names regardless.
+        """
+        loss = preview.loss
+        loss.backup_name = self._restore.name if self._restore is not None else None
+        loss.app_dir_backup_name = (
+            self._restore_app_dir.name if self._restore_app_dir is not None else None
+        )
+        loss.imported_name = self._imported.name if self._imported is not None else None
+        if self.report_path is None:
+            return
+        try:
+            loss.save(self.paths, path=self.report_path)
+        except OSError as error:
+            _log.warning("could not re-save the loss report %s: %s", self.report_path, error)
+
+    def _preserve_app_dir(self, bridges: Sequence[BridgeEntry]) -> None:
         """Rename an existing App dir aside, presets and Monitor profiles in it, before the
         switch writes the imported one: written over in place, the user's Modules had no
         copy Roll back could put back (#148 review R1). Named like the Entrypoint's.
@@ -970,12 +1194,9 @@ class MigrationFlow:
         loading after the switch, as they did when the tree was written in place.
         """
         app_dir = self.paths.app_dir
-        if not app_dir.is_dir():
-            return None
-        target = app_dir.with_name(APP_DIR_BACKUP_NAME)
-        if target.exists():
-            stamp = self.now().strftime(backups.STAMP_FORMAT)
-            target = app_dir.with_name(f"{APP_DIR_BACKUP_NAME}.{stamp}")
+        target = self._restore_app_dir
+        if target is None:
+            return
         os.replace(app_dir, target)
         # What the user saved in the app is theirs, not the replaced config's (#148 fix
         # review R8). Copied, so the moved-aside dir stays whole for Roll back.
@@ -995,7 +1216,6 @@ class MigrationFlow:
             if kept is not None and kept.is_file():
                 output.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(kept, output)
-        return target
 
     def _write_tree(
         self,
@@ -1102,11 +1322,72 @@ __all__ = [
     "Decision",
     "MigrationFlow",
     "Preview",
+    "RollBackOutcome",
     "Step",
     "SwitchResult",
     "VerifyGate",
     "fresh_start",
 ]
+
+
+class _Put(StrEnum):
+    """What Roll back does to the Entrypoint (`_entrypoint_plan`)."""
+
+    LEAVE = "leave"
+    """The user's own file is in place already."""
+    MOVE_BACK = "move-back"
+    """The displaced original is moved back from `hyprland.lua.bak`."""
+    FROM_BACKUP = "from-backup"
+    """That file is gone; the full-tree backup's copy is copied into place."""
+    DELETE = "delete"
+    """The `.conf` path: the generated Entrypoint goes, `hyprland.conf` takes over."""
+    STUCK = "stuck"
+    """Neither copy exists: Roll back changes nothing and says so."""
+
+
+def marker_rescue_command(marker: sentinels.Sentinel | None) -> str:
+    """The TTY rescue for the switch `marker` records, with the names it made (#268).
+
+    What a relaunched app, which has no Preview, shows beside a Roll back that failed.
+    """
+    if marker is None or not marker.known:
+        return rescue_command(None)
+    return rescue_command(
+        marker.restore is not None,
+        backup=Path(marker.restore).name if marker.restore else BACKUP_NAME,
+        app_dir_backup=Path(marker.restore_app_dir).name if marker.restore_app_dir else None,
+    )
+
+
+def _sha256(path: Path) -> str | None:
+    """The file's `sha256`, or `None` when there is no file to hash."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _free_beside(path: Path, name: str, stamp: str) -> Path:
+    """`name` beside `path` if nothing holds it, else `name.<stamp>[-n]`."""
+    target = path.with_name(name)
+    suffix = 1
+    while target.exists() or target.is_symlink():
+        target = path.with_name(f"{name}.{stamp}" + (f"-{suffix}" if suffix > 1 else ""))
+        suffix += 1
+    return target
+
+
+def _copy_into_place(source: Path, target: Path) -> None:
+    """Copy `source` over `target` in one rename; a symlink is recreated as one, as the
+    backup took it (`backup.create`)."""
+    if source.is_symlink():
+        temporary = target.with_name(f".{target.name}.restoring")
+        temporary.unlink(missing_ok=True)
+        temporary.symlink_to(source.readlink())
+        os.replace(temporary, target)
+        return
+    write_atomic(target, source.read_bytes())
+    shutil.copymode(source, target)
 
 
 ROLLED_BACK_DIR = "rolled-back"

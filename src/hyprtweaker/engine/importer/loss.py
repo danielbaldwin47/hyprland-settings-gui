@@ -37,12 +37,14 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from ..files import write_atomic
 from ..paths import ConfigPaths
 
 __all__ = [
     "APP_DIR_BACKUP_NAME",
     "BACKUP_NAME",
     "FORMAT_VERSION",
+    "IMPORTED_NAME",
     "LOSS_CODES",
     "RESCUE_COMMAND_CONF",
     "RESCUE_COMMAND_LUA",
@@ -81,17 +83,26 @@ APP_DIR_BACKUP_NAME = "hyprtweaker.bak"
 Stamped like `hyprland.lua.bak` when an earlier migration took the name."""
 
 
+IMPORTED_NAME = "hyprtweaker.imported"
+"""Where the rescue moves the imported App dir out of the way of the user's own.
+
+Stamped like the backups when an earlier rescue left one there: `mv` onto an existing
+directory moves *into* it, and the user's App dir would not come back (#268)."""
+
+
 def rescue_command(
     restore_backup: bool | None,
     *,
     backup: str = BACKUP_NAME,
     app_dir_backup: str | None = None,
+    imported: str = IMPORTED_NAME,
 ) -> str:
     """The bare shell command, for surfaces that show a command rather than prose.
 
     An unknown answer takes the restoring command: it is the one that cannot destroy a
     config by being wrong. `app_dir_backup` names the App dir the switch moved aside: the
-    imported one is moved out of its way, never deleted, and the user's own moved back.
+    imported one is moved out of its way to `imported`, never deleted, and the user's own
+    moved back.
     """
     command = (
         RESCUE_COMMAND_CONF
@@ -101,7 +112,7 @@ def rescue_command(
     if app_dir_backup is None:
         return command
     return (
-        "mv ~/.config/hypr/hyprtweaker ~/.config/hypr/hyprtweaker.imported && "
+        f"mv ~/.config/hypr/hyprtweaker ~/.config/hypr/{imported} && "
         f"mv ~/.config/hypr/{app_dir_backup} ~/.config/hypr/hyprtweaker && {command}"
     )
 
@@ -130,6 +141,7 @@ def rescue_line(
     *,
     backup: str = BACKUP_NAME,
     app_dir_backup: str | None = None,
+    imported: str = IMPORTED_NAME,
 ) -> str:
     """The TTY escape hatch, for a migration that did or did not displace a `hyprland.lua`.
 
@@ -147,7 +159,9 @@ def rescue_line(
         return RESCUE_LINE_UNKNOWN
     if not restore_backup and app_dir_backup is None:
         return RESCUE_LINE_CONF
-    command = rescue_command(restore_backup, backup=backup, app_dir_backup=app_dir_backup)
+    command = rescue_command(
+        restore_backup, backup=backup, app_dir_backup=app_dir_backup, imported=imported
+    )
     return f"{_RESCUE_PREFIX}run `{command}` to restore your previous config."
 
 
@@ -428,6 +442,18 @@ class LossReport:
     """Whether that migration also moved an existing App dir aside, so the rescue moves it
     back too (#148 review R1). Set by the wizard beside `restore_backup`."""
 
+    backup_name: str | None = None
+    """The name the switch moved the displaced `hyprland.lua` to, stamped or not (#268).
+
+    Set when the switch re-saves the report; `None` in a report saved at Preview, or one
+    from before #268, which reads with the generic `hyprland.lua.bak`."""
+
+    app_dir_backup_name: str | None = None
+    """The name the switch moved the App dir it found to, beside `backup_name`."""
+
+    imported_name: str | None = None
+    """Where the rescue moves the imported App dir, a name free at the switch."""
+
     def add(
         self,
         code: LossCode,
@@ -498,6 +524,9 @@ class LossReport:
             "source": self.source,
             "restore_backup": self.restore_backup,
             "restore_app_dir": self.restore_app_dir,
+            "backup_name": self.backup_name,
+            "app_dir_backup_name": self.app_dir_backup_name,
+            "imported_name": self.imported_name,
             "counts": {str(k): v for k, v in self.counts().items()},
             "items": [item.as_json() for item in self.items],
         }
@@ -513,14 +542,23 @@ class LossReport:
             created=record.get("created", ""),
             restore_backup=record.get("restore_backup"),
             restore_app_dir=bool(record.get("restore_app_dir")),
+            backup_name=_name(record.get("backup_name")),
+            app_dir_backup_name=_name(record.get("app_dir_backup_name")),
+            imported_name=_name(record.get("imported_name")),
         )
 
     @property
     def rescue_line(self) -> str:
-        """The escape hatch for the migration this report belongs to (#131)."""
+        """The escape hatch for the migration this report belongs to (#131), with the
+        names its switch made once it has re-saved the report (#268)."""
+        app_dir_backup = self.app_dir_backup_name or (
+            APP_DIR_BACKUP_NAME if self.restore_app_dir else None
+        )
         return rescue_line(
             self.restore_backup,
-            app_dir_backup=APP_DIR_BACKUP_NAME if self.restore_app_dir else None,
+            backup=self.backup_name or BACKUP_NAME,
+            app_dir_backup=app_dir_backup,
+            imported=self.imported_name or IMPORTED_NAME,
         )
 
     def render(self) -> str:
@@ -552,20 +590,24 @@ class LossReport:
                     lines.append(f"  - now: `{item.replacement}`")
         return "\n".join(lines) + "\n"
 
-    def save(self, paths: ConfigPaths, *, now: datetime | None = None) -> Path:
+    def save(
+        self, paths: ConfigPaths, *, now: datetime | None = None, path: Path | None = None
+    ) -> Path:
         """Write the pair to the reports dir; returns the JSON path.
 
         The stamp is the filename, so `latest()` needs no index and the two files of one
-        report share a name.
+        report share a name. `path`, a JSON path an earlier `save` returned, re-saves into
+        that pair: the switch does, once it knows the backup names (#268).
+
+        Each file is written whole or not at all, the Markdown first: `stored()` and
+        `latest()` find a report by its JSON, so a failure in between leaves the earlier
+        pair, or no report, never a JSON without its readable copy. Raises `OSError`.
         """
         if not self.created:
             self.created = _timestamp(now)
-        stamp = _stamp(now)
-        directory = paths.reports_dir
-        directory.mkdir(parents=True, exist_ok=True)
-        json_path = directory / f"{stamp}.json"
-        json_path.write_text(json.dumps(self.as_json(), indent=2) + "\n", encoding="utf-8")
-        (directory / f"{stamp}.md").write_text(self.render(), encoding="utf-8")
+        json_path = path or paths.reports_dir / f"{_stamp(now)}.json"
+        write_atomic(json_path.with_suffix(".md"), self.render())
+        write_atomic(json_path, json.dumps(self.as_json(), indent=2) + "\n")
         return json_path
 
     @classmethod
@@ -638,3 +680,8 @@ def _timestamp(now: datetime | None = None) -> str:
 
 def _stamp(now: datetime | None = None) -> str:
     return _now(now).strftime("%Y%m%d-%H%M%S")
+
+
+def _name(value: object) -> str | None:
+    """A file name read back from a report, or `None` for anything else."""
+    return value if isinstance(value, str) and value else None
