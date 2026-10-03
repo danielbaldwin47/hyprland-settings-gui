@@ -927,6 +927,23 @@ class TestWithoutACompositor:
 
         assert legacy.entrypoint.is_file()
 
+    def test_the_written_config_is_recorded_as_a_kept_import(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        """#259, review m1 F10: with no countdown to answer, it is kept by being written, so
+        the next live start makes it the restore boundary."""
+        flow = flow_for(legacy, schema, client=None)
+        flow.build_preview()
+        flow.back_up()
+
+        run(flow.switch())
+
+        record = kept_import.read(legacy)
+        assert record is not None and record.known
+        manifest = Manifest.load(legacy.manifest, app_version="x", schema_version="y")
+        assert dict(record.modules) == manifest.modules
+        assert record.modules
+
 
 class TestReloadSettling:
     def test_config_errors_are_re_read_before_they_count(

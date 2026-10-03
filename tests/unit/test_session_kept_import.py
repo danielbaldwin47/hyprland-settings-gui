@@ -178,3 +178,24 @@ def test_an_unanswered_switch_is_no_boundary_until_it_is_kept(tmp_path: Path) ->
     run_with_fake(
         scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
     )
+
+
+def test_an_import_whose_config_errors_could_not_be_read_is_unconfirmed(tmp_path: Path) -> None:
+    """#259, review m1 F10: a read-back that could not read `configerrors` has learned
+    nothing, so the import it seeds is no restore point."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        import_and_keep(tmp_path, 4)
+        del fake.conversation["j/configerrors"]
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+
+        assert kept_import.read(session.paths) is None, "the record is consumed"
+        (entry,) = session.journal.entries()
+        assert entry.boundary
+        assert not entry.confirmed
+        assert session.last_good_for(GENERAL_MODULE) is None
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 4}), reload_emits_event=True)
+    )
