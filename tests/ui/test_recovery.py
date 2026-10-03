@@ -115,10 +115,12 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
     # "did this raise a toast?" is a real question for ADR-0016's toasts-only-for-auto-revert
     # rule.
     window._toast_log = []
+    window._toasts_shown = []
     raise_toast = window._toasts.add_toast
 
     def counted(toast: Any) -> None:
         window._toast_log.append(toast.get_title())
+        window._toasts_shown.append(toast)
         raise_toast(toast)
 
     window._toasts.add_toast = counted
@@ -348,8 +350,8 @@ def restore_through_dialog(window: Any) -> Any:
     return body
 
 
-def test_a_restore_names_where_the_copy_of_the_edited_file_is(tmp_path: Path) -> None:
-    """#266: the answer says where this restore put the hand edit, not just the folder."""
+def test_a_restore_offers_the_copy_of_the_edited_file_it_kept(tmp_path: Path) -> None:
+    """#266: the answer says the hand edit was kept, and its button shows that copy."""
     from hyprtweaker.session import RestoreStart
 
     session, window = build_window(tmp_path, (APP_ERROR,))
@@ -362,10 +364,13 @@ def test_a_restore_names_where_the_copy_of_the_edited_file_is(tmp_path: Path) ->
         "general.lua goes back to the last version this app wrote and Hyprland accepted. "
         f"A copy of the file as it is now is kept in {tmp_path / 'state' / 'edited-copies'}."
     )
-    assert window._toast_log[-1] == (
-        f"general.lua is back to the last version Hyprland accepted. A copy of your edited "
-        f"file is at {copy}"
-    )
+    assert window._toast_log[-1] == "general.lua is restored, and a copy of your edit is kept"
+    toast = window._toasts_shown[-1]
+    assert toast.get_button_label() == "Show copy"
+    shown: list[Path] = []
+    window._show_in_folder = shown.append
+    toast.emit("button-clicked")
+    assert shown == [copy]
 
 
 def test_a_restore_that_cannot_keep_a_copy_says_nothing_was_restored(tmp_path: Path) -> None:

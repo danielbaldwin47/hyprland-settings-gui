@@ -51,7 +51,6 @@ from hyprtweaker.engine.apply import (  # noqa: E402
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
-from hyprtweaker.engine.bridge.wire import shown as tilde_path  # noqa: E402
 from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
 from hyprtweaker.engine.ipc import CommandClient, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
@@ -2410,17 +2409,21 @@ class MainWindow(Adw.ApplicationWindow):
                 return
 
             def done(ok: bool) -> None:
-                # Called once the restore has run, so after `start` is assigned below.
-                said = (
-                    f"{name} is back to the last version Hyprland accepted"
-                    if ok
-                    else f"{name} could not be restored. The Banner says what is wrong"
-                )
+                # Called once the restore has run, so after `start` is assigned below. The
+                # copy's path is too long for a toast's one line: "Show copy" opens its
+                # folder with the copy selected, where the path is whole (#266).
                 copy = start.copies.get(module)
+                if not ok:
+                    said = f"{name} could not be restored. The Banner says what is wrong"
+                elif copy is not None:
+                    said = f"{name} is restored, and a copy of your edit is kept"
+                else:
+                    said = f"{name} is back to the last version Hyprland accepted"
+                toast = plain_toast(said, timeout=8)
                 if copy is not None:
-                    shown = tilde_path(copy, self._session.paths)
-                    said += f". A copy of your edited file is at {shown}"
-                self._toasts.add_toast(plain_toast(said, timeout=8))
+                    toast.set_button_label("Show copy")
+                    toast.connect("button-clicked", lambda *_: self._show_in_folder(copy))
+                self._toasts.add_toast(toast)
 
             start = self._session.restore_last_good(module, done=done)
             if start.uncopied:
@@ -2484,6 +2487,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _launch_file(self, path: Path) -> None:
         Gtk.FileLauncher(file=Gio.File.new_for_path(str(path))).launch(self, None, None)
+
+    def _show_in_folder(self, path: Path) -> None:
+        """Open the folder holding `path`, with `path` selected where the file manager can."""
+        launcher = Gtk.FileLauncher(file=Gio.File.new_for_path(str(path)))
+        launcher.open_containing_folder(self, None, None)
 
     # --- plugins (#174) -------------------------------------------------------------------
 
