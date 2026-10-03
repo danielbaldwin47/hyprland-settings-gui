@@ -15,7 +15,7 @@ Infer the repo from `git remote -v` — `gh` does this automatically when run in
 
 ## Open a PR
 
-A PR's base is `main`. The owner merges it there, and the `Closes #<n>` lines in its body, one per spec and ticket it lands, close those tickets at the merge. GitHub closes on a merge into the default branch only: a PR opened onto a spec or effort branch whose own PR has already merged closes nothing. `gh pr edit <n> --base main` retargets a PR opened elsewhere.
+A PR's base is `main`. The owner merges it there, and the `Closes #<n>` lines in its body, one per spec and ticket it lands, close those tickets at the merge. GitHub closes on a merge into the default branch only. `gh pr edit <n> --base main` retargets a PR opened elsewhere.
 
 `.claude/hooks/pr-base-guard.sh` (a `PreToolUse` hook in `.claude/settings.json`) refuses `gh pr create --base` and `gh pr edit --base` onto a branch whose own PR to `main` has merged, and every merge (`gh pr merge`, or `gh api` on the REST or GraphQL merge), since the owner merges. A refusal names the fix.
 
@@ -33,7 +33,7 @@ GitHub shares one number space across issues and PRs, so a bare `#42` may be eit
 
 ## Specs
 
-A change spec is an issue labelled `spec`. One that fits a single build session also carries `ready-for-agent`; a larger one carries `spec` alone and is cut into `ready-for-agent` tickets before anyone builds it (`docs/agents/tickets.md`). Those labels apply when the owner asked for the spec or the cut; a follow-up an agent files on its own gets `needs-triage` (`docs/agents/triage-labels.md`). Tickets are sub-issues of their spec, and the specs of an effort are sub-issues of an issue labelled `effort` (`docs/agents/implement-spec.md`).
+A change spec is an issue labelled `spec`, written before its tickets are cut (`/to-spec`, then `/to-tickets`). Its tickets are its sub-issues and carry `ready-for-agent`; those labels apply when the owner asked for the spec or the cut, and a follow-up an agent files on its own gets `needs-triage` (`docs/agents/triage-labels.md`). Blocking edges are native issue dependencies (§ Wayfinding operations, Blocking).
 
 ## When a skill says "publish to the issue tracker"
 

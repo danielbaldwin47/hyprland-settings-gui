@@ -4,9 +4,9 @@
 #
 #  - A merge: `gh pr merge`, `gh api` on a `pulls/<n>/merge` path, and
 #    `gh api graphql` whose query names `mergePullRequest`. The owner
-#    merges, from their own shell; a session opens the PR to main, labels it
-#    ready-to-merge, and the merge closes the tickets its body names
-#    (docs/agents/implement-spec.md, step 8). All three shapes are judged
+#    merges, from their own shell; a session opens the PR to main and marks
+#    it ready, and the merge closes the tickets its body names
+#    (docs/agents/issue-tracker.md, Open a PR). All three shapes are judged
 #    because sessions refused `gh pr merge` have merged through the REST path.
 #  - `gh pr create --base <b>` and `gh pr edit --base <b>` where <b> is not
 #    main, has a MERGED PR to main and no OPEN one: a dead base. GitHub
@@ -90,7 +90,7 @@ for segment in "${raw_segments[@]}"; do
     else
         continue
     fi
-    deny "Merging is the owner's: a session opens the PR to main and labels it ready-to-merge (docs/agents/implement-spec.md, step 8)."
+    deny "Merging is the owner's: a session opens the PR to main and marks it ready for review (docs/agents/issue-tracker.md, Open a PR)."
 done
 
 # --- The base rule ------------------------------------------------------------
