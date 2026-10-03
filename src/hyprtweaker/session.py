@@ -664,9 +664,10 @@ class Session:
 
         A Retired notice keeps coming, start after start, until `notice_seen` records it."""
 
-        self.on_refused: Callable[[str, str], None] | None = None
+        self.on_refused: Callable[[str | int, str], None] | None = None
         """Called with a change refused because the Module it belongs in was edited outside
-        the app (ADR-0005), and that Module: the model is as it was, and no undo step was
+        the app (ADR-0005), and that Module: the change's title, or how many changes the
+        Writer kept out of that file. The model is as it was, and no undo step was
         recorded. The user's ways on are `keep_edited_file`, `edited_file_path` and
         `replace_edited_file`; after a Replace they make the change again."""
 
@@ -2815,7 +2816,7 @@ class Session:
                 return module
         return None
 
-    def _say_refused(self, what: str, module: str, *, toast: bool = True) -> None:
+    def _say_refused(self, what: str | int, module: str, *, toast: bool = True) -> None:
         """Name the refused change and the file that stopped it; keep the file on the Banner."""
         _log.info("refused %s: %s was edited outside the app", what, module)
         if module not in self._edited_files:
@@ -4018,9 +4019,7 @@ class Session:
         self._forget_unedited()
         for module, titles in refused.items():
             # The Rows show the model, which just went back to what the file holds.
-            self._say_refused(
-                titles[0] if len(titles) == 1 else f"{len(titles)} changes", module
-            )
+            self._say_refused(titles[0] if len(titles) == 1 else len(titles), module)
 
         rewired = result.write is not None and result.write.entrypoint_written
         if self._client is not None and (rewired or any(p.source is not None for p in presets)):
