@@ -562,6 +562,33 @@ def test_a_drag_released_into_a_module_edited_mid_drag_shows_the_old_value_again
     )
 
 
+def test_a_drag_tick_after_a_mid_drag_hand_edit_shows_the_old_value_again(
+    tmp_path: Path,
+) -> None:
+    """#267, review m1 F26: the restore runs at the first refused tick, before any release:
+    the next tick is refused and its `eval` carries the saved 18, not the dragged 30."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 18)
+        await shown(session, runner)
+        session.preview_option(ROUNDING, 25)
+        await shown(session, runner)
+        edited = hand_edit(tmp_path, DECORATION)
+
+        session.preview_option(ROUNDING, 30)
+        await shown(session, runner)
+
+        assert session.model.get(ROUNDING) == 18
+        assert evals(fake)[-1] == "eval hl.config{decoration={rounding=18}}"
+        assert module(tmp_path, DECORATION).read_text() == edited
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )
+
+
 def test_a_drag_whose_write_the_writer_skips_shows_the_old_value_again(tmp_path: Path) -> None:
     """#267: the release passed the gate and the file was edited before the write, so the
     Writer left it alone. The model goes back to 18 (#148 defect 13), and so does the
