@@ -714,6 +714,9 @@ class Session:
 
         self._edited_files: list[str] = []
         """Modules that refused a change and are still edited: `Health.edited_files`."""
+        self._unloaded: str | None = None
+        """The Entity Module the last startup read stopped at, named in `entities_unreadable`
+        (review m1 F29)."""
         self._adopted: set[str] = set()
         """Entity Modules a foreign reload read a hand edit from (`_moved_on_disk`): the
         model holds what the file said then, so the file back at the Manifest's hash is a
@@ -974,9 +977,8 @@ class Session:
             return None
         if not (self._paths.manifest.is_file() or self._paths.app_dir.is_dir()):
             return None
-        cause = (
-            self.offline_sentence or "One of its files would not load, so it is left as it is."
-        )
+        unloaded = (self._unloaded or "One of its files").rsplit("/", 1)[-1]
+        cause = self.offline_sentence or f"{unloaded} would not load, so it is left as it is."
         if cause.startswith("This app"):
             # Already about this app reading them: the prefix would say "This app" twice.
             return cause
@@ -3881,6 +3883,7 @@ class Session:
         every load succeeded: marking it with `window_rules.lua` unread would let the next
         Option write prune a rules file the user merely broke.
         """
+        self._unloaded = None
         if (
             self._load_binds()
             and self._load_rules()
@@ -3907,6 +3910,7 @@ class Session:
         parsed = parse_binds_module(path)
         if not parsed.ok:
             _log.warning("binds.lua would not evaluate, leaving it alone: %s", parsed.errors[0])
+            self._unloaded = BINDS_MODULE
             return False
 
         binds = list(parsed.binds)
@@ -3948,6 +3952,7 @@ class Session:
                 _log.warning(
                     "%s would not evaluate, leaving it alone: %s", module, parsed.errors[0]
                 )
+                self._unloaded = module
                 return False
             window.extend(parsed.window_rules)
             layer.extend(parsed.layer_rules)
@@ -3976,6 +3981,7 @@ class Session:
                 _log.warning(
                     "%s would not evaluate, leaving it alone: %s", module, parsed.errors[0]
                 )
+                self._unloaded = module
                 return False
             monitors.extend(parsed.monitors)
             workspace.extend(parsed.workspace_rules)
@@ -4029,6 +4035,7 @@ class Session:
                 _log.warning(
                     "%s would not evaluate, leaving it alone: %s", module, parsed.errors[0]
                 )
+                self._unloaded = module
                 return False
             curves.extend(parsed.curves)
             animations.extend(parsed.animations)

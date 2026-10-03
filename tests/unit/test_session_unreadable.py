@@ -143,8 +143,8 @@ def test_live_with_a_module_that_would_not_load(tmp_path: Path) -> None:
         await runner.settle()
         assert session.live, session.offline_reason
         assert session.entities_unreadable == (
-            "This app cannot read your settings right now. One of its files would not load, "
-            "so it is left as it is."
+            "This app cannot read your settings right now. binds.lua would not load, so it "
+            "is left as it is."
         )
 
     run_with_fake(scenario, FakeHyprland(section_conversation("general")))
