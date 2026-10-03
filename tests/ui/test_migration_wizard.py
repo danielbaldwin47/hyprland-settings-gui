@@ -1771,6 +1771,8 @@ class TestASwitchThatFailsItsChecks:
 
         assert _page_title(dialog) == "Stopped"
         assert dialog.get_can_close()
+        # Back there, "Switch and verify" is spent: no dead back arrow (addendum 2).
+        assert not dialog._view.get_visible_page().get_can_pop()
         (said,) = _descriptions(dialog)
         assert said.startswith("Your hyprland.lua could not be put back.\n\n")
         assert "You are back on the configuration" not in said

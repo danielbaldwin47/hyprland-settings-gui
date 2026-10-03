@@ -615,12 +615,11 @@ class MigrationDialog(Adw.Dialog):
             else:
                 title = "The new configuration did not load, and it could not be rolled back"
                 said = outcome.rescue
-            self._view.push(
-                self._failed_page(
-                    title,
-                    "\n\n".join(part for part in (said, failures, *outcome.notes) if part),
-                )
+            page = self._failed_page(
+                title, "\n\n".join(part for part in (said, failures, *outcome.notes) if part)
             )
+            page.set_can_pop(False)  # back there, "Switch and verify" is spent
+            self._view.push(page)
             self.set_can_close(True)
             return
         if not result.live:
