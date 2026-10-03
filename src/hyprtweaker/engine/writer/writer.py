@@ -453,13 +453,14 @@ class Writer:
             else:
                 unchanged.append(name)
 
-        removed = self._prune(
+        removed, spared = self._prune(
             manifest,
             keep=set(rendered),
             off_limits=off_limits,
             prune_entities=model.entities_loaded,
             before_replace=before_replace,
         )
+        skipped.extend(spared)
 
         if ENTRYPOINT_NAME in off_limits:
             skipped.append(ENTRYPOINT_NAME)
@@ -742,8 +743,10 @@ class Writer:
         *,
         prune_entities: bool = True,
         before_replace: BeforeReplace | None = None,
-    ) -> list[str]:
-        """Delete Modules the model no longer produces.
+    ) -> tuple[list[str], list[str]]:
+        """Delete Modules the model no longer produces: the ones removed, and the hand-edited
+        ones spared, which the write reports as skipped like any other change it kept off
+        disk (#273).
 
         Scoped to `options/` and to files the Manifest says the app wrote: a Module the app
         never claimed is somebody else's, and deleting it would be exactly the "manager over
@@ -758,8 +761,9 @@ class Writer:
         it -- and an explicit overwrite re-establishes the record that makes it prunable.
         """
         removed: list[str] = []
+        spared: list[str] = []
         for name in sorted(manifest.modules):
-            if name in keep or name in off_limits or not is_generated_module(name):
+            if name in keep or not is_generated_module(name):
                 continue
             if is_entity_module(name) and not prune_entities:
                 # The model's Entity half was never read, so "the model renders no binds"
@@ -768,9 +772,13 @@ class Writer:
                 # reach this state: Options are recovered from the compositor at startup.
                 continue
             path = self._paths.app_dir / name
+            if name in off_limits:
+                if path.is_file():
+                    spared.append(name)
+                continue
             if path.is_file():
                 if before_replace is not None:
                     before_replace(path)
                 path.unlink()
                 removed.append(name)
-        return removed
+        return removed, spared
