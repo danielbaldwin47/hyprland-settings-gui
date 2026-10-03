@@ -418,8 +418,9 @@ class MainWindow(Adw.ApplicationWindow):
         """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
         self._shown_live = False
         """Whether the Entity Pages last drew their rows editable."""
-        self._shown_unreadable: str | None = None
-        """What the Entity Pages' empty states last said the lists could not be read for."""
+        self._shown_causes: tuple[str | None, str | None] = (None, None)
+        """The read-only cause and the unreadable-lists sentence the Entity Pages last drew
+        their Save tooltips and empty states with (#269)."""
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -1377,7 +1378,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._shown_entities = self._entity_lists()
         self._shown_live = bool(self._session.live)
-        self._shown_unreadable = self._session.entities_unreadable
+        self._shown_causes = self._causes()
         self._fill_sidebar()
         self._select_section(self._restored(selected))
         self.sync()
@@ -2712,16 +2713,16 @@ class MainWindow(Adw.ApplicationWindow):
     def _moved_entities(self) -> frozenset[str]:
         """The Entity lists that differ from what their Pages last drew: every one when the
         session went live or read-only since, since each row's controls follow that, or the
-        lists became readable or unreadable, since each empty state says which (#269)."""
+        cause the empty states and Save tooltips name moved (#269)."""
         lists = self._entity_lists()
-        if (
-            bool(self._session.live) != self._shown_live
-            or self._session.entities_unreadable != self._shown_unreadable
-        ):
+        if bool(self._session.live) != self._shown_live or self._causes() != self._shown_causes:
             return frozenset(lists)
         return frozenset(
             kind for kind, items in lists.items() if self._shown_entities.get(kind) != items
         )
+
+    def _causes(self) -> tuple[str | None, str | None]:
+        return (self._session.offline_sentence, self._session.entities_unreadable)
 
     def _draw_entity_pages(self, kinds: frozenset[str]) -> None:
         """Rebuild the Pages showing `kinds` from the model, and every sidebar count.
@@ -2755,7 +2756,7 @@ class MainWindow(Adw.ApplicationWindow):
         lists = self._entity_lists()
         self._shown_entities.update((kind, lists[kind]) for kind in kinds if kind in lists)
         self._shown_live = bool(self._session.live)
-        self._shown_unreadable = self._session.entities_unreadable
+        self._shown_causes = self._causes()
         self._sync_entity_counts()
 
     def _entity_lists(self) -> dict[str, tuple[Any, ...]]:

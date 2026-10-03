@@ -544,6 +544,22 @@ def test_a_save_that_lands_read_only_is_refused_and_says_so(tmp_path: Path) -> N
     assert session.monitor_profiles() == ()
 
 
+def test_save_current_follows_a_new_cause_into_the_window(tmp_path: Path) -> None:
+    """Built while connecting, then held behind an import offer: still read-only, but the
+    tooltip names the offer, not a connection (#269)."""
+    from hyprtweaker.engine.migration.detect import ConfigKind
+    from hyprtweaker.ui.shell.window import CONVERT_SENTENCE, READ_ONLY_REASON
+
+    session, window = build_window(tmp_path)
+    session.set_read_only(READ_ONLY_REASON[ConfigKind.LEGACY_CONF], sentence=CONVERT_SENTENCE)
+    window.sync()
+
+    assert window.monitors_page.save_button.get_tooltip_text() == (
+        "Profiles can be saved once this app can read your settings. Your config has not "
+        "been converted yet: use Convert... at the top of the window."
+    )
+
+
 def test_save_dialog_hands_over_the_name() -> None:
     from gi.repository import Adw
 
