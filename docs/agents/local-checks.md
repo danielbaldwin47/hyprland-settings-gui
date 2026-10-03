@@ -36,7 +36,7 @@ It starts a nested Hyprland with a fresh sandbox `$HOME`, launches the app insid
 - **Fenced.** The app runs non-unique, so concurrent sandboxes never hand their launch to each other, and a copied `--config` has its top-level `hl.exec_cmd(` and `hl.env(` lines commented out, so a rice's autostart never runs against the owner's session.
 - **A widget probe** reads properties, not pixels: build the window in-process the way the UI tier does (each `tests/ui/test_*_page.py` has a `build_window(tmp_path)`), drive it, and read the widget's properties and adjustments. Probe before any screenshot loop: a scroll bug once took ten screenshot cycles that two probes settled.
 - **Live probes** of compositor behaviour (`hyprctl keyword`, `hyprctl dispatch`, temporary binds, `hyprctl reload`) go to a nested instance, never the desktop session: the sandbox or the Harness tier's `NestedHyprland`.
-- Real monitors and input devices exist only on the desktop session; a nested instance shows one virtual output and the host's forwarded keyboard and pointer. A ticket whose proof needs real hardware says so, and the effort PR lists it for the owner (`implement-spec.md` step 8).
+- Real monitors and input devices exist only on the desktop session; a nested instance shows one virtual output and the host's forwarded keyboard and pointer. A ticket whose proof needs real hardware says so, and the PR body lists it for the owner.
 
 ## Harness tier
 
