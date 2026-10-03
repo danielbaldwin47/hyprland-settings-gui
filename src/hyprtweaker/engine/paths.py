@@ -103,6 +103,7 @@ EDITED_COPIES_DIR = "edited-copies"
 JOURNAL_NAME = "journal.jsonl"
 JOURNAL_PENDING_NAME = "journal-pending.json"
 SENTINEL_NAME = "migration-pending.json"
+KEPT_IMPORT_NAME = "import-kept.json"
 
 
 def _xdg_dir(variable: str, fallback: str) -> Path:
@@ -251,6 +252,15 @@ class ConfigPaths:
         "still here" mean "nobody answered".
         """
         return self.state_dir / SENTINEL_NAME
+
+    @property
+    def kept_import(self) -> Path:
+        """A kept import the Journal has not recorded yet (#259, `state/kept_import.py`).
+
+        Written by Keep before it clears the sentinel, removed once the Session's next
+        read-back has journalled the import as a boundary.
+        """
+        return self.state_dir / KEPT_IMPORT_NAME
 
     @property
     def journal(self) -> Path:

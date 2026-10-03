@@ -116,6 +116,7 @@ package_sources = {
   'hyprtweaker/engine/state': [
     '__init__.py',
     'journal.py',
+    'kept_import.py',
     'manifest.py',
     'retirement.py',
   ],

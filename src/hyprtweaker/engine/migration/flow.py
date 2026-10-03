@@ -57,6 +57,7 @@ from ..monitors_catalog import arrangement_mismatches
 from ..paths import MONITOR_PROFILES_DIR, PRESETS_DIR, ConfigPaths
 from ..profiles import ACTIVE_NAME
 from ..schema import Schema
+from ..state import kept_import
 from ..state.manifest import Manifest
 from ..tools import detached_environment, find_tool
 from ..writer import Writer, load_manifest
@@ -570,6 +571,11 @@ class MigrationFlow:
             # happened. Writing one anyway would offer to undo a migration on the next start.
             self._write_tree(preview, self.paths)
             self._record_provenance(preview)
+            try:
+                # Kept by being written: there is no countdown to answer (#259).
+                kept_import.write(self.paths, self._manifest())
+            except OSError as error:
+                _log.warning("could not record the kept import: %s", error)
             self.step = Step.DONE
             return SwitchResult(
                 ok=True,
@@ -777,7 +783,14 @@ class MigrationFlow:
             self._answer.set()
 
     def keep(self) -> None:
-        """Confirm the switch: clear the sentinel and let the new config stand."""
+        """Confirm the switch: record the import, clear the sentinel, let it stand.
+
+        The record (`state/kept_import.py`) is what makes the import the user's restore
+        boundary at the Session's next read-back (#259). Written first, so a Keep that dies
+        in between leaves the switch unanswered rather than kept with no record; a record
+        that cannot be written raises with the sentinel still in place.
+        """
+        kept_import.write(self.paths, self._manifest())
         sentinels.clear(self.paths)
         self.step = Step.DONE
 
@@ -809,6 +822,11 @@ class MigrationFlow:
         self.rollback = outcome
         if outcome.complete:
             sentinels.clear(self.paths)
+            # A Keep that died between its record and the sentinel: never a boundary (#259).
+            try:
+                kept_import.clear(self.paths)
+            except OSError as error:
+                _log.warning("could not drop the unanswered kept-import record: %s", error)
         self.step = Step.DONE
         return outcome
 

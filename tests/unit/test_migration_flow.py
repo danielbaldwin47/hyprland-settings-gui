@@ -36,7 +36,7 @@ from hyprtweaker.engine.migration.flow import (
 from hyprtweaker.engine.model.values import CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
-from hyprtweaker.engine.state import Manifest
+from hyprtweaker.engine.state import Manifest, kept_import
 
 T = TypeVar("T")
 
@@ -594,6 +594,59 @@ class TestKeepOrRollBack:
         run(flow.switch())
 
         assert run(flow.decide(seconds=0.01, tick=0.005)) is not Decision.KEPT
+
+    def test_keeping_records_the_imported_modules_for_the_next_read_back(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        """#259: the Session journals this as the import's restore boundary."""
+        flow = flow_for(legacy, schema, FakeClient())
+        flow.build_preview()
+        flow.back_up()
+        run(flow.switch())
+        assert kept_import.read(legacy) is None, "nothing is kept before the answer"
+
+        flow.keep()
+
+        record = kept_import.read(legacy)
+        manifest = Manifest.load(legacy.manifest, app_version="test", schema_version="0")
+        assert record is not None and record.known
+        assert dict(record.modules) == manifest.modules
+        assert "options/general.lua" in record.modules
+        assert not legacy.sentinel.exists()
+
+    def test_a_keep_that_cannot_record_the_import_leaves_the_switch_unanswered(
+        self, legacy: ConfigPaths, schema: Schema, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Never a moment with neither: the sentinel goes only once the record is down."""
+        flow = flow_for(legacy, schema, FakeClient())
+        flow.build_preview()
+        flow.back_up()
+        run(flow.switch())
+
+        def refuse(*_args: object) -> None:
+            raise OSError("read-only state dir")
+
+        monkeypatch.setattr(kept_import, "write", refuse)
+        with pytest.raises(OSError):
+            flow.keep()
+        assert legacy.sentinel.exists()
+
+    def test_rolling_back_records_no_import_and_drops_an_unanswered_one(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        """A Keep that died before it cleared the sentinel, then rolled back on relaunch."""
+        flow = flow_for(legacy, schema, FakeClient())
+        flow.build_preview()
+        flow.back_up()
+        run(flow.switch())
+        kept_import.write(
+            legacy, Manifest.load(legacy.manifest, app_version="t", schema_version="0")
+        )
+
+        outcome = flow.roll_back()
+
+        assert outcome.complete
+        assert kept_import.read(legacy) is None
 
 
 @pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter on this machine")
