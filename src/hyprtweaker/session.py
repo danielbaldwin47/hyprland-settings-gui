@@ -32,7 +32,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Collection, Coroutine, Iterable, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Collection,
+    Coroutine,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -85,14 +93,14 @@ from hyprtweaker.engine.bridge import (
     owners,
     with_presence,
 )
-from hyprtweaker.engine.bridge.wire import bridge_output
+from hyprtweaker.engine.bridge.wire import NOT_UPDATED, OutputAside, bridge_output
 from hyprtweaker.engine.bridge.wire import shown as tilde_path
 from hyprtweaker.engine.entities_catalog import (
     IDENTITY_FIELD,
     device_field_bounds,
     overridden_options,
 )
-from hyprtweaker.engine.files import write_atomic
+from hyprtweaker.engine.files import keep_edited_copy
 from hyprtweaker.engine.importer.lua.sandbox import LuaUnavailable, lua_missing_reason
 from hyprtweaker.engine.ipc import (
     MONITOR_ADDED,
@@ -186,7 +194,14 @@ from hyprtweaker.engine.schema import (
     newer_than_shipped,
     supplement,
 )
-from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash, retirement
+from hyprtweaker.engine.state import (
+    Journal,
+    LastKnownGood,
+    Manifest,
+    content_hash,
+    kept_import,
+    retirement,
+)
 from hyprtweaker.engine.state.retirement import (
     RenamedNotice,
     Restoration,
@@ -305,6 +320,10 @@ class Health:
     Journal **and reported in the Banner**". Quietly keeping a user's edit and quietly taking
     it are not the same promise, and only the second one needs announcing."""
 
+    rescued_uncopied: tuple[str, ...] = ()
+    """Of `rescued`, the Modules no copy of the hand edit could be kept of as a file (#266).
+    The Journal still holds the bytes; the Banner says the file copy is missing."""
+
     @property
     def unhealthy(self) -> bool:
         """Whether the Banner shows at all."""
@@ -361,9 +380,12 @@ class Health:
             # needs -- the alternative pairs a reassuring title with a Details button opening
             # a dialog full of errors it never mentioned.
             files = ", ".join(name.rsplit("/", 1)[-1] for name in self.rescued)
+            kept = (
+                ", but no copy of it could be kept as a file." if self.rescued_uncopied else "."
+            )
             return (
                 f"Restored {files} so your keybinds would load again. "
-                f"Your edited version is saved in this app's history."
+                f"Your edited version is saved in this app's history{kept}"
             )
         if self.unapplied:
             return f"{self._unapplied_summary} was written but did not take effect."
@@ -435,6 +457,39 @@ class Replaced(Enum):
         return self is Replaced.DONE
 
 
+class RestoreRefusal(Enum):
+    """Why `Session.restore_last_good` queued nothing (review addendum 3)."""
+
+    READ_ONLY = "read-only"
+    """The session cannot write: `offline_sentence` says why."""
+    RUNNING = "running"
+    """Another restore is still running."""
+    NO_EARLIER = "no earlier"
+    """No confirmed write of these Modules to go back to."""
+    NO_COPY = "no copy"
+    """A hand-edited Module's copy could not be kept: `uncopied` names it."""
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreStart:
+    """How `Session.restore_last_good` began (#266): `queued` says whether the restore
+    was queued; what it then did arrives through its `done`.
+
+    The copies are made, and refused on, before anything is queued, so this is the whole
+    answer to "where is my edited file?" for the restore that follows.
+    """
+
+    queued: bool
+    copies: Mapping[str, Path] = field(default_factory=dict)
+    """Each hand-edited Module's copy, kept before its bytes are replaced, by Module."""
+    uncopied: tuple[str, ...] = ()
+    """Hand-edited Modules no copy could be kept of. A Restore the user chose is refused at
+    the first of them, before any write; the emergency restore goes on without it, the
+    Journal holding the bytes it replaces (ADR-0016 §Zero-binds)."""
+    refusal: RestoreRefusal | None = None
+    """Why nothing was queued; `None` when it was."""
+
+
 @dataclass(frozen=True, slots=True)
 class _PendingEntityStep:
     """An Entity step waiting for the verdict on the commit that carries it."""
@@ -461,6 +516,21 @@ class _WallpaperOrder:
 
 
 @dataclass(frozen=True, slots=True)
+class BridgeRemoved:
+    """`remove_bridge`'s answer once the Entrypoint that no longer loads the tool stands: its
+    output in the bridge folder is gone, and its own files may go back (`finish_unwire`)."""
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeNotRemoved:
+    """`remove_bridge`'s answer when hyprland.lua still loads the tool: its output and
+    entries are as they were (#267)."""
+
+    reason: str
+    """Why, as a sentence for the user."""
+
+
+@dataclass(frozen=True, slots=True)
 class _AppliedPreset:
     """A Preset whose Options are queued: its name, each Option's value before it, the
     Bridge entries it gated ("Use preset's colors"), and the wallpaper it will set."""
@@ -474,6 +544,42 @@ class _AppliedPreset:
 
 
 @dataclass(frozen=True, slots=True)
+class _PendingActivation:
+    """A profile activation, or its revert, waiting for the verdict on its commit (#273).
+
+    The pointer moves only when that transaction stands with both lists on disk: the
+    profile store is outside the model, so nothing else would take a refused one back.
+    """
+
+    serial: int
+    """`commit_entities`'s serial, as for `_PendingEntityStep`."""
+    change: EntityStep | None
+    """The lists it moved, before to after; `None` when it moved none."""
+    active: str | None
+    """The pointer it sets once it stands."""
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingUndo:
+    """An undo waiting for the verdict on its write: the step comes back on the stack, and
+    the model goes back to the file, if a hand-edited Module kept it off disk (#273)."""
+
+    step: UndoStep | EntityStep
+    serial: int | None
+    """The Entity commit's serial for an `EntityStep`; `None` for an Option step, which the
+    transaction carrying its keys reports."""
+
+    def carried_by(self, result: ApplyResult) -> bool:
+        if isinstance(self.step, EntityStep):
+            return (
+                self.serial is not None
+                and result.entities is not None
+                and self.serial <= result.entities
+            )
+        return set(self.step.names) <= set(result.keys)
+
+
+@dataclass(frozen=True, slots=True)
 class _UndonePreset:
     """A Preset step whose Options are being put back: what follows once that stands."""
 
@@ -481,6 +587,21 @@ class _UndonePreset:
     source: SourceChange | None
     wallpaper: WallpaperChange | None
     notes: tuple[str, ...]
+
+
+HELD_ENTRY_MOVED = "it changed outside this app"
+"""Why a held editor's save was refused when its entry is no longer where it opened (#225)."""
+
+
+def _same_entry(held: Any, current: Any) -> bool:
+    """Whether `current` is still the Entity an editor opened on as `held`.
+
+    `origin` is left out: it is the line a read found the entity on, and re-reading the
+    same file after a hand edit elsewhere in it moves that without changing the entity.
+    """
+    return type(held) is type(current) and replace(held, origin="") == replace(
+        current, origin=""
+    )
 
 
 def _gates(entries: Sequence[BridgeEntry]) -> tuple[tuple[str, str, object], ...]:
@@ -590,14 +711,28 @@ class Session:
 
         A Retired notice keeps coming, start after start, until `notice_seen` records it."""
 
-        self.on_refused: Callable[[str, str], None] | None = None
+        self.on_refused: Callable[[str | int, str], None] | None = None
         """Called with a change refused because the Module it belongs in was edited outside
-        the app (ADR-0005), and that Module: the model is as it was, and no undo step was
+        the app (ADR-0005), and that Module: the change's title, or how many changes the
+        Writer kept out of that file. The model is as it was, and no undo step was
         recorded. The user's ways on are `keep_edited_file`, `edited_file_path` and
         `replace_edited_file`; after a Replace they make the change again."""
 
+        self.on_not_saved: Callable[[str, str], None] | None = None
+        """Called with an editor's save refused because the list moved under it (#225): the
+        change's title and why, a clause. The entry it opened on is gone from its position
+        (`HELD_ENTRY_MOVED`), or the identity it saves is another row's now. Nothing was
+        written; the editor keeps the draft."""
+
         self._edited_files: list[str] = []
         """Modules that refused a change and are still edited: `Health.edited_files`."""
+        self._unloaded: str | None = None
+        """The Entity Module the last startup read stopped at, named in `entities_unreadable`
+        (review m1 F29)."""
+        self._adopted: set[str] = set()
+        """Entity Modules a foreign reload read a hand edit from (`_moved_on_disk`): the
+        model holds what the file said then, so the file back at the Manifest's hash is a
+        change to read too (#225)."""
         self._read_off_text: frozenset[str] = frozenset()
         self._not_known: set[str] = set()
         """Edited Modules whose values neither their text nor a Snapshot could give (R9)."""
@@ -662,12 +797,24 @@ class Session:
         key. Between those two moments the Option is mid-gesture, however many model writes
         the widget makes -- which is what turns fifty slider ticks into one undo step."""
 
+        self._previewed: set[str] = set()
+        """Options an `eval` preview may have left the compositor showing: added by a drag's
+        tick, dropped by the transaction that carries the key or a reload. A refusal that
+        puts one back re-previews it (`_show_restored`, #267)."""
+
         self._pending_entities: list[_PendingEntityStep] = []
         """Entity steps whose commit has not reported yet, oldest first (#189).
 
         Built where the edit is made -- before and after are both known there -- and held
         until the transaction carrying the commit says whether it stood (`_applied`): a
         rejected entity write never reaches the stack, as ADR-0016 has it for Options."""
+
+        self._pending_activations: list[_PendingActivation] = []
+        """Profile activations and reverts whose commit has not reported yet, oldest first."""
+
+        self._pending_undos: list[_PendingUndo] = []
+        """Undos whose write has not reported yet, oldest first: popped off the stack, and
+        pushed back if a hand edit kept them off disk (#273)."""
 
         self._undo_group: UndoGroup | None = None
         """The open undo group, if any -- one at a time (`begin_undo_group`)."""
@@ -681,7 +828,6 @@ class Session:
         The window's own undo, so an undo the window puts behind a countdown still goes
         there; without one the session undoes it itself."""
 
-        self._reverting = False
         self._recovery_halted = False
         self._recovery = Recovery()
         """What the last reload said was wrong, attributed. The Banner is a view of this.
@@ -738,6 +884,9 @@ class Session:
         self._pending_rescue: tuple[str, ...] = ()
         """A rescue announced only once its own restore has been observed -- see
         `_emergency_restore`, which explains why it cannot be announced any earlier."""
+
+        self._rescue_uncopied: tuple[str, ...] = ()
+        """The emergency restore's Modules no copy could be kept of: the Banner says so."""
 
         self._bridge_owners: dict[str, str] | None = None
         """`bridge_owners`, read off the Manifest once per state change rather than per Row."""
@@ -825,6 +974,27 @@ class Session:
             # A reason the caller can say better: an import still on offer (F20).
             return self._offline_sentence
         return "This app is not connected to Hyprland."
+
+    @property
+    def entities_unreadable(self) -> str | None:
+        """Why the Entity lists are not shown, as the sentences an empty list says instead of
+        "none yet", or `None` when an empty list is the truth (#269).
+
+        Set when an app config exists to read (a Manifest or the App dir) and its lists were
+        not loaded: no Lua, a Hyprland too old to connect to, an import still on offer, or a
+        Module that would not load. `None` once they were read, live or off the files, on a
+        fresh install with nothing to read, and while connecting, when they are about to be.
+        """
+        if self._model.entities_loaded or self._offline_reason == _NOT_CONNECTED_YET:
+            return None
+        if not (self._paths.manifest.is_file() or self._paths.app_dir.is_dir()):
+            return None
+        unloaded = (self._unloaded or "One of its files").rsplit("/", 1)[-1]
+        cause = self.offline_sentence or f"{unloaded} would not load, so it is left as it is."
+        if cause.startswith("This app"):
+            # Already about this app reading them: the prefix would say "This app" twice.
+            return cause
+        return f"This app cannot read your settings right now. {cause}"
 
     @property
     def entrypoint_edited(self) -> bool:
@@ -1005,31 +1175,55 @@ class Session:
         """The Manifest as it is on disk now: what #166's `detect` and `unwire` take."""
         return self._manifest()
 
-    def remove_bridge(self, tool: str) -> bool:
+    def remove_bridge(
+        self,
+        tool: str,
+        *,
+        done: Callable[[BridgeRemoved | BridgeNotRemoved], None] | None = None,
+    ) -> bool:
         """Take `tool`'s Bridge entries and lines out: what #166's `unwire` calls first.
 
         `True` with nothing done when the tool has no entry, so an `unwire` that converges
-        after a crash never costs a reload.
+        after a crash never costs a reload. Otherwise `True` once the Entrypoint write is
+        queued, and `done`, if given, hears once that write and its reload have answered --
+        or at once, when this refuses (#267). The tool's output in the bridge folder is set
+        aside inside the write and deleted only when it stands; one that fails puts it back.
         """
         manifest = self._manifest()
         output = bridge_output(tool, self._paths)
         if not output and not any(entry.tool == tool for entry in manifest.bridges):
+            if done is not None:
+                done(BridgeRemoved())
             return True
-        if self.color_source_blocked is not None:
+        if (blocked := self.color_source_blocked) is not None:
+            if done is not None:
+                done(BridgeNotRemoved(blocked))
             return False
+        # Before the Entrypoint is rendered: a file left in the bridge folder loads with no
+        # entry at all, which kept a removed tool loading (#148 hand-test 1).
+        aside = OutputAside(tool, self._paths)
 
-        def delete_output() -> None:
-            # Before the Entrypoint is rendered: a file left in the bridge folder loads with
-            # no entry at all, which kept a removed tool loading (#148 hand-test 1).
-            for path in bridge_output(tool, self._paths):
-                path.unlink(missing_ok=True)
+        def answered(reason: str | None) -> None:
+            try:
+                if reason is None:
+                    aside.drop()
+                else:
+                    aside.put_back()
+            except OSError as error:
+                _log.error("could not settle the set-aside output of %s: %s", tool, error)
+            if done is not None:
+                done(BridgeRemoved() if reason is None else BridgeNotRemoved(reason))
 
-        return self._set_bridges(
+        queued = self._set_bridges(
             lambda current: [entry for entry in current if entry.tool != tool],
             manifest.remove_bridge(tool),
             f"remove {REGISTRY[tool].title if tool in REGISTRY else tool}",
-            first=delete_output,
+            first=aside.move,
+            answered=answered,
         )
+        if not queued and done is not None:
+            done(BridgeNotRemoved(NOT_UPDATED))
+        return queued
 
     def _module_files_present(self, spec: ToolSpec) -> frozenset[str]:
         return files_present(self._paths.hypr_dir, (each.file for each in spec.modules))
@@ -1041,10 +1235,11 @@ class Session:
         what: str,
         *,
         first: Callable[[], None] | None = None,
+        answered: Callable[[str | None], None] | None = None,
     ) -> bool:
         """Rewrite the Entrypoint with `change` applied to the Manifest's entries as they are
         when the queued write runs, so a change landing in between is built on, not lost.
-        `first` runs in the queued write, just before it."""
+        `first` runs in the queued write, just before it; `answered` as `_recovery_write`."""
 
         def write(before: BeforeReplace | None) -> bool:
             if first is not None:
@@ -1058,6 +1253,7 @@ class Session:
             prospective,
             what,
             exclude=tuple(owners(prospective.bridges, quarantined=prospective.quarantined)),
+            answered=answered,
         )
 
     def _bridge_files_present(self, entries: Sequence[BridgeEntry]) -> frozenset[str]:
@@ -1106,6 +1302,7 @@ class Session:
             halted=self._recovery_halted,
             unapplied=self._unapplied,
             rescued=self._rescued,
+            rescued_uncopied=tuple(m for m in self._rescue_uncopied if m in self._rescued),
             edited_files=tuple(self._edited_files),
         )
 
@@ -1266,6 +1463,7 @@ class Session:
         if self._refused_by_edit(name):
             return
         self._begin_edit(name)
+        self._previewed.add(name)
         self._model.set(name, value)
         self._applier.preview(name)  # type: ignore[union-attr]  # _refuse proved it is here
 
@@ -1322,18 +1520,22 @@ class Session:
             lambda binds: binds.append(bind), title=entity_title("binds", "added")
         )
 
-    def replace_bind(self, index: int, bind: Bind) -> bool:
-        """Replace the Bind at `index`, keeping its position.
+    def replace_bind(self, index: int, bind: Bind, *, expected: Bind) -> bool:
+        """Replace the Bind at `index`, keeping its position, if it is still `expected`.
 
         In place rather than remove-and-append: position *is* identity, so a bind that
         jumped to the end of the list would change which of two duplicates fires first.
+        `expected` is the bind the editor opened on: a list that moved while it was open
+        holds another bind at `index`, which a save there would overwrite (#225).
         """
+        title = entity_title("binds", "changed")
+        if self._held_entry_gone("binds", index, expected, title):
+            return False
 
         def swap(binds: list[Bind]) -> None:
-            if 0 <= index < len(binds):
-                binds[index] = bind
+            binds[index] = bind
 
-        return self.edit_binds(swap, title=entity_title("binds", "changed"))
+        return self.edit_binds(swap, title=title)
 
     def remove_bind(self, index: int) -> bool:
         """Delete the Bind at `index`."""
@@ -1449,14 +1651,24 @@ class Session:
             kind, lambda rules: rules.append(rule), title=self._rule_title(kind, "added")
         )
 
-    def replace_rule(self, kind: str, index: int, rule: WindowRule | LayerRule) -> bool:
-        """Replace the Rule at `index`, keeping its position."""
+    def replace_rule(
+        self,
+        kind: str,
+        index: int,
+        rule: WindowRule | LayerRule,
+        *,
+        expected: WindowRule | LayerRule,
+    ) -> bool:
+        """Replace the Rule at `index`, keeping its position, if it is still `expected`
+        (the rule the editor opened on, as `replace_bind`)."""
+        title = self._rule_title(kind, "changed")
+        if self._held_entry_gone(f"{kind}_rules", index, expected, title):
+            return False
 
         def swap(rules: list[Any]) -> None:
-            if 0 <= index < len(rules):
-                rules[index] = rule
+            rules[index] = rule
 
-        return self.edit_rules(kind, swap, title=self._rule_title(kind, "changed"))
+        return self.edit_rules(kind, swap, title=title)
 
     def remove_rule(self, kind: str, index: int) -> bool:
         """Delete the Rule at `index`."""
@@ -1748,15 +1960,48 @@ class Session:
         attribute = IDENTITY_FIELD.get(kind)
         return None if attribute is None else str(getattr(entity, attribute))
 
-    def _identity_taken(self, kind: str, entity: Any, *, index: int | None) -> bool:
-        """Whether saving `entity` would give two rows the same identity."""
+    def _identity_taken(self, kind: str, entity: Any, *, index: int | None, title: str) -> bool:
+        """Whether saving `entity` would give two rows the same identity; says so when it
+        would. The editor refuses this itself against the list it opened on, so the session
+        meets it only when the list moved under the editor, and silence would be a save
+        that did nothing (#225)."""
         identity = self.identity_of(kind, entity)
         if identity is None:
             return False
-        return any(
+        taken = any(
             position != index and self.identity_of(kind, existing) == identity
             for position, existing in enumerate(self.declarations(kind))
         )
+        if taken:
+            self._say_not_saved(
+                title, f"there is already an entry for “{identity}”, so edit that one instead"
+            )
+        return taken
+
+    def _held_entry_gone(self, kind: str, index: int, expected: Any, title: str) -> bool:
+        """Whether the `kind` entry an editor opened on is gone from `index`; says why.
+
+        The list may have moved while the editor was open (a foreign reload re-read it,
+        #225). Writing the draft at `index` then would overwrite whichever entry is there
+        now, so the save is refused, never redirected. A hand-edited Module is the louder
+        reason and is said first, as every other change into it is (`_say_refused`).
+        """
+        items = getattr(self._model.entities, kind)
+        if 0 <= index < len(items) and _same_entry(expected, items[index]):
+            return False
+        if self._refuse(kind):
+            return True
+        edited = self._edited_module((ENTITY_KIND_MODULES[kind],))
+        if edited is not None:
+            self._say_refused(title, edited)
+        else:
+            self._say_not_saved(title, HELD_ENTRY_MOVED)
+        return True
+
+    def _say_not_saved(self, what: str, why: str) -> None:
+        _log.info("refused %s: %s", what, why)
+        if self.on_not_saved is not None:
+            self.on_not_saved(what, why)
 
     def add_declaration(self, kind: str, entity: Any) -> bool:
         """Append one entity, refusing an identity another row already holds.
@@ -1766,22 +2011,24 @@ class Session:
         list. The Page's move is to focus the existing row, exactly as `save_workspace_rule`
         expects of the Workspaces page.
         """
-        if self._identity_taken(kind, entity, index=None):
+        title = entity_title(kind, "added")
+        if self._identity_taken(kind, entity, index=None, title=title):
             return False
-        return self.edit_declarations(
-            kind, lambda items: items.append(entity), title=entity_title(kind, "added")
-        )
+        return self.edit_declarations(kind, lambda items: items.append(entity), title=title)
 
-    def replace_declaration(self, kind: str, index: int, entity: Any) -> bool:
-        """Replace the entity at `index`, keeping its position."""
-        if self._identity_taken(kind, entity, index=index):
+    def replace_declaration(self, kind: str, index: int, entity: Any, *, expected: Any) -> bool:
+        """Replace the entity at `index`, keeping its position, if it is still `expected`
+        (the entity the editor opened on, as `replace_bind`)."""
+        title = entity_title(kind, "changed")
+        if self._held_entry_gone(kind, index, expected, title):
+            return False
+        if self._identity_taken(kind, entity, index=index, title=title):
             return False
 
         def swap(items: list[Any]) -> None:
-            if 0 <= index < len(items):
-                items[index] = entity
+            items[index] = entity
 
-        return self.edit_declarations(kind, swap, title=entity_title(kind, "changed"))
+        return self.edit_declarations(kind, swap, title=title)
 
     def remove_declaration(self, kind: str, index: int) -> bool:
         """Delete the entity at `index`."""
@@ -1875,15 +2122,17 @@ class Session:
 
     def save_monitor_profile(
         self, name: str, connected: Sequence[Mapping[str, Any]] = ()
-    ) -> str:
+    ) -> str | None:
         """Capture the current display setup as a new profile, returning its slug.
 
-        Allowed on a read-only session -- a capture is a JSON file in the App dir, not a
-        config write, and "save what I have before experimenting" is most valuable
-        exactly when things are fragile. `connected` is the live `hyprctl -j monitors`
-        answer, helper data used as ADR-0008 allows: to fingerprint, never to
-        reconstruct rule state.
+        Refused (`None`) on a read-only session (#269): without Lua, behind an import offer
+        or on a Hyprland too old to connect to, the lists a capture is made of were never
+        read, and a profile of them would be an empty one standing in for the real setup.
+        `connected` is the live `hyprctl -j monitors` answer, helper data used as ADR-0008
+        allows: to fingerprint, never to reconstruct rule state.
         """
+        if not self.live:
+            return None
         return self._profile_store.save(
             capture(
                 name,
@@ -1918,8 +2167,10 @@ class Session:
     ) -> bool:
         """One transaction over both lists, then the pointer -- activation and its revert.
 
-        The pointer moves only after the commit is accepted, so a refused write never
-        claims a profile the files do not show.
+        The pointer moves only once that transaction stands with both lists on disk
+        (`_take_back_activations`), so a refused or failed write never claims a profile the
+        files do not show -- the gate below refuses at once, the Writer refuses a file
+        edited between the gate and the write (#273).
 
         The one Entity commit that records no undo step, and it forgets every step over
         the two lists, held ones included (#189). The pointer lives outside the model, so a
@@ -1940,11 +2191,20 @@ class Session:
             # Before the lists, the pointer or any countdown move (#148 review R6).
             self._say_refused("Display profile", edited)
             return False
+        change = EntityStep.of(
+            (
+                EntityEdit("monitors", tuple(entities.monitors), tuple(monitors)),
+                EntityEdit(
+                    "workspace_rules", tuple(entities.workspace_rules), tuple(workspaces)
+                ),
+            ),
+            "Display profile",
+        )
         self._model.entities.monitors[:] = list(monitors)
         self._model.entities.workspace_rules[:] = list(workspaces)
         self._forget_entities(DISPLAY_KINDS)
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        self._profile_store.set_active(active)
+        serial = self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it
+        self._pending_activations.append(_PendingActivation(serial, change, active))
         return True
 
     def active_monitor_profile(self) -> tuple[str, MonitorProfile] | None:
@@ -1960,10 +2220,11 @@ class Session:
 
         True exactly when activating the profile again would change something, so the
         badge clears on re-activation and on "Update profile", and a hand edit to
-        `monitors.lua` shows up the moment the file is re-read (ADR-0015).
+        `monitors.lua` shows up the moment the file is re-read (ADR-0015). Lists never
+        read are no evidence either way, so they do not drift (#269).
         """
         active = self.active_monitor_profile()
-        if active is None:
+        if active is None or not self._model.entities_loaded:
             return False
         _, profile = active
         return drift(
@@ -1975,9 +2236,11 @@ class Session:
     def update_monitor_profile(
         self, slug: str, connected: Sequence[Mapping[str, Any]] = ()
     ) -> bool:
-        """Recapture the current setup over an existing slug -- the drift badge's "Update"."""
+        """Recapture the current setup over an existing slug -- the drift badge's "Update".
+
+        Refused on a read-only session, as a new capture is (`save_monitor_profile`)."""
         existing = self._profile_store.load(slug)
-        if existing is None:
+        if existing is None or not self.live:
             return False
         self._profile_store.replace(
             slug,
@@ -2603,6 +2866,11 @@ class Session:
         module = self._edited_module((module_relpath(option),))
         if module is None:
             return False
+        if name in self._previewed and name in self._open_gestures:
+            # A drag whose Module was edited after its first tick: the ticks moved the model
+            # and the compositor with nothing queued to take them back (#267).
+            self._restore({name: self._open_gestures[name]})
+            self._show_restored((name,))
         self._say_refused(option.title, module)
         return True
 
@@ -2628,7 +2896,7 @@ class Session:
                 return module
         return None
 
-    def _say_refused(self, what: str, module: str, *, toast: bool = True) -> None:
+    def _say_refused(self, what: str | int, module: str, *, toast: bool = True) -> None:
         """Name the refused change and the file that stopped it; keep the file on the Banner."""
         _log.info("refused %s: %s was edited outside the app", what, module)
         if module not in self._edited_files:
@@ -2703,6 +2971,7 @@ class Session:
             return self._undo_preset(step)
 
         self._restore({edit.name: edit.before for edit in step.edits})
+        self._pending_undos.append(_PendingUndo(step, None))
         self._applier.commit(*step.names)
         self._changed()
         return True
@@ -2830,7 +3099,8 @@ class Session:
             return False
         for edit in step.edits:
             getattr(entities, edit.kind)[:] = edit.before
-        self._applier.commit_entities()  # type: ignore[union-attr]  # undo checked it is here
+        serial = self._applier.commit_entities()  # type: ignore[union-attr]  # undo checked it
+        self._pending_undos.append(_PendingUndo(step, serial))
         self._changed()
         return True
 
@@ -2897,6 +3167,17 @@ class Session:
             group.held = [step for step in group.held if not step.kinds & gone]
             # A dropped in-flight step may have been all an ended group was waiting for.
             self._announce(self._close_group(group))
+
+    def _show_restored(self, names: Iterable[str]) -> None:
+        """Preview again each of `names` a drag's `eval` may have left on the compositor,
+        now the model is put back: a refusal must leave the desktop showing what the Row and
+        the file say (#267). Sends the model's value, so an Unset one shows nothing new --
+        `eval` cannot unset -- until the next reload."""
+        shown = [name for name in names if name in self._previewed]
+        self._previewed.difference_update(shown)
+        if shown and self._applier is not None:
+            self._applier.forget_previews()
+            self._applier.preview(*shown)
 
     def _restore(self, values: Mapping[str, OptionValue]) -> None:
         """Put the model back to `values`, and forget any gesture open on those Options.
@@ -3114,8 +3395,29 @@ class Session:
         # "On launch ... the full re-read + drift scan attributes any errors and raises the
         # same Banner" (ADR-0016 §Surfacing). Breakage that happened while the app was closed
         # is not a lesser kind of breakage, and the app has to open saying so.
-        await self._scan(client)
+        errors = await self._scan(client)
+        self._seed_kept_import(result, errors)
         return result
+
+    def _seed_kept_import(self, read: ReRead, errors: tuple[str, ...] | None) -> None:
+        """Journal a kept import as the restore boundary, at its first read-back (#259).
+
+        Confirmed by ADR-0016's rule applied to the whole import: no config errors and every
+        Option read back. A record beside a migration sentinel is a Keep that never finished:
+        it waits for the relaunch's offer to be answered, and a Roll back drops it.
+        """
+        record = kept_import.read(self._paths)
+        if record is None or self._paths.sentinel.exists():
+            return
+        confirmed = errors == () and not read.unreadable and not read.unknown
+        kept_import.seed(
+            self._journal,
+            self._paths,
+            record,
+            self._manifest(),
+            confirmed=confirmed,
+            outcome=str(ApplyOutcome.CONFIG_ERRORS if errors else ApplyOutcome.OK),
+        )
 
     async def _read_files(self) -> None:
         """With no compositor to ask, read the App dir's own Modules, read-only.
@@ -3272,21 +3574,23 @@ class Session:
         record = self._manifest().modules.get(module)
         return self._journal.snapshot(record.sha256) if record is not None else None
 
-    async def _scan(self, client: CommandClient) -> None:
+    async def _scan(self, client: CommandClient) -> tuple[str, ...] | None:
         """Read what the live config is complaining about, and raise the Banner for it.
 
         For the two reloads the app did not perform: the one before it started, and any
         foreign one since. Failures are swallowed -- a session that could not read
         `configerrors` has learned nothing, and refusing to start over it would turn a
-        transient socket hiccup into an app that will not open.
+        transient socket hiccup into an app that will not open. Returns the errors read,
+        or `None` when they could not be.
         """
         try:
             errors = await client.configerrors()
             binds = await client.bind_count() if errors else None
         except IpcError as error:
             _log.warning("could not read the config's health: %s", error)
-            return
+            return None
         self._observe_foreign(errors, binds)
+        return errors
 
     async def _rescan_drift(self, client: CommandClient) -> None:
         """A drift scan on its own, then the Rows told: the callers of `_scan_drift` that
@@ -3410,6 +3714,7 @@ class Session:
         # spanning somebody else's reload. Entity steps over a list the re-read changes are
         # dropped there (`_reread_after_foreign_reload`).
         self._open_gestures.clear()
+        self._previewed.clear()
         self._spawn(self._reread_after_foreign_reload())
 
     def adopt_import(self) -> None:
@@ -3430,10 +3735,14 @@ class Session:
         self._model.clear()
         self._undo = UndoStack()
         self._open_gestures.clear()
+        self._previewed.clear()
         self._pending_entities = []
+        self._pending_activations = []
+        self._pending_undos = []
         self._undo_group = None
         self._undo_waits_for = None
         self._edited_files.clear()
+        self._adopted.clear()
         try:
             await self._recover(client)
         except IpcError as error:
@@ -3492,6 +3801,36 @@ class Session:
         self.load_new_user_lua()
         self._changed()
 
+    def _moved_on_disk(self, modules: Iterable[str]) -> bool:
+        """Whether any of `modules` says something the model does not: a foreign reload's
+        Entity gate, one for every `_reread_*`.
+
+        A file the app did not write (its hash is not the Manifest's) is a hand edit to
+        adopt. A file back at the Manifest's hash is one only if a re-read adopted a hand
+        edit from it since (`_adopted`): put back to the app's bytes -- an editor's undo, a
+        `git checkout` -- it no longer says what the model took from it, and skipping it
+        would leave the reverted edit in the model for the next write to put back (#225).
+        Bytes the app wrote and nobody touched still need no Lua evaluation.
+        """
+        manifest = self._manifest()
+        moved = False
+        for module in modules:
+            path = self._paths.app_dir / module
+            if not path.is_file():
+                continue
+            try:
+                current = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            record = manifest.modules.get(module)
+            if record is None or record.sha256 != content_hash(current):
+                self._adopted.add(module)
+                moved = True
+            elif module in self._adopted:
+                self._adopted.discard(module)
+                moved = True
+        return moved
+
     def _reread_binds(self) -> None:
         """Adopt a hand-edited `binds.lua` instead of overwriting it (ADR-0007).
 
@@ -3510,19 +3849,8 @@ class Session:
         any other, and throwing away the binds the model holds on the strength of a file
         that would not load would turn one broken reload into lost state.
         """
-        path = self._paths.app_dir / BINDS_MODULE
-        if not path.is_file():
-            return
-        try:
-            current = path.read_text(encoding="utf-8")
-        except OSError:
-            return
-
-        record = self._manifest().modules.get(BINDS_MODULE)
-        if record is not None and record.sha256 == content_hash(current):
-            return
-
-        self._load_binds()
+        if self._moved_on_disk((BINDS_MODULE,)):
+            self._load_binds()
 
     def _reread_rules(self) -> None:
         """Adopt hand-edited rule Modules, gated on the Manifest hash like binds.
@@ -3532,19 +3860,7 @@ class Session:
         them separately would let the un-edited file's stale parse overwrite the edited
         one's adoption.
         """
-        changed = False
-        for module in (WINDOW_RULES_MODULE, LAYER_RULES_MODULE):
-            path = self._paths.app_dir / module
-            if not path.is_file():
-                continue
-            try:
-                current = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            record = self._manifest().modules.get(module)
-            if record is None or record.sha256 != content_hash(current):
-                changed = True
-        if changed:
+        if self._moved_on_disk((WINDOW_RULES_MODULE, LAYER_RULES_MODULE)):
             self._load_rules()
 
     def _reread_monitors(self) -> None:
@@ -3556,19 +3872,7 @@ class Session:
         never lights. One gate over both files, one load for both, for `_reread_rules`'s
         reason: `_load_monitors` splices misfiled entities to the kind they are.
         """
-        changed = False
-        for module in (MONITORS_MODULE, WORKSPACE_RULES_MODULE):
-            path = self._paths.app_dir / module
-            if not path.is_file():
-                continue
-            try:
-                current = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            record = self._manifest().modules.get(module)
-            if record is None or record.sha256 != content_hash(current):
-                changed = True
-        if changed:
+        if self._moved_on_disk((MONITORS_MODULE, WORKSPACE_RULES_MODULE)):
             self._load_monitors()
 
     def _reread_declarations(self) -> None:
@@ -3579,19 +3883,7 @@ class Session:
         one file without the others would drop whatever it found belonging to a list the
         other six own.
         """
-        changed = False
-        for module in self.DECLARATION_MODULES:
-            path = self._paths.app_dir / module
-            if not path.is_file():
-                continue
-            try:
-                current = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            record = self._manifest().modules.get(module)
-            if record is None or record.sha256 != content_hash(current):
-                changed = True
-        if changed:
+        if self._moved_on_disk(self.DECLARATION_MODULES):
             self._load_declarations()
 
     def _load_entities(self) -> None:
@@ -3603,6 +3895,7 @@ class Session:
         every load succeeded: marking it with `window_rules.lua` unread would let the next
         Option write prune a rules file the user merely broke.
         """
+        self._unloaded = None
         if (
             self._load_binds()
             and self._load_rules()
@@ -3629,6 +3922,7 @@ class Session:
         parsed = parse_binds_module(path)
         if not parsed.ok:
             _log.warning("binds.lua would not evaluate, leaving it alone: %s", parsed.errors[0])
+            self._unloaded = BINDS_MODULE
             return False
 
         binds = list(parsed.binds)
@@ -3670,6 +3964,7 @@ class Session:
                 _log.warning(
                     "%s would not evaluate, leaving it alone: %s", module, parsed.errors[0]
                 )
+                self._unloaded = module
                 return False
             window.extend(parsed.window_rules)
             layer.extend(parsed.layer_rules)
@@ -3698,6 +3993,7 @@ class Session:
                 _log.warning(
                     "%s would not evaluate, leaving it alone: %s", module, parsed.errors[0]
                 )
+                self._unloaded = module
                 return False
             monitors.extend(parsed.monitors)
             workspace.extend(parsed.workspace_rules)
@@ -3751,6 +4047,7 @@ class Session:
                 _log.warning(
                     "%s would not evaluate, leaving it alone: %s", module, parsed.errors[0]
                 )
+                self._unloaded = module
                 return False
             curves.extend(parsed.curves)
             animations.extend(parsed.animations)
@@ -3796,19 +4093,10 @@ class Session:
         Ctrl+Z should be able to take it back). A gesture can never be both, which is why the
         failed one is never pushed rather than pushed and popped.
         """
-        if self._reverting:
-            # The restore transaction's own result. It carries no gesture of the user's, and
-            # a second auto-revert on top of a failed one is the loop ADR-0016 forbids.
-            #
-            # A restore carries its own keys alone (`apply_now`), so an edit made in the
-            # ~25 ms it takes is still mid-gesture: its entry stays open in
-            # `_open_gestures`, and the next transaction records it from the value it really
-            # started at rather than from the one the revert put back.
-            self._recovery_result(result)
-            self._observe(result)
-            self._report(result)
-            return
-
+        if result.write is not None:
+            # The app's own bytes now: nothing adopted from them is left to read back, so
+            # the next foreign reload spends no Lua evaluation on them (#225, review m1 F14).
+            self._adopted.difference_update(result.write.written)
         delta = self._close(result.keys)
         refused = self._take_back_options(result, delta)
         presets = self._carried_presets(result.keys)
@@ -3819,7 +4107,9 @@ class Session:
             delta = {**delta, **preset.before}
         undone = self._carried_undos(result.keys)
         stands = self._stands(result)
-        entity_steps, failed = self._settle_entities(result, stands=stands)
+        entity_steps, failed = self._settle_entities(result, stands=stands, refused=refused)
+        activations = self._landed_activations(result)
+        undos = self._landed_undos(result)
         if not stands:
             # The gate goes back first, so the auto-revert's write renders the Entrypoint
             # with the wallpaper's Bridge loading again (S6). Newest first: each one's
@@ -3831,15 +4121,17 @@ class Session:
                 if each.source is not None:
                     self._put_bridges(each.source.before, each.source.after)
             self._fell(result, delta, self._lists_before(failed))
+            self._previewed.difference_update(result.keys)
             return
 
-        entity_steps = self._take_back_entities(result, entity_steps, refused)
+        self._take_back_activations(result, activations, refused)
+        self._take_back_undos(result, undos, refused)
+        # Its reload wiped every `eval`; one a refusal put back is re-previewed above.
+        self._previewed.difference_update(result.keys)
         self._forget_unedited()
         for module, titles in refused.items():
             # The Rows show the model, which just went back to what the file holds.
-            self._say_refused(
-                titles[0] if len(titles) == 1 else f"{len(titles)} changes", module
-            )
+            self._say_refused(titles[0] if len(titles) == 1 else len(titles), module)
 
         rewired = result.write is not None and result.write.entrypoint_written
         if self._client is not None and (rewired or any(p.source is not None for p in presets)):
@@ -3900,18 +4192,21 @@ class Session:
                 continue
             refused.setdefault(module_relpath(option), []).append(option.title)
             self._restore({name: before})
+            self._show_restored((name,))
         return refused
 
     def _take_back_entities(
         self, result: ApplyResult, steps: list[EntityStep], refused: dict[str, list[str]]
-    ) -> list[EntityStep]:
-        """`steps` less what a hand-edited Module kept off disk, which goes back out of the
-        model and joins `refused` under its own Module, as `_take_back_options` does. A step
-        over several lists keeps the lists that were written."""
+    ) -> list[EntityStep | None]:
+        """Each of `steps` less what a hand-edited Module kept off disk, `None` where that
+        was all of it: the rest goes back out of the model and joins `refused` under its own
+        Module, as `_take_back_options` does. A step over several lists keeps the lists that
+        were written."""
         skipped = set(result.skipped)
         if not skipped:
-            return steps
-        kept: list[EntityStep] = []
+            return list(steps)
+        kept: list[EntityStep | None] = []
+        taken: list[EntityStep] = []
         for step in steps:
             blocked = [e for e in step.edits if ENTITY_KIND_MODULES.get(e.kind) in skipped]
             if not blocked:
@@ -3919,16 +4214,103 @@ class Session:
                 continue
             for module in dict.fromkeys(ENTITY_KIND_MODULES[e.kind] for e in blocked):
                 refused.setdefault(module, []).append(step.title)
-            self._put_back(self._lists_before([EntityStep(tuple(blocked), step.title)]))
-            rest = EntityStep.of((e for e in step.edits if e not in blocked), step.title)
-            if rest is not None:
-                kept.append(rest)
+            taken.append(EntityStep(tuple(blocked), step.title))
+            kept.append(EntityStep.of((e for e in step.edits if e not in blocked), step.title))
+        # All at once: two edits to one list chain, and only the newest reads as the list
+        # does now, so one at a time put back the newest alone (#272).
+        self._put_back(self._lists_before(taken))
         return kept
+
+    def _landed_activations(self, result: ApplyResult) -> list[_PendingActivation]:
+        """The activations `result` carries, taken, as `_settle_entities` takes steps."""
+        if result.entities is None:
+            return []
+        landed = [p for p in self._pending_activations if p.serial <= result.entities]
+        self._pending_activations = [
+            p for p in self._pending_activations if p.serial > result.entities
+        ]
+        return landed
+
+    def _landed_undos(self, result: ApplyResult) -> list[_PendingUndo]:
+        """The undos `result` carries, taken."""
+        landed = [p for p in self._pending_undos if p.carried_by(result)]
+        self._pending_undos = [p for p in self._pending_undos if p not in landed]
+        return landed
+
+    def _take_back_activations(
+        self,
+        result: ApplyResult,
+        activations: list[_PendingActivation],
+        refused: dict[str, list[str]],
+    ) -> None:
+        """Move the pointer for each activation whose lists reached disk; for one a hand edit
+        kept off disk, put the lists it could not write back and leave the pointer, as the
+        gate does (#273). A standing transaction only: one that fell moves no pointer."""
+        skipped = set(result.skipped)
+        for pending in activations:
+            edits = pending.change.edits if pending.change is not None else ()
+            blocked = [e for e in edits if ENTITY_KIND_MODULES[e.kind] in skipped]
+            if not blocked:
+                self._profile_store.set_active(pending.active)
+                continue
+            for module in dict.fromkeys(ENTITY_KIND_MODULES[e.kind] for e in blocked):
+                refused.setdefault(module, []).append("Display profile")
+            self._put_back(self._lists_before([EntityStep(tuple(blocked), "Display profile")]))
+
+    def _take_back_undos(
+        self, result: ApplyResult, undos: list[_PendingUndo], refused: dict[str, list[str]]
+    ) -> None:
+        """For each undo a hand-edited Module kept off disk: the model goes back to what the
+        file holds, the step back on the stack to undo once the file is settled, and the
+        Module joins `refused` -- what the gate does for an undo it refuses (#273). A step
+        over several lists or Options keeps only the part that was not written."""
+        skipped = set(result.skipped)
+        if not skipped:
+            return
+        for pending in undos:
+            step = pending.step
+            back: UndoStep | EntityStep
+            if isinstance(step, EntityStep):
+                lists = [e for e in step.edits if ENTITY_KIND_MODULES[e.kind] in skipped]
+                if not lists:
+                    continue
+                modules = [ENTITY_KIND_MODULES[e.kind] for e in lists]
+                undone = EntityStep(
+                    tuple(EntityEdit(e.kind, e.after, e.before) for e in lists), step.title
+                )
+                self._put_back(self._lists_before([undone]))
+                back = (
+                    step
+                    if len(lists) == len(step.edits)
+                    else EntityStep(tuple(lists), step.title)
+                )
+            else:
+                options = [
+                    (e, module_relpath(o))
+                    for e in step.edits
+                    if (o := self._schema.get(e.name)) is not None
+                    and module_relpath(o) in skipped
+                ]
+                if not options:
+                    continue
+                modules = [module for _, module in options]
+                for edit, _ in options:
+                    if self._model.get(edit.name) == edit.before:
+                        self._restore({edit.name: edit.after})
+                edits = tuple(e for e, _ in options)
+                back = step if len(edits) == len(step.edits) else UndoStep(edits)
+            for module in dict.fromkeys(modules):
+                refused.setdefault(module, []).append("Undo")
+            self._undo.record(back)
 
     @property
     def edited_copies_shown(self) -> str:
         """Where "Replace file" keeps the edited copy, as the user knows the path."""
         return tilde_path(self._paths.edited_copies_dir, self._paths)
+
+    def edited_outside(self, module: str) -> bool:
+        """Whether `module` was edited outside the app: what a Restore keeps a copy of."""
+        return self._edited_module((module,)) is not None
 
     def edited_file_path(self, module: str) -> Path:
         """Where an edited Module lives, for "Open file"."""
@@ -3969,16 +4351,8 @@ class Session:
         a copy is whole or absent and a second one never lands on the first.
         """
         source = self._paths.app_dir / module
-        if not source.exists():
-            return True  # deleted by hand: there is nothing of the user's to copy
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        base = self._paths.edited_copies_dir / stamp
-        suffix = 1
-        while (base / module).exists():
-            suffix += 1
-            base = self._paths.edited_copies_dir / f"{stamp}-{suffix}"
         try:
-            write_atomic(base / module, source.read_bytes())
+            keep_edited_copy(self._paths, source, module)  # None: deleted by hand, no copy
         except OSError as error:
             _log.warning("could not keep a copy of %s: %s", source, error)
             return False
@@ -4060,17 +4434,22 @@ class Session:
         return not self._own_write_errors(result)
 
     def _settle_entities(
-        self, result: ApplyResult, *, stands: bool
+        self, result: ApplyResult, *, stands: bool, refused: dict[str, list[str]]
     ) -> tuple[list[EntityStep], list[EntityStep]]:
-        """The Entity steps this result lets stand, and the ungrouped ones it failed.
+        """The Entity steps this result lets stand, and the ones it failed.
 
         Every pending step with a serial up to `result.entities` was rendered by this
         transaction. Standing: it is recorded, or handed to its undo group. Not standing: it
-        is returned as failed for `_fell` to take out of the model, and a grouped one marks
-        its group failed -- ADR-0016's failed gesture, never on the stack; the group's owner
-        (a display countdown) puts its own lists back. A group this result completes is
+        is returned as failed for `_fell` to take out of the model, grouped or not, and a
+        grouped one also marks its group failed -- ADR-0016's failed gesture, never on the
+        stack. A countdown's Keep puts nothing back, so the model must already show what the
+        disk accepted when it ends (#222). A group this result completes is
         merged here, and lands after the steps it was held beside. Both lists are in commit
         order.
+
+        A standing step loses first what a hand-edited Module kept off disk
+        (`_take_back_entities`), grouped or not: a countdown's Keep must not record, and
+        its Rows must not show, a display change the file never got (#272).
         """
         if result.entities is None:
             return [], []
@@ -4081,15 +4460,22 @@ class Session:
         steps: list[EntityStep] = []
         failed: list[EntityStep] = []
         groups: dict[int, UndoGroup] = {}
-        for pending in reported:
-            if pending.group is None:
-                (steps if stands else failed).append(pending.step)
+        each = [p.step for p in reported]
+        written = self._take_back_entities(result, each, refused) if stands else each
+        for pending, step in zip(reported, written, strict=True):
+            if pending.group is not None:
+                # Even for a step taken back whole: its group may be waiting on it to close.
+                groups[id(pending.group)] = pending.group
+            if step is None:
                 continue
-            groups[id(pending.group)] = pending.group
+            if pending.group is None:
+                (steps if stands else failed).append(step)
+                continue
             if stands:
-                pending.group.held.append(pending.step)
+                pending.group.held.append(step)
             else:
                 pending.group.failed = True
+                failed.append(step)
         for group in groups.values():
             merged = self._close_group(group)
             if merged is not None:
@@ -4130,6 +4516,7 @@ class Session:
         self._repoll_if_timed_out(result)
         if result.outcome is ApplyOutcome.ABORTED:
             self._restore(delta)
+            self._show_restored(delta)
             self._put_back(lists)
             self._finish_failed(result)
             self._changed()
@@ -4368,7 +4755,11 @@ class Session:
         # own reload observes the config afresh, and announcing before that would have the
         # notice wiped by the very transaction it describes.
         self._pending_rescue = tuple(modules)
-        if not self.restore_last_good(*modules):
+        # A copy that cannot be kept does not stop it (§Zero-binds): the Journal holds the
+        # bytes it replaces, and the Banner says no file copy was kept (#266).
+        start = self.restore_last_good(*modules, copy_required=False)
+        self._rescue_uncopied = start.uncopied
+        if not start.queued:
             # Declined before anything ran -- no confirmed write to go back to. A notice
             # left pending would surface on the next restore the user chooses themselves.
             self._pending_rescue = ()
@@ -4388,18 +4779,33 @@ class Session:
         """Whether `module` has a restore point: a version a confirmed write left."""
         return self._journal.last_known_good(module) is not None
 
+    def unverified_since_import(self, module: str) -> bool:
+        """Whether `module` has no restore point because the import that wrote it could not
+        all be read back when it was kept (#259): what the Restore offer says instead."""
+        return self._journal.unverified_since_import(module)
+
     def restore_last_good(
-        self, *modules: str, done: Callable[[bool], None] | None = None
-    ) -> bool:
-        """Put `modules` back to their newest confirmed bytes. `False` if nothing can be.
+        self,
+        *modules: str,
+        done: Callable[[bool], None] | None = None,
+        copy_required: bool = True,
+    ) -> RestoreStart:
+        """Put `modules` back to their newest confirmed bytes, after keeping a copy of each
+        hand-edited one. `queued` False, with its `refusal`, when nothing was queued and
+        nothing was then written.
 
         ADR-0016's Restore last good, for both the classes that offer it: the hand-edited app
         Module the user chose it for, and the emergency that takes it without asking. The
         difference between those two is entirely in *who calls this* -- by the time it runs,
-        the decision is made.
+        the decision is made. The one thing that differs is a copy that cannot be kept: it
+        refuses the user's Restore (its dialog promised the copy), and only the emergency,
+        `copy_required=False`, goes on without it (§Zero-binds: the Journal keeps the bytes).
+        `done` is called once the queued restore has run, never before this returns.
         """
-        if not self.live or self._applier is None or self._restoring:
-            return False
+        if not self.live or self._applier is None:
+            return RestoreStart(queued=False, refusal=RestoreRefusal.READ_ONLY)
+        if self._restoring:
+            return RestoreStart(queued=False, refusal=RestoreRefusal.RUNNING)
 
         restores = [
             good
@@ -4408,13 +4814,33 @@ class Session:
         ]
         if not restores:
             _log.warning("nothing to restore: no confirmed write to %s", ", ".join(modules))
-            return False
+            return RestoreStart(queued=False, refusal=RestoreRefusal.NO_EARLIER)
 
+        # Every copy before the first byte moves, so a refusal leaves every file as it was.
+        # Only a hand edit needs one: bytes the app wrote are its own to replace.
+        copies: dict[str, Path] = {}
+        uncopied: list[str] = []
         for good in restores:
-            # The bytes being replaced, where the user can find them (#148 hand-test 17).
-            self._keep_edited_copy(good.module)
+            if self._edited_module((good.module,)) is None:
+                continue
+            source = self._paths.app_dir / good.module
+            try:
+                copy = keep_edited_copy(self._paths, source, good.module)
+            except OSError as error:
+                _log.warning("could not keep a copy of %s: %s", source, error)
+                uncopied.append(good.module)
+                if copy_required:
+                    return RestoreStart(
+                        queued=False,
+                        copies=copies,
+                        uncopied=(good.module,),
+                        refusal=RestoreRefusal.NO_COPY,
+                    )
+                continue
+            if copy is not None:  # None: deleted by hand, nothing to copy
+                copies[good.module] = copy
         self._spawn(self._restore_transaction(restores, done))
-        return True
+        return RestoreStart(queued=True, copies=copies, uncopied=tuple(uncopied))
 
     async def _restore_transaction(
         self, restores: Sequence[LastKnownGood], done: Callable[[bool], None] | None = None
@@ -4426,8 +4852,9 @@ class Session:
             return
 
         self._restoring = True
+        transaction = applier.restore(restores)
         try:
-            result = await applier.restore_now(applier.restore(restores))
+            result = await applier.restore_now(transaction)
         except (IpcError, RuntimeError) as error:
             _log.error("the restore transaction failed: %s", error)
             self._recovery_halted = True
@@ -4459,9 +4886,15 @@ class Session:
             # restored key is still an override (F3, F4 of the #148 review).
             await self._scan_drift(self._client)
         self._repoll_if_timed_out(result)
+        # The Modules that landed are the app's own again, part-way or not: nothing about
+        # them is held as edited outside the app any more (#266).
+        self._not_known.difference_update(transaction.landed)
+        self._forget_unedited()
         # After the observation, which clears the field: this notice is about what the
         # restore just did, so it has to survive the restore's own reload and nothing later.
-        self._rescued, self._pending_rescue = self._pending_rescue, ()
+        # Only what it actually overwrote: a Module whose write never happened was not taken.
+        self._rescued = tuple(m for m in self._pending_rescue if m in transaction.landed)
+        self._pending_rescue = ()
         self._report(result)
         self._changed()
         if done is not None:
@@ -4550,6 +4983,7 @@ class Session:
         prospective: Manifest,
         what: str,
         exclude: Sequence[str] = (),
+        answered: Callable[[str | None], None] | None = None,
     ) -> bool:
         """Rewrite the Entrypoint out of band, then reload. `False` if it could not be done.
 
@@ -4563,7 +4997,8 @@ class Session:
         here, so a recovery the gate refuses answers `False` and leaves the Banner as it is.
         `exclude` names owned Options the re-read leaves alone. The write
         itself runs queued (`EntrypointTransaction`): its Journal draft stays open until the
-        reload answers, and nothing else may open one meanwhile.
+        reload answers, and nothing else may open one meanwhile. A queued write calls
+        `answered` once it is over: `None` when the Entrypoint was written, else why not.
         """
         if not self.live or self._applier is None:
             return False
@@ -4572,16 +5007,31 @@ class Session:
         except (LuaSyntaxError, ValueError) as error:
             _log.error("could not %s: %s", what, error)
             return False
-        self._spawn(self._recover_entrypoint(write, what, exclude))
+        self._spawn(
+            self._answer_after(self._recover_entrypoint(write, what, exclude), answered)
+        )
         return True
+
+    @staticmethod
+    async def _answer_after(
+        recovery: Awaitable[bool], answered: Callable[[str | None], None] | None
+    ) -> None:
+        """Run `recovery`, then tell `answered` once, however it ended (#267)."""
+        written = False
+        try:
+            written = await recovery
+        finally:
+            if answered is not None:
+                answered(None if written else NOT_UPDATED)
 
     async def _recover_entrypoint(
         self,
         write: Callable[[BeforeReplace | None], bool],
         what: str,
         exclude: Sequence[str] = (),
-    ) -> None:
-        """Rewrite the Entrypoint, reload, and re-read what the config now says.
+    ) -> bool:
+        """Rewrite the Entrypoint, reload, and re-read what the config now says. `True` when
+        the Entrypoint was written, whatever the reload then found.
 
         A plain apply would do the wrong thing here: it renders the model over the App dir,
         and the file that changes is the one file the model does not describe. So this
@@ -4589,7 +5039,7 @@ class Session:
         """
         applier = self._applier
         if applier is None:
-            return
+            return False
         # Every owned Option, not a narrow set: quarantining `user.lua` changes the value of
         # everything that file was overriding, and the app cannot know which those were
         # without asking about all of them.
@@ -4612,9 +5062,10 @@ class Session:
         except (IpcError, RuntimeError) as error:
             _log.error("could not reload after a recovery: %s", error)
             self._changed()
-            return
+            return False
         await self._read_off_text_of(edited, texts)
-        if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+        written = result.outcome not in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED)
+        if not written:
             _log.error("could not %s: %s", what, result.detail)
         self._observe(result)
         if self._client is not None and result.reloaded:
@@ -4624,6 +5075,7 @@ class Session:
         self._repoll_if_timed_out(result)
         self._report(result)
         self._changed()
+        return written
 
     # --- auto-revert (ADR-0016) ---------------------------------------------------------------
 
@@ -4669,14 +5121,19 @@ class Session:
         if applier is None:
             return
 
-        self._reverting = True
         try:
-            await applier.apply_now(*keys)
+            own = await applier.apply_now(*keys)
         except (IpcError, RuntimeError) as error:
             _log.error("could not re-apply after reverting: %s", error)
             self._recovery_halted = True
-        finally:
-            self._reverting = False
+        else:
+            # The restore's own result, which `apply_now` hands here and not to `_applied`
+            # (#222): it carries no gesture of the user's, and a second auto-revert on top
+            # of a failed one is the loop ADR-0016 forbids. An edit made while it ran is
+            # still open in `_open_gestures`, for the batch that carries it to record.
+            self._recovery_result(own)
+            self._observe(own)
+            self._report(own)
 
         restored = self._verify(expected)
         if self.on_reverted is not None:

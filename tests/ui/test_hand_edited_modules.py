@@ -15,18 +15,29 @@ from _live_window import live_entity_window
 BINDS = "binds.lua"
 
 
-def held_back_bind(tmp_path: Path) -> tuple[Any, Any]:
-    """A live window whose last bind edit came back with `binds.lua` skipped as hand-edited:
-    the Writer's backstop, for a file edited between the gate and the write."""
+def shown_title(toast: Any) -> str:
+    """What a toast says: its title, or its own wrapping label's."""
+    from hyprtweaker.ui.shell.window import toast_text
+
+    return toast_text(toast)
+
+
+def held_back_bind(
+    tmp_path: Path, keys: tuple[str, ...] = ("SUPER + B",), *, said: list[str] | None = None
+) -> tuple[Any, Any]:
+    """A live window whose last bind edits came back with `binds.lua` skipped as hand-edited:
+    the Writer's backstop, for a file edited between the gate and the write. `said` collects
+    the toasts the write's answer raised."""
     from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
     from hyprtweaker.engine.model import Bind, DispatcherCall
     from hyprtweaker.engine.writer import WriteResult
 
     session, window, applier = live_entity_window(tmp_path)
     session.on_refused = window.show_refused
-    session.add_bind(
-        Bind(keys="SUPER + B", dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
-    )
+    for each in keys:
+        session.add_bind(
+            Bind(keys=each, dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
+        )
     write = WriteResult(
         written=(),
         unchanged=(),
@@ -35,6 +46,12 @@ def held_back_bind(tmp_path: Path) -> tuple[Any, Any]:
         hand_edited=(BINDS,),
         skipped=(BINDS,),
     )
+    if said is not None:
+        add_toast = window._toasts.add_toast
+        window._toasts.add_toast = lambda toast: (
+            said.append(shown_title(toast)),
+            add_toast(toast),
+        )
     applier.reported = applier.serial
     session._applied(
         ApplyResult(ApplyOutcome.NOTHING_TO_DO, write=write, entities=applier.serial)
@@ -62,6 +79,9 @@ def test_details_names_the_change_and_offers_keep_open_and_replace(tmp_path: Pat
     assert dialog.get_heading() == "binds.lua was edited outside this app"
     body = dialog.get_body()
     assert "Keybind added was not saved." in body
+    assert "If you keep your file, changes to it here are not saved until you replace it." in (
+        body
+    )
     assert "then make the change again" in body
     assert "replacing keeps a copy of your edited file in" in body
     assert "edited-copies" in body
@@ -79,11 +99,42 @@ def test_the_toast_names_the_change_and_the_file(tmp_path: Path) -> None:
 
     toast = window.show_refused("Corner rounding", "options/decoration.lua")
 
-    assert toast.get_title() == (
+    assert shown_title(toast) == (
         "Corner rounding was not saved: decoration.lua was edited outside this app"
     )
+    # Review m1 F6: a label that wraps, so the file's name is never cut off by an ellipsis.
+    assert toast.get_custom_title().get_wrap()
     assert toast.get_button_label() == "Details"
     assert session.can_undo is False
+
+
+def test_two_changes_held_back_from_one_file_say_so_in_one_toast(tmp_path: Path) -> None:
+    said: list[str] = []
+
+    session, _window = held_back_bind(tmp_path, ("SUPER + B", "SUPER + C"), said=said)
+
+    assert session.model.entities.binds == []
+    assert said == ["2 changes were not saved: binds.lua was edited outside this app"]
+
+
+def test_keep_my_file_says_later_changes_to_it_are_not_saved(tmp_path: Path) -> None:
+    said: list[str] = []
+    session, window = held_back_bind(tmp_path, said=said)
+    assert len(said) == 1
+    dismissed: list[bool] = []
+    window._refused_toast.connect("dismissed", lambda _toast: dismissed.append(True))
+
+    dialog = window.show_edited_file(BINDS, "Keybind added")
+    dialog.emit("response", "keep")
+    dialog.force_close()
+
+    assert said[1:] == [
+        "binds.lua was edited outside this app, so changes to it here are not saved until "
+        "you replace it"
+    ]
+    assert dismissed == [True], "the answered refusal held the answer's toast back"
+    assert session.health.edited_files == ()
+    assert not window._banner.get_revealed()
 
 
 def test_the_banner_offers_each_edited_file_in_turn_and_keep_lets_it_go(
@@ -135,7 +186,7 @@ def test_a_refused_undo_says_only_the_refusal_and_keeps_the_step(tmp_path: Path)
     session._edited_module = lambda modules: BINDS if BINDS in set(modules) else None
     said: list[str] = []
     add_toast = window._toasts.add_toast
-    window._toasts.add_toast = lambda toast: (said.append(toast.get_title()), add_toast(toast))
+    window._toasts.add_toast = lambda toast: (said.append(shown_title(toast)), add_toast(toast))
 
     window._undo()
 

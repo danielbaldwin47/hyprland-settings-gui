@@ -140,7 +140,7 @@ class RuleEditor(Adw.Dialog):
         self,
         *,
         kind: str,
-        on_done: Callable[[Rule], None],
+        on_done: Callable[[Rule], str | None],
         rule: Rule | None = None,
         taken_names: Sequence[str] = (),
         fetch_targets: Fetch | None = None,
@@ -730,7 +730,11 @@ class RuleEditor(Adw.Dialog):
             enabled=enabled,
             origin=origin,
         )
-        self._on_done(rule)
+        if why := self._on_done(rule):
+            # Refused: the draft stays, with the reason where the user is looking (#225).
+            self._error.set_label(why)
+            self._error.set_visible(True)
+            return
         self.close()
 
 

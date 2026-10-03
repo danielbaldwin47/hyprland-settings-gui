@@ -239,10 +239,20 @@ class RestoreTransaction:
         self._reloader = reloader
         self._restores = tuple(restores)
         self._journal = journal
+        self._landed: tuple[str, ...] = ()
 
     @property
     def modules(self) -> tuple[str, ...]:
         return tuple(good.module for good in self._restores)
+
+    @property
+    def landed(self) -> tuple[str, ...]:
+        """The Modules `run` replaced on disk, the restored bytes now the app's own (#266).
+
+        All of `modules` that differed, after a clean run; after a write that failed part-way,
+        the ones before it, whose model values `run` settled from their bytes all the same.
+        """
+        return self._landed
 
     @property
     def options(self) -> tuple[str, ...]:
@@ -276,38 +286,34 @@ class RestoreTransaction:
         # edit is "preserved in the Journal". This is that promise.
         draft = self._journal.begin(self.modules) if self._journal is not None else None
 
+        changed: list[str] = []
         try:
-            changed = [
-                good.module
-                for good in self._restores
+            for good in self._restores:
                 if self._writer.restore(
                     self._model,
                     good.module,
                     good.data,
                     good.options,
                     before_replace=draft.preserve if draft is not None else None,
-                )
-            ]
+                ):
+                    changed.append(good.module)
         except (LuaSyntaxError, ProtectedFile, ValueError) as error:
             # A Snapshot that will not parse, or one aimed at a file the app must not write.
             # The Writer gates per Module, so an earlier Module may already have been
             # replaced: then the App dir is half-restored, which is `WRITE_FAILED`'s
             # sentence, and the bytes it overwrote are journalled like any other write's.
-            landed = draft.dirty() if draft is not None else ()
+            landed = draft.dirty() if draft is not None else tuple(changed)
             if not landed:
                 _log.error("restore refused before writing: %s", error)
                 if draft is not None:
                     draft.discard()
                 return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
             _log.error("restore refused part-way, after %s: %s", ", ".join(landed), error)
-            result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
-            self._record(draft, result, landed)
-            return result
+            return await self._partial(draft, landed, names, error)
         except OSError as error:
             _log.error("restore failed mid-write: %s", error)
-            result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
-            self._record(draft, result, draft.dirty() if draft is not None else ())
-            return result
+            landed = draft.dirty() if draft is not None else tuple(changed)
+            return await self._partial(draft, landed, names, error)
 
         if not changed:
             # The Snapshot is already what is on disk. Reloading would spend a full teardown
@@ -317,7 +323,8 @@ class RestoreTransaction:
                 draft.discard()
             return ApplyResult(ApplyOutcome.NOTHING_TO_DO, keys=names)
 
-        live = await self._settle_from_bytes(names)
+        self._landed = tuple(changed)
+        live = await self._settle_from_bytes(names, self.modules)
         result = await reload_and_reread(
             reloader=self._reloader,
             client=self._client,
@@ -328,7 +335,30 @@ class RestoreTransaction:
         self._record(draft, result, changed)
         return result
 
-    async def _settle_from_bytes(self, names: Sequence[str]) -> tuple[str, ...]:
+    async def _partial(
+        self, draft: Draft | None, landed: Sequence[str], names: Sequence[str], error: Exception
+    ) -> ApplyResult:
+        """A write that failed after `landed` were replaced: `WRITE_FAILED`, with no reload.
+
+        The landed Modules are the app's own now (their hashes are recorded), so the next
+        edit in one renders the model over them: the model takes their values from their
+        bytes first (#266), or that edit would write the replaced version straight back.
+        The compositor picks the bytes up at the next reload, as after any failed write.
+        """
+        self._landed = tuple(landed)
+        if self._landed:
+            restored = set(self._landed)
+            await self._settle_from_bytes(
+                [n for g in self._restores if g.module in restored for n in g.options],
+                self._landed,
+            )
+        result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=tuple(names), detail=str(error))
+        self._record(draft, result, self._landed)
+        return result
+
+    async def _settle_from_bytes(
+        self, names: Sequence[str], modules: Sequence[str]
+    ) -> tuple[str, ...]:
         """Put the model in step with the restored Modules from their own bytes, as launch
         does; return the keys that still have to be read off the compositor.
 
@@ -340,7 +370,7 @@ class RestoreTransaction:
         """
         paths = self._writer.paths
         manifest = self._writer.manifest(self._model)
-        restored = {good.module for good in self._restores}
+        restored = set(modules)
         for option, _value in self._model.set_options():
             if module_relpath(option) in restored and option.name not in names:
                 self._model.unset(option.name)

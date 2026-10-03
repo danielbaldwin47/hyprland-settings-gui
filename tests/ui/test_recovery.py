@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
@@ -31,7 +32,7 @@ ENTRYPOINT_ERROR = "/home/user/.config/hypr/hyprland.lua:2: unexpected symbol"
 
 def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) -> Any:
     """A window over a session whose health is whatever the test needs it to be."""
-    from gi.repository import Adw
+    from gi.repository import Adw, GLib
 
     from hyprtweaker.engine.apply import plan
     from hyprtweaker.engine.ipc import Instance, NoInstance
@@ -62,11 +63,31 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
         def restorable(self, module: str) -> bool:
             return self.can_restore
 
-        def restore_last_good(self, *modules: str, done: Any = None) -> bool:
+        unverified_import = False
+
+        def unverified_since_import(self, module: str) -> bool:
+            return self.unverified_import
+
+        restore_start: Any = None
+        """What `restore_last_good` answers; `None` queues it with no copy kept."""
+        restore_ends = True
+        """Whether a queued restore ends at once, and how (`done(True)`)."""
+        edited = True
+
+        def edited_outside(self, module: str) -> bool:
+            return self.edited
+
+        def restore_last_good(self, *modules: str, done: Any = None) -> Any:
+            from hyprtweaker.session import RestoreStart
+
             self.calls.append(("restore", modules[0]))
-            if done is not None:
-                done(True)
-            return True
+            start = self.restore_start
+            if start is None:
+                start = RestoreStart(queued=True)
+            if start.queued and done is not None and self.restore_ends is not None:
+                # After the answer, as the real one's spawned transaction is.
+                GLib.idle_add(lambda: done(self.restore_ends) and False)
+            return start
 
         def regenerate_entrypoint(self) -> bool:
             self.calls.append(("regenerate", ""))
@@ -95,10 +116,12 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
     # "did this raise a toast?" is a real question for ADR-0016's toasts-only-for-auto-revert
     # rule.
     window._toast_log = []
+    window._toasts_shown = []
     raise_toast = window._toasts.add_toast
 
     def counted(toast: Any) -> None:
         window._toast_log.append(toast.get_title())
+        window._toasts_shown.append(toast)
         raise_toast(toast)
 
     window._toasts.add_toast = counted
@@ -305,9 +328,137 @@ def test_restore_reaches_the_session(tmp_path: Path) -> None:
     confirm = window.get_visible_dialog()
     assert confirm.get_heading() == "Restore general.lua?"
     confirm.emit("response", "restore")
+    idle()
 
     assert session.calls == [("restore", "options/general.lua")]
-    assert window._toast_log[-1] == "general.lua is back to the last version Hyprland accepted."
+    assert window._toast_log[-1] == "general.lua is back to the last version Hyprland accepted"
+
+
+def idle() -> None:
+    from gi.repository import GLib
+
+    context = GLib.MainContext.default()
+    while context.pending():
+        context.iteration(False)
+
+
+def restore_through_dialog(window: Any) -> Any:
+    _click(window.show_errors(), "Restore last good")
+    confirm = window.get_visible_dialog()
+    body = confirm.get_body()
+    confirm.emit("response", "restore")
+    idle()
+    return body
+
+
+def test_a_restore_offers_the_copy_of_the_edited_file_it_kept(tmp_path: Path) -> None:
+    """#266: the answer says the hand edit was kept, and its button shows that copy."""
+    from hyprtweaker.session import RestoreStart
+
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    copy = tmp_path / "state" / "edited-copies" / "20261003-120000" / "options" / "general.lua"
+    session.restore_start = RestoreStart(queued=True, copies={"options/general.lua": copy})
+
+    body = restore_through_dialog(window)
+
+    assert body == (
+        "general.lua goes back to the last version this app wrote and Hyprland accepted. "
+        f"A copy of the file as it is now is kept in {tmp_path / 'state' / 'edited-copies'}."
+    )
+    assert window._toast_log[-1] == "general.lua is restored, and a copy of your edit is kept"
+    toast = window._toasts_shown[-1]
+    assert toast.get_button_label() == "Show copy"
+    shown: list[Path] = []
+    window._show_in_folder = shown.append
+    toast.emit("button-clicked")
+    assert shown == [copy]
+
+
+def test_show_copy_that_cannot_open_a_folder_names_the_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review m1 F8: with no file manager, or a portal that refuses, Show copy did nothing
+    and the toast had no path. The failure now toasts where the copy is."""
+    from gi.repository import GLib
+
+    from hyprtweaker.ui.shell import window as window_module
+
+    class NoFileManager:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def open_containing_folder(self, _parent: object, _cancel: object, done: Any) -> None:
+            done(self, None)
+
+        def open_containing_folder_finish(self, _result: object) -> bool:
+            raise GLib.Error("No application is registered as handling this file")
+
+    _session, window = build_window(tmp_path, (APP_ERROR,))
+    monkeypatch.setattr(window_module.Gtk, "FileLauncher", NoFileManager)
+    copy = tmp_path / "state" / "edited-copies" / "20261003-120000" / "options" / "general.lua"
+
+    window._show_in_folder(copy)
+
+    toast = window._toasts_shown[-1]
+    assert window_module.toast_text(toast) == (
+        f"The folder could not be opened. The copy is {copy}"
+    )
+    assert toast.get_custom_title().get_wrap()
+
+
+@pytest.mark.parametrize(
+    ("refusal", "said"),
+    [
+        ("NO_EARLIER", "general.lua could not be restored: there is no earlier version"),
+        ("RUNNING", "general.lua could not be restored yet: a restore is still running"),
+        (
+            "READ_ONLY",
+            "general.lua could not be restored. This app is not connected to Hyprland",
+        ),
+    ],
+)
+def test_a_restore_that_was_not_queued_says_its_own_cause(
+    tmp_path: Path, refusal: str, said: str
+) -> None:
+    """Review addendum 3: "there is no earlier version" was said for all three causes."""
+    from hyprtweaker.session import RestoreRefusal, RestoreStart
+
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    session.restore_start = RestoreStart(queued=False, refusal=RestoreRefusal[refusal])
+
+    restore_through_dialog(window)
+
+    assert window._toast_log[-1] == said
+
+
+def test_a_restore_that_cannot_keep_a_copy_says_nothing_was_restored(tmp_path: Path) -> None:
+    from hyprtweaker.session import RestoreStart
+
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    session.restore_start = RestoreStart(queued=False, uncopied=("options/general.lua",))
+
+    restore_through_dialog(window)
+
+    assert window._toast_log == [
+        "general.lua was not restored: a copy of it could not be kept, so it was left as it is"
+    ]
+
+
+def test_a_file_the_app_wrote_is_restored_without_promising_a_copy(tmp_path: Path) -> None:
+    """Only a hand edit is copied, so only a hand-edited file's dialog promises one."""
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    session.edited = False
+    session.restore_ends = False
+
+    body = restore_through_dialog(window)
+
+    assert (
+        body
+        == "general.lua goes back to the last version this app wrote and Hyprland accepted."
+    )
+    assert window._toast_log == [
+        "general.lua could not be restored. The Banner says what is wrong"
+    ]
 
 
 def test_regenerate_reaches_the_session(tmp_path: Path) -> None:
@@ -472,6 +623,25 @@ def test_restore_is_not_offered_without_a_restore_point(tmp_path: Path) -> None:
     assert (
         "This app has no earlier version of general.lua that Hyprland accepted, so there is "
         "nothing to restore. Open the file to fix the error."
+    ) in _labels(dialog.get_extra_child())
+
+
+def test_an_import_kept_unverified_says_why_there_is_no_restore_point(
+    tmp_path: Path,
+) -> None:
+    """#259 AC4: not "no earlier version" -- there are older ones, and none is offered."""
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    session.can_restore = False
+    session.unverified_import = True
+
+    dialog = window.show_errors()
+
+    labels = {button.get_label() for button in buttons(dialog.get_extra_child())}
+    assert labels == {"Open file"}
+    assert (
+        "There is no verified restore point for general.lua since the import, because its "
+        "settings could not all be checked against Hyprland when it was kept. Open the file "
+        "to fix the error."
     ) in _labels(dialog.get_extra_child())
 
 

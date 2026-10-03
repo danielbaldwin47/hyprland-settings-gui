@@ -366,10 +366,11 @@ class MonitorsPage:
                 "Activating one brings the whole setup back."
             ),
         )
-        save = Gtk.Button(label="Save current…", valign=Gtk.Align.CENTER)
-        save.set_tooltip_text("Capture the current setup as a new profile")
-        save.connect("clicked", self._on_save_profile_clicked)
-        self._profiles_group.set_header_suffix(save)
+        self._save = Gtk.Button(label="Save current…", valign=Gtk.Align.CENTER)
+        self._save.connect("clicked", self._on_save_profile_clicked)
+        self._profiles_group.set_header_suffix(self._save)
+        self._connected_empty: Adw.ActionRow | None = None
+        self._profiles_empty: Adw.ActionRow | None = None
         self._page.add(self._profiles_group)
 
         self._connected_rows: list[Adw.ExpanderRow] = []
@@ -408,6 +409,21 @@ class MonitorsPage:
     @property
     def catch_all_row(self) -> Adw.ExpanderRow | None:
         return self._catch_all_row
+
+    @property
+    def save_button(self) -> Gtk.Button:
+        """ "Save current…": off while read-only, with the cause as its tooltip (#269)."""
+        return self._save
+
+    @property
+    def connected_empty_row(self) -> Adw.ActionRow | None:
+        """What Connected says when no display is listed, or `None` when one is."""
+        return self._connected_empty
+
+    @property
+    def profiles_empty_row(self) -> Adw.ActionRow | None:
+        """What Profiles says when there are none, or `None` when there are."""
+        return self._profiles_empty
 
     @property
     def profile_rows(self) -> tuple[Adw.ActionRow, ...]:
@@ -482,6 +498,11 @@ class MonitorsPage:
         rules = self._session.monitor_rules
         monitors = self._connected or ()
         editable = bool(self._session.live)
+        # A capture is made of the lists a read-only session may never have read (#269).
+        self._save.set_sensitive(editable)
+        self._save.set_tooltip_text(
+            "Capture the current setup as a new profile" if editable else self._capture_off()
+        )
 
         # Every applied edit rebuilds the page, and the rows that take several edits in a
         # row (the four reserved sides, the luminance fields) sit inside a display's
@@ -503,6 +524,7 @@ class MonitorsPage:
         self._catch_all_row = None
         self._rule_rows = {}
         self._profile_rows_by_slug = {}
+        self._connected_empty = self._profiles_empty = None
 
         # The canvas: live outputs at logical size, IPC geometry (ADR-0008).
         displays = []
@@ -542,11 +564,22 @@ class MonitorsPage:
             self._connected_group.add(row)
             self._connected_rows.append(row)
             self._listed.setdefault(self._connected_group, []).append(row)
+        # Read-only with nothing listed, the Connected row says the cause; the Profiles
+        # hint below then leaves it out rather than repeat it (review m1 F5).
+        cause_shown = not monitors and self._session.offline_sentence is not None
         if not monitors:
+            unreadable = self._session.entities_unreadable
             empty = Adw.ActionRow(
-                title="No connected displays to show",
-                subtitle="Hyprland is not answering, so only saved rules are listed.",
+                title="No connected displays to show"
+                if unreadable is None
+                else "Display rules could not be read",
+                # Read-only, the session's cause is what is true; "not answering" only for
+                # a live session whose fetch has not answered (review m1 F4).
+                subtitle=unreadable
+                or self._session.offline_sentence
+                or "Hyprland is not answering, so only saved rules are listed.",
             )
+            self._connected_empty = empty
             self._connected_group.add(empty)
             self._listed.setdefault(self._connected_group, []).append(empty)
 
@@ -593,8 +626,11 @@ class MonitorsPage:
         if not profiles:
             hint = Adw.ActionRow(
                 title="No profiles yet",
-                subtitle="Save the current setup to switch between arrangements later.",
+                subtitle="Save the current setup to switch between arrangements later."
+                if editable
+                else self._capture_off(cause=not cause_shown),
             )
+            self._profiles_empty = hint
             self._profiles_group.add(hint)
             self._listed.setdefault(self._profiles_group, []).append(hint)
 
@@ -690,8 +726,17 @@ class MonitorsPage:
                 "to keep what you have, or detach to let them differ."
             )
             row.add_suffix(badge)
-            update = Gtk.Button(label="Update", valign=Gtk.Align.CENTER, css_classes=["flat"])
-            update.set_tooltip_text("Recapture the current setup into this profile")
+            update = Gtk.Button(
+                label="Update",
+                valign=Gtk.Align.CENTER,
+                css_classes=["flat"],
+                sensitive=editable,
+            )
+            update.set_tooltip_text(
+                "Recapture the current setup into this profile"
+                if editable
+                else self._capture_off()
+            )
             update.connect("clicked", lambda _b: self._profiles.update(slug))
             row.add_suffix(update)
             detach = Gtk.Button(label="Detach", valign=Gtk.Align.CENTER, css_classes=["flat"])
@@ -718,6 +763,12 @@ class MonitorsPage:
         remove.connect("clicked", lambda _b: self._profiles.delete(slug))
         row.add_suffix(remove)
         return row
+
+    def _capture_off(self, *, cause: bool = True) -> str:
+        offline = self._session.offline_sentence if cause else None
+        return (
+            f"Profiles can be saved once this app can read your settings. {offline or ''}"
+        ).rstrip()
 
     def _on_save_profile_clicked(self, _button: Gtk.Button) -> None:
         SaveProfileDialog(on_save=self._profiles.save).present(self._page)

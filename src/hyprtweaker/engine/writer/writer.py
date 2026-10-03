@@ -453,13 +453,14 @@ class Writer:
             else:
                 unchanged.append(name)
 
-        removed = self._prune(
+        removed, spared = self._prune(
             manifest,
             keep=set(rendered),
             off_limits=off_limits,
             prune_entities=model.entities_loaded,
             before_replace=before_replace,
         )
+        skipped.extend(spared)
 
         if ENTRYPOINT_NAME in off_limits:
             skipped.append(ENTRYPOINT_NAME)
@@ -579,7 +580,16 @@ class Writer:
         `before_replace` is called just before the rename, as in `write`: the recovery's
         Journal draft keeps the bytes being overwritten (ADR-0010 §Rollback).
         """
-        manifest = self._manifest_for(model)
+        return self._regenerate_under(model, self._manifest_for(model), before_replace)
+
+    def _regenerate_under(
+        self, model: ConfigModel, manifest: Manifest, before_replace: BeforeReplace | None
+    ) -> bool:
+        """Write the Entrypoint `manifest` renders, then save `manifest` with its record.
+
+        The Manifest is saved only once the Entrypoint stands: a write that fails leaves the
+        record saying what still loads (review m1 F3).
+        """
         text = self.entrypoint_text(model, manifest)
         changed = self._write_if_changed(self._paths.entrypoint, text, before_replace)
         self._save(replace(manifest, entrypoint=ModuleRecord.of(text)))
@@ -616,8 +626,8 @@ class Writer:
         Reversal is this same call with the name removed -- which is what makes the ADR's
         "one-click re-enable" one click rather than an undo path of its own.
         """
-        self._save(self._manifest_for(model).with_quarantine(requires))
-        return self.regenerate_entrypoint(model, before_replace=before_replace)
+        manifest = self._manifest_for(model).with_quarantine(requires)
+        return self._regenerate_under(model, manifest, before_replace)
 
     def set_bridges(
         self,
@@ -632,8 +642,8 @@ class Writer:
         choice lives and the Entrypoint is where it takes effect (ADR-0014). Returns whether
         the Entrypoint's bytes changed.
         """
-        self.record_bridges(model, entries)
-        return self.regenerate_entrypoint(model, before_replace=before_replace)
+        manifest = self._manifest_for(model).with_bridges(entries)
+        return self._regenerate_under(model, manifest, before_replace)
 
     def record_bridges(self, model: ConfigModel, entries: Sequence[BridgeEntry]) -> None:
         """Record exactly `entries`, Manifest only: the next `write` renders their lines.
@@ -742,8 +752,10 @@ class Writer:
         *,
         prune_entities: bool = True,
         before_replace: BeforeReplace | None = None,
-    ) -> list[str]:
-        """Delete Modules the model no longer produces.
+    ) -> tuple[list[str], list[str]]:
+        """Delete Modules the model no longer produces: the ones removed, and the hand-edited
+        ones spared, which the write reports as skipped like any other change it kept off
+        disk (#273).
 
         Scoped to `options/` and to files the Manifest says the app wrote: a Module the app
         never claimed is somebody else's, and deleting it would be exactly the "manager over
@@ -758,8 +770,9 @@ class Writer:
         it -- and an explicit overwrite re-establishes the record that makes it prunable.
         """
         removed: list[str] = []
+        spared: list[str] = []
         for name in sorted(manifest.modules):
-            if name in keep or name in off_limits or not is_generated_module(name):
+            if name in keep or not is_generated_module(name):
                 continue
             if is_entity_module(name) and not prune_entities:
                 # The model's Entity half was never read, so "the model renders no binds"
@@ -768,9 +781,13 @@ class Writer:
                 # reach this state: Options are recovered from the compositor at startup.
                 continue
             path = self._paths.app_dir / name
+            if name in off_limits:
+                if path.is_file():
+                    spared.append(name)
+                continue
             if path.is_file():
                 if before_replace is not None:
                     before_replace(path)
                 path.unlink()
                 removed.append(name)
-        return removed
+        return removed, spared

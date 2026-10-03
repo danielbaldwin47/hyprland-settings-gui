@@ -157,8 +157,14 @@ class TestRendering:
         """Including a clean one: the reader who needs it cannot open the app to look it
         up, and a report that only carries the escape hatch when trouble was predicted is
         missing the case where the prediction was wrong (ADR-0009)."""
-        assert "rm ~/.config/hypr/hyprland.lua" in LossReport().render()
-        assert "rm ~/.config/hypr/hyprland.lua" in _report().render()
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            in LossReport().render()
+        )
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            in _report().render()
+        )
 
     def test_the_summary_line_counts_every_class(self) -> None:
         assert "3 findings -- 1 breakage, 1 needs review, 1 info." in _report().render()
@@ -190,6 +196,69 @@ class TestPersistence:
         report.add(LossCode.MODS_SPELLING, "x")
         record = json.loads(report.save(paths).read_text(encoding="utf-8"))
         assert record["items"][0]["class"] == str(LossClass.INFO)
+
+    def test_a_report_whose_record_cannot_be_written_is_not_listed(
+        self, paths: ConfigPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#268: each file whole or absent, the readable copy first, the JSON `stored()`
+        lists last, so a failed save leaves no report half there."""
+        from hyprtweaker.engine.importer import loss
+
+        real = loss.write_atomic
+
+        def refuse_json(path: Path, content: str | bytes) -> None:
+            if path.suffix == ".json":
+                raise OSError(28, "No space left on device")
+            real(path, content)
+
+        monkeypatch.setattr(loss, "write_atomic", refuse_json)
+        with pytest.raises(OSError):
+            _report().save(paths)
+
+        assert LossReport.stored(paths) == []
+        assert [path.suffix for path in paths.reports_dir.iterdir()] == [".md"]
+
+    def test_a_re_save_names_this_switchs_backups_in_the_same_pair(
+        self, paths: ConfigPaths
+    ) -> None:
+        report = _report()
+        report.restore_backup = True
+        report.restore_app_dir = True
+        path = report.save(paths)
+        report.backup_name = "hyprland.lua.bak.20261002T120000Z"
+        report.app_dir_backup_name = "hyprtweaker.bak.20261002T120000Z"
+        report.imported_name = "hyprtweaker.imported.20261002T120000Z"
+
+        assert report.save(paths, path=path) == path
+
+        hypr = "~/.config/hypr"
+        command = (
+            f"mv {hypr}/hyprtweaker {hypr}/hyprtweaker.imported.20261002T120000Z"
+            f" && mv {hypr}/hyprtweaker.bak.20261002T120000Z {hypr}/hyprtweaker"
+            f" && mv {hypr}/hyprland.lua.bak.20261002T120000Z {hypr}/hyprland.lua"
+        )
+        assert LossReport.stored(paths) == [path]
+        assert f"`{command}`" in LossReport.load(path).rescue_line
+        assert f"`{command}`" in path.with_suffix(".md").read_text(encoding="utf-8")
+
+    def test_a_report_from_before_the_names_reads_with_the_generic_ones(
+        self, paths: ConfigPaths
+    ) -> None:
+        report = _report()
+        report.restore_backup = True
+        report.restore_app_dir = True
+        path = report.save(paths)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        for key in ("backup_name", "app_dir_backup_name", "imported_name"):
+            del record[key]
+        path.write_text(json.dumps(record), encoding="utf-8")
+
+        assert (
+            "`mv ~/.config/hypr/hyprtweaker ~/.config/hypr/hyprtweaker.imported && mv "
+            "~/.config/hypr/hyprtweaker.bak ~/.config/hypr/hyprtweaker && mv "
+            "~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua`"
+            in (LossReport.load(path).rescue_line)
+        )
 
     def test_saving_writes_both_a_json_record_and_a_readable_copy(
         self, paths: ConfigPaths
@@ -252,9 +321,12 @@ class TestRescueLine:
     config and tells the user it restored it.
     """
 
-    def test_a_migration_that_displaced_nothing_removes_the_generated_entrypoint(self) -> None:
+    def test_a_migration_that_displaced_nothing_moves_the_generated_entrypoint_aside(
+        self,
+    ) -> None:
+        """Moved, never removed: a hand edit made since the switch survives the rescue."""
         line = rescue_line(False)
-        assert "rm ~/.config/hypr/hyprland.lua" in line
+        assert "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched" in line
         assert ".bak" not in line
 
     def test_a_migration_that_displaced_a_lua_restores_it_instead_of_deleting(self) -> None:
@@ -264,10 +336,12 @@ class TestRescueLine:
 
     def test_an_undecided_migration_never_offers_a_bare_delete(self) -> None:
         """A report whose migration is not yet known still gets a line, and it leads with
-        the restore -- guessing wrong towards `rm` is the failure this class is about."""
+        the restore -- guessing wrong towards removing the file is the failure this class
+        is about, and the other command only moves it aside (review m1 F2)."""
         line = rescue_line(None)
         assert "hyprland.lua.bak" in line
-        assert line.index("mv ") < line.index("rm ")
+        assert "rm " not in line
+        assert line.index("hyprland.lua.bak") < line.index("hyprland.lua.switched")
 
     def test_the_rescue_names_the_backup_that_was_actually_made(self) -> None:
         """A second migration finds `.bak` taken and stamps the new one. Naming the plain
@@ -290,12 +364,18 @@ class TestRescueLine:
         report.restore_backup = True
         rendered = report.render()
         assert "hyprland.lua.bak" in rendered
-        assert "rm ~/.config/hypr/hyprland.lua" not in rendered
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            not in rendered
+        )
 
-    def test_a_legacy_report_renders_the_removing_line(self) -> None:
+    def test_a_legacy_report_renders_the_moving_aside_line(self) -> None:
         report = LossReport(source="/home/tester/.config/hypr/hyprland.conf")
         report.restore_backup = False
-        assert "rm ~/.config/hypr/hyprland.lua" in report.render()
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            in report.render()
+        )
 
     def test_every_report_carries_one_even_when_nothing_was_lost(self) -> None:
         assert "If Hyprland will not start" in LossReport().render()

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import threading
 from collections.abc import Coroutine
 from dataclasses import replace
@@ -35,7 +36,7 @@ from hyprtweaker.engine.migration.flow import (
 from hyprtweaker.engine.model.values import CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
-from hyprtweaker.engine.state import Manifest
+from hyprtweaker.engine.state import Manifest, kept_import
 
 T = TypeVar("T")
 
@@ -594,6 +595,59 @@ class TestKeepOrRollBack:
 
         assert run(flow.decide(seconds=0.01, tick=0.005)) is not Decision.KEPT
 
+    def test_keeping_records_the_imported_modules_for_the_next_read_back(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        """#259: the Session journals this as the import's restore boundary."""
+        flow = flow_for(legacy, schema, FakeClient())
+        flow.build_preview()
+        flow.back_up()
+        run(flow.switch())
+        assert kept_import.read(legacy) is None, "nothing is kept before the answer"
+
+        flow.keep()
+
+        record = kept_import.read(legacy)
+        manifest = Manifest.load(legacy.manifest, app_version="test", schema_version="0")
+        assert record is not None and record.known
+        assert dict(record.modules) == manifest.modules
+        assert "options/general.lua" in record.modules
+        assert not legacy.sentinel.exists()
+
+    def test_a_keep_that_cannot_record_the_import_leaves_the_switch_unanswered(
+        self, legacy: ConfigPaths, schema: Schema, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Never a moment with neither: the sentinel goes only once the record is down."""
+        flow = flow_for(legacy, schema, FakeClient())
+        flow.build_preview()
+        flow.back_up()
+        run(flow.switch())
+
+        def refuse(*_args: object) -> None:
+            raise OSError("read-only state dir")
+
+        monkeypatch.setattr(kept_import, "write", refuse)
+        with pytest.raises(OSError):
+            flow.keep()
+        assert legacy.sentinel.exists()
+
+    def test_rolling_back_records_no_import_and_drops_an_unanswered_one(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        """A Keep that died before it cleared the sentinel, then rolled back on relaunch."""
+        flow = flow_for(legacy, schema, FakeClient())
+        flow.build_preview()
+        flow.back_up()
+        run(flow.switch())
+        kept_import.write(
+            legacy, Manifest.load(legacy.manifest, app_version="t", schema_version="0")
+        )
+
+        outcome = flow.roll_back()
+
+        assert outcome.complete
+        assert kept_import.read(legacy) is None
+
 
 @pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter on this machine")
 class TestForeignLuaPath:
@@ -650,9 +704,12 @@ class TestForeignLuaPath:
         relaunched = flow_for(paths, schema, FakeClient())
         pending = relaunched.pending_switch()
         relaunched.roll_back(pending)
-        relaunched.roll_back(pending)
+        second = relaunched.roll_back(pending)
 
         assert paths.entrypoint.read_text(encoding="utf-8") == original
+        # Left in place, not put back from the full backup (review m1 F27).
+        assert second.edited_copy is None
+        assert not any("was missing" in note for note in second.notes)
 
     def test_a_roll_back_leaves_no_app_dir_claiming_the_config(
         self, paths: ConfigPaths, schema: Schema
@@ -686,12 +743,15 @@ class TestTheRescueLine:
     on the legacy path and the user's only config on the Lua path (#131, ADR-0009).
     """
 
-    def test_the_legacy_path_removes_the_generated_entrypoint(
+    def test_the_legacy_path_moves_the_generated_entrypoint_aside(
         self, legacy: ConfigPaths, schema: Schema
     ) -> None:
         flow = flow_for(legacy, schema)
         flow.detect()
-        assert "rm ~/.config/hypr/hyprland.lua" in flow.rescue_line
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            in flow.rescue_line
+        )
 
     def test_the_lua_path_restores_the_backup(self, paths: ConfigPaths, schema: Schema) -> None:
         paths.entrypoint.write_text("hl.config({})\n", encoding="utf-8")
@@ -869,6 +929,23 @@ class TestWithoutACompositor:
         run(flow.switch())
 
         assert legacy.entrypoint.is_file()
+
+    def test_the_written_config_is_recorded_as_a_kept_import(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        """#259, review m1 F10: with no countdown to answer, it is kept by being written, so
+        the next live start makes it the restore boundary."""
+        flow = flow_for(legacy, schema, client=None)
+        flow.build_preview()
+        flow.back_up()
+
+        run(flow.switch())
+
+        record = kept_import.read(legacy)
+        assert record is not None and record.known
+        manifest = Manifest.load(legacy.manifest, app_version="x", schema_version="y")
+        assert dict(record.modules) == manifest.modules
+        assert record.modules
 
 
 class TestReloadSettling:
@@ -1244,10 +1321,408 @@ class TestAnImportKeepsWhatTheUserSavedInTheApp:
 
         assert _listing(paths.app_dir) == before
 
-    def test_the_preview_says_what_carries_over_and_where_the_rest_is(
+    def test_nothing_is_said_without_an_app_dir(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        flow = flow_for(legacy, schema, FakeClient())
+        flow.detect()
+        flow.build_preview()
+
+        assert flow.app_data_note is None
+
+
+class _Crash(BaseException):
+    """The process stopping at this point: nothing after it runs, nothing catches it."""
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _switched(paths: ConfigPaths, schema: Schema, source: Path | None) -> MigrationFlow:
+    flow = flow_for(paths, schema, FakeClient())
+    flow.detect()
+    flow.build_preview(source)
+    flow.back_up()
+    run(flow.switch())
+    return flow
+
+
+class _AtHome:
+    """The fenced home's real layout, so paths read back as the user sees them (`~/...`)."""
+
+    @pytest.fixture
+    def paths(self) -> ConfigPaths:
+        config = ConfigPaths.default()
+        config.hypr_dir.mkdir(parents=True, exist_ok=True)
+        return config
+
+
+class TestTheSwitchRecordsBeforeItMoves(_AtHome):
+    """#268 AC3, ADR-0009 Switch step 1: the marker names the backups the switch is about to
+    make, and the original's hash, before the first original file moves. A marker written
+    after the moves lost the original when its write failed."""
+
+    def test_a_marker_that_cannot_be_written_moves_nothing(
+        self, paths: ConfigPaths, schema: Schema, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _app_generated(paths, schema)
+        before = _hypr_dir(paths)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        flow.back_up()
+
+        def refuse(*_args: object, **_kwargs: object) -> None:
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(sentinels, "write_atomic", refuse)
+        with pytest.raises(OSError):
+            run(flow.switch())
+
+        assert _hypr_dir(paths) == before
+        assert not paths.sentinel.exists()
+
+    def test_the_marker_names_the_backups_and_both_hashes(
         self, paths: ConfigPaths, schema: Schema
     ) -> None:
-        source = self._app_user(paths, schema)
+        source = _app_generated(paths, schema)
+        original = _sha(paths.entrypoint)
+        _switched(paths, schema, source)
+
+        marker = sentinels.read(paths)
+        assert marker is not None
+        assert marker.restore == str(paths.hypr_dir / "hyprland.lua.bak")
+        assert marker.restore_app_dir == str(paths.hypr_dir / "hyprtweaker.bak")
+        assert marker.original_sha256 == original
+        assert marker.generated_sha256 == _sha(paths.entrypoint)
+        assert marker.generated_sha256 != original
+
+    @pytest.mark.parametrize("stop_before", ["hyprland.lua", "hyprtweaker", "the tree"])
+    def test_a_switch_interrupted_after_the_marker_rolls_back_at_relaunch(
+        self,
+        paths: ConfigPaths,
+        schema: Schema,
+        monkeypatch: pytest.MonkeyPatch,
+        stop_before: str,
+    ) -> None:
+        source = _app_generated(paths, schema)
+        before = _hypr_dir(paths)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        flow.back_up()
+
+        real_replace = os.replace
+
+        def replace_until(src: object, dst: object) -> None:
+            if Path(str(src)).name == stop_before and Path(str(src)).parent == paths.hypr_dir:
+                raise _Crash
+            real_replace(src, dst)  # type: ignore[arg-type]
+
+        def tree_until(*_args: object, **_kwargs: object) -> None:
+            paths.app_dir.mkdir(parents=True, exist_ok=True)
+            (paths.app_dir / "manifest.json").write_text("{ half")
+            raise _Crash
+
+        monkeypatch.setattr(os, "replace", replace_until)
+        if stop_before == "the tree":
+            monkeypatch.setattr(MigrationFlow, "_write_tree", tree_until)
+        with pytest.raises(_Crash):
+            run(flow.switch())
+        monkeypatch.undo()
+
+        relaunched = flow_for(paths, schema, FakeClient())
+        pending = relaunched.pending_switch()
+        assert pending is not None
+        outcome = relaunched.roll_back(pending)
+
+        assert outcome.complete
+        assert _hypr_dir(paths) == before
+        assert not paths.sentinel.exists()
+        # Nothing was put back from the full backup, nor copied (review m1 F27).
+        assert outcome.edited_copy is None
+        assert not any("was missing" in note for note in outcome.notes)
+
+
+MARK = "\n-- hand edit during the countdown: marker-268-6f1c\n"
+
+
+class TestRollBackNeverClaimsWhatItDidNot(_AtHome):
+    """#268 AC1: a recorded backup that is gone. Roll back puts the Entrypoint back from the
+    full-tree backup; with that gone too, it changes nothing, keeps the marker, and says
+    what is still in place."""
+
+    def test_a_missing_bak_is_put_back_from_the_full_backup(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = _app_generated(paths, schema)
+        before = _hypr_dir(paths)
+        flow = _switched(paths, schema, source)
+        (paths.hypr_dir / "hyprland.lua.bak").unlink()
+
+        outcome = flow.roll_back()
+
+        assert outcome.complete
+        assert _hypr_dir(paths) == before
+        assert (
+            "hyprland.lua.bak was missing, so your hyprland.lua was put back from the backup "
+            "made before the switch."
+        ) in outcome.notes
+        assert not paths.sentinel.exists()
+
+    def test_with_both_copies_gone_nothing_changes_and_the_switch_stays_unfinished(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = _app_generated(paths, schema)
+        flow = _switched(paths, schema, source)
+        assert flow.backup is not None
+        (paths.hypr_dir / "hyprland.lua.bak").unlink()
+        (flow.backup.path / "hyprland.lua").unlink()
+        switched = _hypr_dir(paths)
+
+        relaunched = flow_for(paths, schema, FakeClient())
+        outcome = relaunched.roll_back(relaunched.pending_switch())
+
+        assert not outcome.complete
+        assert _hypr_dir(paths) == switched
+        assert relaunched.pending_switch() is not None
+        assert outcome.rescue.startswith(
+            "Your hyprland.lua could not be put back: hyprland.lua.bak is missing. The "
+            "backup made before the switch is in ~/.local/state/hyprtweaker/backups/"
+        )
+        assert outcome.rescue.endswith(
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+        )
+
+    def test_an_unreadable_marker_changes_nothing_and_names_the_backup(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = _app_generated(paths, schema)
+        flow = _switched(paths, schema, source)
+        assert flow.backup is not None
+        paths.sentinel.write_text("{ truncated", encoding="utf-8")
+        switched = _hypr_dir(paths)
+
+        relaunched = flow_for(paths, schema, FakeClient())
+        outcome = relaunched.roll_back(relaunched.pending_switch())
+
+        assert not outcome.complete
+        assert _hypr_dir(paths) == switched
+        assert paths.sentinel.exists()
+        assert (
+            "The backup made before the switch is in ~/.local/state/hyprtweaker/backups/"
+            f"{flow.backup.path.name}."
+        ) in outcome.rescue
+
+
+class TestRollBackKeepsAHandEdit(_AtHome):
+    """#268 AC2: an Entrypoint edited during the countdown is copied, byte for byte, under a
+    name of its own before Roll back replaces or removes it, and the user is told where."""
+
+    @pytest.mark.parametrize("config", [_legacy, _app_generated])
+    def test_the_edited_bytes_are_kept_and_named(
+        self, paths: ConfigPaths, schema: Schema, config
+    ) -> None:
+        source = config(paths, schema)
+        before = _hypr_dir(paths)
+        flow = _switched(paths, schema, source)
+        with paths.entrypoint.open("a", encoding="utf-8") as handle:
+            handle.write(MARK)
+        edited = paths.entrypoint.read_bytes()
+
+        outcome = flow.roll_back()
+
+        assert outcome.complete
+        assert outcome.edited_copy is not None
+        assert outcome.edited_copy.read_bytes() == edited
+        assert outcome.edited_copy.is_relative_to(paths.edited_copies_dir)
+        shown = "~/" + str(outcome.edited_copy.relative_to(paths.config_home.parent))
+        assert outcome.notes[0] == (
+            f"hyprland.lua had changed since the switch, so that version is kept as {shown}."
+        )
+        assert _hypr_dir(paths) == before
+
+    def test_a_conf_entrypoint_rewritten_without_the_banner_is_kept_and_rolled_back(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """Review m1 F1: a hand edit that drops the app's banner is still the switch's file,
+        known by its hash; leaving it would keep it loading over hyprland.conf while the
+        wizard says nothing was kept."""
+        _legacy(paths, schema)
+        before = _hypr_dir(paths)
+        flow = _switched(paths, schema, None)
+        paths.entrypoint.write_text("-- my own config now" + MARK, encoding="utf-8")
+        edited = paths.entrypoint.read_bytes()
+
+        outcome = flow.roll_back()
+
+        assert outcome.complete
+        assert outcome.edited_copy is not None
+        assert outcome.edited_copy.read_bytes() == edited
+        assert not paths.entrypoint.exists()
+        assert not paths.sentinel.exists()
+        assert _hypr_dir(paths) == before
+
+    def test_an_untouched_switch_keeps_no_copy(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = _app_generated(paths, schema)
+        flow = _switched(paths, schema, source)
+
+        outcome = flow.roll_back()
+
+        assert outcome.complete
+        assert outcome.edited_copy is None
+        assert not paths.edited_copies_dir.exists()
+
+    def test_a_copy_that_fails_stops_roll_back_before_any_byte_changes(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = _app_generated(paths, schema)
+        flow = _switched(paths, schema, source)
+        with paths.entrypoint.open("a", encoding="utf-8") as handle:
+            handle.write(MARK)
+        paths.edited_copies_dir.write_text("in the way")
+        switched = _hypr_dir(paths)
+
+        outcome = flow.roll_back()
+
+        assert not outcome.complete
+        assert _hypr_dir(paths) == switched
+        assert paths.sentinel.exists()
+        assert outcome.rescue.startswith(
+            "Nothing was rolled back: hyprland.lua has changed since the switch, and a copy "
+            "of it could not be kept ("
+        )
+        assert outcome.rescue.splitlines()[-1] == (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched && "
+            "mv ~/.config/hypr/hyprtweaker ~/.config/hypr/hyprtweaker.imported && "
+            "mv ~/.config/hypr/hyprtweaker.bak ~/.config/hypr/hyprtweaker && "
+            "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua"
+        )
+
+
+class TestRollBackSaysWhereThingsWent(_AtHome):
+    """#268 AC6: the switch's own App dir, with the presets and profiles in it, and the full
+    backup are named; two Roll backs in one second each get a folder of their own."""
+
+    def test_the_notes_name_the_rolled_back_folder_and_the_full_backup(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = _app_generated(paths, schema)
+        flow = _switched(paths, schema, source)
+        assert flow.backup is not None
+
+        outcome = flow.roll_back()
+
+        (folder,) = (paths.state_dir / "rolled-back").iterdir()
+        assert (folder / "hyprtweaker" / "presets" / "mine.json").is_file()
+        assert outcome.notes == (
+            "What the switch wrote, with the presets and display profiles in it, is kept in "
+            f"~/.local/state/hyprtweaker/rolled-back/{folder.name}.",
+            "A full copy of your config from before the switch is kept in "
+            f"~/.local/state/hyprtweaker/backups/{flow.backup.path.name}.",
+        )
+
+    def test_two_roll_backs_in_one_second_keep_both(
+        self, paths: ConfigPaths, schema: Schema, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from datetime import UTC, datetime
+
+        from hyprtweaker.engine.migration import flow as flow_module
+
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                return datetime(2026, 10, 2, 12, 0, 0, tzinfo=UTC)
+
+        monkeypatch.setattr(flow_module, "datetime", Frozen)
+        source = _app_generated(paths, schema)
+        _switched(paths, schema, source).roll_back()
+        _switched(paths, schema, source).roll_back()
+
+        assert sorted(path.name for path in (paths.state_dir / "rolled-back").iterdir()) == [
+            "20261002-120000",
+            "20261002-120000-2",
+        ]
+
+
+class TestTheReportNamesThisSwitchsBackups(_AtHome):
+    """#268 AC5: after a repeated migration the backups are stamped; the report re-saved
+    after the switch, and the wizard, name the ones this switch made, and the rescue never
+    moves the imported App dir into one an earlier rescue left."""
+
+    def test_a_repeated_migration_names_its_own_backups(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = _app_generated(paths, schema)
+        for name in ("hyprland.lua.bak", "hyprtweaker.bak", "hyprtweaker.imported"):
+            target = paths.hypr_dir / name
+            target.mkdir() if name != "hyprland.lua.bak" else target.write_text("old\n")
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        report = flow.save_report()
+        flow.back_up()
+        run(flow.switch())
+
+        made = {
+            path.name
+            for path in paths.hypr_dir.iterdir()
+            if path.name.startswith(("hyprland.lua.bak.", "hyprtweaker.bak."))
+        }
+        entry = next(name for name in made if name.startswith("hyprland.lua.bak."))
+        app = next(name for name in made if name.startswith("hyprtweaker.bak."))
+        saved = LossReport.load(report)
+        assert (saved.backup_name, saved.app_dir_backup_name) == (entry, app)
+        assert saved.imported_name is not None
+        assert saved.imported_name.startswith("hyprtweaker.imported.")
+        assert not (paths.hypr_dir / saved.imported_name).exists()
+        command = (
+            f"mv ~/.config/hypr/hyprtweaker ~/.config/hypr/{saved.imported_name} && "
+            f"mv ~/.config/hypr/{app} ~/.config/hypr/hyprtweaker && "
+            f"mv ~/.config/hypr/{entry} ~/.config/hypr/hyprland.lua"
+        )
+        assert flow.rescue_command == command
+        assert f"`{command}`" in report.with_suffix(".md").read_text()
+        assert LossReport.stored(paths) == [report]
+
+    def test_a_report_that_cannot_be_re_saved_never_fails_the_switch(
+        self, paths: ConfigPaths, schema: Schema, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _app_generated(paths, schema)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        report = flow.save_report()
+        flow.back_up()
+
+        def refuse(*_args: object, **_kwargs: object) -> Path:
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(LossReport, "save", refuse)
+        result = run(flow.switch())
+
+        assert result.ok
+        assert LossReport.load(report).backup_name is None
+        assert "hyprland.lua.bak ~/.config/hypr/hyprland.lua" in flow.rescue_command
+
+
+class TestThePreviewNoteIsTrue(_AtHome):
+    """#268 comment 2: the note names `hyprtweaker.bak` only when that name is free, and
+    gives the displays reason only for an import that sets displays."""
+
+    def _app_user(self, paths: ConfigPaths, schema: Schema, conf: str = CONF) -> Path:
+        source = _app_generated(paths, schema)
+        source.write_text(conf, encoding="utf-8")
+        (paths.monitor_profiles_dir / "active.json").write_text('{"slug": "docked"}\n')
+        return source
+
+    def test_an_import_with_monitor_rules_gives_that_reason(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = self._app_user(paths, schema, CONF + "monitor = DP-1, 1920x1080@60, 0x0, 1\n")
         flow = flow_for(paths, schema, FakeClient())
         flow.detect()
         flow.build_preview(source)
@@ -1258,11 +1733,29 @@ class TestAnImportKeepsWhatTheUserSavedInTheApp:
             "previous folder is kept as ~/.config/hypr/hyprtweaker.bak."
         )
 
-    def test_nothing_is_said_without_an_app_dir(
-        self, legacy: ConfigPaths, schema: Schema
+    def test_an_import_without_monitor_rules_says_how_to_choose_one(
+        self, paths: ConfigPaths, schema: Schema
     ) -> None:
-        flow = flow_for(legacy, schema, FakeClient())
+        source = self._app_user(paths, schema)
+        flow = flow_for(paths, schema, FakeClient())
         flow.detect()
-        flow.build_preview()
+        flow.build_preview(source)
 
-        assert flow.app_data_note is None
+        assert flow.app_data_note == (
+            "Kept from the app: 1 preset and 1 display profile. None of the profiles stays "
+            "marked active; choose one on the Displays page to use it again. The app's "
+            "previous folder is kept as ~/.config/hypr/hyprtweaker.bak."
+        )
+
+    def test_a_taken_bak_name_is_not_promised(self, paths: ConfigPaths, schema: Schema) -> None:
+        source = self._app_user(paths, schema)
+        (paths.hypr_dir / "hyprtweaker.bak").mkdir()
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+
+        assert flow.app_data_note is not None
+        assert flow.app_data_note.endswith(
+            "The app's previous folder is kept in ~/.config/hypr under a dated name, since "
+            "hyprtweaker.bak is taken by an earlier import."
+        )

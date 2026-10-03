@@ -338,17 +338,19 @@ def _wait(
                             f"the read wrote more than {OUTPUT_LIMIT_BYTES} bytes to its output"
                         )
                     chunks[key.fd].append(chunk)
+            # The runner's exit status can show up here, or only in the `wait` below: the
+            # kernel closes a process's pipes before it becomes a zombie, so a loaded
+            # machine sees the EOF first (CI run 37103101388). Both check for the stop.
             if process.poll() == OUTPUT_LIMIT_EXIT:
-                # The runner left on its own: take what it started with it, as every
-                # other end of a read does.
-                _kill_group(process)
-                return OUTPUT_LIMIT_EXIT, "", ""
+                return _stopped_itself(process)
             if not pipes.get_map():
                 try:
                     process.wait(timeout=wait)
                 except subprocess.TimeoutExpired:
                     pass
                 else:
+                    if process.returncode == OUTPUT_LIMIT_EXIT:
+                        return _stopped_itself(process)
                     return (
                         process.returncode,
                         b"".join(out).decode("utf-8", errors="replace"),
@@ -372,6 +374,13 @@ def _stop_running() -> None:
         for process in _running:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
+
+
+def _stopped_itself(process: subprocess.Popen[bytes]) -> tuple[int, str, str]:
+    """The runner left at its print budget: take what it started with it, as every other
+    end of a read does. Its group outlives it while anything in it still runs."""
+    _kill_group(process)
+    return OUTPUT_LIMIT_EXIT, "", ""
 
 
 def _kill_group(process: subprocess.Popen[bytes]) -> None:

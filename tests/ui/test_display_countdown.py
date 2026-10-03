@@ -326,3 +326,104 @@ def test_restart_gives_the_countdown_back_in_full() -> None:
     assert "in 5 s" in dialog.get_body()
     dialog.tick()
     assert dialog.remaining == 4
+
+
+def kept_off_disk(session: Any, applier: Any, module: str = "monitors.lua") -> None:
+    """The write's answer: the Writer skipped `module`, edited outside the app since the
+    gate let the change through (ADR-0005's backstop)."""
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+    from hyprtweaker.engine.writer import WriteResult
+
+    write = WriteResult(
+        written=(),
+        unchanged=(),
+        removed=(),
+        entrypoint_written=False,
+        hand_edited=(module,),
+        skipped=(module,),
+    )
+    applier.reported = applier.serial
+    session._applied(
+        ApplyResult(ApplyOutcome.NOTHING_TO_DO, write=write, entities=applier.serial)
+    )
+
+
+def test_a_breaking_edit_the_writer_kept_off_disk_ends_its_countdown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """#272: the countdown asked to keep a change the file never got."""
+    session, window, applier, shown = countdown_window(tmp_path, monkeypatch)
+    session.on_refused = window.show_refused
+    window._apply_monitor_breaking("eDP-1", {"scale": 2})
+    window.flush_monitor_edits()
+    assert len(shown) == 1
+
+    kept_off_disk(session, applier)
+
+    assert rules(session) == []
+    assert window.display_confirm is None
+    assert session.can_undo is False
+
+
+def test_an_activation_the_writer_kept_off_disk_ends_its_countdown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """#272, carried from #273: activation returns at enqueue, so its countdown opened
+    over a write the Writer then refused; Revert was refused too."""
+    session, window, applier, shown, slug = profile_session(tmp_path, monkeypatch)
+    session.on_refused = window.show_refused
+
+    window._activate_monitor_profile(slug)
+    assert len(shown) == 1
+    kept_off_disk(session, applier)
+
+    assert rules(session) == [("eDP-1", {"mode": "1920x1080@50"})]
+    assert session.active_monitor_profile() is None
+    assert window.display_confirm is None
+
+
+def test_a_breaking_edit_whose_write_failed_ends_its_countdown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Review addendum 1 (carry 50/54/79): the write failed, the display went back, and the
+    countdown still asked to keep a change that did not stand. It closes, answered Keep."""
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+
+    session, window, applier, shown = countdown_window(tmp_path, monkeypatch)
+    from hyprtweaker.session import AutoRevert
+
+    window._apply_monitor_breaking("eDP-1", {"scale": 2})
+    window.flush_monitor_edits()
+    assert len(shown) == 1
+
+    applier.reported = applier.serial
+    session._applied(ApplyResult(ApplyOutcome.WRITE_FAILED, entities=applier.serial))
+    # What the session says once its auto-revert has landed; this tier runs no revert write.
+    window.show_revert(
+        AutoRevert(
+            keys=(),
+            modules=("monitors.lua",),
+            errors=(),
+            restored=True,
+            outcome=ApplyOutcome.WRITE_FAILED,
+        )
+    )
+
+    assert rules(session) == []
+    assert window.display_confirm is None
+
+
+def test_a_refusal_after_a_change_that_stood_keeps_the_countdown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    session, window, applier, shown = countdown_window(tmp_path, monkeypatch)
+    session.on_refused = window.show_refused
+    breaking(window, applier, "eDP-1", {"scale": 2})
+    (dialog,) = shown
+
+    window._apply_monitor_breaking("eDP-1", {"scale": 1.5})
+    window.flush_monitor_edits()
+    kept_off_disk(session, applier)
+
+    assert rules(session) == [("eDP-1", {"scale": 2})]
+    assert window.display_confirm is dialog

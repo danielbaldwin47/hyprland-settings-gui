@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
@@ -82,9 +83,13 @@ class FakeSession:
         profiles: tuple[tuple[str, Any], ...] = (),
         active: tuple[str, Any] | None = None,
         drifted: bool = False,
+        offline_sentence: str | None = None,
+        entities_unreadable: str | None = None,
     ) -> None:
         self.monitor_rules = rules
         self.live = live
+        self.offline_sentence = offline_sentence
+        self.entities_unreadable = entities_unreadable
         self._profiles = profiles
         self._active = active
         self._drifted = drifted
@@ -444,6 +449,143 @@ def test_activation_needs_a_live_session() -> None:
     assert not activate.get_sensitive()
 
 
+NOT_CONNECTED = "This app is not connected to Hyprland."
+NO_LUA = (
+    "This app reads your settings with Lua, which is not installed. Install Lua (lua5.5, "
+    "lua5.4, lua5.3, lua or luajit) and open the app again."
+)
+
+
+def test_save_current_captures_while_live() -> None:
+    page, _recorder = build_page([])
+
+    assert page.save_button.get_sensitive()
+    assert page.save_button.get_tooltip_text() == "Capture the current setup as a new profile"
+    assert page.profiles_empty_row is not None
+    assert page.profiles_empty_row.get_subtitle() == (
+        "Save the current setup to switch between arrangements later."
+    )
+
+
+@pytest.mark.parametrize("cause", [NOT_CONNECTED, NO_LUA])
+def test_save_current_is_off_read_only_and_says_why(cause: str) -> None:
+    """#269: no profile is captured from a session that may not have read the setup, and
+    the empty state does not tell the user to press a button that is off."""
+    page, _recorder = build_page([], FakeSession([], live=False, offline_sentence=cause))
+
+    expected = f"Profiles can be saved once this app can read your settings. {cause}"
+    assert not page.save_button.get_sensitive()
+    assert page.save_button.get_tooltip_text() == expected
+    assert page.profiles_empty_row is not None
+    assert page.profiles_empty_row.get_title() == "No profiles yet"
+    # The Connected row above already says the cause, with no display listed.
+    assert page.profiles_empty_row.get_subtitle() == (
+        "Profiles can be saved once this app can read your settings."
+    )
+
+
+def test_save_current_follows_the_session_into_read_only() -> None:
+    session = FakeSession([])
+    page, _recorder = build_page([], session)
+    session.live = False
+    session.offline_sentence = NOT_CONNECTED
+    page.refresh()
+    assert not page.save_button.get_sensitive()
+
+
+def test_a_drifted_profile_cannot_be_recaptured_read_only() -> None:
+    docked = _profile("Docked")
+    session = FakeSession(
+        [],
+        live=False,
+        offline_sentence=NOT_CONNECTED,
+        profiles=(("docked", docked),),
+        active=("docked", docked),
+        drifted=True,
+    )
+    page, _recorder = build_page([], session)
+
+    update, detach, _trash = _buttons(page.profile_rows[0])
+    assert not update.get_sensitive()
+    assert update.get_tooltip_text() == (
+        f"Profiles can be saved once this app can read your settings. {NOT_CONNECTED}"
+    )
+    assert detach.get_sensitive()
+
+
+def test_unread_display_rules_are_not_called_saved_ones() -> None:
+    session = FakeSession([], live=False, offline_sentence=NO_LUA, entities_unreadable=NO_LUA)
+    page, _recorder = build_page([], session)
+
+    assert page.connected_empty_row is not None
+    assert page.connected_empty_row.get_title() == "Display rules could not be read"
+    assert page.connected_empty_row.get_subtitle() == NO_LUA
+    # Said once on the page (review m1 F5): the Profiles hint below does not repeat it.
+    assert page.profiles_empty_row is not None
+    assert page.profiles_empty_row.get_subtitle() == (
+        "Profiles can be saved once this app can read your settings."
+    )
+
+
+IMPORT_OFFERED = (
+    "Your config has not been converted yet: use Convert... at the top of the window."
+)
+TOO_OLD = "Hyprland 0.54.0 is running, and this app needs Hyprland 0.56 or newer."
+
+
+@pytest.mark.parametrize("cause", [NOT_CONNECTED, IMPORT_OFFERED, TOO_OLD])
+def test_read_only_with_no_displays_says_why_none_are_shown(cause: str) -> None:
+    """Review m1 F4: "Hyprland is not answering" was false behind an import offer and on a
+    too-old Hyprland. The read-only cause is what is true in each state."""
+    session = FakeSession([], live=False, offline_sentence=cause)
+    page, _recorder = build_page([], session)
+
+    assert page.connected_empty_row is not None
+    assert page.connected_empty_row.get_title() == "No connected displays to show"
+    assert page.connected_empty_row.get_subtitle() == cause
+
+
+def test_live_with_no_displays_answered_says_hyprland_is_not_answering() -> None:
+    page, _recorder = build_page([], FakeSession([]))
+
+    assert page.connected_empty_row is not None
+    assert page.connected_empty_row.get_subtitle() == (
+        "Hyprland is not answering, so only saved rules are listed."
+    )
+
+
+def test_a_save_that_lands_read_only_is_refused_and_says_so(tmp_path: Path) -> None:
+    """The name dialog was open when the session went read-only: nothing is captured."""
+    from hyprtweaker.ui.shell.window import toast_text
+
+    session, window = build_window(tmp_path)
+    toasts: list[str] = []
+    window._toasts.add_toast = lambda toast: toasts.append(toast_text(toast))
+
+    window._save_monitor_profile("Docked")
+    # With its cause, as every other "applying is off" surface says it (review m1 F19).
+    assert toasts == [
+        f'Profile "Docked" was not saved: applying is off. {session.offline_sentence}'
+    ]
+    assert session.monitor_profiles() == ()
+
+
+def test_save_current_follows_a_new_cause_into_the_window(tmp_path: Path) -> None:
+    """Built while connecting, then held behind an import offer: still read-only, but the
+    tooltip names the offer, not a connection (#269)."""
+    from hyprtweaker.engine.migration.detect import ConfigKind
+    from hyprtweaker.ui.shell.window import CONVERT_SENTENCE, READ_ONLY_REASON
+
+    session, window = build_window(tmp_path)
+    session.set_read_only(READ_ONLY_REASON[ConfigKind.LEGACY_CONF], sentence=CONVERT_SENTENCE)
+    window.sync()
+
+    assert window.monitors_page.save_button.get_tooltip_text() == (
+        "Profiles can be saved once this app can read your settings. Your config has not "
+        "been converted yet: use Convert... at the top of the window."
+    )
+
+
 def test_save_dialog_hands_over_the_name() -> None:
     from gi.repository import Adw
 
@@ -473,12 +615,74 @@ def test_save_dialog_cancel_saves_nothing() -> None:
     assert saved == []
 
 
-def _window_with_docked_profile(tmp_path: Path) -> tuple[Any, Any]:
+def seed_profile(session: Any, name: str) -> str:
+    """A profile on disk as a live session would have captured it: `build_window`'s session
+    is read-only, and refuses the capture gesture itself (#269)."""
+    from hyprtweaker.engine.profiles import capture, connected_outputs
+
+    entities = session.model.entities
+    return str(
+        session._profile_store.save(
+            capture(
+                name,
+                monitors=entities.monitors,
+                workspace_rules=entities.workspace_rules,
+                connected=connected_outputs(MONITORS),
+            )
+        )
+    )
+
+
+def _window_with_docked_profile(tmp_path: Path, *, live: bool = True) -> tuple[Any, Any]:
     session, window = build_window(tmp_path)
-    session.save_monitor_profile("Docked", MONITORS)
+    seed_profile(session, "Docked")
     # Diverge from the capture, so activating the profile would change something.
     session.monitor_rules.append(monitor_rule("eDP-1", mode="1920x1080@60"))
+    if live:
+        session._offline_reason = None  # a connected session, as the toast's fetch implies
     return session, window
+
+
+def test_a_read_only_session_is_told_the_match_without_a_dead_activate(
+    tmp_path: Path,
+) -> None:
+    """Hand-test 3 (#281): Activate on a read-only session did nothing. The toast says the
+    match and why it cannot be activated, and offers no button."""
+    from hyprtweaker.engine.migration.detect import ConfigKind
+    from hyprtweaker.ui.shell.window import CONVERT_SENTENCE, READ_ONLY_REASON, toast_text
+
+    session, window = _window_with_docked_profile(tmp_path, live=False)
+    session.set_read_only(READ_ONLY_REASON[ConfigKind.LEGACY_CONF], sentence=CONVERT_SENTENCE)
+
+    window._on_monitors_event(MONITORS)
+
+    toast = window.profile_toast
+    assert toast is not None
+    assert toast.get_button_label() is None
+    assert toast_text(toast) == (
+        'Displays match profile "Docked", but it cannot be activated now. Your config has '
+        "not been converted yet: use Convert... at the top of the window."
+    )
+
+
+def test_activate_pressed_after_the_session_went_read_only_says_why(tmp_path: Path) -> None:
+    from hyprtweaker.ui.shell.window import toast_text
+
+    session, window = _window_with_docked_profile(tmp_path)
+    window._on_monitors_event(MONITORS)
+    toast = window.profile_toast
+    assert toast is not None and toast.get_button_label() == "Activate"
+    session.set_read_only("Hyprland is not answering")
+    said: list[str] = []
+    window._toasts.add_toast = lambda each: said.append(toast_text(each))
+
+    toast.emit("button-clicked")
+
+    assert said == [
+        'Profile "Docked" was not activated: applying is off. This app is not connected '
+        "to Hyprland."
+    ]
+    assert session.active_monitor_profile() is None
 
 
 def test_profile_toast_offers_a_match_at_open(tmp_path: Path) -> None:
@@ -526,7 +730,7 @@ def test_no_toast_when_nothing_would_change(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
     # The profile equals the current (empty) setup: activating it is a no-op, so the
     # toast must stay quiet however well the connected set matches.
-    session.save_monitor_profile("Empty", MONITORS)
+    seed_profile(session, "Empty")
     for rule in list(session.monitor_rules):
         session.monitor_rules.remove(rule)
 
@@ -536,6 +740,8 @@ def test_no_toast_when_nothing_would_change(tmp_path: Path) -> None:
 
 def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None:
     """The window half of AC 2: activation stands behind the countdown, revert undoes it."""
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+
     session, window = build_window(tmp_path)
 
     class StubApplier:
@@ -552,6 +758,8 @@ def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None
     session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@48"})
 
     window._activate_monitor_profile(slug)
+    # The write lands: the pointer moves on a transaction that stood (#273).
+    session._applied(ApplyResult(ApplyOutcome.OK, entities=session._applier.serial))
     dialog = window.display_confirm
     assert dialog is not None
     assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@60"]
@@ -559,6 +767,7 @@ def test_activation_presents_confirm_and_revert_restores(tmp_path: Path) -> None
     assert active is not None and active[0] == slug
 
     dialog._on_response(dialog, "revert")
+    session._applied(ApplyResult(ApplyOutcome.OK, entities=session._applier.serial))
     assert [rule.fields["mode"] for rule in session.monitor_rules] == ["1920x1080@48"]
     assert session.active_monitor_profile() is None
 

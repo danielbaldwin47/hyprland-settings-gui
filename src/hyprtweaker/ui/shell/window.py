@@ -26,6 +26,7 @@ auto-revert (ADR-0016), which is the only event the ADR reserves a toast for out
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -50,6 +51,8 @@ from hyprtweaker.engine.apply import (  # noqa: E402
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
+from hyprtweaker.engine.bridge.wire import shown as tilde_path  # noqa: E402
+from hyprtweaker.engine.files import failure_reason  # noqa: E402
 from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
 from hyprtweaker.engine.ipc import CommandClient, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
@@ -59,6 +62,7 @@ from hyprtweaker.engine.migration.flow import (  # noqa: E402
     MigrationFlow,
     asks_consent,
     fresh_start,
+    marker_rescue_command,
 )
 from hyprtweaker.engine.migration.sentinel import Sentinel  # noqa: E402
 from hyprtweaker.engine.migration.sentinel import read as sentinel_read  # noqa: E402
@@ -86,7 +90,15 @@ from hyprtweaker.engine.schema import ResolvedOption, Schema  # noqa: E402
 from hyprtweaker.engine.scripting import LAYOUT_OPTION, discovered_layouts  # noqa: E402
 from hyprtweaker.engine.triggers import parse_trigger  # noqa: E402
 from hyprtweaker.engine.workspace_catalog import layout_choices  # noqa: E402
-from hyprtweaker.session import AutoRevert, Notice, Replaced, Session  # noqa: E402
+from hyprtweaker.engine.writer import ENTITY_KIND_MODULES  # noqa: E402
+from hyprtweaker.session import (  # noqa: E402
+    HELD_ENTRY_MOVED,
+    AutoRevert,
+    Notice,
+    Replaced,
+    RestoreRefusal,
+    Session,
+)
 from hyprtweaker.ui.dialogs.bind_editor import BindEditor  # noqa: E402
 from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
 from hyprtweaker.ui.dialogs.colour_conflict import (  # noqa: E402
@@ -175,6 +187,8 @@ from hyprtweaker.ui.search import (  # noqa: E402
 )
 from hyprtweaker.ui.shell.finder import NAV_MODE, RESULTS_MODE, Finder  # noqa: E402
 
+_log = logging.getLogger(__name__)
+
 ENTITY_CHANGED = "That item changed. Results updated."
 """The toast for a search hit whose entity was removed or rewritten since it was listed."""
 
@@ -259,6 +273,23 @@ of ours that would have to know which widgets count as text entries."""
 SIDEBAR_TITLE = "Hyprland"
 """What the sidebar header says when the finder is closed (ADR-0017 swaps it for the entry)."""
 
+NOT_SAVED_SENTENCE = "This change was not saved."
+"""An editor's line for a refusal that said nothing of its own (a read-only session)."""
+
+KEPT_SENTENCE = (
+    "{name} was edited outside this app, so changes to it here are not saved until you "
+    "replace it"
+)
+"""The toast "Keep my file" leaves, since the Banner it dismisses said so until then."""
+
+
+def not_saved(what: str | int) -> str:
+    """A refusal's opening: "<what> was not saved", or "<n> changes were not saved"."""
+    return (
+        f"{what} changes were not saved" if isinstance(what, int) else f"{what} was not saved"
+    )
+
+
 SEVERE_BANNER_CLASS = "error"
 """libadwaita's own red styling, for ADR-0016's "Red Banner".
 
@@ -337,6 +368,12 @@ nothing is remembered: the action is disabled then, and the menu item hides with
 class MainWindow(Adw.ApplicationWindow):
     """The Config view over one `Session`."""
 
+    _refused_sentence: str | None = None
+    """The last refusal, as an editor shows it (`_saved_or_why`)."""
+
+    _refused_toast: Adw.Toast | None = None
+    """The refusal toast still up, which a repeat of the same refusal keeps up (#272)."""
+
     def __init__(
         self,
         session: Session,
@@ -402,6 +439,9 @@ class MainWindow(Adw.ApplicationWindow):
         """Each Entity list as its Page last drew it, so `sync` can tell which have moved."""
         self._shown_live = False
         """Whether the Entity Pages last drew their rows editable."""
+        self._shown_causes: tuple[str | None, str | None] = (None, None)
+        """The read-only cause and the unreadable-lists sentence the Entity Pages last drew
+        their Save tooltips and empty states with (#269)."""
         self._section_titles: dict[str, str] = {}
         """Every built Page's heading, by the sidebar id it answers to.
 
@@ -882,13 +922,28 @@ class MainWindow(Adw.ApplicationWindow):
         # Answered once: closing the dialog emits its close response ("roll-back") again,
         # and a second roll back used to delete the file the first put back (hand-test 19).
         _dialog.disconnect_by_func(self._on_rollback_response)
-        self._switch_offer_open = False
         flow = self.migration_flow()
         if response == "keep":
-            flow.keep()
-            self._start_held_session()
+            self._keep_pending(flow, pending)
             return
-        flow.roll_back(pending)
+        try:
+            outcome = flow.roll_back(pending)
+        except Exception as error:  # any failure must reach a dialog that can close
+            _log.warning("rolling back the unfinished switch failed", exc_info=True)
+            body = (
+                f"Roll back did not finish: {failure_reason(error)}\n\nIf you are locked out, "
+                "run this from "
+                f"a TTY:\n{marker_rescue_command(self._session.paths, pending)}"
+            )
+            GLib.idle_add(self._show_unfinished, pending, body)
+            return
+        if not outcome.complete:
+            # Nothing was changed and the marker stands: still unanswered, still read-only.
+            GLib.idle_add(
+                self._show_unfinished, pending, "\n\n".join((outcome.rescue, *outcome.notes))
+            )
+            return
+        self._switch_offer_open = False
         self._spawn(flow.reload_restored())
         # The user's own file is back, so the session must not write to the app's Modules
         # any more: the same offer a launch on that file makes (#148 hand-tests 19, 20).
@@ -904,7 +959,46 @@ class MainWindow(Adw.ApplicationWindow):
             self._start_held_session()
         # Said, as the wizard's own Roll back says it, with any theming tool's file left
         # as the user changed it or not put back (finding 21).
-        GLib.idle_add(self._show_rollback_notes, flow.rollback_notes)
+        GLib.idle_add(self._show_rollback_notes, outcome.notes)
+
+    def _keep_pending(self, flow: MigrationFlow, pending: Sentinel) -> None:
+        try:
+            flow.keep()
+        except Exception as error:  # any failure must reach a dialog that can close
+            _log.warning("keeping the unfinished switch failed", exc_info=True)
+            body = (
+                f"Keep did not finish: {failure_reason(error)}\n\nIf you are locked out, run "
+                "this from a "
+                f"TTY:\n{marker_rescue_command(self._session.paths, pending)}"
+            )
+            GLib.idle_add(self._show_unfinished, None, body)
+            return
+        self._switch_offer_open = False
+        self._start_held_session()
+
+    def _show_unfinished(self, pending: Sentinel | None, body: str) -> bool:
+        """The relaunch's Roll back or Keep could not finish (#268 AC1, AC4).
+
+        The app stays read-only and the switch unfinished, so the next start offers it
+        again; with a Roll back that stopped, Keep is offered here as the way forward.
+        """
+        dialog = Adw.AlertDialog(heading="The switch is still unfinished", body=body)
+        dialog.add_response("close", "Close")
+        if pending is not None:
+            dialog.add_response("keep", "Keep the new configuration")
+        dialog.set_default_response("close")
+        dialog.set_close_response("close")
+        if pending is not None:
+            dialog.connect("response", self._on_unfinished_response, pending)
+        dialog.present(self)
+        return GLib.SOURCE_REMOVE
+
+    def _on_unfinished_response(
+        self, dialog: Adw.AlertDialog, response: str, pending: Sentinel
+    ) -> None:
+        dialog.disconnect_by_func(self._on_unfinished_response)
+        if response == "keep":
+            self._keep_pending(self.migration_flow(), pending)
 
     def _show_rollback_notes(self, notes: tuple[str, ...]) -> bool:
         body = "\n\n".join(("You are on the configuration you had before the switch.", *notes))
@@ -981,7 +1075,16 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.paths,
             app_version=self._session.app_version,
         )
-        result.write(target)
+        existed = target.exists()
+        try:
+            result.write(target)
+        except OSError as error:
+            # The write is atomic (#251): a failure leaves whatever was at `target` as it was.
+            note = f"The export was not written: {failure_reason(error)}"
+            if existed:
+                note += f". {target.name} is unchanged"
+            self._toasts.add_toast(plain_toast(note, timeout=8, wrap=True))
+            return
         note = (
             f"Exported to {target.name}"
             if not result.missing
@@ -1297,6 +1400,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._shown_entities = self._entity_lists()
         self._shown_live = bool(self._session.live)
+        self._shown_causes = self._causes()
         self._fill_sidebar()
         self._select_section(self._restored(selected))
         self.sync()
@@ -1397,9 +1501,11 @@ class MainWindow(Adw.ApplicationWindow):
     # --- binds ---------------------------------------------------------------------------
 
     def _add_bind(self, submap: str | None = None) -> None:
-        def done(bind: Bind) -> None:
-            if self._session.add_bind(bind):
+        def done(bind: Bind) -> str | None:
+            why = self._saved_or_why(lambda: self._session.add_bind(bind))
+            if why is None:
                 self._refresh_binds()
+            return why
 
         BindEditor(on_done=done, submap=submap, fetch_switches=self._switch_fetch()).present(
             self
@@ -1412,13 +1518,30 @@ class MainWindow(Adw.ApplicationWindow):
         if not 0 <= index < len(binds):
             return
 
-        def done(bind: Bind) -> None:
-            if self._session.replace_bind(index, bind):
-                self._refresh_binds()
+        held = binds[index]
 
-        BindEditor(
-            on_done=done, bind=binds[index], fetch_switches=self._switch_fetch()
-        ).present(self)
+        def done(bind: Bind) -> str | None:
+            why = self._saved_or_why(
+                lambda: self._session.replace_bind(index, bind, expected=held)
+            )
+            if why is None:
+                self._refresh_binds()
+            return why
+
+        BindEditor(on_done=done, bind=held, fetch_switches=self._switch_fetch()).present(self)
+
+    def _saved_or_why(self, save: Callable[[], bool]) -> str | None:
+        """`None` once `save` is accepted; else why not, for the editor that asked (#225).
+
+        An editor shows the sentence above its Save and stays open with the draft, so a
+        refused save loses nothing. The sentence is the refusal's own (`show_refused`,
+        `show_not_saved`), with the way on, since the toast behind the dialog cannot be
+        acted on while it is open.
+        """
+        self._refused_sentence = None
+        if save():
+            return None
+        return self._refused_sentence or NOT_SAVED_SENTENCE
 
     def _switch_fetch(self) -> FetchSwitches | None:
         """The live switch list for Capture's picker, or `None` when nobody is answering.
@@ -1475,7 +1598,7 @@ class MainWindow(Adw.ApplicationWindow):
         def done(text: str) -> None:
             keys = str(parse_trigger(text.strip()))
             fixed = replace(bind, keys=keys, enabled=bind.enabled or enable)
-            if keys and self._session.replace_bind(index, fixed):
+            if keys and self._session.replace_bind(index, fixed, expected=bind):
                 self._refresh_binds()
 
         CaptureDialog(
@@ -1537,9 +1660,11 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_rule(self, kind: str) -> None:
-        def done(rule: WindowRule | LayerRule) -> None:
-            if self._session.add_rule(kind, rule):
+        def done(rule: WindowRule | LayerRule) -> str | None:
+            why = self._saved_or_why(lambda: self._session.add_rule(kind, rule))
+            if why is None:
                 self._refresh_rules(kind)
+            return why
 
         RuleEditor(
             kind=kind,
@@ -1553,14 +1678,20 @@ class MainWindow(Adw.ApplicationWindow):
         if not 0 <= index < len(rules):
             return
 
-        def done(rule: WindowRule | LayerRule) -> None:
-            if self._session.replace_rule(kind, index, rule):
+        held = rules[index]
+
+        def done(rule: WindowRule | LayerRule) -> str | None:
+            why = self._saved_or_why(
+                lambda: self._session.replace_rule(kind, index, rule, expected=held)
+            )
+            if why is None:
                 self._refresh_rules(kind)
+            return why
 
         RuleEditor(
             kind=kind,
             on_done=done,
-            rule=rules[index],
+            rule=held,
             taken_names=self._taken_rule_names(kind, besides=index),
             fetch_targets=self._rule_fetch(kind),
         ).present(self)
@@ -1649,7 +1780,7 @@ class MainWindow(Adw.ApplicationWindow):
         return tuple(curve.name for curve in self._session.curves if curve.name)
 
     def declaration_editor(
-        self, kind: str, *, on_done: Callable[[Any], None], index: int | None = None
+        self, kind: str, *, on_done: Callable[[Any], str | None], index: int | None = None
     ) -> DeclarationEditor:
         """The editor for a new entity of `kind`, or for the one at `index`."""
         entities = self._session.declarations(kind)
@@ -1664,19 +1795,27 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_declaration(self, kind: str) -> None:
-        def done(entity: Any) -> None:
-            if self._session.add_declaration(kind, entity):
+        def done(entity: Any) -> str | None:
+            why = self._saved_or_why(lambda: self._session.add_declaration(kind, entity))
+            if why is None:
                 self._refresh_declarations(kind)
+            return why
 
         self.declaration_editor(kind, on_done=done).present(self)
 
     def _edit_declaration(self, kind: str, index: int) -> None:
-        if not 0 <= index < len(self._session.declarations(kind)):
+        entities = self._session.declarations(kind)
+        if not 0 <= index < len(entities):
             return
+        held = entities[index]
 
-        def done(entity: Any) -> None:
-            if self._session.replace_declaration(kind, index, entity):
+        def done(entity: Any) -> str | None:
+            why = self._saved_or_why(
+                lambda: self._session.replace_declaration(kind, index, entity, expected=held)
+            )
+            if why is None:
                 self._refresh_declarations(kind)
+            return why
 
         self.declaration_editor(kind, on_done=done, index=index).present(self)
 
@@ -1812,6 +1951,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self._countdown is not countdown:
             return True
         if opened:
+            countdown.shown = True
             countdown.dialog.present(self)
         else:
             countdown.dialog.restart()
@@ -1847,6 +1987,22 @@ class MainWindow(Adw.ApplicationWindow):
             )
         self._session.end_undo_group(countdown.group, title=DISPLAY_CHANGED)
         self._refresh_entity_pages(DISPLAY_KINDS)
+
+    def _end_countdown_over_nothing(self) -> None:
+        """Close the open countdown when a refusal or a failed commit took back all it was
+        asking about (#272, review addendum 1).
+
+        The display is as it was when the countdown opened: Keep would record nothing, and
+        Revert, a write into the file that refused, would be refused too. Answered as Keep,
+        so the dialog's own close is not read as a Revert.
+        """
+        countdown = self._countdown
+        if countdown is None or not countdown.shown:
+            return
+        if self._session.monitor_state_snapshot() != countdown.snapshot:
+            return
+        countdown.dialog.emit("response", "keep")
+        countdown.dialog.force_close()
 
     @property
     def display_confirm(self) -> ConfirmRevertDialog | None:
@@ -1927,9 +2083,19 @@ class MainWindow(Adw.ApplicationWindow):
         self._profile_offered = (slug, fingerprint)
         if self._profile_toast is not None:
             self._profile_toast.dismiss()
-        toast = plain_toast(f'Displays match profile "{profile.name}"', timeout=10)
-        toast.set_button_label("Activate")
-        toast.connect("button-clicked", lambda _t: self._activate_monitor_profile(slug))
+        said = f'Displays match profile "{profile.name}"'
+        if self._session.live:
+            toast = plain_toast(said, timeout=10)
+            toast.set_button_label("Activate")
+            toast.connect(
+                "button-clicked", lambda _t: self._activate_from_toast(slug, profile.name)
+            )
+        else:
+            # Read-only (an import on offer, a stream lost): an Activate here did nothing
+            # (#281). The match is still news; the cause says when it can be activated.
+            cause = self._session.offline_sentence or ""
+            said = f"{said}, but it cannot be activated now. {cause}".rstrip()
+            toast = plain_toast(said, timeout=10, wrap=True)
         self._profile_toast = toast
         self._toasts.add_toast(toast)
 
@@ -1937,9 +2103,29 @@ class MainWindow(Adw.ApplicationWindow):
         """Capture the current setup under `name` -- the save dialog's verb."""
         if self._monitors_page is None:
             return
-        self._session.save_monitor_profile(name, self._monitors_page.connected)
-        self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
+        if self._session.save_monitor_profile(name, self._monitors_page.connected) is None:
+            # Gone read-only while the name dialog was open: the button is off now.
+            self._toasts.add_toast(
+                plain_toast(
+                    f'Profile "{name}" was not saved: {self._applying_off()}', wrap=True
+                )
+            )
+        else:
+            self._toasts.add_toast(plain_toast(f'Saved profile "{name}"'))
         self._refresh_monitors()
+
+    def _applying_off(self) -> str:
+        """ "applying is off", with the session's cause when it has one."""
+        return f"applying is off. {self._session.offline_sentence or ''}".rstrip()
+
+    def _activate_from_toast(self, slug: str, name: str) -> None:
+        """The match toast's Activate: refused, with why, if the session went read-only
+        while the toast was up (#281)."""
+        if not self._session.live:
+            said = f'Profile "{name}" was not activated: {self._applying_off()}'
+            self._toasts.add_toast(plain_toast(said, timeout=8, wrap=True))
+            return
+        self._activate_monitor_profile(slug)
 
     def _activate_monitor_profile(self, slug: str) -> None:
         """Activation: one transaction, behind the one countdown (ADR-0015).
@@ -2084,6 +2270,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         if not result.ok:
             self._dismiss_undo()
+            # A display commit that did not stand: nothing is left to keep or revert.
+            self._end_countdown_over_nothing()
         if not result.ok and not result.errors and not result.mismatches:
             toast = plain_toast(_result_summary(result), timeout=5)
             self._result_toast = toast
@@ -2099,6 +2287,7 @@ class MainWindow(Adw.ApplicationWindow):
         compositor's copy.
         """
         self._dismiss_undo()
+        self._end_countdown_over_nothing()
         toast = plain_toast(_revert_summary(revert), timeout=8)
         if revert.errors:
             toast.set_button_label("Details")
@@ -2110,27 +2299,66 @@ class MainWindow(Adw.ApplicationWindow):
             )
         self._toasts.add_toast(toast)
 
-    def show_refused(self, what: str, module: str) -> Adw.Toast:
+    def show_refused(self, what: str | int, module: str) -> Adw.Toast:
         """A change refused because its file was edited outside the app (ADR-0005), named
-        with that file. Returned for tests.
+        with that file; `what` is the change's title, or how many changes. Returned for
+        tests.
 
         A toast because it answers the gesture just made, and the Banner stays up after it
         times out (`Health.edited_files`): every later change to that file is refused the
         same way until the user decides. Withdraws any undo offer: nothing here was saved.
+
+        One toast per gesture (#272): a slider drag or a held spin button is refused at
+        every tick, and each repeat of the refusal still on screen keeps that toast up
+        rather than queueing another behind it. The Pages showing the file's lists are
+        drawn again, since the control the user moved shows a change the model never took.
         """
         self._dismiss_undo()
+        kinds = frozenset(
+            kind for kind, owner in ENTITY_KIND_MODULES.items() if owner == module
+        )
+        self._draw_entity_pages(kinds)
+        if kinds & DISPLAY_KINDS:
+            self._end_countdown_over_nothing()
         self.sync_banner()
         name = module.rsplit("/", 1)[-1]
-        toast = plain_toast(
-            f"{what} was not saved: {name} was edited outside this app", timeout=8
+        said = f"{not_saved(what)}: {name} was edited outside this app"
+        self._refused_sentence = (
+            f"{said}. Close this editor, then choose Details on the banner."
         )
+        shown = self._refused_toast
+        if shown is not None and toast_text(shown) == said:
+            self._toasts.add_toast(shown)  # already up: its timeout starts again
+            return shown
+        toast = plain_toast(said, timeout=8, wrap=True)  # the file's name is the point
         toast.set_button_label("Details")
         toast.connect("button-clicked", lambda *_: self.show_edited_file(module, what))
+        toast.connect("dismissed", self._on_refused_dismissed)
+        self._refused_toast = toast
+        self._toasts.add_toast(toast)
+        return toast
+
+    def _on_refused_dismissed(self, toast: Adw.Toast) -> None:
+        if self._refused_toast is toast:
+            self._refused_toast = None
+
+    def show_not_saved(self, what: str, why: str) -> Adw.Toast:
+        """An editor's save refused because the list moved under it (#225): `why` is the
+        session's clause. Returned for tests; withdraws any undo offer, as nothing was
+        saved."""
+        self._dismiss_undo()
+        said = f"{what} was not saved: {why}"
+        # The toast stays one line; the editor, where the user is, says when and what next.
+        moved = (
+            " while this editor was open. Close this editor, then edit it again from the list"
+        )
+        self._refused_sentence = f"{said}{moved if why == HELD_ENTRY_MOVED else ''}."
+        toast = plain_toast(said, timeout=8)
         self._toasts.add_toast(toast)
         return toast
 
     def show_edited_file(
-        self, module: str, what: str | None = None, *, then: tuple[str, ...] = ()
+        self, module: str, what: str | int | None = None, *, then: tuple[str, ...] = ()
     ) -> Adw.AlertDialog:
         """A file edited outside the app, and the three ways on. Returned for the UI tier.
 
@@ -2140,12 +2368,14 @@ class MainWindow(Adw.ApplicationWindow):
         offered in turn once this one is answered.
         """
         name = module.rsplit("/", 1)[-1]
-        refused = f"{what} was not saved" if what else "Changes to it are not saved"
+        refused = f"{not_saved(what)}. " if what is not None else ""
         copies = self._session.edited_copies_shown
         dialog = Adw.AlertDialog(
             heading=f"{name} was edited outside this app",
             body=(
-                f"This app does not overwrite a file you have edited yourself. {refused}.\n\n"
+                f"This app does not overwrite a file you have edited yourself. {refused}"
+                f"If you keep your file, changes to it here are not saved until you "
+                f"replace it.\n\n"
                 f"Replace the file with the app's version, then make the change again: "
                 f"replacing keeps a copy of your edited file in {copies}. Or open the file "
                 f"and make the change there."
@@ -2168,6 +2398,9 @@ class MainWindow(Adw.ApplicationWindow):
         # which offered the next file twice.
         _dialog.disconnect_by_func(self._on_edited_file_response)
         name = module.rsplit("/", 1)[-1]
+        if self._refused_toast is not None:
+            # Answered: the toast that asked would otherwise hold the answer's toast back.
+            self._refused_toast.dismiss()
         if response == "open":
             self._launch_file(self._session.edited_file_path(module))
         elif response == "replace":
@@ -2179,6 +2412,12 @@ class MainWindow(Adw.ApplicationWindow):
             self._toasts.add_toast(plain_toast(said, timeout=8))
         else:
             self._session.keep_edited_file(module)
+            # The Banner lets the file go, so this is the last word on it until the next
+            # change into it is refused (#272).
+            # Wrapping: the title's ellipsis cut "until you replace it" off at the default
+            # width, the one part that says what to do.
+            toast = plain_toast(KEPT_SENTENCE.format(name=name), timeout=8, wrap=True)
+            self._toasts.add_toast(toast)
         self.sync_banner()
         if then:
             GLib.idle_add(lambda: self.show_edited_file(then[0], then=then[1:]) and False)
@@ -2237,6 +2476,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._session.recovery,
             on_action=self._on_recovery_action,
             restorable=self._session.restorable,
+            unverified_import=self._session.unverified_since_import,
         )
 
     def _on_recovery_action(self, action: Action, problem: Problem) -> None:
@@ -2260,17 +2500,17 @@ class MainWindow(Adw.ApplicationWindow):
         """Ask before putting a file back, then say how it went (#148 hand-test 17).
 
         It overwrites the file as it is now -- usually somebody's hand edit -- so it asks,
-        keeps a copy, and reports the outcome rather than closing on silence.
+        keeps a copy of a hand edit, and reports the outcome and where that copy is rather
+        than closing on silence (#266).
         """
         name = module.rsplit("/", 1)[-1]
-        dialog = Adw.AlertDialog(
-            heading=f"Restore {name}?",
-            body=(
-                f"{name} goes back to the last version this app wrote and Hyprland "
-                f"accepted. A copy of the file as it is now is kept in "
+        body = f"{name} goes back to the last version this app wrote and Hyprland accepted."
+        if self._session.edited_outside(module):
+            body += (
+                f" A copy of the file as it is now is kept in "
                 f"{self._session.edited_copies_shown}."
-            ),
-        )
+            )
+        dialog = Adw.AlertDialog(heading=f"Restore {name}?", body=body)
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("restore", "Restore")
         dialog.set_response_appearance("restore", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -2282,14 +2522,35 @@ class MainWindow(Adw.ApplicationWindow):
                 return
 
             def done(ok: bool) -> None:
-                self._toast(
-                    f"{name} is back to the last version Hyprland accepted."
-                    if ok
-                    else f"{name} could not be restored. The Banner says what is wrong."
-                )
+                # Called once the restore has run, so after `start` is assigned below. The
+                # copy's path is too long for a toast's one line: "Show copy" opens its
+                # folder with the copy selected, where the path is whole (#266).
+                copy = start.copies.get(module)
+                if not ok:
+                    said = f"{name} could not be restored. The Banner says what is wrong"
+                elif copy is not None:
+                    said = f"{name} is restored, and a copy of your edit is kept"
+                else:
+                    said = f"{name} is back to the last version Hyprland accepted"
+                toast = plain_toast(said, timeout=8)
+                if copy is not None:
+                    toast.set_button_label("Show copy")
+                    toast.connect("button-clicked", lambda *_: self._show_in_folder(copy))
+                self._toasts.add_toast(toast)
 
-            if not self._session.restore_last_good(module, done=done):
-                self._toast(f"{name} could not be restored: there is no earlier version.")
+            start = self._session.restore_last_good(module, done=done)
+            if start.uncopied:
+                self._toast(
+                    f"{name} was not restored: a copy of it could not be kept, "
+                    f"so it was left as it is"
+                )
+            elif start.refusal is RestoreRefusal.RUNNING:
+                self._toast(f"{name} could not be restored yet: a restore is still running")
+            elif start.refusal is RestoreRefusal.READ_ONLY:
+                cause = (self._session.offline_sentence or "").rstrip(".")
+                self._toast(f"{name} could not be restored. {cause}".rstrip(". "))
+            elif not start.queued:
+                self._toast(f"{name} could not be restored: there is no earlier version")
 
         dialog.connect("response", answered)
         dialog.present(self)
@@ -2344,6 +2605,23 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _launch_file(self, path: Path) -> None:
         Gtk.FileLauncher(file=Gio.File.new_for_path(str(path))).launch(self, None, None)
+
+    def _show_in_folder(self, path: Path) -> None:
+        """Open the folder holding `path`, with `path` selected where the file manager can."""
+        launcher = Gtk.FileLauncher(file=Gio.File.new_for_path(str(path)))
+
+        def finished(source: Gtk.FileLauncher, result: Gio.AsyncResult) -> None:
+            try:
+                source.open_containing_folder_finish(result)
+            except GLib.Error as error:
+                # No file manager, or a portal that refused: the path is the way left to
+                # the copy (review m1 F8).
+                _log.info("could not open the folder of %s: %s", path, error)
+                where = tilde_path(path, self._session.paths)
+                said = f"The folder could not be opened. The copy is {where}"
+                self._toasts.add_toast(plain_toast(said, timeout=10, wrap=True))
+
+        launcher.open_containing_folder(self, None, finished)
 
     # --- plugins (#174) -------------------------------------------------------------------
 
@@ -2576,13 +2854,17 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _moved_entities(self) -> frozenset[str]:
         """The Entity lists that differ from what their Pages last drew: every one when the
-        session went live or read-only since, since each row's controls follow that."""
+        session went live or read-only since, since each row's controls follow that, or the
+        cause the empty states and Save tooltips name moved (#269)."""
         lists = self._entity_lists()
-        if bool(self._session.live) != self._shown_live:
+        if bool(self._session.live) != self._shown_live or self._causes() != self._shown_causes:
             return frozenset(lists)
         return frozenset(
             kind for kind, items in lists.items() if self._shown_entities.get(kind) != items
         )
+
+    def _causes(self) -> tuple[str | None, str | None]:
+        return (self._session.offline_sentence, self._session.entities_unreadable)
 
     def _draw_entity_pages(self, kinds: frozenset[str]) -> None:
         """Rebuild the Pages showing `kinds` from the model, and every sidebar count.
@@ -2616,6 +2898,7 @@ class MainWindow(Adw.ApplicationWindow):
         lists = self._entity_lists()
         self._shown_entities.update((kind, lists[kind]) for kind in kinds if kind in lists)
         self._shown_live = bool(self._session.live)
+        self._shown_causes = self._causes()
         self._sync_entity_counts()
 
     def _entity_lists(self) -> dict[str, tuple[Any, ...]]:
@@ -3125,6 +3408,8 @@ class _DisplayCountdown:
     group: UndoGroup
     dialog: ConfirmRevertDialog
     includes_profile: bool = False
+    shown: bool = False
+    """Whether its dialog is up: one still being opened is `_behind_countdown`'s to settle."""
 
 
 def _breaks_display(step: Step | None) -> bool:
@@ -3236,17 +3521,32 @@ def _counted(count: int, verb: str) -> str:
     return f"{count} settings {plural}"
 
 
-def plain_toast(title: str, *, timeout: int = 5) -> Adw.Toast:
+def plain_toast(title: str, *, timeout: int = 5, wrap: bool = False) -> Adw.Toast:
     """A toast whose title is plain text, never Pango markup (F7 of the #148 review).
 
     `Adw.Toast` parses its title as markup by default, so a preset's name, a path or a
     tool's message holding `&` or `<` rendered blank or wrong. Markup goes off before the
     title is set, which is the order that never parses it (#228).
+
+    `wrap` shows the title in a label of its own that wraps, for a sentence whose end is
+    the point (a file's name, "is unchanged"): the title's own ellipsis cuts it at the
+    default width. A custom title clears the title, so `toast_text` reads what it says.
     """
     toast = Adw.Toast(timeout=timeout)
     toast.set_use_markup(False)
     toast.set_title(title)
+    if wrap:
+        label = Gtk.Label(label=title, wrap=True, max_width_chars=45, css_classes=["heading"])
+        toast.set_custom_title(label)
     return toast
+
+
+def toast_text(toast: Adw.Toast) -> str:
+    """What `toast` says: its wrapping label's text, or its title."""
+    custom = toast.get_custom_title()
+    if isinstance(custom, Gtk.Label):
+        return custom.get_label()
+    return toast.get_title() or ""
 
 
 def _result_summary(result: ApplyResult) -> str:

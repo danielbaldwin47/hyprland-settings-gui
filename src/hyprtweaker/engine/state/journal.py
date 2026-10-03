@@ -194,6 +194,13 @@ class JournalEntry:
 
     changes: tuple[ModuleChange, ...]
 
+    boundary: bool = False
+    """A kept import (#259): the config before it was replaced, not edited.
+
+    Last known good never reaches past the newest boundary that touches a Module
+    (`last_known_good`), so the bytes the user imported over are never offered back as
+    their restore point. The entries before it stay, as history."""
+
     @property
     def modules(self) -> tuple[str, ...]:
         return tuple(change.module for change in self.changes)
@@ -212,6 +219,7 @@ class JournalEntry:
             "outcome": self.outcome,
             "confirmed": self.confirmed,
             "changes": [change.as_json() for change in self.changes],
+            "boundary": self.boundary,
         }
 
     @classmethod
@@ -233,6 +241,7 @@ class JournalEntry:
             outcome=str(payload.get("outcome", "")),
             confirmed=bool(payload.get("confirmed", False)),
             changes=tuple(change for change in changes if change is not None),
+            boundary=payload.get("boundary") is True,
         )
 
 
@@ -325,6 +334,7 @@ class Draft:
         confirmed: bool,
         changed: Iterable[str],
         options: Mapping[str, Sequence[str]] | None = None,
+        boundary: bool = False,
     ) -> JournalEntry | None:
         """Record what happened. `changed` names the files this write actually replaced.
 
@@ -337,6 +347,8 @@ class Draft:
         `options` maps a Module to the Options its new bytes set -- `Writer.module_options`,
         the same walk that produced the rendering. A Module absent from it set none, which is
         the honest reading for a deleted Module and for the Entrypoint alike.
+
+        `boundary` marks a kept import (`JournalEntry.boundary`).
         """
         names = sorted(set(changed))
         if not names:
@@ -365,6 +377,7 @@ class Draft:
             outcome=outcome,
             confirmed=confirmed,
             changes=tuple(changes),
+            boundary=boundary,
         )
         self._journal.append(entry)
         # After the append, so the preserved Snapshots are never unreferenced in between. A
@@ -590,23 +603,54 @@ class Journal:
         the bytes through Lua, `restore.py`). Handing back bytes alone would leave the
         caller guessing from the *current* Manifest record -- the option set at the moment
         of the failure, not of the good write.
+
+        A kept import is a boundary (#259): the walk stops at the newest one that touches
+        `module`, which answers for itself if it was confirmed and `None` otherwise. What the
+        user imported over is not their restore point.
         """
-        for entry in reversed(self.entries()):
-            if not entry.confirmed:
-                continue
-            change = entry.change(module)
-            if change is None or change.after is None:
-                continue
-            data = self.snapshot(change.after)
-            if data is None:
-                # Pruned or never stored. Older entries may still hold a usable one, and a
-                # missing blob is not evidence that this Module has no Last known good.
-                continue
-            return LastKnownGood(module=module, data=data, options=change.options, at=entry.at)
-        return None
+        stop = self._restore_point(module)
+        if stop is None:
+            return None
+        entry, data = stop
+        if data is None:
+            return None
+        change = entry.change(module)
+        options = change.options if change is not None else ()
+        return LastKnownGood(module=module, data=data, options=options, at=entry.at)
+
+    def unverified_since_import(self, module: str) -> bool:
+        """True when `module` has no restore point because the import that wrote it could
+        not be confirmed when it was kept: what the Restore offer explains instead (#259)."""
+        stop = self._restore_point(module)
+        return stop is not None and stop[1] is None and not stop[0].confirmed
 
     def last_known_good_digest(self, module: str) -> str | None:
-        return self._digest(module, lambda entry: entry.confirmed, lambda change: change.after)
+        stop = self._restore_point(module)
+        if stop is None or stop[1] is None:
+            return None
+        change = stop[0].change(module)
+        return change.after if change is not None else None
+
+    def _restore_point(self, module: str) -> tuple[JournalEntry, bytes | None] | None:
+        """Where the walk back for `module`'s Last known good stops, with its bytes.
+
+        The newest confirmed entry whose `after` bytes are stored, or the newest boundary
+        that touches `module`, whichever comes first walking back; the bytes are `None`
+        when it stopped at a boundary that has none to offer.
+        """
+        for entry in reversed(self.entries()):
+            change = entry.change(module)
+            if change is None:
+                continue
+            if entry.confirmed and change.after is not None:
+                data = self.snapshot(change.after)
+                if data is not None:
+                    return entry, data
+                # Pruned or never stored. Older entries may still hold a usable one, and a
+                # missing blob is not evidence that this Module has no Last known good.
+            if entry.boundary:
+                return entry, None
+        return None
 
     def previous_digest(self, module: str) -> str | None:
         """The bytes `module` held before the newest write that touched it.
@@ -669,12 +713,13 @@ class Journal:
         pinned: set[str] = set()
         for index in reversed(range(len(entries))):
             entry = entries[index]
-            if not entry.confirmed:
-                continue
             fresh = [
                 change.module
                 for change in entry.changes
-                if change.module not in pinned and change.after is not None
+                if change.module not in pinned
+                # A boundary pins its Modules whatever it holds: pruned out of the window,
+                # it would let the pinned entry before it be offered again (#259).
+                and (entry.boundary or (entry.confirmed and change.after is not None))
             ]
             if fresh:
                 pinned.update(fresh)

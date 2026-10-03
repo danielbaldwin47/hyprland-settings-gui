@@ -13,6 +13,7 @@ and the Entrypoint wrong -- would look perfectly healthy from inside.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from hyprtweaker.engine.model import UNSET
 from hyprtweaker.engine.paths import ENTRYPOINT_NAME, ConfigPaths
 from hyprtweaker.engine.state import Manifest
 from hyprtweaker.engine.writer import LuaSyntaxError, Writer, syntax
-from hyprtweaker.session import Session
+from hyprtweaker.session import RestoreRefusal, Session
 
 BORDER_SIZE = "general:border_size"
 ROUNDING = "decoration:rounding"
@@ -223,7 +224,7 @@ def test_restore_last_good_puts_the_file_and_the_model_back(tmp_path: Path) -> N
             '{"option": "general:border_size", "int": 3, "set": true }'
         )
 
-        assert session.restore_last_good(GENERAL_MODULE)
+        assert session.restore_last_good(GENERAL_MODULE).queued
         await settle(session, runner)
 
         assert (app_dir(tmp_path) / GENERAL_MODULE).read_bytes() == good
@@ -266,9 +267,33 @@ def test_a_module_with_no_confirmed_write_has_nothing_to_restore(tmp_path: Path)
         session = await live_session(fake, tmp_path, runner)
 
         assert session.last_good_for(GENERAL_MODULE) is None
-        assert not session.restore_last_good(GENERAL_MODULE)
+        start = session.restore_last_good(GENERAL_MODULE)
+        assert (start.queued, start.refusal) == (False, RestoreRefusal.NO_EARLIER)
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_restore_while_one_runs_says_so(tmp_path: Path) -> None:
+    """Review addendum 3: not "there is no earlier version" -- there is, and it is running."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        (app_dir(tmp_path) / GENERAL_MODULE).write_bytes(b"-- hand edited\n")
+
+        assert session.restore_last_good(GENERAL_MODULE).queued
+        for _ in range(3):
+            await asyncio.sleep(0)  # the first restore starts and waits on Hyprland
+        second = session.restore_last_good(GENERAL_MODULE)
+        await settle(session, runner)
+
+        assert (second.queued, second.refusal) == (False, RestoreRefusal.RUNNING)
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
 
 
 # --- the zero-binds emergency --------------------------------------------------------------
@@ -405,7 +430,7 @@ def test_a_rescue_that_raised_is_not_announced_by_the_next_restore(tmp_path: Pat
         assert session.recovery_halted, "the precondition: the rescue raised"
         applier.restore_now = restore_now  # type: ignore[method-assign]
 
-        assert session.restore_last_good(GENERAL_MODULE)
+        assert session.restore_last_good(GENERAL_MODULE).queued
         await settle(session, runner)
 
         assert (app_dir(tmp_path) / GENERAL_MODULE).read_bytes() != (
@@ -437,7 +462,7 @@ def test_a_rescue_with_nothing_to_restore_is_not_announced_later(tmp_path: Path)
         assert session.health.rescued == (), "the precondition: nothing was restored"
 
         journal_file.write_bytes(history)
-        assert session.restore_last_good(GENERAL_MODULE)
+        assert session.restore_last_good(GENERAL_MODULE).queued
         await settle(session, runner)
 
         assert session.health.rescued == ()
@@ -1038,7 +1063,7 @@ def test_a_restore_whose_write_fails_keeps_the_banner_and_reports_once(
         session.on_applied = lambda result: reports.append(str(result.outcome))
         monkeypatch.setattr(Writer, "restore", read_only)
 
-        assert session.restore_last_good(GENERAL_MODULE)
+        assert session.restore_last_good(GENERAL_MODULE).queued
         await settle(session, runner)
 
         assert session.health.unhealthy
@@ -1169,7 +1194,7 @@ def test_restore_takes_the_restored_bytes_not_an_override_of_them(tmp_path: Path
             '{"option": "general:border_size", "int": 20, "set": true }'
         )
 
-        assert session.restore_last_good(GENERAL_MODULE)
+        assert session.restore_last_good(GENERAL_MODULE).queued
         await settle(session, runner)
 
         assert session.model.get(BORDER_SIZE) == 3

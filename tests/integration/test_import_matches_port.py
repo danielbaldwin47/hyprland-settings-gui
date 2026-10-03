@@ -8,10 +8,12 @@ rice's own author shipped, and compare what Hyprland ended up with.
 
 Two limits are deliberate and stated rather than worked around:
 
-- **Options compared, Entities booted.** The imported config is written the way the
-  wizard writes it, Entity Modules included (#101), so every boot below loads its binds,
-  rules and monitor rules. The state comparison is over Options; the pixel comparison
-  with the port is the one place Entities are judged, and it is still an expected failure.
+- **What each comparison can see.** The imported config is written the way the wizard
+  writes it, Entity Modules included (#101), so every boot below loads its binds, rules
+  and monitor rules. The state comparison reads Options and every Entity surface `hyprctl`
+  lists (binds, animations and curves, monitors, workspace rules, layers); window and
+  layer rules have no such surface, so the pixel comparison is the only place they are
+  judged, and only for the probe windows it opens.
 - **The port is a port, not a transcript.** Upstream hand-wrote their Lua; where it
   deliberately differs from their `.conf`, agreement is the wrong expectation. So the
   comparison is over the options *both* configs set, and disagreements are reported with
@@ -24,12 +26,14 @@ is also the only place the *whole* tree gets mapped.
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import pytest
 from harness.corpus import rice, rices_with_ground_truth, stage
 from harness.nested import NestedHyprland
-from harness.state import capture
+from harness.state import capture, diff
 from harness.visual import Canvas, compare
 
 from hyprtweaker.engine.importer import import_config
@@ -60,6 +64,83 @@ options rather than a tolerance: a *new* disagreement is a mapping bug and must 
 """
 
 pytestmark = pytest.mark.hyprland
+
+BindSignature = tuple[int, str, str, tuple[str, ...], str]
+"""(modmask, key, submap, flags, description): what a bind is, as `_bind_signature` reads it."""
+
+KNOWN_PORT_BIND_DIVERGENCES: tuple[tuple[str, BindSignature, str], ...] = (
+    (
+        "import",
+        (0, "", "global", ("catch_all", "non_consuming"), ""),
+        "`hyprland/keybinds.conf:16` binds `Super, catchall`; `hyprland/keybinds.lua:8-11` has "
+        "it commented out",
+    ),
+    (
+        "import",
+        (68, "slash", "global", (), ""),
+        "`custom/keybinds.conf:5` binds Ctrl+Super Slash; `custom/keybinds.lua` ports no bind",
+    ),
+    (
+        "import",
+        (76, "slash", "global", (), ""),
+        "`custom/keybinds.conf:6` binds Ctrl+Super+Alt Slash; `custom/keybinds.lua` ports "
+        "no bind",
+    ),
+    (
+        "import",
+        (64, "", "global", ("repeat",), ""),
+        "`hyprland/keybinds.conf:240-243` binds Super code:82 twice; "
+        "`hyprland/keybinds.lua:263-269`"
+        " keeps one and comments out the rest",
+    ),
+    (
+        "import",
+        (64, "", "global", ("repeat",), ""),
+        "the same for Super code:86",
+    ),
+    (
+        "import",
+        (72, "f1", "global", (), ""),
+        "`hyprland/keybinds.conf:218-221` enters the virtual-machine submap with one bind and "
+        "leaves it with another; `hyprland/keybinds.lua:217-228` has one universal bind that "
+        "toggles",
+    ),
+    (
+        "import",
+        (72, "f1", "virtual-machine", (), ""),
+        "the leaving half of that pair",
+    ),
+    (
+        "port",
+        (72, "f1", "virtual-machine", ("submap_universal",), ""),
+        "the port's one toggling bind",
+    ),
+)
+"""Binds upstream's hand port changed, each traced to both trees (#253, 2026-10-02).
+
+Measured at a nested 0.56.2: the import registers 197 binds and the port 191, and these
+eight are the whole difference. Read with `_bind_signature`, which compares key names
+case-blind (`SUPER_L` in the port, `Super_L` in the `.conf`) and reads the `.conf`'s submap
+named `global` (`hyprland/keybinds.conf:5-7`, which the port drops) as the default submap.
+A bind outside this table is a mapping bug and fails the test.
+"""
+
+PORT_THEME: dict[str, str] = {
+    "general:col.active_border": "rgba(F7DCDE39)",
+    "general:col.inactive_border": "rgba(A58A8D30)",
+    "misc:background_color": "rgba(1D1011FF)",
+}
+"""The `.conf`'s own theme colours (`hyprland/colors.conf:4-9`), for the pixel comparison.
+
+The port reads its colours from `hyprland/colors.lua`, a theme generated for another
+wallpaper (`KNOWN_PORT_DIVERGENCES`). Rendered as shipped, that alone is the whole pixel
+difference (#253, 2026-10-02, nested 0.56.2): 26.9% of pixels at a max delta of 35/255, all
+of it the background colour in the gaps and behind the translucent probe, and the border
+colours at the window edges; with these three values set on the port the two screenshots
+are byte-identical. Copied from the `.conf` rather than from the import, so the screenshot
+still checks the Importer's colour mapping. The pinned-window border rule
+(`colors.conf:34`) differs the same way and is invisible here: no probe window is pinned.
+"""
 
 
 @pytest.fixture(scope="module")
@@ -114,10 +195,11 @@ def test_an_imported_rice_boots_without_config_errors(
     assert state.config_errors == (), f"the imported config was rejected: {state.config_errors}"
 
 
-def test_imported_options_agree_with_the_upstream_port(
+def test_imported_state_agrees_with_the_upstream_port(
     tmp_path: Path, artifacts: Path, schema
 ) -> None:  # type: ignore[no-untyped-def]
-    """Every option both configs set must land on the same live value."""
+    """Every option both configs set lands on the same live value, and every Entity
+    `hyprctl` lists agrees but for `KNOWN_PORT_BIND_DIVERGENCES`."""
     staged = stage(rice(RICE), tmp_path / "home")
     result = _import_staged(staged, schema)
     assert staged.ground_truth_lua is not None
@@ -157,6 +239,80 @@ def test_imported_options_agree_with_the_upstream_port(
     stale = set(KNOWN_PORT_DIVERGENCES) - set(names)
     assert not stale, f"KNOWN_PORT_DIVERGENCES lists options the import no longer sets: {stale}"
 
+    # Entities: every surface `hyprctl` lists, from the same two boots.
+    entities = diff(imported, upstream)
+    unchanged = (entities.animations, entities.beziers, *entities.lists)
+    assert all(delta.empty for delta in unchanged), (
+        "Entities disagreed with the upstream port: "
+        + "; ".join(str(delta) for delta in unchanged if not delta.empty)
+    )
+    imported_binds = Counter(_bind_signature(b) for b in imported.surfaces["binds"])
+    port_binds = Counter(_bind_signature(b) for b in upstream.surfaces["binds"])
+    expected = {
+        side: Counter(
+            signature for owner, signature, _ in KNOWN_PORT_BIND_DIVERGENCES if owner == side
+        )
+        for side in ("import", "port")
+    }
+    assert (imported_binds - port_binds, port_binds - imported_binds) == (
+        expected["import"],
+        expected["port"],
+    ), "binds disagreed with the upstream port beyond KNOWN_PORT_BIND_DIVERGENCES"
+
+
+#: The boolean `hyprctl binds` fields that change what a bind does.
+BIND_FLAGS = (
+    "locked",
+    "mouse",
+    "release",
+    "repeat",
+    "longPress",
+    "non_consuming",
+    "auto_consuming",
+    "catch_all",
+    "allow_input_capture",
+)
+
+
+def _bind_signature(bind: dict[str, Any]) -> BindSignature:
+    """A `hyprctl binds` record reduced to what the bind is, not how Lua registered it.
+
+    `dispatcher` and `arg` are left out: both configs are Lua, so every bind reads back as
+    `__lua` with a callback number, and the numbers differ whenever the bind order does.
+    """
+    flags = [name for name in BIND_FLAGS if bind.get(name) is True]
+    if bind.get("submap_universal") == "true":
+        flags.append("submap_universal")
+    return (
+        int(bind["modmask"]),
+        str(bind["key"]).casefold(),
+        str(bind.get("submap") or "global"),
+        tuple(sorted(flags)),
+        str(bind.get("description", "")),
+    )
+
+
+def _with_conf_theme(port: Path) -> Path:
+    """The staged port Entrypoint with `PORT_THEME` set last, so it wins over `colors.lua`.
+
+    Edits the staged copy under the test's tmp dir; the vendored corpus stays as shipped.
+    """
+    assert set(PORT_THEME) <= set(KNOWN_PORT_DIVERGENCES), "PORT_THEME sets a non-divergence"
+    conf_colours = (port.parent / "hyprland" / "colors.conf").read_text()
+    for literal in PORT_THEME.values():
+        colour = literal.removeprefix("rgba(").removesuffix(")")
+        assert colour in conf_colours, f"PORT_THEME {literal} is no longer in colors.conf"
+    lines = ["", "-- Harness (#253): the .conf's theme colours, set over colors.lua."]
+    for name, literal in PORT_THEME.items():
+        section, key = name.split(":", 1)
+        path = key.split(".")
+        table = f'{path[-1]} = "{literal}"'
+        for part in reversed(path[:-1]):
+            table = f"{part} = {{ {table} }}"
+        lines.append(f"hl.config({{ {section} = {{ {table} }} }})")
+    port.write_text(port.read_text() + "\n".join(lines) + "\n")
+    return port
+
 
 def _render(entrypoint: Path, home: Path, png: Path, log: Path) -> Path:
     with (
@@ -193,23 +349,14 @@ def test_the_imported_config_renders_the_same_screen_every_time(
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "the imported end-4 still renders differently from its port: with every Entity "
-        "Module written (#101), 26.9% of pixels differ at a max delta of 35/255 "
-        "(measured 2026-10-02), cause not yet traced (#253). The state-level comparison "
-        "above is the part that is checkable today."
-    ),
-    strict=True,
-)
 def test_the_imported_config_renders_the_same_screen_as_the_port(
     tmp_path: Path, artifacts: Path, schema
 ) -> None:  # type: ignore[no-untyped-def]
-    """The full-fidelity pixel comparison, kept runnable so a fix can just delete the mark.
+    """The pixel comparison: the imported rice paints what upstream's port paints.
 
-    Left in place rather than deferred to a later ticket because it is the measurement that
-    says how far there is to go: it prints the exact pixel delta between an imported rice
-    and its hand-written port every time it runs.
+    The port is rendered with the `.conf`'s theme colours (`PORT_THEME`); as shipped it
+    differs by exactly those three colours, which the Option comparison above already names.
+    The tolerance is `visually_identical`'s, unchanged.
     """
     staged = stage(rice(RICE), tmp_path / "home")
     result = _import_staged(staged, schema)
@@ -221,7 +368,10 @@ def test_the_imported_config_renders_the_same_screen_as_the_port(
     port = stage(rice(RICE), tmp_path / "port")
     assert port.ground_truth_lua is not None
     port_png = _render(
-        port.ground_truth_lua, port.home, artifacts / "port.png", artifacts / "port-visual.log"
+        _with_conf_theme(port.ground_truth_lua),
+        port.home,
+        artifacts / "port.png",
+        artifacts / "port-visual.log",
     )
 
     comparison = compare(imported_png, port_png, heatmap=artifacts / "diff.png")

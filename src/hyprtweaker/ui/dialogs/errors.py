@@ -63,17 +63,21 @@ def error_dialog(
     on_action: ActionHandler | None = None,
     body: str = "",
     restorable: Callable[[str], bool] | None = None,
+    unverified_import: Callable[[str], bool] | None = None,
 ) -> Adw.AlertDialog:
     """Show `recovery` over `parent` and return the dialog, so a caller can assert on it.
 
     Returned rather than merely presented because this tier is testable and the alternative
-    is a function whose entire effect is invisible from a test.
+    is a function whose entire effect is invisible from a test. `unverified_import` names a
+    Module whose missing restore point is an import nobody could confirm (#259).
     """
     dialog = Adw.AlertDialog(heading=_HEADING, body=body)
     # Wide where the window allows: an error line is a path, a line number and a reason,
     # and the narrow layout cut it at "user.lua:2: s" (#148 hand-test 14).
     dialog.set_prefer_wide_layout(True)
-    dialog.set_extra_child(_problem_list(recovery, dialog, on_action, restorable))
+    dialog.set_extra_child(
+        _problem_list(recovery, dialog, on_action, restorable, unverified_import)
+    )
     dialog.add_response("close", "Close")
     dialog.set_default_response("close")
     dialog.set_close_response("close")
@@ -86,10 +90,11 @@ def _problem_list(
     dialog: Adw.AlertDialog,
     on_action: ActionHandler | None,
     restorable: Callable[[str], bool] | None,
+    unverified_import: Callable[[str], bool] | None,
 ) -> Gtk.Widget:
     body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
     for problem in recovery.problems:
-        body.append(_problem_card(problem, dialog, on_action, restorable))
+        body.append(_problem_card(problem, dialog, on_action, restorable, unverified_import))
     return Gtk.ScrolledWindow(
         child=body,
         propagate_natural_height=True,
@@ -106,6 +111,7 @@ def _problem_card(
     dialog: Adw.AlertDialog,
     on_action: ActionHandler | None,
     restorable: Callable[[str], bool] | None,
+    unverified_import: Callable[[str], bool] | None,
 ) -> Gtk.Widget:
     card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     card.append(
@@ -135,12 +141,20 @@ def _problem_card(
         # Offered with no restore point, it closed the dialog and did nothing (#148
         # hand-test 17): say why, and leave the way that works.
         name = problem.module.rsplit("/", 1)[-1] if problem.module else ""
+        if unverified_import is not None and unverified_import(problem.module or ""):
+            # Older versions exist, but they are the config the import replaced (#259).
+            why = (
+                f"There is no verified restore point for {name} since the import, because "
+                "its settings could not all be checked against Hyprland when it was kept."
+            )
+        else:
+            why = (
+                f"This app has no earlier version of {name} that Hyprland accepted, so "
+                "there is nothing to restore."
+            )
         card.append(
             Gtk.Label(
-                label=(
-                    f"This app has no earlier version of {name} that Hyprland accepted, so "
-                    "there is nothing to restore. Open the file to fix the error."
-                ),
+                label=f"{why} Open the file to fix the error.",
                 xalign=0.0,
                 wrap=True,
                 css_classes=["dim-label"],

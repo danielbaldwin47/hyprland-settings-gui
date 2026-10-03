@@ -264,7 +264,7 @@ class TestTheRescueRow:
     Markdown arriving in a Row that renders backticks and asterisks literally (#131).
     """
 
-    def test_the_legacy_path_offers_the_command_that_removes_the_generated_file(
+    def test_the_legacy_path_offers_the_command_that_moves_the_generated_file_aside(
         self, tmp_path: Path
     ) -> None:
         from hyprtweaker.engine.paths import ConfigPaths
@@ -278,7 +278,7 @@ class TestTheRescueRow:
         _click(dialog, "Convert...")
 
         shown = _text_under(dialog)
-        assert "rm ~/.config/hypr/hyprland.lua" in shown
+        assert "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched" in shown
         assert ".bak" not in shown
 
     def test_the_lua_path_offers_the_command_that_restores_the_backup(
@@ -300,7 +300,9 @@ class TestTheRescueRow:
 
         shown = _text_under(_rescue_group(flow.rescue_command))
         assert "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua" in shown
-        assert "rm ~/.config/hypr/hyprland.lua" not in shown
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched" not in shown
+        )
 
     def test_the_row_shows_a_command_rather_than_the_report_markdown(
         self, tmp_path: Path
@@ -956,6 +958,52 @@ class TestExport:
         assert text.startswith("-- Hyprland config exported")
         assert "__host_require" in text
 
+    def test_an_export_that_cannot_be_written_says_so_and_keeps_the_file(
+        self, tmp_path: Path
+    ) -> None:
+        """#251: a refused write is a toast naming the untouched file, never a traceback."""
+        window, _ = build_window(tmp_path)
+        window.route_first_run()
+        folder = tmp_path / "read-only"
+        folder.mkdir()
+        target = folder / "hyprland.lua"
+        target.write_text("-- the user's own config\n", encoding="utf-8")
+        toasts: list[Any] = []
+        window._toasts.add_toast = toasts.append
+        folder.chmod(0o500)
+        try:
+            window._write_export(target)
+        finally:
+            folder.chmod(0o700)
+
+        assert target.read_text(encoding="utf-8") == "-- the user's own config\n"
+        # Review m1 F7: a label that wraps, so "is unchanged" is never cut off.
+        (toast,) = toasts
+        assert toast.get_custom_title().get_wrap()
+        assert toast.get_custom_title().get_label() == (
+            "The export was not written: permission denied. hyprland.lua is unchanged"
+        )
+
+    def test_an_export_to_a_new_file_that_cannot_be_written_says_so(
+        self, tmp_path: Path
+    ) -> None:
+        window, _ = build_window(tmp_path)
+        window.route_first_run()
+        folder = tmp_path / "read-only"
+        folder.mkdir()
+        from hyprtweaker.ui.shell.window import toast_text
+
+        toasts: list[str] = []
+        window._toasts.add_toast = lambda toast: toasts.append(toast_text(toast))
+        folder.chmod(0o500)
+        try:
+            window._write_export(folder / "exported.lua")
+        finally:
+            folder.chmod(0o700)
+
+        assert list(folder.iterdir()) == []
+        assert toasts == ["The export was not written: permission denied"]
+
 
 # --- widget-tree helpers ---------------------------------------------------------------------
 
@@ -1211,10 +1259,12 @@ def _wizard(  # type: ignore[no-untyped-def]
     tools: tuple[str, ...],
     *,
     live: bool = True,
+    source: Path | None = None,
 ):
     """The wizard over a `hyprland.conf` in the fenced home, with `tools` installed (stubs
     on the fenced tool path, never run) and matugen's and wallust's configs present. The
-    static gate is stood in for: `test_bridge_verify_config.py` runs the real one."""
+    static gate is stood in for: `test_bridge_verify_config.py` runs the real one. `source`
+    is a file Import... chose instead."""
     import subprocess
 
     from hyprtweaker.engine.migration import flow as flow_module
@@ -1250,7 +1300,7 @@ def _wizard(  # type: ignore[no-untyped-def]
     started_application()
     from started_app import presented
 
-    dialog = presented(MigrationDialog(flow, spawn=_run_the_switch_only))
+    dialog = presented(MigrationDialog(flow, spawn=_run_the_switch_only, source=source))
     _click(dialog, "Convert...")
     _click(dialog, "Back up and convert")
     return dialog, flow, paths
@@ -1585,3 +1635,276 @@ class TestTheUnfinishedSwitchOffer:
         offer.force_close()
 
         assert started == [True]
+
+
+MARK_268 = "\n-- hand edit during the countdown: marker-268-6f1c\n"
+
+
+def _switched_wizard(monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]):  # type: ignore[no-untyped-def]
+    """The wizard on Keep or roll back, the switch done, the countdown not yet started."""
+    dialog, flow, paths = _wizard(monkeypatch, stub_tool, ())
+    _click(dialog, "Switch and verify")
+    assert _page_title(dialog) == "Keep or roll back"
+    return dialog, flow, paths
+
+
+def _answer_during_countdown(dialog, decision) -> None:  # type: ignore[no-untyped-def]
+    """Run the wizard's own countdown and press `decision` while it waits."""
+    import asyncio
+
+    async def press() -> None:
+        countdown = asyncio.ensure_future(dialog._countdown())
+        await asyncio.sleep(0.05)
+        dialog._answer(decision)
+        await countdown
+
+    asyncio.run(press())
+
+
+class TestTheCountdownsEndingsAreTrue:
+    """#268: a Keep or Roll back that raises ends on a page that can close and carries the
+    rescue (AC4); a Roll back that could not finish never says the old config is back
+    (AC1); an edit made during the countdown is kept and named (AC2)."""
+
+    @pytest.mark.parametrize("answer", ["kept", "rolled-back"])
+    def test_an_answer_that_raises_ends_on_a_page_that_can_close(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path], answer: str
+    ) -> None:
+        from hyprtweaker.engine.migration.flow import Decision
+
+        dialog, flow, _paths = _switched_wizard(monkeypatch, stub_tool)
+        assert not dialog.get_can_close()
+
+        def fail(*_args: object) -> None:
+            raise OSError(5, "Input/output error")
+
+        monkeypatch.setattr(flow, "keep" if answer == "kept" else "roll_back", fail)
+        _answer_during_countdown(dialog, Decision(answer))
+
+        which = "Keep" if answer == "kept" else "Roll back"
+        assert _page_title(dialog) == "Stopped"
+        assert dialog.get_can_close()
+        assert not dialog._view.get_visible_page().get_can_pop()
+        assert _descriptions(dialog) == [
+            f"{which} did not finish: input/output error\n\n"
+            "The switch is still recorded as unfinished, so the app offers to roll it back "
+            "the next time it starts.\n\n"
+            "If you are locked out, run this from a TTY:\n"
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+        ]
+        _click(dialog, "Close")
+
+    def test_an_edit_during_the_countdown_is_kept_and_named(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        from hyprtweaker.engine.migration.flow import Decision
+
+        dialog, _flow, paths = _switched_wizard(monkeypatch, stub_tool)
+        with paths.entrypoint.open("a", encoding="utf-8") as handle:
+            handle.write(MARK_268)
+        edited = paths.entrypoint.read_bytes()
+
+        _answer_during_countdown(dialog, Decision.ROLLED_BACK)
+
+        (copy,) = paths.edited_copies_dir.rglob("hyprland.lua")
+        assert copy.read_bytes() == edited
+        assert not paths.entrypoint.exists()
+        assert _page_title(dialog) == "Rolled back"
+        (said,) = _descriptions(dialog)
+        assert said.startswith(
+            "Nothing was kept. You are on the configuration you started with.\n\n"
+            "hyprland.lua had changed since the switch, so that version is kept as "
+            f"~/.local/state/hyprtweaker/edited-copies/{copy.parent.name}/hyprland.lua.\n\n"
+        )
+        _click(dialog, "Close")
+
+    def test_a_roll_back_that_could_not_finish_says_what_is_still_in_place(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        from hyprtweaker.engine.migration.flow import Decision
+
+        dialog, flow, paths = _switched_wizard(monkeypatch, stub_tool)
+        with paths.entrypoint.open("a", encoding="utf-8") as handle:
+            handle.write(MARK_268)
+        paths.edited_copies_dir.parent.mkdir(parents=True, exist_ok=True)
+        paths.edited_copies_dir.write_text("in the way")
+
+        _answer_during_countdown(dialog, Decision.ROLLED_BACK)
+
+        assert _page_title(dialog) == "Not rolled back"
+        assert dialog.get_can_close()
+        (said,) = _descriptions(dialog)
+        assert "You are on the configuration" not in said
+        assert said.startswith(
+            "Nothing was rolled back: hyprland.lua has changed since the switch"
+        )
+        assert said.endswith(
+            "TTY:\nmv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+        )
+        assert flow.pending_switch() is not None
+        assert MARK_268 in paths.entrypoint.read_text(encoding="utf-8")
+        _click(dialog, "Close")
+
+
+class TestASwitchThatFailsItsChecks:
+    """#268 AC1, review m1 F28: a switch that fails verification and then cannot be rolled
+    back never says the old configuration is back; it says what is left, and the rescue."""
+
+    def test_a_roll_back_that_could_not_finish_says_so(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        from gi.repository import Adw
+
+        from hyprtweaker.engine.migration.flow import RollBackOutcome
+
+        async def broken(_self: object) -> tuple[str, ...]:
+            return ("hyprland.lua:3: unknown keyword",)
+
+        monkeypatch.setattr(LiveClient, "configerrors", broken)
+        dialog, flow, _paths = _wizard(monkeypatch, stub_tool, ())
+        stuck = RollBackOutcome(
+            complete=False, rescue="Your hyprland.lua could not be put back."
+        )
+        monkeypatch.setattr(flow, "roll_back", lambda _marker=None: stuck)
+
+        _click(dialog, "Switch and verify")
+
+        assert _page_title(dialog) == "Stopped"
+        assert dialog.get_can_close()
+        # Back there, "Switch and verify" is spent: no dead back arrow (addendum 2).
+        assert not dialog._view.get_visible_page().get_can_pop()
+        (said,) = _descriptions(dialog)
+        assert said.startswith("Your hyprland.lua could not be put back.\n\n")
+        assert "You are back on the configuration" not in said
+        (group,) = _of_type(dialog, Adw.PreferencesGroup)
+        assert group.get_title() == (
+            "The new configuration did not load, and it could not be rolled back"
+        )
+
+
+class TestTheKeptPageNamesTheBackups:
+    """#268 AC5, review m1 F11: a second migration finds the plain backup names taken, and
+    the Kept page names the stamped ones it made, not the generic ones."""
+
+    def test_keep_names_the_stamped_backups(
+        self, monkeypatch: pytest.MonkeyPatch, stub_tool: Callable[..., Path]
+    ) -> None:
+        from gi.repository import GLib
+
+        from hyprtweaker.engine.migration.flow import Decision, fresh_start
+        from hyprtweaker.engine.paths import ConfigPaths
+        from hyprtweaker.engine.schema import load_schema
+        from hyprtweaker.engine.writer import Writer
+
+        paths = ConfigPaths.default()
+        paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+        schema = load_schema("0.56.2", ROOT / "data" / "schema")
+        Writer(paths, app_version=APP_VERSION).write(
+            fresh_start(paths, schema, app_version=APP_VERSION)
+        )
+        (paths.hypr_dir / "hyprland.lua.bak").write_text("-- an older one\n")
+        (paths.hypr_dir / "hyprtweaker.bak").mkdir()
+        other = paths.config_home / "other.conf"
+        other.write_text(CONF, encoding="utf-8")
+
+        dialog, _flow, _paths = _wizard(monkeypatch, stub_tool, (), source=other)
+        _click(dialog, "Switch and verify")
+        _answer_during_countdown(dialog, Decision.KEPT)
+
+        (lua,) = paths.hypr_dir.glob("hyprland.lua.bak.*")
+        (folder,) = paths.hypr_dir.glob("hyprtweaker.bak.*")
+        assert lua.name.removeprefix("hyprland.lua.bak.") == folder.name.removeprefix(
+            "hyprtweaker.bak."
+        ), "one stamp, the switch's"
+        assert _page_title(dialog) == "Kept"
+        assert _descriptions(dialog) == [
+            GLib.markup_escape_text(
+                "Your settings are now set up here. Your old configuration is backed up. "
+                f"Kept your previous hyprland.lua as ~/.config/hypr/{lua.name} and the "
+                f"app's previous folder as ~/.config/hypr/{folder.name}."
+            )
+        ]
+        _click(dialog, "Close")
+
+
+class TestTheRelaunchSaysWhatIsLeft:
+    """#268 AC1 and AC4 on the relaunch offer: a Roll back that could not finish or that
+    raised ends on a dialog that can close, says what is left, and offers Keep."""
+
+    def _offered(self, tmp_path: Path):  # type: ignore[no-untyped-def]
+        window, session = build_window(tmp_path)
+        _crashed_switch(tmp_path, "app", session.schema)
+        window.route_first_run()
+        offer = window.get_visible_dialog()
+        assert offer.get_heading() == "A configuration switch was not finished"
+        return window, session, offer
+
+    def test_with_both_copies_gone_it_says_so_and_keep_finishes_the_switch(
+        self, tmp_path: Path
+    ) -> None:
+        window, session, offer = self._offered(tmp_path)
+        paths = session.paths
+        (paths.hypr_dir / "hyprland.lua.bak").unlink()
+        for copy in paths.backups_dir.glob("*/hyprland.lua"):
+            copy.unlink()
+        switched = _hypr_files(paths.hypr_dir)
+        started: list[bool] = []
+        window.start_when_answered(lambda: started.append(True))
+
+        offer.emit("response", "roll-back")
+        offer.force_close()
+        main_loop.settle("the unfinished dialog to show")
+
+        said = window.get_visible_dialog()
+        assert said.get_heading() == "The switch is still unfinished"
+        assert said.get_body().startswith(
+            "Your hyprland.lua could not be put back: hyprland.lua.bak is missing."
+        )
+        assert "You are on the configuration" not in said.get_body()
+        assert _hypr_files(paths.hypr_dir) == switched
+        assert paths.sentinel.exists()
+        assert started == []
+
+        said.emit("response", "keep")
+        said.force_close()
+
+        assert not paths.sentinel.exists()
+        assert started == [True]
+
+    @pytest.mark.parametrize(
+        ("response", "method", "which"),
+        [("roll-back", "roll_back", "Roll back"), ("keep", "keep", "Keep")],
+    )
+    def test_an_answer_that_raises_ends_on_a_dialog_with_the_rescue(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        response: str,
+        method: str,
+        which: str,
+    ) -> None:
+        """The OS's words, not Python's "[Errno 5]" (review m1 F12, #282); Keep's failure
+        at relaunch says the same (F28)."""
+        from hyprtweaker.engine.migration.flow import MigrationFlow
+
+        window, session, offer = self._offered(tmp_path)
+
+        def fail(*_args: object) -> None:
+            raise OSError(5, "Input/output error")
+
+        monkeypatch.setattr(MigrationFlow, method, fail)
+        offer.emit("response", response)
+        offer.force_close()
+        main_loop.settle("the unfinished dialog to show")
+
+        said = window.get_visible_dialog()
+        assert said.get_heading() == "The switch is still unfinished"
+        assert said.get_body() == (
+            f"{which} did not finish: input/output error\n\n"
+            "If you are locked out, run this from a TTY:\n"
+            "mv ~/.config/hypr/hyprtweaker ~/.config/hypr/hyprtweaker.imported && "
+            "mv ~/.config/hypr/hyprtweaker.bak ~/.config/hypr/hyprtweaker && "
+            "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua"
+        )
+        assert session.paths.sentinel.exists()
+        said.force_close()

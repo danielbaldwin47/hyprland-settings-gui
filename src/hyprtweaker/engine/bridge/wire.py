@@ -69,10 +69,11 @@ Register = Callable[[str], bool]
 """Adds (or removes) the tool's Bridge entries and regenerates the Entrypoint; `False` when
 that cannot be done now. Takes the tool id."""
 
-_NOT_REGISTERED = (
+NOT_UPDATED = (
     "hyprland.lua could not be updated right now, so nothing was changed. Try again; if it "
     "fails again, the banner at the top of the window says why."
 )
+"""Why a Bridge change did not happen when the Entrypoint could not be rewritten."""
 
 
 # --- what callers see -------------------------------------------------------------------------
@@ -542,7 +543,7 @@ def wire(
                 "Review them again."
             )
     if not register(plan.tool):
-        return refused(_NOT_REGISTERED)
+        return refused(NOT_UPDATED)
     if not targets:
         return Wired(plan.tool, written=(), backup=None)
     previous = _Record.active(plan.backups, plan.tool)
@@ -612,13 +613,51 @@ def unwire(
 ) -> Unwired | NeedsChoice | NotDone:
     """Undo `wire`: the Bridge entry goes, and each file goes back to its copy.
 
+    `plan_unwire`, then `unregister`, then `finish_unwire`, for a caller whose `unregister`
+    answers at once. The Theming page waits for the Entrypoint write between the two halves
+    instead (#267).
+    """
+    plan = plan_unwire(tool, paths=paths, manifest=manifest, if_changed=if_changed)
+    if not isinstance(plan, UnwirePlan):
+        return plan
+    if plan.loaded and not unregister(tool):
+        return NotDone(tool, NOT_UPDATED)
+    return finish_unwire(plan)
+
+
+@dataclass(frozen=True, slots=True)
+class UnwirePlan:
+    """What `finish_unwire` does once the Bridge entry is gone: `plan_unwire`'s answer when
+    nothing stands in the way. Nothing has been changed yet."""
+
+    tool: str
+    paths: ConfigPaths
+    loaded: bool
+    """Whether hyprland.lua loads the tool now (an entry, or output in the bridge folder):
+    the Entrypoint must be rewritten before the tool's files go back."""
+    record: _Record | None
+    changed: tuple[_FileRecord, ...]
+    """Files changed since setup, which the choice decides about."""
+    restoring: tuple[_FileRecord, ...]
+    """Files going back to their copy, or deleted if setup created them."""
+    if_changed: IfChanged
+
+
+def plan_unwire(
+    tool: str,
+    *,
+    paths: ConfigPaths,
+    manifest: Manifest,
+    if_changed: IfChanged = IfChanged.ASK,
+) -> UnwirePlan | Unwired | NeedsChoice | NotDone:
+    """The first half of `unwire`, with no side effects: what Remove would do, or why not.
+
     A file that still holds what `wire` wrote is restored (or removed, if `wire` created it);
     one that already holds the original is left. A file changed since setup is never
     silently overwritten: with `IfChanged.ASK` nothing is done and `NeedsChoice` names each,
     with the copy it would be restored from. A record it cannot trust -- a copy gone from
     the backups -- counts as changed, and "Restore the copy" then refuses rather than guess.
-    Idempotent: a second call, or one after a crash part-way, converges; with nothing wired
-    it changes nothing and says so.
+    Idempotent: with nothing wired it answers `Unwired` saying there was nothing to undo.
     """
     spec = REGISTRY.get(tool)
     title = spec.title if spec else tool
@@ -644,19 +683,25 @@ def unwire(
     )
     if record is not None and (refusal := record.cannot_restore(restoring, paths)):
         return NotDone(tool, refusal)
-    if entry and not unregister(tool):
-        return NotDone(tool, _NOT_REGISTERED)
+    return UnwirePlan(tool, paths, entry, record, tuple(changed), tuple(restoring), if_changed)
+
+
+def finish_unwire(plan: UnwirePlan) -> Unwired | NotDone:
+    """The second half of `unwire`, once hyprland.lua no longer loads the tool: each file
+    goes back to its copy and the record closes. Converges when run again after a crash."""
+    tool, paths, record = plan.tool, plan.paths, plan.record
     if record is None:
         return Unwired(tool)
-    if changed and if_changed is IfChanged.LEAVE:
+    files = record.files
+    if plan.changed and plan.if_changed is IfChanged.LEAVE:
         record.close()
         return Unwired(tool, left=tuple(_ref(each.path, paths) for each in files))
     restored: list[FileRef] = []
     removed: list[FileRef] = []
     try:
-        for each in changed:
+        for each in plan.changed:
             record.keep_replaced(each)
-        for each in restoring:
+        for each in plan.restoring:
             if each.copy is None:
                 each.path.unlink(missing_ok=True)
                 removed.append(_ref(each.path, paths))
@@ -664,6 +709,8 @@ def unwire(
                 write_atomic(each.path, (record.directory / each.copy).read_bytes())
                 restored.append(_ref(each.path, paths))
     except OSError as error:
+        spec = REGISTRY.get(tool)
+        title = spec.title if spec else tool
         return NotDone(
             tool,
             f"{title} no longer loads, but {shown(Path(error.filename or ''), paths)} could "
@@ -718,6 +765,48 @@ def bridge_output(tool: str, paths: ConfigPaths) -> tuple[Path, ...]:
         return ()
     found = [paths.hypr_dir / module.file for module in spec.modules]
     return tuple(path for path in found if path.parent == paths.bridge_dir and path.is_file())
+
+
+ASIDE_SUFFIX = ".removing"
+"""Appended to a set-aside output file: `bridge/*.lua` is what hyprland.lua loads, and a
+name that does not end in `.lua` is not loaded (`ModuleSet.discover`)."""
+
+
+class OutputAside:
+    """A tool's bridge output, moved out of what hyprland.lua loads until the Entrypoint
+    write that stops loading it has stood (#267).
+
+    The Entrypoint is rendered from the files on disk, so the output must be out of the
+    bridge folder before that write; and a write that fails must not cost the user the
+    output, which the app never writes (ADR-0006). So `move` renames each file aside in the
+    same folder, `drop` deletes the copies once the write stood, and `put_back` renames them
+    back, byte for byte, when it did not.
+    """
+
+    def __init__(self, tool: str, paths: ConfigPaths) -> None:
+        self._tool = tool
+        self._paths = paths
+        self._moved: list[tuple[Path, Path]] = []
+
+    def move(self) -> None:
+        """Set aside the output there is now. Raises `OSError`; what it moved stays moved,
+        for `put_back`."""
+        for path in bridge_output(self._tool, self._paths):
+            aside = path.with_name(path.name + ASIDE_SUFFIX)
+            os.replace(path, aside)
+            self._moved.append((path, aside))
+
+    def drop(self) -> None:
+        """The write stood: the set-aside copies go."""
+        for _, aside in self._moved:
+            aside.unlink(missing_ok=True)
+        self._moved.clear()
+
+    def put_back(self) -> None:
+        """The write did not stand: each file goes back where it was."""
+        for path, aside in reversed(self._moved):
+            os.replace(aside, path)
+        self._moved.clear()
 
 
 # --- the record -------------------------------------------------------------------------------

@@ -70,6 +70,7 @@ class HyprtweakerApplication(Adw.Application):
         session.on_notice = window.show_notice
         session.on_recorded = window.offer_undo
         session.on_refused = window.show_refused
+        session.on_not_saved = window.show_not_saved
         session.on_preset_note = window.show_preset_note
 
         # Before the session goes live: which of ADR-0009's four cases this machine is in

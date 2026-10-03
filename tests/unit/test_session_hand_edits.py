@@ -16,7 +16,7 @@ from _fake_hyprland import FakeHyprland, run_with_fake
 from _support import Runner, section_conversation, session_for
 
 from hyprtweaker.engine.apply import Step
-from hyprtweaker.engine.model import Bind, DispatcherCall
+from hyprtweaker.engine.model import UNSET, Bind, DispatcherCall
 from hyprtweaker.session import Session
 
 ROUNDING = "decoration:rounding"
@@ -342,3 +342,298 @@ def test_a_kept_import_into_a_live_session_is_what_the_next_edit_builds_on(
         assert "SUPER + Z" in text and "SUPER + B" in text and "SUPER + A" not in text
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+# --- #273: a hand edit between the gate and the write ------------------------------------
+#
+# The tests above edit before the gesture, so `_edited_module` refuses it. These edit after
+# the gesture returns -- the gate passed, the commit is only queued -- and before the queued
+# transaction writes, so the Writer is what finds the file edited and leaves it alone
+# (ADR-0005). Each expects what the gate-time refusal leaves: the file as edited, the model
+# and the pointer as the file has them, the undo still on the stack, the file named.
+
+DOCKED = (
+    {"name": "eDP-1", "description": "BOE 0x0791"},
+    {"name": "DP-3", "description": "Dell U2720Q"},
+)
+
+
+def refused_state(session: Session, refused: list[tuple[str, str]]) -> dict[str, object]:
+    """What the user is left with after the refusal, beside the file's bytes."""
+    active = session.active_monitor_profile()
+    return {
+        "monitor_rules": [(r.output, dict(r.fields)) for r in session.monitor_rules],
+        "rounding": session.model.get(ROUNDING),
+        "binds": [b.keys for b in session.model.entities.binds],
+        "active_profile": None if active is None else active[0],
+        "can_undo": session.can_undo,
+        "refused_files": [file for _, file in refused],
+        "banner_files": session.health.edited_files,
+    }
+
+
+def test_a_hand_edit_after_the_gate_leaves_a_profile_activation_refused_whole(
+    tmp_path: Path,
+) -> None:
+    refused: list[tuple[str, str]] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_refused = lambda what, file: refused.append((what, file))
+        session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@60", "position": "0x0"})
+        await settle(session, runner)
+        slug = session.save_monitor_profile("Docked", DOCKED)
+        session.detach_monitor_profile()
+        session.patch_monitor_rule("eDP-1", {"mode": "1920x1080@48"})
+        await settle(session, runner)
+
+        assert session.activate_monitor_profile(slug)  # the gate passed
+        edited = hand_edit(tmp_path, "monitors.lua")  # before the queued write runs
+        await settle(session, runner)
+
+        assert module(tmp_path, "monitors.lua").read_text() == edited
+        assert refused_state(session, refused) == {
+            "monitor_rules": [("eDP-1", {"mode": "1920x1080@48", "position": "0x0"})],
+            "rounding": UNSET,
+            "binds": [],
+            "active_profile": None,
+            "can_undo": False,  # the activation forgets the display steps at the gate
+            "refused_files": ["monitors.lua"],
+            "banner_files": ("monitors.lua",),
+        }
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_hand_edit_after_the_gate_leaves_an_option_undo_refused_and_undoable(
+    tmp_path: Path,
+) -> None:
+    refused: list[tuple[str, str]] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_refused = lambda what, file: refused.append((what, file))
+        session.set_option(ROUNDING, 18)
+        await settle(session, runner)
+        fake.conversation.update(conversation(**{ROUNDING: 11}))
+        session.set_option(ROUNDING, 11)
+        await settle(session, runner)
+        step = session.last_gesture
+
+        assert session.undo()  # the gate passed
+        edited = hand_edit(tmp_path, DECORATION)  # before the queued write runs
+        await settle(session, runner)
+
+        assert module(tmp_path, DECORATION).read_text() == edited
+        assert (refused_state(session, refused), session.last_gesture is step) == (
+            {
+                "monitor_rules": [],
+                "rounding": 11,
+                "binds": [],
+                "active_profile": None,
+                "can_undo": True,
+                "refused_files": [DECORATION],
+                "banner_files": (DECORATION,),
+            },
+            True,
+        )
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )
+
+
+def test_a_hand_edit_after_the_gate_leaves_an_entity_undo_refused_and_undoable(
+    tmp_path: Path,
+) -> None:
+    refused: list[tuple[str, str]] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_refused = lambda what, file: refused.append((what, file))
+        session.add_bind(bind("SUPER + A"))
+        await settle(session, runner)
+        session.add_bind(bind("SUPER + B"))
+        await settle(session, runner)
+        step = session.last_gesture
+
+        assert session.undo()  # the gate passed
+        edited = hand_edit(tmp_path, "binds.lua")  # before the queued write runs
+        await settle(session, runner)
+
+        assert module(tmp_path, "binds.lua").read_text() == edited
+        assert (refused_state(session, refused), session.last_gesture is step) == (
+            {
+                "monitor_rules": [],
+                "rounding": UNSET,
+                "binds": ["SUPER + A", "SUPER + B"],
+                "active_profile": None,
+                "can_undo": True,
+                "refused_files": ["binds.lua"],
+                "banner_files": ("binds.lua",),
+            },
+            True,
+        )
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_hand_edit_after_the_gate_leaves_an_undo_that_empties_its_module_refused(
+    tmp_path: Path,
+) -> None:
+    """The Writer keeps a hand-edited Module it would prune (`_prune`'s `off_limits`) but
+    leaves it out of `skipped`, so nothing after the write knows the change missed disk."""
+    refused: list[tuple[str, str]] = []
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.on_refused = lambda what, file: refused.append((what, file))
+        session.add_bind(bind("SUPER + A"))
+        await settle(session, runner)
+        step = session.last_gesture
+
+        assert session.undo()  # the gate passed; the undo leaves binds.lua nothing to hold
+        edited = hand_edit(tmp_path, "binds.lua")  # before the queued write runs
+        await settle(session, runner)
+
+        assert module(tmp_path, "binds.lua").read_text() == edited
+        assert (refused_state(session, refused), session.last_gesture is step) == (
+            {
+                "monitor_rules": [],
+                "rounding": UNSET,
+                "binds": ["SUPER + A"],
+                "active_profile": None,
+                "can_undo": True,
+                "refused_files": ["binds.lua"],
+                "banner_files": ("binds.lua",),
+            },
+            True,
+        )
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+# --- #267: a refused drag leaves the compositor on the value the Row shows -------------------
+
+
+def evals(fake: FakeHyprland) -> list[str]:
+    return [request for request in fake.requests if request.startswith("eval ")]
+
+
+async def shown(session: Session, runner: Runner) -> None:
+    """`settle`, then until no `eval` is pending or on the socket."""
+    await settle(session, runner)
+    assert session._applier is not None
+    await session._applier.flush_previews()
+
+
+def test_a_drag_released_into_a_module_edited_mid_drag_shows_the_old_value_again(
+    tmp_path: Path,
+) -> None:
+    """#267: the drag's ticks put 25 on the desktop by `eval`; the file was hand-edited before
+    the release, which is refused. The model, the Row and the compositor all go back to 18,
+    and the file keeps the hand edit."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 18)
+        await shown(session, runner)
+        session.preview_option(ROUNDING, 25)
+        await shown(session, runner)
+        assert evals(fake)[-1] == "eval hl.config{decoration={rounding=25}}"
+        edited = hand_edit(tmp_path, DECORATION)
+
+        session.set_option(ROUNDING, 25)
+        await shown(session, runner)
+
+        assert session.model.get(ROUNDING) == 18
+        assert evals(fake)[-1] == "eval hl.config{decoration={rounding=18}}"
+        assert module(tmp_path, DECORATION).read_text() == edited
+        assert session.last_gesture is not None
+        assert session.last_gesture.edits[0].after == 18
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )
+
+
+def test_a_drag_tick_after_a_mid_drag_hand_edit_shows_the_old_value_again(
+    tmp_path: Path,
+) -> None:
+    """#267, review m1 F26: the restore runs at the first refused tick, before any release:
+    the next tick is refused and its `eval` carries the saved 18, not the dragged 30."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 18)
+        await shown(session, runner)
+        session.preview_option(ROUNDING, 25)
+        await shown(session, runner)
+        edited = hand_edit(tmp_path, DECORATION)
+
+        session.preview_option(ROUNDING, 30)
+        await shown(session, runner)
+
+        assert session.model.get(ROUNDING) == 18
+        assert evals(fake)[-1] == "eval hl.config{decoration={rounding=18}}"
+        assert module(tmp_path, DECORATION).read_text() == edited
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )
+
+
+def test_a_drag_whose_write_the_writer_skips_shows_the_old_value_again(tmp_path: Path) -> None:
+    """#267: the release passed the gate and the file was edited before the write, so the
+    Writer left it alone. The model goes back to 18 (#148 defect 13), and so does the
+    compositor, which the drag's `eval` had left on 25."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 18)
+        await shown(session, runner)
+        session.preview_option(ROUNDING, 25)
+        await shown(session, runner)
+
+        session.set_option(ROUNDING, 25)
+        edited = hand_edit(tmp_path, DECORATION)
+        await shown(session, runner)
+
+        assert session.model.get(ROUNDING) == 18
+        assert evals(fake)[-1] == "eval hl.config{decoration={rounding=18}}"
+        assert module(tmp_path, DECORATION).read_text() == edited
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )
+
+
+def test_a_drag_released_normally_sends_no_eval_after_its_write(tmp_path: Path) -> None:
+    """#267's other half: an accepted drag ends on its write, and nothing re-previews it."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(ROUNDING, 18)
+        await shown(session, runner)
+        session.preview_option(ROUNDING, 25)
+        await shown(session, runner)
+        fake.conversation.update(conversation(**{ROUNDING: 25}))
+
+        session.set_option(ROUNDING, 25)
+        await shown(session, runner)
+
+        assert session.model.get(ROUNDING) == 25
+        assert evals(fake) == ["eval hl.config{decoration={rounding=25}}"]
+        assert "rounding = 25" in module(tmp_path, DECORATION).read_text()
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{ROUNDING: 18}), reload_emits_event=True)
+    )

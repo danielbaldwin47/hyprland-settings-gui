@@ -471,3 +471,104 @@ def test_the_entrypoint_is_snapshotted_from_beside_the_app_dir(tmp_path: Path) -
     paths.entrypoint.write_text("-- entrypoint\n", encoding="utf-8")
 
     assert journal.read_module(ENTRYPOINT_NAME) == b"-- entrypoint\n"
+
+
+# --- a kept import is a boundary (#259) -----------------------------------------------------
+
+
+def kept_import(
+    journal: Journal,
+    paths: ConfigPaths,
+    modules: dict[str, str | None],
+    *,
+    confirmed: bool,
+) -> JournalEntry | None:
+    """An import the user kept: the wizard laid the bytes down, the Session records them."""
+    for module, text in modules.items():
+        if text is None:
+            (paths.app_dir / module).unlink(missing_ok=True)
+        else:
+            put(paths, module, text)
+    draft = journal.begin(modules)
+    return draft.commit(
+        keys=("general:gaps_in",),
+        outcome="ok",
+        confirmed=confirmed,
+        changed=modules,
+        options={module: ("general:gaps_in",) for module in modules},
+        boundary=True,
+    )
+
+
+def test_a_confirmed_import_is_the_restore_point_not_the_bytes_before_it(
+    tmp_path: Path,
+) -> None:
+    journal, paths = journal_for(tmp_path)
+    transaction(journal, paths, GENERAL, "-- before the import\n")
+
+    kept_import(journal, paths, {GENERAL: "-- imported\n"}, confirmed=True)
+
+    good = journal.last_known_good(GENERAL)
+    assert good is not None
+    assert (good.data, good.options) == (b"-- imported\n", ("general:gaps_in",))
+    assert not journal.unverified_since_import(GENERAL)
+
+
+def test_an_unconfirmed_import_offers_nothing_from_before_it(tmp_path: Path) -> None:
+    """AC4: the pre-import bytes are a config the user replaced, not a restore point."""
+    journal, paths = journal_for(tmp_path)
+    transaction(journal, paths, GENERAL, "-- before the import\n")
+
+    kept_import(journal, paths, {GENERAL: "-- imported\n"}, confirmed=False)
+
+    assert journal.last_known_good(GENERAL) is None
+    assert journal.last_known_good_digest(GENERAL) is None
+    assert journal.unverified_since_import(GENERAL)
+    assert len(journal.entries()) == 2, "the history before the import is kept"
+
+
+def test_a_module_the_import_deleted_offers_nothing_from_before_it(tmp_path: Path) -> None:
+    journal, paths = journal_for(tmp_path)
+    transaction(journal, paths, DECORATION, "-- before the import\n")
+
+    kept_import(journal, paths, {DECORATION: None, GENERAL: "-- imported\n"}, confirmed=True)
+
+    assert journal.last_known_good(DECORATION) is None
+    assert not journal.unverified_since_import(DECORATION)
+
+
+def test_a_confirmed_write_after_an_unconfirmed_import_is_the_restore_point(
+    tmp_path: Path,
+) -> None:
+    journal, paths = journal_for(tmp_path)
+    kept_import(journal, paths, {GENERAL: "-- imported\n"}, confirmed=False)
+
+    transaction(journal, paths, GENERAL, "-- edited since\n")
+
+    good = journal.last_known_good(GENERAL)
+    assert good is not None and good.data == b"-- edited since\n"
+    assert not journal.unverified_since_import(GENERAL)
+
+
+def test_a_module_the_import_left_alone_keeps_its_restore_point(tmp_path: Path) -> None:
+    journal, paths = journal_for(tmp_path)
+    transaction(journal, paths, DECORATION, "-- untouched\n")
+
+    kept_import(journal, paths, {GENERAL: "-- imported\n"}, confirmed=False)
+
+    good = journal.last_known_good(DECORATION)
+    assert good is not None and good.data == b"-- untouched\n"
+
+
+def test_the_boundary_survives_a_reopened_journal_and_pruning(tmp_path: Path) -> None:
+    """Pruned out of the window, an unconfirmed boundary would let the pinned pre-import
+    entry be offered again."""
+    journal, paths = journal_for(tmp_path, max_entries=2)
+    transaction(journal, paths, GENERAL, "-- before the import\n")
+    kept_import(journal, paths, {GENERAL: "-- imported\n"}, confirmed=False)
+    for index in range(4):
+        transaction(journal, paths, DECORATION, f"-- {index}\n", confirmed=False)
+
+    reopened = Journal(paths, max_entries=2)
+    assert reopened.last_known_good(GENERAL) is None
+    assert reopened.unverified_since_import(GENERAL)

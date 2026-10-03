@@ -39,7 +39,7 @@ No confirmation — instant apply has no cancel, and the restored bytes are the 
 
 ### Last known good
 
-**Last known good** is per-Module: the newest Journal Snapshot whose transaction confirmed clean (empty `configerrors` + read-back ok). Journal entries gain a `confirmed` flag written after Read-back. **Restore last good** restores implicated Modules only — never the whole tree.
+**Last known good** is per-Module: the newest Journal Snapshot whose transaction confirmed clean (empty `configerrors` + read-back ok). Journal entries gain a `confirmed` flag written after Read-back. **Restore last good** restores implicated Modules only — never the whole tree. *Amended during #259.* A kept import is a boundary: Last known good never reaches past it, so a Module the import wrote offers the imported bytes when the Session's first read-back after Keep confirmed the whole import clean, and nothing otherwise.
 
 ### Quarantine (user.lua)
 
@@ -47,7 +47,7 @@ For errors in `user.lua` the app offers a consent-gated **"Disable user.lua unti
 
 ### Zero-binds emergency
 
-When a reload ends with config errors **and zero binds** (Hyprland's emergency mode), stranded-user beats hand-edit sanctity: the app auto-restores implicated app-owned Modules to last known good without the class-2 manual gate. The overwritten hand edit is preserved in the Journal and reported in the Banner. If binds are still zero because the error is in a foreign file, the Banner states it plainly ("Your keybinds are not loaded — error in user.lua:12") and offers Quarantine.
+When a reload ends with config errors **and zero binds** (Hyprland's emergency mode), stranded-user beats hand-edit sanctity: the app auto-restores implicated app-owned Modules to last known good without the class-2 manual gate. The overwritten hand edit is preserved in the Journal and reported in the Banner. *Amended during #266.* The emergency restore tries an edited copy as Restore last good does, and a copy that fails never stops it: the Banner then says no copy could be kept as a file. A Restore last good the user chose is refused instead, before any write. If binds are still zero because the error is in a foreign file, the Banner states it plainly ("Your keybinds are not loaded — error in user.lua:12") and offers Quarantine.
 
 ### Surfacing
 

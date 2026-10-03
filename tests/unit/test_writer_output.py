@@ -304,6 +304,18 @@ class TestManifest:
         assert result.removed == ()
         assert edited.is_file()
 
+    def test_a_hand_edited_module_it_would_remove_is_reported_skipped(
+        self, writer: Writer, paths: ConfigPaths, model: ConfigModel
+    ) -> None:
+        """#273: a removal is a change the edit kept off disk as surely as a rewrite is, and
+        the Session takes back only what `skipped` names."""
+        writer.write(model)
+        (paths.options_dir / "misc.lua").write_text("-- mine now\n", encoding="utf-8")
+
+        model.unset("misc:force_default_wallpaper")
+
+        assert writer.write(model).skipped == ("options/misc.lua",)
+
     def test_a_spared_module_stays_in_the_manifest_and_stays_reportable(
         self, writer: Writer, paths: ConfigPaths, model: ConfigModel
     ) -> None:

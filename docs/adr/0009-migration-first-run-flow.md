@@ -51,8 +51,8 @@ Convert…") and an app-menu entry. No nagging beyond that.
 Five steps, each an `Adw.NavigationView` subpage in one dialog (prototyped in #7):
 **Detect → Preview → Back up → Switch & verify → Keep or roll back.**
 
-- **`.conf` source:** the hyprlang Importer (prototype-proven, 7/7 corpus rices verify
-  clean). Variables land in `vars.lua`; unrepresentable constructs in `legacy.lua`.
+- **`.conf` source:** the hyprlang Importer (what the corpus proves of it is § Corpus
+  proofs, below). Variables land in `vars.lua`; unrepresentable constructs in `legacy.lua`.
 - **`.lua` source:** the **Lua importer** — evaluation-based. The file is executed under a
   recording `hl.*` stub: declarative calls (`hl.config`, `hl.bind`, `hl.monitor`, rules, …)
   are captured into the model; script constructs (`hl.on` handlers, function-valued actions,
@@ -88,7 +88,8 @@ The preview shows a per-file before/after diff plus the **loss report**, in thre
 | **Needs review** | Baked decisions shown with the branch taken: `# hyprlang if` conditions, dead keysyms (xkb-validated, commented out), `catchall` modifier loss, gesture `dispatcher` → callback. |
 | **Breakage** | What the wizard cannot fix: `hyprctl dispatch`/`keyword` greps across all exec strings *and referenced local scripts*; external tools with no Bridge. |
 
-The report is persisted to `$XDG_STATE_HOME/hyprtweaker/reports/<timestamp>.{md,json}` and
+The report is persisted to `$XDG_STATE_HOME/hyprtweaker/reports/<timestamp>.{md,json}` at
+the end of Preview, and re-saved after the Switch with the backup names it made (#268), and
 reachable later from the app menu. A "Copy the Lua instead" exit serves DIY users without
 switching anything — interop, not lock-in.
 
@@ -112,7 +113,9 @@ switching anything — interop, not lock-in.
 
 Requires a live session; without an IPC socket the wizard runs Detect/Preview only.
 
-1. Write a `migration-pending` sentinel to the state dir, then the Entrypoint.
+1. Write a `migration-pending` sentinel to the state dir, then the Entrypoint. The sentinel
+   names the backups the switch is about to make and the original Entrypoint's hash, and is
+   rewritten with the generated Entrypoint's hash once the tree is written (#268).
 2. `hyprctl reload full-reset`; treat socket2 `configreloaded` as "reload started", then poll.
 3. Live checks over the IPC socket (spoken directly — no `hyprctl` spawns): `configerrors`
    empty; bind count; workspace-rule count; monitor arrangement. `hl.env`/`hl.permission` are
@@ -121,9 +124,8 @@ Requires a live session; without an IPC socket the wizard runs Detect/Preview on
    - **Bind count** is hard. The expected count is what the Writer emits (`live_bind_count`: a
      disabled bind is a comment and a function-valued one is never written), and the check
      is `live >= expected`, because `legacy.lua` and preserved scripts can register more. It
-     is hard only because a Harness run over the `tests/corpus/` rices showed no false
-     rollback, with every hard check, `configerrors` included, asserted for every rice; a
-     config that loads with no keybinds is ADR-0016's emergency.
+     is hard only because the verify proof (§ Corpus proofs) shows no false rollback on any
+     corpus rice; a config that loads with no keybinds is ADR-0016's emergency.
    - **Workspace-rule count** and **monitor arrangement** are soft: reported on the Keep or
      roll back page under "What this could not confirm", never a rollback, because each
      compares against what Hyprland *did* with a request (merged a selector, picked the
@@ -134,6 +136,39 @@ Requires a live session; without an IPC socket the wizard runs Detect/Preview on
      `configerrors` only, and the switch shows no row for them.
 4. Any hard check fails → automatic rollback, report shown.
 
+### Corpus proofs
+
+Three separate proofs, each a Harness-tier test (ADR-0011 tier 3) over `tests/corpus/`, and
+each claiming only what it measures. Measured on Hyprland 0.56.2, 2026-10-02 (#253).
+
+- **Verify** (`test_migration_live_checks.py`,
+  `test_no_corpus_rice_is_rolled_back_by_a_bind_count_that_is_not_the_switchs_fault`):
+  every one of the 7 corpus rices imports to a config that loads with no config errors and
+  passes every hard live check above. It says Hyprland accepts the import and the switch
+  does not roll it back for nothing; it does not say the values are right.
+- **State** (`test_import_matches_port.py`, `test_imported_state_agrees_with_the_upstream_port`):
+  end-4, the one rice whose own hand-written Lua port is booted beside its import. Every
+  Option both configs set has the same live value, except six where the port departs from
+  its own `.conf` (three theme colours, three gesture settings it comments out). Animations,
+  curves, monitor rules, workspace rules and layers agree. Binds: the import registers 197
+  and the port 191, and the difference is eight binds, each a line the port changed
+  (`KNOWN_PORT_BIND_DIVERGENCES`). Window and layer rules have no IPC listing, so this proof
+  does not reach them.
+- **Pixel** (`test_import_matches_port.py`,
+  `test_the_imported_config_renders_the_same_screen_as_the_port`): end-4 again, three probe
+  windows (one translucent) tiled on a 1920x1080 headless output. The import's screenshot
+  was measured byte-identical to the port's on 2026-10-02 once the port is given the
+  `.conf`'s three theme colours; the test holds it within 2/255 of blend rounding. As
+  shipped, the port's theme module is a different colour scheme, and that is the whole
+  difference: 26.9% of pixels at most 35/255 apart, the background in the gaps and behind
+  the translucent window plus the border colours. That figure is screen area, not settings
+  lost. The proof covers what three probe windows show (borders, gaps, rounding, blur,
+  opacity, tiling, background); it does not cover rules that match other applications,
+  animation in motion, or other outputs.
+
+None of the three proves pixel equivalence for a rice outside the corpus, for a tool or
+external state the config drives, or for a Hyprland version other than the one measured.
+
 ### Keep or roll back
 
 - **1-minute countdown; doing nothing rolls back** (short by design: a broken-binds session
@@ -142,8 +177,14 @@ Requires a live session; without an IPC socket the wizard runs Detect/Preview on
   full-reset, clear the sentinel. **Keep** clears the sentinel.
 - Crash safety: if the app relaunches and finds an unconfirmed sentinel, the switch is
   treated as failed and rollback is offered.
-- The TTY rescue line is printed in every report: `rm ~/.config/hypr/hyprland.lua` (or
-  `mv hyprland.lua.bak hyprland.lua`).
+- Rollback decides by bytes (#268): an Entrypoint that hashes as the original stays; a
+  missing `hyprland.lua.bak` is replaced by the full backup's copy; an Entrypoint edited
+  since the switch is copied to `edited-copies/` first. When it cannot put the original
+  back, it changes nothing, keeps the sentinel and says what is still in place.
+- The TTY rescue line is printed in every report: `mv ~/.config/hypr/hyprland.lua
+  ~/.config/hypr/hyprland.lua.switched` (or `mv hyprland.lua.bak hyprland.lua`). The `.conf`
+  path's rescue moves the generated file aside rather than removing it, so a hand edit made
+  during the countdown survives it (m1 review).
 - Rollback stays available from the app menu for as long as the backup exists; restoring any
   backup replays Back up → Switch → Verify in reverse.
 
