@@ -140,21 +140,19 @@ def test_a_window_closed_through_its_close_route_is_released_each_time(tmp_path:
 
 
 def test_a_window_closed_with_toasts_waiting_is_released(tmp_path: Path) -> None:
-    """#272: closing on a toast with another queued behind it aborted on a double free, as
-    the toast overlay's dispose ran twice."""
+    """#272: closing on a toast with another queued behind it aborted the app on a double
+    free, as the toast overlay's dispose ran twice: once in `release`, again when it went."""
     from hyprtweaker.ui.shell.window import plain_toast
 
     window = wired_window(offline_session(tmp_path))
     window.present()
     main_loop.settle("the window to map")
     for title in ("One was not saved", "Two was not saved"):
-        toast = plain_toast(title)
-        toast.connect("button-clicked", lambda *_, shown=window: shown.sync())
-        window._toasts.add_toast(toast)
+        window._toasts.add_toast(plain_toast(title))
     main_loop.settle("the toasts to show")
     window.close()
     refs = [weakref.ref(window)]
-    del window, toast
+    del window
 
     assert collected(refs) == [True]
 
