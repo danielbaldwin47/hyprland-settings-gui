@@ -9,10 +9,11 @@ Two things are worth stating plainly, because both are easy to get wrong later:
 * **Evaluating at all needs consent.** ADR-0009 puts import behind the Migration wizard,
   and `Consent.evaluate` is that gate expressed in the type system -- there is no way to
   reach `evaluate()` from a default-constructed `Consent`.
-* **A read is bounded.** It ends at the timeout, on cancel, at app exit, and once it has
-  written `OUTPUT_LIMIT_BYTES` to stdout and stderr together or printed that much itself:
-  each ends the config's whole process group, and the read comes back as an error, never as
-  partial data.
+* **A read is bounded.** It ends at the timeout, on cancel, at app exit, once it has written
+  `OUTPUT_LIMIT_BYTES` to stdout and stderr together, and once its own `print` and
+  `io.write` have recorded that much (each entry costing a little over its length): each
+  ends the config's whole process group, and the read comes back as an error, never as
+  partial data. Two budgets of that size, not one: the pipes' and the record's.
 * **Side effects need consent separately.** The default policy fakes them. Passthrough is
   a second, narrower grant for configs that produce nothing useful without it, and it is
   never inferred from the first.
@@ -62,6 +63,7 @@ OUTPUT_LIMIT_BYTES = 1024 * 1024
 #: cannot see them, and a printing loop would fill the runner's memory until the timeout.
 OUTPUT_LIMIT_EXIT = 77
 
+#: What one `os.read` takes from a pipe.
 _CHUNK = 64 * 1024
 
 #: Stripped from the child's environment even under passthrough: with these set, anything
@@ -306,7 +308,9 @@ def _wait(
     it is killed and reaped.
     """
     assert process.stdout is not None and process.stderr is not None
-    chunks: dict[int, list[bytes]] = {process.stdout.fileno(): [], process.stderr.fileno(): []}
+    out: list[bytes] = []
+    err: list[bytes] = []
+    chunks = {process.stdout.fileno(): out, process.stderr.fileno(): err}
     held = 0
     with selectors.DefaultSelector() as pipes:
         for fd in chunks:
@@ -334,17 +338,22 @@ def _wait(
                             f"the read wrote more than {OUTPUT_LIMIT_BYTES} bytes to its output"
                         )
                     chunks[key.fd].append(chunk)
-            else:
+            if process.poll() == OUTPUT_LIMIT_EXIT:
+                # The runner left on its own: take what it started with it, as every
+                # other end of a read does.
+                _kill_group(process)
+                return OUTPUT_LIMIT_EXIT, "", ""
+            if not pipes.get_map():
                 try:
                     process.wait(timeout=wait)
                 except subprocess.TimeoutExpired:
                     pass
                 else:
-                    stdout, stderr = (
-                        b"".join(parts).decode("utf-8", errors="replace")
-                        for parts in chunks.values()
+                    return (
+                        process.returncode,
+                        b"".join(out).decode("utf-8", errors="replace"),
+                        b"".join(err).decode("utf-8", errors="replace"),
                     )
-                    return process.returncode, stdout, stderr
             if cancel is not None and cancel.is_set():
                 _kill_group(process)
                 raise Cancelled("the read was cancelled")

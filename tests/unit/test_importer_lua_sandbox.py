@@ -304,17 +304,53 @@ def test_a_config_that_prints_through_lua_is_stopped_at_the_budget(tmp_path, pri
     assert _zombie_children() == []
 
 
-def test_a_config_cannot_fake_or_catch_the_output_stop(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """The stop is the runner's own exit, outside the config's reach: `pcall` does not
-    swallow it and the config's `os.exit` is the trapped one."""
-    entry = write(
-        tmp_path,
-        'while true do pcall(print, string.rep("x", 4096)) end\n',
-    )
+@pytest.mark.parametrize("printer", ["print()", 'io.write("")'])
+def test_a_config_that_prints_nothing_for_ever_is_stopped_too(tmp_path, printer) -> None:  # type: ignore[no-untyped-def]
+    """An empty print is still a recorded entry: 20 million of them were 288 MB."""
+    entry = write(tmp_path, f"while true do {printer} end\n")
+    started = time.monotonic()
 
     recording = evaluate(entry, consent=GRANTED, timeout=30)
 
-    assert recording.errors and "printed more than" in recording.errors[0]
+    assert time.monotonic() - started < 15, "the read ran on towards its timeout"
+    assert recording.errors == (
+        "Your config printed more than 1 MiB while it was read, so reading it was stopped.",
+    )
+
+
+def test_the_print_stop_takes_a_command_the_config_started_with_it(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The runner exits itself at the print budget; its process group still goes with it."""
+    pidfile = tmp_path / "command.pid"
+    entry = write(
+        tmp_path,
+        f'os.execute("sleep 600 >/dev/null 2>&1 & echo $! > {pidfile}")\n'
+        'while true do print("xxxxxxxxxxxxxxxx") end\n',
+    )
+    try:
+        recording = evaluate(
+            entry, consent=Consent(evaluate=True, passthrough=True), timeout=30
+        )
+
+        assert recording.errors and "printed more than" in recording.errors[0]
+        command = int(pidfile.read_text())
+        _within(10, lambda: not _alive(command), "the command's end")
+    finally:
+        if pidfile.is_file():
+            _kill_if_ours(int(pidfile.read_text()))
+
+
+def test_a_config_cannot_fake_or_catch_the_output_stop(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The stop is the runner's own exit, outside the config's reach: `pcall` does not
+    swallow it, and the config's `os.exit(77)` is only the trapped one."""
+    faked = write(tmp_path, "os.exit(77)\n", "faked.lua")
+    looped = write(
+        tmp_path, 'while true do pcall(print, string.rep("x", 4096)) end\n', "looped.lua"
+    )
+
+    assert evaluate(faked, consent=GRANTED).errors == ("os.exit(77) trapped",)
+    assert evaluate(looped, consent=GRANTED, timeout=30).errors == (
+        "Your config printed more than 1 MiB while it was read, so reading it was stopped.",
+    )
 
 
 def _write_both(each: int) -> list[str]:

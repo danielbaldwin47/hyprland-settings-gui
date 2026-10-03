@@ -58,8 +58,9 @@ local record = {
 }
 
 local printed = 0
+local PRINT_ENTRY_COST = 16 -- a recorded entry is never free: an empty print in a loop adds up
 local function note_print(text)
-  printed = printed + #text
+  printed = printed + #text + PRINT_ENTRY_COST
   if print_limit and printed > print_limit then
     -- The real `os`, which the config never reaches: it cannot catch this or fake it.
     os.exit(PRINT_LIMIT_EXIT, true)

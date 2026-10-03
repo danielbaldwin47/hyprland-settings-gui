@@ -30,7 +30,8 @@ MAY_SPAWN = {
         "instance signature, the runtime dir and the session bus address stripped from its "
         "environment, in a session of its own that is killed at the timeout, on cancel and "
         "at app exit, and held to 1 MiB of stdout and stderr together "
-        "(`OUTPUT_LIMIT_BYTES`, #242), past which it is killed and the read fails"
+        "(`OUTPUT_LIMIT_BYTES`, #242), and to as much recorded `print` and `io.write` output; "
+        "past either it is killed and the read fails"
     ),
     "importer/lua/scripts.py": (
         "`luac -l` reads the globals a preserved closure loads straight out of its "
