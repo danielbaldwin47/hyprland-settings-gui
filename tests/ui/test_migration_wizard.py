@@ -264,7 +264,7 @@ class TestTheRescueRow:
     Markdown arriving in a Row that renders backticks and asterisks literally (#131).
     """
 
-    def test_the_legacy_path_offers_the_command_that_removes_the_generated_file(
+    def test_the_legacy_path_offers_the_command_that_moves_the_generated_file_aside(
         self, tmp_path: Path
     ) -> None:
         from hyprtweaker.engine.paths import ConfigPaths
@@ -278,7 +278,7 @@ class TestTheRescueRow:
         _click(dialog, "Convert...")
 
         shown = _text_under(dialog)
-        assert "rm ~/.config/hypr/hyprland.lua" in shown
+        assert "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched" in shown
         assert ".bak" not in shown
 
     def test_the_lua_path_offers_the_command_that_restores_the_backup(
@@ -300,7 +300,9 @@ class TestTheRescueRow:
 
         shown = _text_under(_rescue_group(flow.rescue_command))
         assert "mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua" in shown
-        assert "rm ~/.config/hypr/hyprland.lua" not in shown
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched" not in shown
+        )
 
     def test_the_row_shows_a_command_rather_than_the_report_markdown(
         self, tmp_path: Path
@@ -1680,7 +1682,7 @@ class TestTheCountdownsEndingsAreTrue:
             f"{which} did not finish: [Errno 5] Input/output error\n\n"
             "The switch is still recorded as unfinished, so the app offers to roll it back "
             "the next time it starts.\n\n"
-            "If you are locked out, run this from a TTY:\nrm ~/.config/hypr/hyprland.lua"
+            "If you are locked out, run this from a TTY:\nmv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
         ]
         _click(dialog, "Close")
 

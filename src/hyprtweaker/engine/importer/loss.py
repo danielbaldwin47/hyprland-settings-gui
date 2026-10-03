@@ -64,9 +64,11 @@ FORMAT_VERSION = 1
 
 _RESCUE_PREFIX = "> **If Hyprland will not start:** from a TTY, "
 
-RESCUE_COMMAND_CONF = "rm ~/.config/hypr/hyprland.lua"
-"""The legacy path's rescue: the generated Entrypoint is the *new* file, and removing it
-hands the session back to the `hyprland.conf` that is still sitting there untouched."""
+RESCUE_COMMAND_CONF = "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+"""The legacy path's rescue: the generated Entrypoint is the *new* file, and moving it out
+of the way hands the session back to the `hyprland.conf` that is still sitting there
+untouched. Moved, not removed: a hand edit made since the switch is in that file, and the
+rescue must not be what deletes it (review m1 F2, hand-test 1)."""
 
 BACKUP_NAME = "hyprland.lua.bak"
 """The name a displaced `hyprland.lua` is normally renamed to.
@@ -131,9 +133,8 @@ RESCUE_LINE_UNKNOWN = (
     f"{_RESCUE_PREFIX}restore your previous config: run `{RESCUE_COMMAND_LUA}` if that "
     f"backup exists, otherwise `{RESCUE_COMMAND_CONF}`."
 )
-"""When it is not yet known which way the migration goes. Leads with the restore, because
-the two guesses are not symmetrically wrong: a needless `mv` fails harmlessly, a wrong `rm`
-is unrecoverable."""
+"""When it is not yet known which way the migration goes. Leads with the restore: neither
+command deletes anything, but only the restore brings the previous config back."""
 
 
 def rescue_line(

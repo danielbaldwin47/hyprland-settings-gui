@@ -740,12 +740,15 @@ class TestTheRescueLine:
     on the legacy path and the user's only config on the Lua path (#131, ADR-0009).
     """
 
-    def test_the_legacy_path_removes_the_generated_entrypoint(
+    def test_the_legacy_path_moves_the_generated_entrypoint_aside(
         self, legacy: ConfigPaths, schema: Schema
     ) -> None:
         flow = flow_for(legacy, schema)
         flow.detect()
-        assert "rm ~/.config/hypr/hyprland.lua" in flow.rescue_line
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            in flow.rescue_line
+        )
 
     def test_the_lua_path_restores_the_backup(self, paths: ConfigPaths, schema: Schema) -> None:
         paths.entrypoint.write_text("hl.config({})\n", encoding="utf-8")

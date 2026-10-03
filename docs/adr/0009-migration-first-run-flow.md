@@ -180,8 +180,10 @@ external state the config drives, or for a Hyprland version other than the one m
   missing `hyprland.lua.bak` is replaced by the full backup's copy; an Entrypoint edited
   since the switch is copied to `edited-copies/` first. When it cannot put the original
   back, it changes nothing, keeps the sentinel and says what is still in place.
-- The TTY rescue line is printed in every report: `rm ~/.config/hypr/hyprland.lua` (or
-  `mv hyprland.lua.bak hyprland.lua`).
+- The TTY rescue line is printed in every report: `mv ~/.config/hypr/hyprland.lua
+  ~/.config/hypr/hyprland.lua.switched` (or `mv hyprland.lua.bak hyprland.lua`). The `.conf`
+  path's rescue moves the generated file aside rather than removing it, so a hand edit made
+  during the countdown survives it (m1 review).
 - Rollback stays available from the app menu for as long as the backup exists; restoring any
   backup replays Back up → Switch → Verify in reverse.
 

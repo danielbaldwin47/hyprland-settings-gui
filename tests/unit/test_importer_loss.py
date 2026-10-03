@@ -157,8 +157,14 @@ class TestRendering:
         """Including a clean one: the reader who needs it cannot open the app to look it
         up, and a report that only carries the escape hatch when trouble was predicted is
         missing the case where the prediction was wrong (ADR-0009)."""
-        assert "rm ~/.config/hypr/hyprland.lua" in LossReport().render()
-        assert "rm ~/.config/hypr/hyprland.lua" in _report().render()
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            in LossReport().render()
+        )
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            in _report().render()
+        )
 
     def test_the_summary_line_counts_every_class(self) -> None:
         assert "3 findings -- 1 breakage, 1 needs review, 1 info." in _report().render()
@@ -315,9 +321,12 @@ class TestRescueLine:
     config and tells the user it restored it.
     """
 
-    def test_a_migration_that_displaced_nothing_removes_the_generated_entrypoint(self) -> None:
+    def test_a_migration_that_displaced_nothing_moves_the_generated_entrypoint_aside(
+        self,
+    ) -> None:
+        """Moved, never removed: a hand edit made since the switch survives the rescue."""
         line = rescue_line(False)
-        assert "rm ~/.config/hypr/hyprland.lua" in line
+        assert "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched" in line
         assert ".bak" not in line
 
     def test_a_migration_that_displaced_a_lua_restores_it_instead_of_deleting(self) -> None:
@@ -327,10 +336,12 @@ class TestRescueLine:
 
     def test_an_undecided_migration_never_offers_a_bare_delete(self) -> None:
         """A report whose migration is not yet known still gets a line, and it leads with
-        the restore -- guessing wrong towards `rm` is the failure this class is about."""
+        the restore -- guessing wrong towards removing the file is the failure this class
+        is about, and the other command only moves it aside (review m1 F2)."""
         line = rescue_line(None)
         assert "hyprland.lua.bak" in line
-        assert line.index("mv ") < line.index("rm ")
+        assert "rm " not in line
+        assert line.index("hyprland.lua.bak") < line.index("hyprland.lua.switched")
 
     def test_the_rescue_names_the_backup_that_was_actually_made(self) -> None:
         """A second migration finds `.bak` taken and stamps the new one. Naming the plain
@@ -353,12 +364,18 @@ class TestRescueLine:
         report.restore_backup = True
         rendered = report.render()
         assert "hyprland.lua.bak" in rendered
-        assert "rm ~/.config/hypr/hyprland.lua" not in rendered
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            not in rendered
+        )
 
-    def test_a_legacy_report_renders_the_removing_line(self) -> None:
+    def test_a_legacy_report_renders_the_moving_aside_line(self) -> None:
         report = LossReport(source="/home/tester/.config/hypr/hyprland.conf")
         report.restore_backup = False
-        assert "rm ~/.config/hypr/hyprland.lua" in report.render()
+        assert (
+            "mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched"
+            in report.render()
+        )
 
     def test_every_report_carries_one_even_when_nothing_was_lost(self) -> None:
         assert "If Hyprland will not start" in LossReport().render()

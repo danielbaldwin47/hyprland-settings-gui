@@ -77,7 +77,7 @@ Convert... opens one dialog with five steps: Detect, Preview, Back up, Switch & 
 
 If the app or the session dies during the switch, the next start finds the unfinished switch and asks: "A configuration switch was not finished", with Keep it and Roll back (the default). If a Roll back cannot put your config back, it changes nothing further and gives the command that does. The app stays read-only, and offers to keep the new configuration, until the switch is settled.
 
-If Hyprland will not start at all, from a TTY, for a Lua source: `mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua`. For a `.conf` source: `rm ~/.config/hypr/hyprland.lua`. Every loss report and the Keep or roll back page print the exact command for your switch, including the stamped names a second migration uses.
+If Hyprland will not start at all, from a TTY, for a Lua source: `mv ~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua`. For a `.conf` source: `mv ~/.config/hypr/hyprland.lua ~/.config/hypr/hyprland.lua.switched`. Every loss report and the Keep or roll back page print the exact command for your switch, including the stamped names a second migration uses.
 
 ### What conversion proves, and what it does not
 
