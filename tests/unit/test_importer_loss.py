@@ -191,6 +191,69 @@ class TestPersistence:
         record = json.loads(report.save(paths).read_text(encoding="utf-8"))
         assert record["items"][0]["class"] == str(LossClass.INFO)
 
+    def test_a_report_whose_record_cannot_be_written_is_not_listed(
+        self, paths: ConfigPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#268: each file whole or absent, the readable copy first, the JSON `stored()`
+        lists last, so a failed save leaves no report half there."""
+        from hyprtweaker.engine.importer import loss
+
+        real = loss.write_atomic
+
+        def refuse_json(path: Path, content: str | bytes) -> None:
+            if path.suffix == ".json":
+                raise OSError(28, "No space left on device")
+            real(path, content)
+
+        monkeypatch.setattr(loss, "write_atomic", refuse_json)
+        with pytest.raises(OSError):
+            _report().save(paths)
+
+        assert LossReport.stored(paths) == []
+        assert [path.suffix for path in paths.reports_dir.iterdir()] == [".md"]
+
+    def test_a_re_save_names_this_switchs_backups_in_the_same_pair(
+        self, paths: ConfigPaths
+    ) -> None:
+        report = _report()
+        report.restore_backup = True
+        report.restore_app_dir = True
+        path = report.save(paths)
+        report.backup_name = "hyprland.lua.bak.20261002T120000Z"
+        report.app_dir_backup_name = "hyprtweaker.bak.20261002T120000Z"
+        report.imported_name = "hyprtweaker.imported.20261002T120000Z"
+
+        assert report.save(paths, path=path) == path
+
+        hypr = "~/.config/hypr"
+        command = (
+            f"mv {hypr}/hyprtweaker {hypr}/hyprtweaker.imported.20261002T120000Z"
+            f" && mv {hypr}/hyprtweaker.bak.20261002T120000Z {hypr}/hyprtweaker"
+            f" && mv {hypr}/hyprland.lua.bak.20261002T120000Z {hypr}/hyprland.lua"
+        )
+        assert LossReport.stored(paths) == [path]
+        assert f"`{command}`" in LossReport.load(path).rescue_line
+        assert f"`{command}`" in path.with_suffix(".md").read_text(encoding="utf-8")
+
+    def test_a_report_from_before_the_names_reads_with_the_generic_ones(
+        self, paths: ConfigPaths
+    ) -> None:
+        report = _report()
+        report.restore_backup = True
+        report.restore_app_dir = True
+        path = report.save(paths)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        for key in ("backup_name", "app_dir_backup_name", "imported_name"):
+            del record[key]
+        path.write_text(json.dumps(record), encoding="utf-8")
+
+        assert (
+            "`mv ~/.config/hypr/hyprtweaker ~/.config/hypr/hyprtweaker.imported && mv "
+            "~/.config/hypr/hyprtweaker.bak ~/.config/hypr/hyprtweaker && mv "
+            "~/.config/hypr/hyprland.lua.bak ~/.config/hypr/hyprland.lua`"
+            in (LossReport.load(path).rescue_line)
+        )
+
     def test_saving_writes_both_a_json_record_and_a_readable_copy(
         self, paths: ConfigPaths
     ) -> None:

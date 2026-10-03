@@ -17,13 +17,12 @@ checked it out a rollback of a migration that finished fine on one of them.
 
 from __future__ import annotations
 
-import contextlib
 import json
-import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..files import write_atomic
 from ..paths import ConfigPaths
 
 FORMAT_VERSION = 1
@@ -48,9 +47,11 @@ class Sentinel:
     restore: str | None
     """A file to move back into place on rollback: the `.lua` path's `hyprland.lua.bak`.
 
-    `None` on the `.conf` path, where rollback is deleting the Entrypoint -- `hyprland.conf`
-    was never touched, so there is nothing to put back and Hyprland picks it up again on its
-    own (which is what keeps "delete `hyprland.lua`" a complete rollback).
+    Named before the switch moves the original there (#268), so a reader checks that it
+    exists before trusting it. `None` on the `.conf` path, where rollback is deleting the
+    Entrypoint -- `hyprland.conf` was never touched, so there is nothing to put back and
+    Hyprland picks it up again on its own (which is what keeps "delete `hyprland.lua`" a
+    complete rollback).
     """
 
     restore_app_dir: str | None = None
@@ -68,7 +69,25 @@ class Sentinel:
     wired nothing, and `unwire` of a tool that was never wired is a no-op.
     """
 
+    original_sha256: str | None = None
+    """The `sha256` of the Entrypoint the switch found, `None` when there was none (#268).
+
+    How Roll back tells, by bytes, whether the original is still in place (the switch
+    stopped before moving it) or a hand edit is about to be replaced. Additive."""
+
+    generated_sha256: str | None = None
+    """The `sha256` of the Entrypoint the switch wrote, recorded once the tree is written.
+
+    `None` while the switch is still writing: Roll back then copies any Entrypoint that is
+    not the original before replacing it, rather than guess it is the app's own. Additive."""
+
     version: int = FORMAT_VERSION
+
+    @property
+    def known(self) -> bool:
+        """Whether this marker could be read. One that could not still means a switch was
+        under way, but names nothing Roll back can trust (`read`)."""
+        return bool(self.kind)
 
     def as_json(self) -> dict[str, object]:
         return dict(asdict(self))
@@ -83,13 +102,16 @@ def write(
     restore: Path | None = None,
     restore_app_dir: Path | None = None,
     bridge_tools: tuple[str, ...] = (),
+    original_sha256: str | None = None,
+    generated_sha256: str | None = None,
     now: datetime | None = None,
 ) -> Sentinel:
-    """Record that a switch is under way. Call this before writing the Entrypoint.
+    """Record that a switch is under way. Call this before moving or writing anything.
 
-    Flushed to disk before it returns, not left to the OS: the whole point is to survive a
-    process that stops existing a moment later, and a sentinel still sitting in a write
-    buffer when the compositor takes the session down would have recorded nothing.
+    Through `write_atomic` (#268): the marker is whole or absent, never a truncated file
+    that names half of what Roll back needs, and its bytes reach the disk before it returns,
+    since the whole point is to survive a process that stops existing a moment later.
+    Raises `OSError`; a switch that cannot record itself must not start.
     """
     marker = Sentinel(
         started=(now or datetime.now(UTC)).isoformat(timespec="seconds"),
@@ -99,25 +121,11 @@ def write(
         restore=str(restore) if restore else None,
         restore_app_dir=str(restore_app_dir) if restore_app_dir else None,
         bridge_tools=bridge_tools,
+        original_sha256=original_sha256,
+        generated_sha256=generated_sha256,
     )
-    paths.sentinel.parent.mkdir(parents=True, exist_ok=True)
-    with paths.sentinel.open("w", encoding="utf-8") as handle:
-        json.dump(marker.as_json(), handle, indent=2)
-        handle.write("\n")
-        handle.flush()
-        _fsync(handle.fileno())
+    write_atomic(paths.sentinel, json.dumps(marker.as_json(), indent=2) + "\n")
     return marker
-
-
-def _fsync(fileno: int) -> None:
-    """`os.fsync`, wrapped so a filesystem that refuses it cannot fail the migration.
-
-    tmpfs and some network mounts reject `fsync` on a plain file. The sentinel is a
-    best-effort durability measure; refusing to migrate because the state dir will not
-    promise durability would trade a rare recovery path for a common outright failure.
-    """
-    with contextlib.suppress(OSError):
-        os.fsync(fileno)
 
 
 def read(paths: ConfigPaths) -> Sentinel | None:
@@ -154,6 +162,8 @@ def read(paths: ConfigPaths) -> Sentinel | None:
         backup=text("backup"),
         restore=text("restore"),
         restore_app_dir=text("restore_app_dir"),
+        original_sha256=text("original_sha256"),
+        generated_sha256=text("generated_sha256"),
         bridge_tools=tuple(
             each for each in (tools if isinstance(tools, list) else []) if isinstance(each, str)
         ),
