@@ -557,6 +557,49 @@ def test_a_remove_whose_entrypoint_write_fails_keeps_the_tool_output(
     )
 
 
+def test_a_remove_whose_entrypoint_rename_fails_keeps_the_bridge_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review m1 F3: the Manifest dropped the entry before the Entrypoint write, so a rename
+    that failed left Theming reading the tool as removed while it still loaded. The real
+    Writer runs here; only the Entrypoint's rename fails."""
+    import os
+
+    from hyprtweaker.engine.writer import writer as writer_module
+
+    real_replace = os.replace
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        put(tmp_path, "hyprtweaker/bridge/matugen.lua")
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        wire(session, MATUGEN)
+        assert session.set_color_source(Wallpaper("matugen"))
+        await settle(session, runner)
+        entrypoint = session.paths.entrypoint
+        heard: list[BridgeRemoved | BridgeNotRemoved] = []
+
+        def failing(source: object, target: object) -> None:
+            if Path(str(target)) == entrypoint:
+                raise OSError(28, "No space left on device")
+            real_replace(source, target)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(writer_module.os, "replace", failing)
+        assert session.remove_bridge("matugen", done=heard.append)
+        await settle(session, runner)
+        monkeypatch.setattr(writer_module.os, "replace", real_replace)
+
+        assert heard == [BridgeNotRemoved(NOT_UPDATED)]
+        assert bridge_lines(tmp_path) == ['require("hyprtweaker/bridge/matugen")']
+        assert [entry.tool for entry in session.manifest().bridges] == ["matugen"]
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
+
+
 def test_a_remove_that_stands_deletes_the_output_and_says_so(tmp_path: Path) -> None:
     """#267: the output goes once the Entrypoint that no longer loads it stands, and the
     caller is told then, not when the write was queued."""
