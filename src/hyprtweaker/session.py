@@ -92,7 +92,7 @@ from hyprtweaker.engine.entities_catalog import (
     device_field_bounds,
     overridden_options,
 )
-from hyprtweaker.engine.files import write_atomic
+from hyprtweaker.engine.files import keep_edited_copy
 from hyprtweaker.engine.importer.lua.sandbox import LuaUnavailable, lua_missing_reason
 from hyprtweaker.engine.ipc import (
     MONITOR_ADDED,
@@ -3969,16 +3969,8 @@ class Session:
         a copy is whole or absent and a second one never lands on the first.
         """
         source = self._paths.app_dir / module
-        if not source.exists():
-            return True  # deleted by hand: there is nothing of the user's to copy
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        base = self._paths.edited_copies_dir / stamp
-        suffix = 1
-        while (base / module).exists():
-            suffix += 1
-            base = self._paths.edited_copies_dir / f"{stamp}-{suffix}"
         try:
-            write_atomic(base / module, source.read_bytes())
+            keep_edited_copy(self._paths, source, module)  # None: deleted by hand, no copy
         except OSError as error:
             _log.warning("could not keep a copy of %s: %s", source, error)
             return False
