@@ -20,9 +20,9 @@ Hyprtweaker 0.1.0 has no public release yet. You install it from this repository
 
 | Your Hyprland | What you get |
 | --- | --- |
-| 0.56.2 or 0.56.1 | A schema shipped with the app: every setting, with its description and limits. |
-| Newer than 0.56.2 | The nearest shipped schema, plus the settings your Hyprland reports that it lacks, each marked "New in <version>" with a basic control until you update the app. |
-| An older 0.56.x, or a version between two shipped ones | The nearest lower shipped schema. Best effort and untested. |
+| 0.56.2 or 0.56.1 | A full list of Hyprland's settings shipped with the app: every setting, with its description and limits. |
+| Newer than 0.56.2 | The nearest shipped list, plus the settings your Hyprland reports that it lacks, each marked "New in <version>" with a basic control until you update the app. |
+| An older 0.56.x, or a version between two shipped ones | The nearest lower shipped list. Best effort and untested. |
 | Older than 0.56 | Read-only, under a banner that says why. Import is off. |
 
 Everything below was checked against Hyprland 0.56.2.
@@ -107,7 +107,7 @@ Converting an Omarchy config works, but afterwards Omarchy's theme menu and Omar
 
 - **Hyprland rejects a change you made.** The app reverts it and shows "Hyprland rejected the change", with Details.
 - **Hyprland reports a problem with the config.** A banner stays under the header until it is fixed. Its dialog lists each `file:line` with the actions that apply: Restore last good, Open file, Disable until fixed (for `user.lua`, reversibly) or Regenerate.
-- **Restore last good** puts a file back to its newest version that Hyprland confirmed clean, for the files at fault only. If you edited the file by hand, a copy of your edit is kept first, and the toast has Show copy. Restore can only reach back to an import you kept when that import was fully read back afterwards. If it was not, the dialog says: "There is no verified restore point for general.lua since the import, because its settings could not all be read back when it was kept. Open the file to fix the error." Use the backup from the wizard in that case.
+- **Restore last good** puts a file back to its newest version that Hyprland confirmed clean, for the files at fault only. If you edited the file by hand, a copy of your edit is kept first, and the toast has Show copy. Restore can only reach back to an import you kept when that import was fully checked against Hyprland afterwards. If it was not, the dialog says: "There is no verified restore point for general.lua since the import, because its settings could not all be checked against Hyprland when it was kept. Open the file to fix the error." Use the backup from the wizard in that case.
 - **No keybinds load at all.** The app restores the files at fault on its own so you can reach a terminal, and reports it.
 - **Removing a theming tool.** Remove on the Theming page keeps the tool's own output, and a Remove that could not finish says it was not removed.
 
@@ -115,7 +115,7 @@ Converting an Omarchy config works, but afterwards Omarchy's theme menu and Omar
 
 | What | Where |
 | --- | --- |
-| The app's Lua files and manifest | `~/.config/hypr/hyprtweaker/` |
+| The app's Lua files and its record of them | `~/.config/hypr/hyprtweaker/` |
 | Your escape hatch, never touched | `~/.config/hypr/hyprtweaker/user.lua` |
 | Backups from the wizard | `$XDG_STATE_HOME/hyprtweaker/backups/<timestamp>/` |
 | Loss reports | `$XDG_STATE_HOME/hyprtweaker/reports/<timestamp>.md` and `.json` |

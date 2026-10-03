@@ -145,7 +145,7 @@ def _problem_card(
             # Older versions exist, but they are the config the import replaced (#259).
             why = (
                 f"There is no verified restore point for {name} since the import, because "
-                "its settings could not all be read back when it was kept."
+                "its settings could not all be checked against Hyprland when it was kept."
             )
         else:
             why = (

@@ -615,8 +615,8 @@ def test_an_import_kept_unverified_says_why_there_is_no_restore_point(
     assert labels == {"Open file"}
     assert (
         "There is no verified restore point for general.lua since the import, because its "
-        "settings could not all be read back when it was kept. Open the file to fix the "
-        "error."
+        "settings could not all be checked against Hyprland when it was kept. Open the file "
+        "to fix the error."
     ) in _labels(dialog.get_extra_child())
 
 
