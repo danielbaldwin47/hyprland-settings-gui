@@ -38,7 +38,7 @@ from typing import Any, Literal, Protocol
 
 from ..bridge import REGISTRY, BridgeEntry
 from ..bridge.wire import WireConsent, shown
-from ..files import failure_reason, keep_edited_copy, write_atomic
+from ..files import failure_reason, free_stamped_folder, keep_edited_copy, write_atomic
 from ..importer.loss import (
     APP_DIR_BACKUP_NAME,
     BACKUP_NAME,
@@ -995,12 +995,9 @@ class MigrationFlow:
         app_dir = self.paths.app_dir
         if not app_dir.is_dir():
             return None
-        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        base = self.paths.state_dir / ROLLED_BACK_DIR / stamp
-        suffix = 1
-        while (base / app_dir.name).exists():
-            suffix += 1
-            base = self.paths.state_dir / ROLLED_BACK_DIR / f"{stamp}-{suffix}"
+        base = free_stamped_folder(
+            self.paths.state_dir / ROLLED_BACK_DIR, app_dir.name, now=self.now()
+        )
         base.mkdir(parents=True, exist_ok=True)
         target = base / app_dir.name
         shutil.move(str(app_dir), str(target))

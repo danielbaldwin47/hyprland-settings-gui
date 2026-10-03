@@ -64,12 +64,21 @@ def keep_edited_copy(paths: ConfigPaths, source: Path, name: str) -> Path | None
     """
     if not source.exists():
         return None
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    base = paths.edited_copies_dir / stamp
+    copy = free_stamped_folder(paths.edited_copies_dir, name) / name
+    write_atomic(copy, source.read_bytes())
+    return copy
+
+
+def free_stamped_folder(parent: Path, name: str, now: datetime | None = None) -> Path:
+    """`parent/<stamp>[-n]`, the first in which `name` is free.
+
+    A folder of its own per copy, so two made in one second never meet: an edited copy, a
+    rolled-back App dir. `now` is the caller's clock where it has one to inject.
+    """
+    stamp = (now or datetime.now(UTC)).strftime("%Y%m%d-%H%M%S")
+    base = parent / stamp
     suffix = 1
     while (base / name).exists():
         suffix += 1
-        base = paths.edited_copies_dir / f"{stamp}-{suffix}"
-    copy = base / name
-    write_atomic(copy, source.read_bytes())
-    return copy
+        base = parent / f"{stamp}-{suffix}"
+    return base
