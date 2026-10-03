@@ -711,7 +711,7 @@ class MigrationDialog(Adw.Dialog):
 
     def _ending_failed(self, error: Exception) -> None:
         """Keep or Roll back raised: a page that can close, saying what is left (#268 AC4)."""
-        which = "Keep" if self._answered is Decision.KEPT else "Roll back"
+        answer = "Keep" if self._answered is Decision.KEPT else "Roll back"
         unfinished = (
             "The switch is still recorded as unfinished, so the app offers to roll it back "
             "the next time it starts."
@@ -721,7 +721,7 @@ class MigrationDialog(Adw.Dialog):
         body = "\n\n".join(
             part
             for part in (
-                f"{which} did not finish: {error}",
+                f"{answer} did not finish: {error}",
                 unfinished,
                 f"If you are locked out, run this from a TTY:\n{self._flow.rescue_command}",
             )
