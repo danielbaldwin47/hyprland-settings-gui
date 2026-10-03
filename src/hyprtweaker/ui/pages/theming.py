@@ -56,6 +56,7 @@ from hyprtweaker.engine.bridge import (  # noqa: E402
     has_run,
 )
 from hyprtweaker.engine.bridge.wire import (  # noqa: E402
+    NOT_UPDATED,
     Change,
     ChangedFile,
     IfChanged,
@@ -63,12 +64,14 @@ from hyprtweaker.engine.bridge.wire import (  # noqa: E402
     NotDone,
     ToolDetection,
     Unwired,
+    UnwirePlan,
     WireConsent,
     Wired,
     WirePlan,
     detect,
+    finish_unwire,
+    plan_unwire,
     plan_wire,
-    unwire,
     unwire_preview,
     wire,
 )
@@ -79,7 +82,7 @@ from hyprtweaker.engine.tools import (  # noqa: E402
     find_tool,
     run_tool,
 )
-from hyprtweaker.session import Session  # noqa: E402
+from hyprtweaker.session import BridgeNotRemoved, BridgeRemoved, Session  # noqa: E402
 from hyprtweaker.ui.dialogs.wire_consent import ConsentDialog  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
 from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
@@ -120,10 +123,6 @@ RUN_TIMEOUT = 120.0
 """Seconds a Regenerate may run: matugen and wallust take about one on a large image."""
 
 WALLPAPER_PLACEHOLDER = "<your wallpaper>"
-NOT_UPDATED = (
-    "hyprland.lua could not be updated right now, so nothing was changed. Try again; if it "
-    "fails again, the banner at the top of the window says why."
-)
 
 Find = Callable[[str], Path | None]
 Run = Callable[..., ToolRun]
@@ -205,6 +204,9 @@ class ThemingMemory:
     """The backend tab last shown."""
     running: str | None = None
     """The backend a Regenerate is running for, so a rebuilt page shows it running."""
+    removing: str | None = None
+    """The tool a Remove is waiting on hyprland.lua's write for: Remove is not offered
+    again until it answers (#267)."""
     page: Any = None
     """The page now showing: where a worker thread's result is delivered, never a page a
     rebuild released (F23 of the #148 review)."""
@@ -541,7 +543,11 @@ class ThemingPage:
                 "Stops loading its colors and puts back the files changed when it was set up.",
             )
             row.add_suffix(
-                _button("Remove…", lambda: self.remove(tab.tool), sensitive=not blocked)
+                _button(
+                    "Remove…",
+                    lambda: self.remove(tab.tool),
+                    sensitive=not blocked and self._memory.removing is None,
+                )
             )
             self._add(self._backends, row)
         self._draw_options(tab)
@@ -662,7 +668,8 @@ class ThemingPage:
                 ("Remove…", tool_state.remove, lambda t=detection.tool: self.remove(t)),
             ):
                 if wanted:
-                    row.add_suffix(_button(label, act, sensitive=not blocked))
+                    pending = label == "Remove…" and self._memory.removing is not None
+                    row.add_suffix(_button(label, act, sensitive=not blocked and not pending))
             if tool_state.patch:
                 row.add_suffix(
                     _button("Copy patch", lambda t=detection.tool: self._copy_patch(t))
@@ -829,25 +836,46 @@ class ThemingPage:
         )
 
     def _unwire(self, tool: str, choice: IfChanged) -> None:
-        title = REGISTRY[tool].title
-        done = unwire(
+        """`plan_unwire`, then the Entrypoint write, then -- once that has stood -- the
+        tool's own files (#267): a write that fails leaves every file as it was."""
+        planned = plan_unwire(
             tool,
             paths=self._session.paths,
             manifest=self._session.manifest(),
-            unregister=self._session.remove_bridge,
             if_changed=choice,
         )
-        match done:
+        match planned:
             case NeedsChoice(changed=changed):
                 self._ask_changed(tool, changed)
                 return
+            case UnwirePlan():
+                self._memory.removing = tool
+                self._session.remove_bridge(
+                    tool, done=lambda outcome: self._deliver("_removed", planned, outcome)
+                )
+            case _:
+                self._report_unwired(planned)
+        self.refresh()
+
+    def _removed(self, plan: UnwirePlan, outcome: BridgeRemoved | BridgeNotRemoved) -> None:
+        """hyprland.lua's write for a Remove has answered."""
+        self._memory.removing = None
+        match outcome:
+            case BridgeRemoved():
+                self._report_unwired(finish_unwire(plan))
+            case BridgeNotRemoved(reason=reason):
+                self._tell(f"{REGISTRY[plan.tool].title} was not removed", reason)
+        self.refresh()
+
+    def _report_unwired(self, done: Unwired | NotDone) -> None:
+        title = REGISTRY[done.tool].title
+        match done:
             case NotDone(reason=reason):
                 self._tell(f"{title} was not removed", reason)
             case Unwired(note=note) if note:
                 self._actions.toast(note)
             case Unwired():
                 self._actions.toast(f"{title} is removed.")
-        self.refresh()
 
     def _ask_changed(self, tool: str, files: tuple[ChangedFile, ...]) -> None:
         """S3's question, showing both sides of each file: as it is now, and the copy that

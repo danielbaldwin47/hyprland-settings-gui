@@ -37,7 +37,11 @@ class EntrypointApplier:
         from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
 
         self.transactions += 1
-        write(None)
+        try:
+            write(None)
+        except OSError as error:
+            # As `EntrypointTransaction`: a write that raises before the file moved.
+            return ApplyResult(ApplyOutcome.WRITE_FAILED, detail=str(error))
         return ApplyResult(ApplyOutcome.OK)
 
 
@@ -706,6 +710,70 @@ def test_remove_names_every_file_it_puts_back_or_deletes_and_cancel_keeps_them(
     )
     answer(page.dialog, "cancel")
     assert tree(tmp_path / "matugen") == files
+
+
+def _no_space(*_args: Any, **_kwargs: Any) -> bool:
+    raise OSError(28, "No space left on device")
+
+
+def test_a_remove_whose_entrypoint_write_fails_says_so_and_keeps_every_file(
+    tmp_path: Path, stub_tool: Any, monkeypatch: Any
+) -> None:
+    """#267: Remove used to toast "is removed" once the write was queued, and the write had
+    already deleted the tool's output. A write that fails now leaves every file as it was."""
+    from hyprtweaker.engine.bridge.wire import NOT_UPDATED
+    from hyprtweaker.engine.writer import Writer
+
+    stub_tool("matugen")
+    put(tmp_path / "matugen/config.toml", "[config]\n")
+    session, _ = make_session(tmp_path)
+    page = build_page(session)
+    ask(page, "Switch to matugen")
+    answer(page.dialog, "agree")
+    output = put(session.paths.bridge_dir / "matugen.lua", "return { colours = 1 }\n")
+    files = tree(tmp_path / "matugen")
+
+    monkeypatch.setattr(Writer, "set_bridges", _no_space)
+    click(page, "Remove…")
+    answer(page.dialog, "agree")
+
+    assert page.dialog.get_heading() == "matugen was not removed"
+    assert page.dialog.get_body() == NOT_UPDATED
+    assert page.toasts == ["matugen is set up. Copies of the files it changed are kept."]
+    assert tree(tmp_path / "matugen") == files
+    assert output.read_text(encoding="utf-8") == "return { colours = 1 }\n"
+    assert [entry.tool for entry in session.manifest().bridges] == ["matugen"]
+    assert page.button("Remove…") is not None
+
+
+def test_remove_waits_for_the_entrypoint_write_before_it_puts_files_back(
+    tmp_path: Path, stub_tool: Any
+) -> None:
+    """#267: the tool's files go back, and the toast says so, once hyprland.lua no longer
+    loads it; until then Remove cannot be pressed again."""
+    stub_tool("matugen")
+    put(tmp_path / "matugen/config.toml", "[config]\n")
+    session, _ = make_session(tmp_path)
+    page = build_page(session)
+    ask(page, "Switch to matugen")
+    answer(page.dialog, "agree")
+    wired_config = (tmp_path / "matugen/config.toml").read_bytes()
+    held: list[Any] = []
+    session._spawn = held.append
+
+    click(page, "Remove…")
+    answer(page.dialog, "agree")
+
+    pending = page.button("Remove…")
+    assert pending is not None and not pending.get_sensitive()
+    assert (tmp_path / "matugen/config.toml").read_bytes() == wired_config
+    assert page.toasts == ["matugen is set up. Copies of the files it changed are kept."]
+
+    run_now(held.pop())
+
+    assert (tmp_path / "matugen/config.toml").read_text(encoding="utf-8") == "[config]\n"
+    assert page.toasts[-1] == "matugen is removed."
+    assert page.button("Remove…") is None
 
 
 def test_a_hand_edit_keeps_its_bytes_through_cancel_and_leave_it_as_it_is(

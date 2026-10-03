@@ -956,6 +956,47 @@ class TestExport:
         assert text.startswith("-- Hyprland config exported")
         assert "__host_require" in text
 
+    def test_an_export_that_cannot_be_written_says_so_and_keeps_the_file(
+        self, tmp_path: Path
+    ) -> None:
+        """#251: a refused write is a toast naming the untouched file, never a traceback."""
+        window, _ = build_window(tmp_path)
+        window.route_first_run()
+        folder = tmp_path / "read-only"
+        folder.mkdir()
+        target = folder / "hyprland.lua"
+        target.write_text("-- the user's own config\n", encoding="utf-8")
+        toasts: list[str] = []
+        window._toasts.add_toast = lambda toast: toasts.append(toast.get_title())
+        folder.chmod(0o500)
+        try:
+            window._write_export(target)
+        finally:
+            folder.chmod(0o700)
+
+        assert target.read_text(encoding="utf-8") == "-- the user's own config\n"
+        assert toasts == [
+            "The export was not written: permission denied. hyprland.lua is unchanged"
+        ]
+
+    def test_an_export_to_a_new_file_that_cannot_be_written_says_so(
+        self, tmp_path: Path
+    ) -> None:
+        window, _ = build_window(tmp_path)
+        window.route_first_run()
+        folder = tmp_path / "read-only"
+        folder.mkdir()
+        toasts: list[str] = []
+        window._toasts.add_toast = lambda toast: toasts.append(toast.get_title())
+        folder.chmod(0o500)
+        try:
+            window._write_export(folder / "exported.lua")
+        finally:
+            folder.chmod(0o700)
+
+        assert list(folder.iterdir()) == []
+        assert toasts == ["The export was not written: permission denied"]
+
 
 # --- widget-tree helpers ---------------------------------------------------------------------
 

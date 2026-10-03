@@ -32,7 +32,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Collection, Coroutine, Iterable, Mapping, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Collection,
+    Coroutine,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -85,7 +93,7 @@ from hyprtweaker.engine.bridge import (
     owners,
     with_presence,
 )
-from hyprtweaker.engine.bridge.wire import bridge_output
+from hyprtweaker.engine.bridge.wire import NOT_UPDATED, OutputAside, bridge_output
 from hyprtweaker.engine.bridge.wire import shown as tilde_path
 from hyprtweaker.engine.entities_catalog import (
     IDENTITY_FIELD,
@@ -468,6 +476,21 @@ class _WallpaperOrder:
 
 
 @dataclass(frozen=True, slots=True)
+class BridgeRemoved:
+    """`remove_bridge`'s answer once the Entrypoint that no longer loads the tool stands: its
+    output in the bridge folder is gone, and its own files may go back (`finish_unwire`)."""
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeNotRemoved:
+    """`remove_bridge`'s answer when hyprland.lua still loads the tool: its output and
+    entries are as they were (#267)."""
+
+    reason: str
+    """Why, as a sentence for the user."""
+
+
+@dataclass(frozen=True, slots=True)
 class _AppliedPreset:
     """A Preset whose Options are queued: its name, each Option's value before it, the
     Bridge entries it gated ("Use preset's colors"), and the wallpaper it will set."""
@@ -730,6 +753,11 @@ class Session:
         key. Between those two moments the Option is mid-gesture, however many model writes
         the widget makes -- which is what turns fifty slider ticks into one undo step."""
 
+        self._previewed: set[str] = set()
+        """Options an `eval` preview may have left the compositor showing: added by a drag's
+        tick, dropped by the transaction that carries the key or a reload. A refusal that
+        puts one back re-previews it (`_show_restored`, #267)."""
+
         self._pending_entities: list[_PendingEntityStep] = []
         """Entity steps whose commit has not reported yet, oldest first (#189).
 
@@ -756,7 +784,6 @@ class Session:
         The window's own undo, so an undo the window puts behind a countdown still goes
         there; without one the session undoes it itself."""
 
-        self._reverting = False
         self._recovery_halted = False
         self._recovery = Recovery()
         """What the last reload said was wrong, attributed. The Banner is a view of this.
@@ -1080,31 +1107,55 @@ class Session:
         """The Manifest as it is on disk now: what #166's `detect` and `unwire` take."""
         return self._manifest()
 
-    def remove_bridge(self, tool: str) -> bool:
+    def remove_bridge(
+        self,
+        tool: str,
+        *,
+        done: Callable[[BridgeRemoved | BridgeNotRemoved], None] | None = None,
+    ) -> bool:
         """Take `tool`'s Bridge entries and lines out: what #166's `unwire` calls first.
 
         `True` with nothing done when the tool has no entry, so an `unwire` that converges
-        after a crash never costs a reload.
+        after a crash never costs a reload. Otherwise `True` once the Entrypoint write is
+        queued, and `done`, if given, hears once that write and its reload have answered --
+        or at once, when this refuses (#267). The tool's output in the bridge folder is set
+        aside inside the write and deleted only when it stands; one that fails puts it back.
         """
         manifest = self._manifest()
         output = bridge_output(tool, self._paths)
         if not output and not any(entry.tool == tool for entry in manifest.bridges):
+            if done is not None:
+                done(BridgeRemoved())
             return True
-        if self.color_source_blocked is not None:
+        if (blocked := self.color_source_blocked) is not None:
+            if done is not None:
+                done(BridgeNotRemoved(blocked))
             return False
+        # Before the Entrypoint is rendered: a file left in the bridge folder loads with no
+        # entry at all, which kept a removed tool loading (#148 hand-test 1).
+        aside = OutputAside(tool, self._paths)
 
-        def delete_output() -> None:
-            # Before the Entrypoint is rendered: a file left in the bridge folder loads with
-            # no entry at all, which kept a removed tool loading (#148 hand-test 1).
-            for path in bridge_output(tool, self._paths):
-                path.unlink(missing_ok=True)
+        def answered(reason: str | None) -> None:
+            try:
+                if reason is None:
+                    aside.drop()
+                else:
+                    aside.put_back()
+            except OSError as error:
+                _log.error("could not settle the set-aside output of %s: %s", tool, error)
+            if done is not None:
+                done(BridgeRemoved() if reason is None else BridgeNotRemoved(reason))
 
-        return self._set_bridges(
+        queued = self._set_bridges(
             lambda current: [entry for entry in current if entry.tool != tool],
             manifest.remove_bridge(tool),
             f"remove {REGISTRY[tool].title if tool in REGISTRY else tool}",
-            first=delete_output,
+            first=aside.move,
+            answered=answered,
         )
+        if not queued and done is not None:
+            done(BridgeNotRemoved(NOT_UPDATED))
+        return queued
 
     def _module_files_present(self, spec: ToolSpec) -> frozenset[str]:
         return files_present(self._paths.hypr_dir, (each.file for each in spec.modules))
@@ -1116,10 +1167,11 @@ class Session:
         what: str,
         *,
         first: Callable[[], None] | None = None,
+        answered: Callable[[str | None], None] | None = None,
     ) -> bool:
         """Rewrite the Entrypoint with `change` applied to the Manifest's entries as they are
         when the queued write runs, so a change landing in between is built on, not lost.
-        `first` runs in the queued write, just before it."""
+        `first` runs in the queued write, just before it; `answered` as `_recovery_write`."""
 
         def write(before: BeforeReplace | None) -> bool:
             if first is not None:
@@ -1133,6 +1185,7 @@ class Session:
             prospective,
             what,
             exclude=tuple(owners(prospective.bridges, quarantined=prospective.quarantined)),
+            answered=answered,
         )
 
     def _bridge_files_present(self, entries: Sequence[BridgeEntry]) -> frozenset[str]:
@@ -1341,6 +1394,7 @@ class Session:
         if self._refused_by_edit(name):
             return
         self._begin_edit(name)
+        self._previewed.add(name)
         self._model.set(name, value)
         self._applier.preview(name)  # type: ignore[union-attr]  # _refuse proved it is here
 
@@ -2738,6 +2792,11 @@ class Session:
         module = self._edited_module((module_relpath(option),))
         if module is None:
             return False
+        if name in self._previewed and name in self._open_gestures:
+            # A drag whose Module was edited after its first tick: the ticks moved the model
+            # and the compositor with nothing queued to take them back (#267).
+            self._restore({name: self._open_gestures[name]})
+            self._show_restored((name,))
         self._say_refused(option.title, module)
         return True
 
@@ -3034,6 +3093,17 @@ class Session:
             group.held = [step for step in group.held if not step.kinds & gone]
             # A dropped in-flight step may have been all an ended group was waiting for.
             self._announce(self._close_group(group))
+
+    def _show_restored(self, names: Iterable[str]) -> None:
+        """Preview again each of `names` a drag's `eval` may have left on the compositor,
+        now the model is put back: a refusal must leave the desktop showing what the Row and
+        the file say (#267). Sends the model's value, so an Unset one shows nothing new --
+        `eval` cannot unset -- until the next reload."""
+        shown = [name for name in names if name in self._previewed]
+        self._previewed.difference_update(shown)
+        if shown and self._applier is not None:
+            self._applier.forget_previews()
+            self._applier.preview(*shown)
 
     def _restore(self, values: Mapping[str, OptionValue]) -> None:
         """Put the model back to `values`, and forget any gesture open on those Options.
@@ -3570,6 +3640,7 @@ class Session:
         # spanning somebody else's reload. Entity steps over a list the re-read changes are
         # dropped there (`_reread_after_foreign_reload`).
         self._open_gestures.clear()
+        self._previewed.clear()
         self._spawn(self._reread_after_foreign_reload())
 
     def adopt_import(self) -> None:
@@ -3590,6 +3661,7 @@ class Session:
         self._model.clear()
         self._undo = UndoStack()
         self._open_gestures.clear()
+        self._previewed.clear()
         self._pending_entities = []
         self._pending_activations = []
         self._pending_undos = []
@@ -3942,19 +4014,6 @@ class Session:
         Ctrl+Z should be able to take it back). A gesture can never be both, which is why the
         failed one is never pushed rather than pushed and popped.
         """
-        if self._reverting:
-            # The restore transaction's own result. It carries no gesture of the user's, and
-            # a second auto-revert on top of a failed one is the loop ADR-0016 forbids.
-            #
-            # A restore carries its own keys alone (`apply_now`), so an edit made in the
-            # ~25 ms it takes is still mid-gesture: its entry stays open in
-            # `_open_gestures`, and the next transaction records it from the value it really
-            # started at rather than from the one the revert put back.
-            self._recovery_result(result)
-            self._observe(result)
-            self._report(result)
-            return
-
         delta = self._close(result.keys)
         refused = self._take_back_options(result, delta)
         presets = self._carried_presets(result.keys)
@@ -3979,11 +4038,14 @@ class Session:
                 if each.source is not None:
                     self._put_bridges(each.source.before, each.source.after)
             self._fell(result, delta, self._lists_before(failed))
+            self._previewed.difference_update(result.keys)
             return
 
         entity_steps = self._take_back_entities(result, entity_steps, refused)
         self._take_back_activations(result, activations, refused)
         self._take_back_undos(result, undos, refused)
+        # Its reload wiped every `eval`; one a refusal put back is re-previewed above.
+        self._previewed.difference_update(result.keys)
         self._forget_unedited()
         for module, titles in refused.items():
             # The Rows show the model, which just went back to what the file holds.
@@ -4050,6 +4112,7 @@ class Session:
                 continue
             refused.setdefault(module_relpath(option), []).append(option.title)
             self._restore({name: before})
+            self._show_restored((name,))
         return refused
 
     def _take_back_entities(
@@ -4286,13 +4349,14 @@ class Session:
     def _settle_entities(
         self, result: ApplyResult, *, stands: bool
     ) -> tuple[list[EntityStep], list[EntityStep]]:
-        """The Entity steps this result lets stand, and the ungrouped ones it failed.
+        """The Entity steps this result lets stand, and the ones it failed.
 
         Every pending step with a serial up to `result.entities` was rendered by this
         transaction. Standing: it is recorded, or handed to its undo group. Not standing: it
-        is returned as failed for `_fell` to take out of the model, and a grouped one marks
-        its group failed -- ADR-0016's failed gesture, never on the stack; the group's owner
-        (a display countdown) puts its own lists back. A group this result completes is
+        is returned as failed for `_fell` to take out of the model, grouped or not, and a
+        grouped one also marks its group failed -- ADR-0016's failed gesture, never on the
+        stack. A countdown's Keep puts nothing back, so the model must already show what the
+        disk accepted when it ends (#222). A group this result completes is
         merged here, and lands after the steps it was held beside. Both lists are in commit
         order.
         """
@@ -4314,6 +4378,7 @@ class Session:
                 pending.group.held.append(pending.step)
             else:
                 pending.group.failed = True
+                failed.append(pending.step)
         for group in groups.values():
             merged = self._close_group(group)
             if merged is not None:
@@ -4354,6 +4419,7 @@ class Session:
         self._repoll_if_timed_out(result)
         if result.outcome is ApplyOutcome.ABORTED:
             self._restore(delta)
+            self._show_restored(delta)
             self._put_back(lists)
             self._finish_failed(result)
             self._changed()
@@ -4779,6 +4845,7 @@ class Session:
         prospective: Manifest,
         what: str,
         exclude: Sequence[str] = (),
+        answered: Callable[[str | None], None] | None = None,
     ) -> bool:
         """Rewrite the Entrypoint out of band, then reload. `False` if it could not be done.
 
@@ -4792,7 +4859,8 @@ class Session:
         here, so a recovery the gate refuses answers `False` and leaves the Banner as it is.
         `exclude` names owned Options the re-read leaves alone. The write
         itself runs queued (`EntrypointTransaction`): its Journal draft stays open until the
-        reload answers, and nothing else may open one meanwhile.
+        reload answers, and nothing else may open one meanwhile. A queued write calls
+        `answered` once it is over: `None` when the Entrypoint was written, else why not.
         """
         if not self.live or self._applier is None:
             return False
@@ -4801,16 +4869,31 @@ class Session:
         except (LuaSyntaxError, ValueError) as error:
             _log.error("could not %s: %s", what, error)
             return False
-        self._spawn(self._recover_entrypoint(write, what, exclude))
+        self._spawn(
+            self._answer_after(self._recover_entrypoint(write, what, exclude), answered)
+        )
         return True
+
+    @staticmethod
+    async def _answer_after(
+        recovery: Awaitable[bool], answered: Callable[[str | None], None] | None
+    ) -> None:
+        """Run `recovery`, then tell `answered` once, however it ended (#267)."""
+        written = False
+        try:
+            written = await recovery
+        finally:
+            if answered is not None:
+                answered(None if written else NOT_UPDATED)
 
     async def _recover_entrypoint(
         self,
         write: Callable[[BeforeReplace | None], bool],
         what: str,
         exclude: Sequence[str] = (),
-    ) -> None:
-        """Rewrite the Entrypoint, reload, and re-read what the config now says.
+    ) -> bool:
+        """Rewrite the Entrypoint, reload, and re-read what the config now says. `True` when
+        the Entrypoint was written, whatever the reload then found.
 
         A plain apply would do the wrong thing here: it renders the model over the App dir,
         and the file that changes is the one file the model does not describe. So this
@@ -4818,7 +4901,7 @@ class Session:
         """
         applier = self._applier
         if applier is None:
-            return
+            return False
         # Every owned Option, not a narrow set: quarantining `user.lua` changes the value of
         # everything that file was overriding, and the app cannot know which those were
         # without asking about all of them.
@@ -4841,9 +4924,10 @@ class Session:
         except (IpcError, RuntimeError) as error:
             _log.error("could not reload after a recovery: %s", error)
             self._changed()
-            return
+            return False
         await self._read_off_text_of(edited, texts)
-        if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+        written = result.outcome not in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED)
+        if not written:
             _log.error("could not %s: %s", what, result.detail)
         self._observe(result)
         if self._client is not None and result.reloaded:
@@ -4853,6 +4937,7 @@ class Session:
         self._repoll_if_timed_out(result)
         self._report(result)
         self._changed()
+        return written
 
     # --- auto-revert (ADR-0016) ---------------------------------------------------------------
 
@@ -4898,14 +4983,19 @@ class Session:
         if applier is None:
             return
 
-        self._reverting = True
         try:
-            await applier.apply_now(*keys)
+            own = await applier.apply_now(*keys)
         except (IpcError, RuntimeError) as error:
             _log.error("could not re-apply after reverting: %s", error)
             self._recovery_halted = True
-        finally:
-            self._reverting = False
+        else:
+            # The restore's own result, which `apply_now` hands here and not to `_applied`
+            # (#222): it carries no gesture of the user's, and a second auto-revert on top
+            # of a failed one is the loop ADR-0016 forbids. An edit made while it ran is
+            # still open in `_open_gestures`, for the batch that carries it to record.
+            self._recovery_result(own)
+            self._observe(own)
+            self._report(own)
 
         restored = self._verify(expected)
         if self.on_reverted is not None:

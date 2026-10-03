@@ -272,6 +272,36 @@ def test_a_user_lua_error_keeps_the_entity_step(tmp_path: Path) -> None:
 # --- nothing reached disk, or the disk refused ------------------------------------------------
 
 
+def test_an_aborted_drag_shows_the_compositor_the_old_value_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#267: nothing reached disk and nothing reloaded, so the drag's `eval` would have left
+    the desktop on 25 while the model and the Row went back to 12."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        fake.conversation.update(conversation(**{ROUNDING: 12}))
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        assert session._applier is not None
+        session.preview_option(ROUNDING, 25)
+        await session._applier.flush_previews()
+
+        fail_once(monkeypatch, session._writer, "write", ValueError("gate refused"))
+        session.set_option(ROUNDING, 25)
+        await settle(session, runner)
+        await session._applier.flush_previews()
+
+        assert session.model.get(ROUNDING) == 12
+        assert [r for r in fake.requests if r.startswith("eval ")] == [
+            "eval hl.config{decoration={rounding=25}}",
+            "eval hl.config{decoration={rounding=12}}",
+        ]
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
 def test_an_aborted_apply_puts_the_model_back_and_records_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
