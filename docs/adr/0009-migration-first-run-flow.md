@@ -51,8 +51,8 @@ Convert…") and an app-menu entry. No nagging beyond that.
 Five steps, each an `Adw.NavigationView` subpage in one dialog (prototyped in #7):
 **Detect → Preview → Back up → Switch & verify → Keep or roll back.**
 
-- **`.conf` source:** the hyprlang Importer (prototype-proven, 7/7 corpus rices verify
-  clean). Variables land in `vars.lua`; unrepresentable constructs in `legacy.lua`.
+- **`.conf` source:** the hyprlang Importer (what the corpus proves of it is § Corpus
+  proofs, below). Variables land in `vars.lua`; unrepresentable constructs in `legacy.lua`.
 - **`.lua` source:** the **Lua importer** — evaluation-based. The file is executed under a
   recording `hl.*` stub: declarative calls (`hl.config`, `hl.bind`, `hl.monitor`, rules, …)
   are captured into the model; script constructs (`hl.on` handlers, function-valued actions,
@@ -121,9 +121,8 @@ Requires a live session; without an IPC socket the wizard runs Detect/Preview on
    - **Bind count** is hard. The expected count is what the Writer emits (`live_bind_count`: a
      disabled bind is a comment and a function-valued one is never written), and the check
      is `live >= expected`, because `legacy.lua` and preserved scripts can register more. It
-     is hard only because a Harness run over the `tests/corpus/` rices showed no false
-     rollback, with every hard check, `configerrors` included, asserted for every rice; a
-     config that loads with no keybinds is ADR-0016's emergency.
+     is hard only because the verify proof (§ Corpus proofs) shows no false rollback on any
+     corpus rice; a config that loads with no keybinds is ADR-0016's emergency.
    - **Workspace-rule count** and **monitor arrangement** are soft: reported on the Keep or
      roll back page under "What this could not confirm", never a rollback, because each
      compares against what Hyprland *did* with a request (merged a selector, picked the
@@ -133,6 +132,38 @@ Requires a live session; without an IPC socket the wizard runs Detect/Preview on
      no `hyprctl` listing, no `hl.get_*` getter), so those two kinds are verified by
      `configerrors` only, and the switch shows no row for them.
 4. Any hard check fails → automatic rollback, report shown.
+
+### Corpus proofs
+
+Three separate proofs, each a Harness-tier test (ADR-0011 tier 3) over `tests/corpus/`, and
+each claiming only what it measures. Measured on Hyprland 0.56.2, 2026-10-02 (#253).
+
+- **Verify** (`test_migration_live_checks.py`,
+  `test_no_corpus_rice_is_rolled_back_by_a_bind_count_that_is_not_the_switchs_fault`):
+  every one of the 7 corpus rices imports to a config that loads with no config errors and
+  passes every hard live check above. It says Hyprland accepts the import and the switch
+  does not roll it back for nothing; it does not say the values are right.
+- **State** (`test_import_matches_port.py`, `test_imported_state_agrees_with_the_upstream_port`):
+  end-4, the one rice whose own hand-written Lua port is booted beside its import. Every
+  Option both configs set has the same live value, except six where the port departs from
+  its own `.conf` (three theme colours, three gesture settings it comments out). Animations,
+  curves, monitor rules, workspace rules and layers agree. Binds: the import registers 197
+  and the port 191, and the difference is eight binds, each a line the port changed
+  (`KNOWN_PORT_BIND_DIVERGENCES`). Window and layer rules have no IPC listing, so this proof
+  does not reach them.
+- **Pixel** (`test_import_matches_port.py`,
+  `test_the_imported_config_renders_the_same_screen_as_the_port`): end-4 again, three probe
+  windows (one translucent) tiled on a 1920x1080 headless output. The import's screenshot is
+  byte-identical to the port's once the port is given the `.conf`'s three theme colours. As
+  shipped, the port's theme module is a different colour scheme, and that is the whole
+  difference: 26.9% of pixels at most 35/255 apart, the background in the gaps and behind
+  the translucent window plus the border colours. That figure is screen area, not settings
+  lost. The proof covers what three probe windows show (borders, gaps, rounding, blur,
+  opacity, tiling, background); it does not cover rules that match other applications,
+  animation in motion, or other outputs.
+
+None of the three proves pixel equivalence for a rice outside the corpus, for a tool or
+external state the config drives, or for a Hyprland version other than the one measured.
 
 ### Keep or roll back
 
