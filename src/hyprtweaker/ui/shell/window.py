@@ -51,6 +51,7 @@ from hyprtweaker.engine.apply import (  # noqa: E402
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
+from hyprtweaker.engine.bridge.wire import shown as tilde_path  # noqa: E402
 from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
 from hyprtweaker.engine.ipc import CommandClient, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
@@ -2387,17 +2388,17 @@ class MainWindow(Adw.ApplicationWindow):
         """Ask before putting a file back, then say how it went (#148 hand-test 17).
 
         It overwrites the file as it is now -- usually somebody's hand edit -- so it asks,
-        keeps a copy, and reports the outcome rather than closing on silence.
+        keeps a copy of a hand edit, and reports the outcome and where that copy is rather
+        than closing on silence (#266).
         """
         name = module.rsplit("/", 1)[-1]
-        dialog = Adw.AlertDialog(
-            heading=f"Restore {name}?",
-            body=(
-                f"{name} goes back to the last version this app wrote and Hyprland "
-                f"accepted. A copy of the file as it is now is kept in "
+        body = f"{name} goes back to the last version this app wrote and Hyprland accepted."
+        if self._session.edited_outside(module):
+            body += (
+                f" A copy of the file as it is now is kept in "
                 f"{self._session.edited_copies_shown}."
-            ),
-        )
+            )
+        dialog = Adw.AlertDialog(heading=f"Restore {name}?", body=body)
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("restore", "Restore")
         dialog.set_response_appearance("restore", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -2409,14 +2410,26 @@ class MainWindow(Adw.ApplicationWindow):
                 return
 
             def done(ok: bool) -> None:
-                self._toast(
-                    f"{name} is back to the last version Hyprland accepted."
+                # Called once the restore has run, so after `start` is assigned below.
+                said = (
+                    f"{name} is back to the last version Hyprland accepted"
                     if ok
-                    else f"{name} could not be restored. The Banner says what is wrong."
+                    else f"{name} could not be restored. The Banner says what is wrong"
                 )
+                copy = start.copies.get(module)
+                if copy is not None:
+                    shown = tilde_path(copy, self._session.paths)
+                    said += f". A copy of your edited file is at {shown}"
+                self._toasts.add_toast(plain_toast(said, timeout=8))
 
-            if not self._session.restore_last_good(module, done=done):
-                self._toast(f"{name} could not be restored: there is no earlier version.")
+            start = self._session.restore_last_good(module, done=done)
+            if start.uncopied:
+                self._toast(
+                    f"{name} was not restored: a copy of it could not be kept, "
+                    f"so it was left as it is"
+                )
+            elif not start:
+                self._toast(f"{name} could not be restored: there is no earlier version")
 
         dialog.connect("response", answered)
         dialog.present(self)

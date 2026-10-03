@@ -866,10 +866,11 @@ class Session:
         """Modules the emergency restore overwrote without asking, so the Banner can say so."""
 
         self._pending_rescue: tuple[str, ...] = ()
-        self._rescue_uncopied: tuple[str, ...] = ()
-        """The emergency restore's Modules no copy could be kept of (`Health.rescued_uncopied`)."""
         """A rescue announced only once its own restore has been observed -- see
         `_emergency_restore`, which explains why it cannot be announced any earlier."""
+
+        self._rescue_uncopied: tuple[str, ...] = ()
+        """The emergency restore's Modules no copy could be kept of: the Banner says so."""
 
         self._bridge_owners: dict[str, str] | None = None
         """`bridge_owners`, read off the Manifest once per state change rather than per Row."""
@@ -4256,6 +4257,10 @@ class Session:
         """Where "Replace file" keeps the edited copy, as the user knows the path."""
         return tilde_path(self._paths.edited_copies_dir, self._paths)
 
+    def edited_outside(self, module: str) -> bool:
+        """Whether `module` was edited outside the app: what a Restore keeps a copy of."""
+        return self._edited_module((module,)) is not None
+
     def edited_file_path(self, module: str) -> Path:
         """Where an edited Module lives, for "Open file"."""
         return self._paths.app_dir / module
@@ -4733,6 +4738,7 @@ class Session:
         the decision is made. The one thing that differs is a copy that cannot be kept: it
         refuses the user's Restore (its dialog promised the copy), and only the emergency,
         `copy_required=False`, goes on without it (§Zero-binds: the Journal keeps the bytes).
+        `done` is called once the queued restore has run, never before this returns.
         """
         if not self.live or self._applier is None or self._restoring:
             return RestoreStart(queued=False)

@@ -235,3 +235,33 @@ def test_a_restore_that_fails_part_way_leaves_the_landed_module_in_the_model(
         scenario,
         FakeHyprland(conversation(**{BORDER_SIZE: 3, ROUNDING: 18}), reload_emits_event=True),
     )
+
+
+def test_a_file_the_app_wrote_is_restored_with_no_copy_to_keep(tmp_path: Path) -> None:
+    """Only a hand edit needs a copy: a Module holding the app's own unconfirmed write is
+    restored even where no copy could be kept, and none is claimed."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.set_option(BORDER_SIZE, 3)
+        await settle(session, runner)
+        good = module(tmp_path, GENERAL_MODULE).read_bytes()
+        # Written, but the compositor still answers 3: not confirmed, so 3 stays last good.
+        session.set_option(BORDER_SIZE, 5)
+        await settle(session, runner)
+        assert "border_size = 5," in module(tmp_path, GENERAL_MODULE).read_text()
+        assert not session.edited_outside(GENERAL_MODULE), "the precondition"
+        block_copies(tmp_path)
+
+        start = session.restore_last_good(GENERAL_MODULE)
+        await settle(session, runner)
+
+        assert start
+        assert (start.copies, start.uncopied) == ({}, ())
+        assert module(tmp_path, GENERAL_MODULE).read_bytes() == good
+        assert session.model.get(BORDER_SIZE) == 3
+
+    run_with_fake(
+        scenario, FakeHyprland(conversation(**{BORDER_SIZE: 3}), reload_emits_event=True)
+    )
