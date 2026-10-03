@@ -339,6 +339,42 @@ def test_the_print_stop_takes_a_command_the_config_started_with_it(tmp_path) -> 
             _kill_if_ours(int(pidfile.read_text()))
 
 
+class _StatusSeenLate(subprocess.Popen):  # type: ignore[type-arg]
+    """A child whose exit status is not yet visible to `poll` when its pipes reach EOF.
+
+    The kernel closes a process's pipes before it becomes a zombie, so a loaded machine
+    can see the EOF first; this makes that ordering certain (CI run 37103101388).
+    """
+
+    def poll(self):  # type: ignore[no-untyped-def]
+        return None
+
+
+def test_the_print_stop_takes_the_command_when_the_pipes_close_first(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """The read sees the runner's pipes close before its exit status: the command it
+    started still goes with it. It survived on CI, 3 reads in 300 on a loaded machine."""
+    monkeypatch.setattr(subprocess, "Popen", _StatusSeenLate)
+    pidfile = tmp_path / "command.pid"
+    entry = write(
+        tmp_path,
+        f'os.execute("sleep 600 >/dev/null 2>&1 & echo $! > {pidfile}")\n'
+        'while true do print("xxxxxxxxxxxxxxxx") end\n',
+    )
+    try:
+        recording = evaluate(
+            entry, consent=Consent(evaluate=True, passthrough=True), timeout=30
+        )
+
+        assert recording.errors and "printed more than" in recording.errors[0]
+        command = int(pidfile.read_text())
+        _within(10, lambda: not _alive(command), "the command's end")
+    finally:
+        if pidfile.is_file():
+            _kill_if_ours(int(pidfile.read_text()))
+
+
 def test_a_config_cannot_fake_or_catch_the_output_stop(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """The stop is the runner's own exit, outside the config's reach: `pcall` does not
     swallow it, and the config's `os.exit(77)` is only the trapped one."""
