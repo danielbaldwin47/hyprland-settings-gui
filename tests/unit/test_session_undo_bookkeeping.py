@@ -88,18 +88,7 @@ def reject_next_reload_then(fake: FakeHyprland, on_reload: dict[int, Any]) -> No
 @pytest.mark.parametrize(
     "moment",
     [
-        pytest.param(
-            1,
-            id="committed-while-the-rejected-write-is-in-flight",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "#222: the batch carrying the edit starts before the spawned revert "
-                    "enqueues, so its result lands inside `_reverting` and `_applied` reads "
-                    "it as the revert's own"
-                ),
-            ),
-        ),
+        pytest.param(1, id="committed-while-the-rejected-write-is-in-flight"),
         pytest.param(2, id="committed-while-the-revert-runs"),
     ],
 )

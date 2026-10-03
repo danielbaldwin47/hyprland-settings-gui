@@ -749,7 +749,6 @@ class Session:
         The window's own undo, so an undo the window puts behind a countdown still goes
         there; without one the session undoes it itself."""
 
-        self._reverting = False
         self._recovery_halted = False
         self._recovery = Recovery()
         """What the last reload said was wrong, attributed. The Banner is a view of this.
@@ -3912,19 +3911,6 @@ class Session:
         Ctrl+Z should be able to take it back). A gesture can never be both, which is why the
         failed one is never pushed rather than pushed and popped.
         """
-        if self._reverting:
-            # The restore transaction's own result. It carries no gesture of the user's, and
-            # a second auto-revert on top of a failed one is the loop ADR-0016 forbids.
-            #
-            # A restore carries its own keys alone (`apply_now`), so an edit made in the
-            # ~25 ms it takes is still mid-gesture: its entry stays open in
-            # `_open_gestures`, and the next transaction records it from the value it really
-            # started at rather than from the one the revert put back.
-            self._recovery_result(result)
-            self._observe(result)
-            self._report(result)
-            return
-
         delta = self._close(result.keys)
         refused = self._take_back_options(result, delta)
         presets = self._carried_presets(result.keys)
@@ -4865,14 +4851,19 @@ class Session:
         if applier is None:
             return
 
-        self._reverting = True
         try:
-            await applier.apply_now(*keys)
+            own = await applier.apply_now(*keys)
         except (IpcError, RuntimeError) as error:
             _log.error("could not re-apply after reverting: %s", error)
             self._recovery_halted = True
-        finally:
-            self._reverting = False
+        else:
+            # The restore's own result, which `apply_now` hands here and not to `_applied`
+            # (#222): it carries no gesture of the user's, and a second auto-revert on top
+            # of a failed one is the loop ADR-0016 forbids. An edit made while it ran is
+            # still open in `_open_gestures`, for the batch that carries it to record.
+            self._recovery_result(own)
+            self._observe(own)
+            self._report(own)
 
         restored = self._verify(expected)
         if self.on_reverted is not None:
