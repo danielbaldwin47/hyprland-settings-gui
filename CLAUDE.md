@@ -42,17 +42,17 @@ Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/do
 - Agent-facing docs (this file, `CONTEXT.md`, everything under `docs/agents/`): load `/mattpocock-skills:writing-for-agents` before writing or editing one.
 - Shared venv at `.venv` (system-site-packages: `gi` importable; ruff, mypy, pytest, pytest-xdist installed). Use `.venv/bin/<tool>`, from worktrees too; never create another venv. Done means the checks in `docs/agents/local-checks.md` § Done checks pass.
 - The owner's desktop compositor is their daily session (Omarchy, Lua config). Run the app with `tools/sandbox.py` (windowless: nothing of an agent's may map on the owner's desktop), and send every live probe (`hyprctl keyword`, `dispatch`, `reload`, temporary binds) to a nested Hyprland: `docs/agents/local-checks.md` § Running the app. Settle spec and behaviour disputes there with `hyprctl -j` rather than by reading docs harder.
-- UI-facing work (a page, dialog or widget the user sees) is proven by a widget probe or a cropped screenshot, not only by green UI-tier tests: one session rewrote the entire Binds page and never once looked at it.
+- UI-facing work (a page, dialog or widget the user sees) is proven by a widget probe or a cropped screenshot, not only by green UI-tier tests: one session rewrote the entire Binds page and never once looked at it. A probe that builds widgets in-process, and its screenshot, run only through `tools/widget_probe.py`, on a private Xvfb: `docs/agents/local-checks.md` § Widget probes.
 
 ### Orientation
 
 Read `CONTEXT.md` first; delegate anything broader to a read-only subagent (Explore) and take targeted-range reads only — whole-file surveys of this repo have cost sessions 90k+ context. Build on the investigator's returned map — the #131 session re-derived it with its own reads and greps and spent 78k before its first edit. Map:
 
-- `src/hyprtweaker/engine/` — config engine: `importer/` (hyprlang → model), `schema/` (option schema: sources/resolve/infer), `model/` (options, values), `writer/` (Lua emit), `apply/` (transaction pipeline), `ipc/` (hyprctl commands/events), `state/` (manifest)
+- `src/hyprtweaker/engine/` — config engine: `importer/` (hyprlang → model), `schema/` (option schema: sources/resolve/infer), `model/` (options, values), `writer/` (Lua emit), `apply/` (transaction pipeline), `ipc/` (hyprctl commands/events), `state/` (manifest), `bridge/` (theming-tool registry, Bridge entries, wire/unwire of a tool's config)
 - `src/hyprtweaker/session.py` — session layer bridging engine and UI
 - `src/hyprtweaker/ui/` — `shell/` (window, runtime), `pages/` (plan, config), `rows/` (factory, chrome, state), `dialogs/`
 - `tests/` — `unit/`, `integration/`, `ui/`, `golden/`, `static/`; `corpus/` is third-party rice fixtures, excluded from lint
-- `tools/` — `gen_schema.py` (release check), `sandbox.py` (the app against a nested Hyprland)
+- `tools/` — `gen_schema.py` (release check), `sandbox.py` (the app against a nested Hyprland), `widget_probe.py` (a widget probe on a private Xvfb)
 
 ### Session budget
 

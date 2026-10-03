@@ -6,13 +6,9 @@ module only has to know how to build each *kind*. That is the whole architecture
 here.
 
 The four basic controls -- switch, spinner, combo, entry -- the four complex-value editors
--- colour, gradient, css-gaps, vec2 -- and the suffix strip every one of them wears
-(`chrome.py`: state pills, Value summary, Dependency badge, reset, ⓘ Help popover). Font
-weights are the one type still rendered read-only: the two Options that have one take either
-a number or a preset name, and offering the names is Overlay curation (`labels`) rather than
-a widget this module can invent. They render their value rather than being left out -- an
-Option missing from its Page is one a user cannot find, and a blank control is the falsehood
-prototype #8 measured (`[[EMPTY]]` rendering as an empty row).
+-- colour, gradient, css-gaps, vec2 -- the font-weight picker, and the suffix strip every
+one of them wears (`chrome.py`: state pills, Value summary, Dependency badge, reset, ⓘ Help
+popover). Every widget type is editable; none is rendered read-only.
 
 Five conventions worth stating, four from ADR-0013 and one from ADR-0010:
 
@@ -48,8 +44,12 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Adw, Gdk, Gtk  # noqa: E402
 
 from hyprtweaker.engine.model import (  # noqa: E402
+    FONT_WEIGHT_NAMES,
+    FONT_WEIGHT_RANGE,
+    UNSET,
     Color,
     CssGaps,
+    FontWeight,
     Gradient,
     Vec2,
     display_text,
@@ -61,12 +61,19 @@ from hyprtweaker.engine.schema import (  # noqa: E402
     Widget,
     humanise,
 )
+from hyprtweaker.engine.scripting import (  # noqa: E402
+    LAYOUT_OPTION,
+    LUA_LAYOUT,
+    discovered_layouts,
+    layout_label,
+)
 from hyprtweaker.session import Session  # noqa: E402
-from hyprtweaker.ui.rows.chrome import Navigate, RowChrome  # noqa: E402
+from hyprtweaker.ui.rows.chrome import Navigate, RevealBackend, RowChrome  # noqa: E402
 from hyprtweaker.ui.rows.gesture import Gesture  # noqa: E402
 from hyprtweaker.ui.rows.state import (  # noqa: E402
     NO_VALUE,
     no_value_label,
+    row_value,
     shown_value,
 )
 
@@ -129,6 +136,17 @@ reset arrow is one click back.
 *Not* what "add a colour" puts in a gradient — that duplicates the last stop, so the new
 swatch starts from the colour beside it rather than from an unrelated white."""
 
+_CUSTOM = "Custom"
+"""The font-weight combo's last choice: the app's own, revealing a spinner for a number."""
+
+_NORMAL_WEIGHT = FONT_WEIGHT_NAMES["normal"]
+"""Where the font-weight spinner starts when the held weight is a name Hyprland lacks."""
+
+_WEIGHT_REACH = 999_999.0
+"""The font-weight spinner's bounds, far past what it accepts (`FONT_WEIGHT_RANGE`): a
+spin button clamps typed text to its bounds silently, so the Row checks the range itself and
+says why it refuses a number."""
+
 _ANGLE_MAX = 360.0
 _ANGLE_PAGE = 15.0
 """Angles are a full turn in degrees, paged in 15° steps -- the increments a gradient is
@@ -176,22 +194,29 @@ class RowFactory:
         *,
         on_edited: Callable[[str], None] | None = None,
         navigate: Navigate | None = None,
+        reveal_backend: RevealBackend | None = None,
     ) -> None:
-        """`on_edited` and `navigate` are the two things a Row cannot do for itself.
+        """`on_edited`, `navigate` and `reveal_backend` are what a Row cannot do for itself.
 
         A control that writes to the model has just changed what *other* Rows show -- its
         own reset arrow, and the dependency badge of everything gated on it -- and only the
         window knows where those Rows are. Same for the badge's click: it names an Option,
-        and turning a name into a visible Row is the window's job. Both default to doing
-        nothing so a Row is still buildable in isolation, which the smoke tier relies on.
+        and turning a name into a visible Row is the window's job, as is opening the Theming
+        page on the tool a "Set by <tool>" pill names (#165). All default to doing nothing so
+        a Row is still buildable in isolation, which the smoke tier relies on.
         """
         self._session = session
         self._on_edited = on_edited
         self._navigate = navigate
+        self._reveal_backend = reveal_backend
         self._echo_guard = False
 
     def build(self, option: ResolvedOption) -> OptionRow:
-        """The Row for one Option. Never raises on an unfamiliar widget."""
+        """The Row for one Option.
+
+        Every `Widget` has a branch (`tests/ui/test_row_editors.py` builds each one), so the
+        `ValueError` is for a widget added to the Schema without one.
+        """
         if option.widget is Widget.TOGGLE:
             row = self._toggle(option)
         elif option.widget in _SPIN_WIDGETS:
@@ -208,8 +233,10 @@ class RowFactory:
             row = self._css_gaps(option)
         elif option.widget is Widget.VEC2:
             row = self._vec2(option)
+        elif option.widget is Widget.FONT_WEIGHT:
+            row = self._font_weight(option)
         else:
-            row = self._read_only(option)
+            raise ValueError(f"no Row is built for the {option.widget.value!r} widget")
 
         # Only the values: the chrome decided itself when `_row` built it.
         row.refresh()
@@ -268,7 +295,8 @@ class RowFactory:
         # The unit belongs in the title: "`px` / `ms` / `deg` / `/s` in the title, so the
         # number means something" (prototype #8 FINDINGS, curation policy, 22 Options).
         row.set_title(f"{option.title} ({option.unit})" if option.unit else option.title)
-        row.set_subtitle(option.description)
+        # The subtitle is the chrome's (`RowState.subtitle`): the description, plus why the
+        # control is read-only on a Row that is, which can change while the Row is shown.
 
     def _chrome(
         self,
@@ -283,6 +311,7 @@ class RowFactory:
             self._session,
             on_reset=self._unset,
             navigate=self._navigate,
+            reveal_backend=self._reveal_backend,
         )
 
     # --- every write to the model goes through these ------------------------------------------
@@ -338,7 +367,8 @@ class RowFactory:
 
         def refresh() -> None:
             with self._quiet():
-                switch.set_active(bool(self._session.effective_value(option)))
+                value = row_value(option, self._session)
+                switch.set_active(bool(option.default if value is UNSET else value))
 
         def changed(*_: Any) -> None:
             if not self._echo_guard:
@@ -367,7 +397,7 @@ class RowFactory:
         row, chrome = self._row(option, control)
 
         def refresh() -> None:
-            value = shown_value(option, self._session.value_of(option))
+            value = shown_value(option, row_value(option, self._session))
             with self._quiet():
                 spin.set_value(_as_number(value, _parked(low, high)))
                 _show_value(control, value is not NO_VALUE)
@@ -439,17 +469,42 @@ class RowFactory:
         return stack
 
     def _combo(self, option: ResolvedOption) -> OptionRow:
-        choices = _choices(option)
-        dropdown = Gtk.DropDown(
-            model=Gtk.StringList.new([label for _, label in choices]),
-            valign=Gtk.Align.CENTER,
-        )
+        choices = list(_choices(option))
+        is_open = option.known_values is not None and option.known_values.open
+        if option.name == LAYOUT_OPTION:
+            # ADR-0018 §Custom layouts: the Lua layouts the user's files register are
+            # choices here, and only choices -- writing one stays in `user.lua`. Gated on
+            # the Option, not on an open list: "open" means "holds values not listed",
+            # not "is a layout".
+            offered = {value for value, _ in choices}
+            choices.extend(
+                (value, layout_label(value, found=True))
+                for value in discovered_layouts(self._session.paths)
+                if value not in offered
+            )
+        labels = Gtk.StringList.new([label for _, label in choices])
+        dropdown = Gtk.DropDown(model=labels, valign=Gtk.Align.CENTER)
         row, chrome = self._row(option, dropdown)
 
         def refresh() -> None:
-            value = shown_value(option, self._session.value_of(option))
+            value = shown_value(option, row_value(option, self._session))
+            held = None if value is NO_VALUE else value
+            index = _index_of(choices, held)
             with self._quiet():
-                dropdown.set_selected(_index_of(choices, None if value is NO_VALUE else value))
+                if index == Gtk.INVALID_LIST_POSITION and is_open and isinstance(held, str):
+                    # An open list holds what its choices do not name: shown as itself and
+                    # selected, never blank and never rewritten to the first choice.
+                    choices.append((held, layout_label(held, found=False)))
+                    labels.append(choices[-1][1])
+                    index = len(choices) - 1
+                dropdown.set_selected(index)
+            explain()
+
+        def explain() -> None:
+            # The short "(not found)" keeps the Row's title readable; the why is one hover away.
+            index = dropdown.get_selected()
+            held = choices[index][0] if index < len(choices) else None
+            dropdown.set_tooltip_text(_unfound_layout_tooltip(held, choices))
 
         def changed(*_: Any) -> None:
             if self._echo_guard:
@@ -458,6 +513,7 @@ class RowFactory:
             if index >= len(choices):
                 return
             self._set(option, choices[index][0])
+            explain()
 
         dropdown.connect("notify::selected", changed)
         return OptionRow(option, row, dropdown, refresh, chrome)
@@ -479,7 +535,7 @@ class RowFactory:
         row, chrome = self._row(option, entry)
 
         def shown_text() -> str:
-            value = shown_value(option, self._session.value_of(option))
+            value = shown_value(option, row_value(option, self._session))
             return "" if value is NO_VALUE else display_text(value)
 
         def refresh() -> None:
@@ -526,12 +582,12 @@ class RowFactory:
         """
         button = Gtk.ColorDialogButton(
             dialog=Gtk.ColorDialog(with_alpha=True, modal=True),
-            rgba=_rgba(_DEFAULT_STOP),
+            rgba=gdk_rgba(_DEFAULT_STOP),
             valign=Gtk.Align.CENTER,
         )
         control = (
             self._placeholder_stack(
-                option, button, on_set=lambda: self._set(option, _color_of(button))
+                option, button, on_set=lambda: self._set(option, color_of(button))
             )
             if option.nullable
             else button
@@ -539,18 +595,20 @@ class RowFactory:
         row, chrome = self._row(option, control)
 
         def refresh() -> None:
-            value = shown_value(option, self._session.value_of(option))
+            value = shown_value(option, row_value(option, self._session))
             with self._quiet():
                 # `_DEFAULT_STOP` when there is no value, not "leave whatever was there":
                 # the placeholder's click writes the button's current colour, and a button
                 # still holding the colour the Row was just reset *from* would make reset
                 # then set silently reinstate it rather than start fresh.
-                button.set_rgba(_rgba(_DEFAULT_STOP if value is NO_VALUE else _as_color(value)))
+                button.set_rgba(
+                    gdk_rgba(_DEFAULT_STOP if value is NO_VALUE else _as_color(value))
+                )
                 _show_value(control, value is not NO_VALUE)
 
         def changed(*_: Any) -> None:
             if not self._echo_guard:
-                self._set(option, _color_of(button))
+                self._set(option, color_of(button))
 
         button.connect("notify::rgba", changed)
         return OptionRow(option, row, control, refresh, chrome)
@@ -578,7 +636,7 @@ class RowFactory:
             hexpand=True,
         )
         editor = _editor_box()
-        editor.append(_field("Colours", stops))
+        editor.append(_field("Colors", stops))
         editor.append(_field("Angle (°)", angle, expand=True))
         # The two `color_inactive` gradients fall back to their related colour when unset,
         # and an editor opening on one opaque white stop at 0° would be stating a gradient
@@ -609,7 +667,7 @@ class RowFactory:
             if index >= len(gradient.colors):
                 return
             colors = list(gradient.colors)
-            colors[index] = _color_of(button)
+            colors[index] = color_of(button)
             self._set(option, replace(gradient, colors=tuple(colors)))
 
         def add_stop() -> None:
@@ -635,9 +693,9 @@ class RowFactory:
                 # value it was built from straight back into the model.
                 button = Gtk.ColorDialogButton(
                     dialog=Gtk.ColorDialog(with_alpha=True, modal=True),
-                    rgba=_rgba(color),
+                    rgba=gdk_rgba(color),
                     valign=Gtk.Align.CENTER,
-                    tooltip_text=f"Colour {index + 1}",
+                    tooltip_text=f"Color {index + 1}",
                 )
                 button.connect(
                     "notify::rgba", lambda widget, _p, at=index: stop_changed(at, widget)
@@ -647,12 +705,12 @@ class RowFactory:
                     stops.append(
                         _icon_button(
                             "list-remove-symbolic",
-                            f"Remove colour {index + 1}",
+                            f"Remove color {index + 1}",
                             lambda _b, at=index: remove_stop(at),
                         )
                     )
             stops.append(
-                _icon_button("list-add-symbolic", "Add a colour", lambda _b: add_stop())
+                _icon_button("list-add-symbolic", "Add a color", lambda _b: add_stop())
             )
 
         def refresh() -> None:
@@ -661,7 +719,8 @@ class RowFactory:
                 angle.set_value(gradient.angle)
                 rebuild(gradient)
                 _show_value(
-                    control, shown_value(option, self._session.value_of(option)) is not NO_VALUE
+                    control,
+                    shown_value(option, row_value(option, self._session)) is not NO_VALUE,
                 )
 
         def angle_changed(*_: Any) -> None:
@@ -695,7 +754,7 @@ class RowFactory:
 
         sides = Gtk.Grid(column_spacing=12, row_spacing=6)
         for column, side in enumerate(_SIDES):
-            sides.attach(_caption(side.capitalize()), column, 0, 1, 1)
+            sides.attach(caption(side.capitalize()), column, 0, 1, 1)
             sides.attach(spins[side], column, 1, 1, 1)
 
         shape = Gtk.Stack()
@@ -758,7 +817,8 @@ class RowFactory:
                 uniform.set_active(gaps.top == gaps.right == gaps.bottom == gaps.left)
                 show(gaps)
                 _show_value(
-                    control, shown_value(option, self._session.value_of(option)) is not NO_VALUE
+                    control,
+                    shown_value(option, row_value(option, self._session)) is not NO_VALUE,
                 )
 
         uniform.connect("toggled", shape_toggled)
@@ -810,7 +870,7 @@ class RowFactory:
         `option.type`, and an Overlay that gave an Option a `widget` its `type` disagrees
         with would otherwise hand a gradient editor a `CssGaps` to unpack.
         """
-        value = shown_value(option, self._session.value_of(option))
+        value = shown_value(option, row_value(option, self._session))
         if value is NO_VALUE:
             return fallback
         try:
@@ -819,28 +879,179 @@ class RowFactory:
             return fallback
         return parsed if isinstance(parsed, type(fallback)) else fallback
 
-    # --- what has no editor yet ---------------------------------------------------------------
+    # --- font weights ---------------------------------------------------------------------
 
-    def _read_only(self, option: ResolvedOption) -> OptionRow:
-        """Font weights, shown but not editable.
+    def _font_weight(self, option: ResolvedOption) -> OptionRow:
+        """A weight name from a combo, or a number typed after choosing "Custom".
 
-        The two Options that have one take either a number (`400`) or a preset name
-        (`"bold"`), and a control that offered both would be inventing the preset list --
-        which is Overlay curation (`labels`), not a widget. Shown as their display text so
-        the Page still answers "what is this set to?", which is the question an omitted Row
-        cannot answer at all.
+        Hyprland takes either (`"bold"` or `700`), so the Row writes what the user chose: a
+        name as the name, a number as the number. The names are Hyprland's own
+        (`FONT_WEIGHT_NAMES`, in weight order); the Overlay's `labels` only spell them for
+        display, so a label for a name Hyprland lacks never reaches the combo.
+
+        One `Gtk.Box` is the Row's single control (ADR-0013 §3), so the dependency badge dims
+        the combo and the spinner together. The spinner shows only while "Custom" is chosen.
+        A box is not focusable, so the Row names the combo as its activatable widget: a click
+        on the Row body opens the combo, as on every other combo Row.
+
+        **What a held value shows, never rewriting it.** A name, or a number equal to a
+        name's weight, selects that name: a held `700` reads "Bold" and stays `700`. Any
+        other number selects "Custom" and shows as typed, even outside 100 to 1000. A name
+        the list lacks (an imported `"extrabold"`) joins the list as written, before
+        "Custom", as the bind editor keeps an unlisted value (#86).
+
+        A typed number a name matches reads as that name once Enter or focus leaving commits
+        it, and stays a number in the model.
+
+        **A typed number outside 100 to 1000 is refused, with the reason beside it.** The
+        spinner's own bounds are wide on purpose: a spin button clamps out-of-range text to
+        its bound, which would write `1000` for a typed `1200` without a word.
         """
-        label = Gtk.Label(valign=Gtk.Align.CENTER, css_classes=["dim-label"], selectable=True)
-        row, chrome = self._row(option, label)
+        names = list(FONT_WEIGHT_NAMES)
+        shown = option.labels or {}
+        low, high = FONT_WEIGHT_RANGE[0], FONT_WEIGHT_RANGE[-1]
+        strings = Gtk.StringList.new([*(shown.get(n, humanise(n)) for n in names), _CUSTOM])
+        dropdown = Gtk.DropDown(model=strings, valign=Gtk.Align.CENTER)
+        spin = Gtk.SpinButton(
+            adjustment=Gtk.Adjustment(
+                lower=-_WEIGHT_REACH,
+                upper=_WEIGHT_REACH,
+                step_increment=10.0,
+                page_increment=100.0,
+            ),
+            digits=0,
+            numeric=True,
+            valign=Gtk.Align.CENTER,
+            width_chars=5,
+            tooltip_text=f"A weight from {low} (thin) to {high} (ultraheavy)",
+            visible=False,
+        )
+        refusal = Gtk.Label(
+            css_classes=["error", "caption"],
+            visible=False,
+            justify=Gtk.Justification.RIGHT,
+            xalign=1.0,
+            # Under the controls, wrapping within their width: beside them it took the
+            # Row's width and squeezed the title to one word per line (#148 hand-test 23).
+            wrap=True,
+            max_width_chars=28,
+        )
+        pickers = Gtk.Box(spacing=6, halign=Gtk.Align.END)
+        pickers.append(dropdown)
+        pickers.append(spin)
+        control = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=4, valign=Gtk.Align.CENTER
+        )
+        control.append(pickers)
+        control.append(refusal)
+        row, chrome = self._row(option, control)
+        row.set_activatable_widget(dropdown)
+
+        unlisted: str | None = None  # a held name the list lacks, offered before "Custom"
+        last_good = _NORMAL_WEIGHT  # what the spinner goes back to after a refusal
+
+        def offer(name: str | None) -> None:
+            nonlocal unlisted
+            if name != unlisted:
+                strings.splice(
+                    len(names), 0 if unlisted is None else 1, [] if name is None else [name]
+                )
+                unlisted = name
+
+        def show_number(number: int) -> None:
+            nonlocal last_good
+            last_good = number
+            with self._quiet():
+                spin.set_value(number)
+
+        def refuse(message: str | None) -> None:
+            refusal.set_text(message or "")
+            refusal.set_visible(message is not None)
+            if message is None:
+                spin.remove_css_class("error")
+            else:
+                spin.add_css_class("error")
 
         def refresh() -> None:
-            value = shown_value(option, self._session.value_of(option))
-            if value is NO_VALUE:
-                label.set_text(no_value_label(option))
-            else:
-                label.set_text(display_text(value))
+            held = self._typed(option, FontWeight(_NORMAL_WEIGHT))
+            named = next(
+                (
+                    i
+                    for i, name in enumerate(names)
+                    if FONT_WEIGHT_NAMES.get(name) == held.number
+                ),
+                None,
+            )
+            refuse(None)
+            show_number(held.number if held.number is not None else _NORMAL_WEIGHT)
+            with self._quiet():
+                if named is not None:
+                    offer(None)
+                    dropdown.set_selected(named)
+                elif isinstance(held.weight, str):
+                    offer(held.weight)
+                    dropdown.set_selected(len(names))
+                else:
+                    offer(None)
+                    dropdown.set_selected(strings.get_n_items() - 1)
+                spin.set_visible(named is None and isinstance(held.weight, int))
 
-        return OptionRow(option, row, label, refresh, chrome)
+        def chosen(*_: Any) -> None:
+            if self._echo_guard:
+                return
+            index = dropdown.get_selected()
+            refuse(None)
+            custom = index == strings.get_n_items() - 1
+            spin.set_visible(custom)
+            if custom:
+                return  # reveals the spinner at the current weight; writes nothing
+            if index < len(names):
+                show_number(FONT_WEIGHT_NAMES[names[index]])
+                self._set(option, names[index])
+            elif unlisted is not None:
+                self._set(option, unlisted)
+
+        def typed(*_: Any) -> None:
+            if self._echo_guard:
+                return
+            number = int(spin.get_value())
+            if number == last_good:
+                return  # the spinner's own echo of a restore, or no change at all
+            if number not in FONT_WEIGHT_RANGE:
+                # 0 is what an empty or wordy entry parses to (a numeric spinner drops the
+                # letters): "0 is out of range" answered a number nobody typed (hand-test 22).
+                refuse(
+                    f"Type the weight as a number from {low} to {high}."
+                    if number == 0
+                    else f"{number} is out of range.\nUse a weight from {low} to {high}."
+                )
+                show_number(last_good)
+                return
+            refuse(None)
+            show_number(number)
+            # Per keystroke-commit and per held arrow repeat: the queue coalesces the burst
+            # (ADR-0010), as for every spinner.
+            self._touch(option, number)
+
+        def committed(*_: Any) -> None:
+            """Enter, or focus leaving: a typed weight a name matches now reads as that name,
+            as the same number held in the file does. Nothing more is written."""
+            spin.update()
+            if refusal.get_visible():
+                # A refused weight stays said: refreshing here cleared the caption and showed
+                # the held weight's name, as if the typed one had been taken (hand-test 24).
+                return
+            held = self._typed(option, FontWeight(_NORMAL_WEIGHT))
+            if spin.get_visible() and held.number in FONT_WEIGHT_NAMES.values():
+                refresh()
+
+        focus = Gtk.EventControllerFocus()
+        focus.connect("leave", committed)
+        spin.add_controller(focus)
+        dropdown.connect("notify::selected", chosen)
+        spin.connect("notify::value", typed)
+        spin.connect("activate", committed)
+        return OptionRow(option, row, control, refresh, chrome)
 
     # --- echo suppression -------------------------------------------------------------------
 
@@ -916,19 +1127,22 @@ def _field(label: str, control: Gtk.Widget, *, expand: bool = False) -> Gtk.Box:
     of width it can get, while a spin button stretched across 700 px is a text field with
     two tiny arrows a long way from the number (seen on the running app).
     """
-    caption = _caption(label)
-    caption.set_hexpand(not expand)
+    name = caption(label)
+    name.set_hexpand(not expand)
     control.set_hexpand(expand)
     control.set_halign(Gtk.Align.FILL if expand else Gtk.Align.END)
 
     box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-    box.append(caption)
+    box.append(name)
     box.append(control)
     return box
 
 
-def _caption(text: str) -> Gtk.Label:
-    return Gtk.Label(label=text, xalign=0.0, css_classes=["caption", "dim-label"])
+def caption(text: str, *, expand: bool = False) -> Gtk.Label:
+    """A dim caption naming one part of a control: a gap side, an editor field."""
+    return Gtk.Label(
+        label=text, xalign=0.0, hexpand=expand, css_classes=["caption", "dim-label"]
+    )
 
 
 def _icon_button(icon: str, tooltip: str, clicked: Callable[..., None]) -> Gtk.Button:
@@ -991,21 +1205,21 @@ def _ends_gesture(widget: Gtk.Widget, gesture: Gesture) -> None:
     widget.add_controller(focus)
 
 
-def _rgba(color: Color) -> Gdk.RGBA:
+def gdk_rgba(color: Color) -> Gdk.RGBA:
     """A model colour as GTK's. Through `#rrggbbaa` -- alpha last, as everywhere but ARGB."""
     rgba = Gdk.RGBA()
     rgba.parse(f"#{color.rgba:08x}")
     return rgba
 
 
-def _color_of(button: Gtk.ColorDialogButton) -> Color:
+def color_of(button: Gtk.ColorDialogButton) -> Color:
     """GTK's colour as the model's packed ARGB word."""
-    rgba = button.get_rgba()
+    shown = button.get_rgba()
     return Color(
-        (_byte(rgba.alpha) << 24)
-        | (_byte(rgba.red) << 16)
-        | (_byte(rgba.green) << 8)
-        | _byte(rgba.blue)
+        (_byte(shown.alpha) << 24)
+        | (_byte(shown.red) << 16)
+        | (_byte(shown.green) << 8)
+        | _byte(shown.blue)
     )
 
 
@@ -1088,6 +1302,19 @@ def _choices(option: ResolvedOption) -> tuple[tuple[Any, str], ...]:
     return tuple(entries)
 
 
+def _unfound_layout_tooltip(value: Any, choices: list[tuple[Any, str]]) -> str | None:
+    """Why a held `lua:<name>` reads "(not found)", or `None` for any other choice."""
+    if not isinstance(value, str) or not value.startswith(LUA_LAYOUT):
+        return None
+    if (value, layout_label(value, found=False)) not in choices:
+        return None
+    name = value.removeprefix(LUA_LAYOUT)
+    return (
+        f"No Lua file of yours registers a layout named “{name}”. "
+        "The setting is kept as it is until you choose another layout."
+    )
+
+
 def _typed(option: ResolvedOption, key: str) -> Any:
     """A `labels` key as the value it stands for.
 
@@ -1106,10 +1333,8 @@ def _typed(option: ResolvedOption, key: str) -> Any:
 def _index_of(choices: tuple[tuple[Any, str], ...], value: Any) -> int:
     """Which choice a model value selects. Unknown values select nothing rather than lying.
 
-    An open `known_values` list (`general:layout` accepts `lua:<name>` for any registered
-    layout) can hold a value no choice offers. Selecting the first entry would quietly
-    report the wrong layout; `Gtk.INVALID_LIST_POSITION` shows the combo as unset, which is
-    the truth until #76 puts discovered layouts in the list.
+    Selecting the first entry would quietly report the wrong value. An open `known_values`
+    list never gets here empty-handed: `_combo` adds the held value to its choices first.
     """
     for index, (candidate, _) in enumerate(choices):
         if candidate == value and isinstance(candidate, bool) == isinstance(value, bool):

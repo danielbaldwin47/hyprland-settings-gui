@@ -30,8 +30,10 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Adw, Gdk, Gtk, Pango  # noqa: E402
 
 from hyprtweaker.engine.schema import ResolvedOption  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 from hyprtweaker.ui.rows.state import (  # noqa: E402
     HelpContent,
+    Pill,
     RowContext,
     RowState,
     help_content,
@@ -42,8 +44,25 @@ _SWATCH = 14.0
 """Side of one gradient swatch, in pixels. Big enough to read a colour off, small enough that
 a four-stop gradient does not start competing with the Row's title for width."""
 
+_EDGE_ALPHA = 0.6
+"""How much of the foreground colour the strip's hairline edge takes (ADR-0019).
+
+The edge is what keeps a stop the colour of the ground from vanishing into it. Measured on
+the rendered strip: 0.6 gives at least 3:1 (WCAG 1.4.11, a graphical object's boundary)
+against the Row's card on both grounds and against a near-black or near-white stop; 0.5 fell
+short on the light ground, where Adwaita's foreground is itself 80% opaque."""
+
+_CHECKER = 4
+"""Side of one checkerboard cell under a see-through stop, in pixels, and its two greys:
+the ones GTK's own colour swatch uses, so a stop reads the same here as on the colour button
+in the expanded editor."""
+_CHECKER_GREYS = (0.66, 0.33)
+
 Navigate = Callable[[str], None]
 """Show the Row for an Option name. The window's job -- the factory only knows the name."""
+
+RevealBackend = Callable[[str], None]
+"""Open the Theming page on a tool, by its registry name: a "Set by <tool>" pill's click."""
 
 _HELP_WIDTH_CHARS = 34
 """Wrap width for the popover's prose. A popover with no width request grows to the width of
@@ -69,12 +88,16 @@ class RowChrome:
         *,
         on_reset: Callable[[str], None],
         navigate: Navigate | None = None,
+        reveal_backend: RevealBackend | None = None,
     ) -> None:
         self._option = option
         self._context = context
+        self._row = row
         self._control = control
         self._on_reset = on_reset
         self._navigate = navigate
+        self._reveal_backend = reveal_backend
+        self._shown_pills: tuple[Pill, ...] | None = None
 
         self._pills = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self._pills.set_valign(Gtk.Align.CENTER)
@@ -174,20 +197,36 @@ class RowChrome:
     def pill_labels(self) -> tuple[str, ...]:
         return tuple(pill.label for pill in self._state.pills)
 
+    @property
+    def pill_buttons(self) -> tuple[Gtk.Button, ...]:
+        """The pills that lead somewhere, in strip order. The UI tier clicks them."""
+        found = []
+        child = self._pills.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Button):
+                found.append(child)
+            child = child.get_next_sibling()
+        return tuple(found)
+
     # --- keeping up with the model -----------------------------------------------------------
 
     def refresh(self) -> None:
         """Recompute the whole strip. Cheap enough to run on every Row that could have moved.
 
-        Control sensitivity is set here rather than by the Page, because two independent
-        things decide it -- the session being live and the dependency being met -- and a
-        second writer would race the first back to the wrong answer.
+        Control sensitivity is set here rather than by the Page, because three independent
+        things decide it -- the session being live, the dependency being met, and the
+        running Hyprland taking the Option (#215) -- and a second writer would race the first
+        back to the wrong answer. The subtitle is set here for the same reason: it says why
+        the control is read-only, and that changes while the Row is shown.
         """
         state = row_state(self._option, self._context)
         self._state = state
 
         self._set_pills(state)
         self._set_summary(state)
+        # The factory turned markup off before the title went in (#228): a description or a
+        # kept value with `&` or `<` in it is text, never markup.
+        self._row.set_subtitle(state.subtitle)
 
         badge = state.dependency
         self._dependency.set_visible(badge is not None)
@@ -216,15 +255,37 @@ class RowChrome:
         self._swatches.set_colors(summary.swatches)
 
     def _set_pills(self, state: RowState) -> None:
+        # Rebuilt only when the pills change, so a refresh while the keyboard is on a pill
+        # button (any edit elsewhere syncs every Row) does not pull the focus out from under it.
+        if state.pills == self._shown_pills:
+            return
+        self._shown_pills = state.pills
         while (child := self._pills.get_first_child()) is not None:
             self._pills.remove(child)
+            release(child)  # a button's handler holds this chrome (#219)
         for pill in state.pills:
+            self._pills.append(self._pill(pill))
+        self._pills.set_visible(bool(state.pills))
+
+    def _pill(self, pill: Pill) -> Gtk.Widget:
+        """A label, or a button where the pill leads somewhere and the window can take it
+        there: a focusable button, so a keyboard user can follow it as a pointer can."""
+        if pill.backend is None or self._reveal_backend is None:
             label = _pill_label(pill.label)
             label.add_css_class("pill")
             label.add_css_class("dim-label")
             label.set_tooltip_text(pill.tooltip)
-            self._pills.append(label)
-        self._pills.set_visible(bool(state.pills))
+            return label
+        # Dressed as the dependency badge is, the Row's other pill that navigates (ADR-0013).
+        button = Gtk.Button(
+            child=_pill_label(pill.label),
+            css_classes=["pill", "flat", "caption"],
+            valign=Gtk.Align.CENTER,
+            hexpand=False,
+            tooltip_text=pill.tooltip,
+        )
+        button.connect("clicked", self._on_pill_clicked, pill.backend)
+        return button
 
     # --- signals -----------------------------------------------------------------------------
 
@@ -232,6 +293,10 @@ class RowChrome:
         badge = self._state.dependency
         if badge is not None and self._navigate is not None:
             self._navigate(badge.option)
+
+    def _on_pill_clicked(self, _button: Gtk.Button, tool: str) -> None:
+        if self._reveal_backend is not None:
+            self._reveal_backend(tool)
 
     def _on_reset_clicked(self, _button: Gtk.Button) -> None:
         # Reset means Unset -- stop emitting the Option -- never write-the-default-value
@@ -282,13 +347,44 @@ class SwatchStrip:
         self.widget.queue_draw()
 
     def _draw(self, _area: Gtk.DrawingArea, context: Any, width: int, height: int) -> None:
+        """Stops inside a hairline edge, see-through ones over a checkerboard (ADR-0019).
+
+        The edge takes the widget's foreground colour, read on every draw, so it is dark on
+        the light ground and light on the dark one; GTK redraws the strip when the colour
+        scheme changes the style, which the widget probe of #183 confirmed.
+        """
         if not self._rgba:
             return
-        span = width / len(self._rgba)
+        span = (width - 2) / len(self._rgba)
         for index, rgba in enumerate(self._rgba):
+            x = 1 + index * span
+            if rgba.alpha < 1:
+                _checkerboard(context, x, 1, span, height - 2)
             context.set_source_rgba(rgba.red, rgba.green, rgba.blue, rgba.alpha)
-            context.rectangle(index * span, 0, span, height)
+            context.rectangle(x, 1, span, height - 2)
             context.fill()
+        edge = self.widget.get_color()
+        context.set_source_rgba(edge.red, edge.green, edge.blue, edge.alpha * _EDGE_ALPHA)
+        context.set_line_width(1)
+        context.rectangle(0.5, 0.5, width - 1, height - 1)
+        context.stroke()
+
+
+def _checkerboard(context: Any, x: float, y: float, width: float, height: float) -> None:
+    """Paint GTK's colour-swatch checkerboard into one rectangle, so alpha reads as alpha."""
+    context.save()
+    context.rectangle(x, y, width, height)
+    context.clip()
+    light, dark = _CHECKER_GREYS
+    context.set_source_rgb(light, light, light)
+    context.paint()
+    context.set_source_rgb(dark, dark, dark)
+    for row in range(int(height // _CHECKER) + 1):
+        for column in range(int(width // _CHECKER) + 1):
+            if (row + column) % 2:
+                context.rectangle(x + column * _CHECKER, y + row * _CHECKER, _CHECKER, _CHECKER)
+    context.fill()
+    context.restore()
 
 
 _BADGE_CHARS = 20
@@ -315,11 +411,17 @@ def _pill_label(text: str = "") -> Gtk.Label:
 
 
 def _badge_label() -> Gtk.Label:
+    # Two lines at the same width before the ellipsis: one line cut most titles short at
+    # every window width ("Requires Snap floating ...", #148 hand-test 6).
     return Gtk.Label(
         css_classes=["caption"],
         valign=Gtk.Align.CENTER,
         hexpand=False,
         ellipsize=Pango.EllipsizeMode.END,
+        wrap=True,
+        wrap_mode=Pango.WrapMode.WORD_CHAR,
+        lines=2,
+        justify=Gtk.Justification.CENTER,
         width_chars=_BADGE_CHARS,
         max_width_chars=_BADGE_CHARS,
     )

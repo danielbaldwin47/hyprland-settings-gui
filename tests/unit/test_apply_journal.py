@@ -13,6 +13,8 @@ state nobody ever checked.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -25,12 +27,18 @@ from _fake_hyprland import (
 )
 from _support import SAMPLE_APP_VERSION, SAMPLE_VERSION, SCHEMA_DIR
 
-from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult, ApplyTransaction
+from hyprtweaker.engine.apply import (
+    ApplyOutcome,
+    ApplyResult,
+    ApplyTransaction,
+    EntrypointTransaction,
+    RestoreTransaction,
+)
 from hyprtweaker.engine.ipc import CommandClient, EventStream
 from hyprtweaker.engine.model import ConfigModel
 from hyprtweaker.engine.paths import ENTRYPOINT_NAME, ConfigPaths
 from hyprtweaker.engine.schema import load_schema
-from hyprtweaker.engine.state import Journal
+from hyprtweaker.engine.state import Journal, LastKnownGood
 from hyprtweaker.engine.writer import Writer
 
 GAPS_IN = "general:gaps_in"
@@ -268,3 +276,168 @@ def test_a_transaction_without_a_journal_still_applies(tmp_path: Path) -> None:
 
     assert run_with_fake(scenario, fake).outcome is ApplyOutcome.OK
     assert not paths.journal.exists()
+
+
+# --- a crash between the write and the commit ----------------------------------------------
+
+
+async def crash_after_the_write(run: Awaitable[ApplyResult]) -> None:
+    """Run a transaction to its first wait -- the reload, after the write -- and kill it there.
+
+    Cancellation skips the commit exactly as a dead process does: the files are replaced,
+    the Journal entry is never written. What survives is whatever reached disk before.
+    """
+    task = asyncio.ensure_future(run)
+    await asyncio.sleep(0)
+    assert not task.done(), "the precondition: the transaction is waiting on its reload"
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+def test_an_apply_killed_before_its_commit_leaves_the_pre_write_bytes_in_the_journal(
+    tmp_path: Path,
+) -> None:
+    """ADR-0010 §Rollback: "Before each write, the transaction snapshots the previous bytes"."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    model = fresh_model()
+    model.set(GAPS_IN, 6)
+    Writer(paths, SAMPLE_APP_VERSION).write(model)  # history the Journal never saw
+    previous = (paths.app_dir / GENERAL_MODULE).read_bytes()
+
+    async def scenario(transaction: ApplyTransaction, _fake: FakeHyprland) -> None:
+        model.set(GAPS_IN, 12)
+        await crash_after_the_write(transaction.run([GAPS_IN]))
+        assert (paths.app_dir / GENERAL_MODULE).read_bytes() != previous, (
+            "the precondition: the write landed"
+        )
+
+    with_transaction(tmp_path, model, scenario)
+
+    recovered = Journal(paths).recover()
+    assert recovered is not None and recovered.outcome == "interrupted"
+    change = recovered.change(GENERAL_MODULE)
+    assert change is not None
+    assert Journal(paths).snapshot(change.before) == previous
+
+
+def test_a_rescue_killed_before_its_commit_keeps_the_hand_edit_it_overwrote(
+    tmp_path: Path,
+) -> None:
+    """ADR-0016 §Zero-binds spends a hand edit without asking, on the promise that it is
+    "preserved in the Journal". A crash before the commit must not break that promise."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    model = fresh_model()
+    model.set(GAPS_IN, 6)
+    hand_edit = b"-- hand edited, and broken\n"
+
+    async def scenario(transaction: ApplyTransaction, fake: FakeHyprland) -> None:
+        await transaction.run([GAPS_IN])
+        journal = Journal(paths)
+        good = journal.last_known_good(GENERAL_MODULE)
+        assert good is not None
+        (paths.app_dir / GENERAL_MODULE).write_bytes(hand_edit)
+
+        restore = RestoreTransaction(
+            model=model,
+            writer=Writer(paths, SAMPLE_APP_VERSION),
+            client=CommandClient(fake.instance),
+            reloader=transaction.reloader,
+            restores=[good],
+            journal=journal,
+        )
+        await crash_after_the_write(restore.run(()))
+        assert (paths.app_dir / GENERAL_MODULE).read_bytes() == good.data, (
+            "the precondition: the restore overwrote the hand edit"
+        )
+
+    with_transaction(tmp_path, model, scenario)
+
+    recovered = Journal(paths).recover()
+    assert recovered is not None
+    change = recovered.change(GENERAL_MODULE)
+    assert change is not None
+    assert Journal(paths).snapshot(change.before) == hand_edit
+
+
+def test_an_entrypoint_fix_killed_before_its_commit_keeps_the_hand_edit_it_overwrote(
+    tmp_path: Path,
+) -> None:
+    """ADR-0010 §Rollback, for ADR-0016's Entrypoint Fix: it overwrites a hand-edited
+    `hyprland.lua` by design, so a crash before the commit must still leave that edit."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    model = fresh_model()
+    model.set(GAPS_IN, 6)
+    hand_edit = b"this is not lua {\n"
+
+    async def scenario(transaction: ApplyTransaction, fake: FakeHyprland) -> None:
+        await transaction.run([GAPS_IN])
+        paths.entrypoint.write_bytes(hand_edit)
+        writer = Writer(paths, SAMPLE_APP_VERSION)
+
+        fix = EntrypointTransaction(
+            model=model,
+            client=CommandClient(fake.instance),
+            reloader=transaction.reloader,
+            write=lambda before: writer.regenerate_entrypoint(model, before_replace=before),
+            journal=Journal(paths),
+        )
+        await crash_after_the_write(fix.run(()))
+        assert paths.entrypoint.read_bytes() != hand_edit, (
+            "the precondition: the fix overwrote the hand edit"
+        )
+
+    with_transaction(tmp_path, model, scenario)
+
+    recovered = Journal(paths).recover()
+    assert recovered is not None and recovered.outcome == "interrupted"
+    change = recovered.change(ENTRYPOINT_NAME)
+    assert change is not None
+    assert Journal(paths).snapshot(change.before) == hand_edit
+
+
+def test_a_rescue_refused_after_its_first_module_landed_journals_what_it_overwrote(
+    tmp_path: Path,
+) -> None:
+    """`Writer.restore` gates per Module, so a two-Module rescue can replace the first and
+    then refuse the second. The first Module's overwritten hand edit is still the user's,
+    and the result must not claim nothing was written."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    model = fresh_model()
+    model.set(GAPS_IN, 6)
+    hand_edit = b"-- hand edited, and broken\n"
+    results: list[ApplyResult] = []
+
+    async def scenario(transaction: ApplyTransaction, fake: FakeHyprland) -> None:
+        await transaction.run([GAPS_IN])
+        journal = Journal(paths)
+        good = journal.last_known_good(GENERAL_MODULE)
+        assert good is not None
+        (paths.app_dir / GENERAL_MODULE).write_bytes(hand_edit)
+        unparseable = LastKnownGood(
+            module=DECORATION_MODULE, data=b"this is (not lua\n", options=(), at=good.at
+        )
+
+        restore = RestoreTransaction(
+            model=model,
+            writer=Writer(paths, SAMPLE_APP_VERSION),
+            client=CommandClient(fake.instance),
+            reloader=transaction.reloader,
+            restores=[good, unparseable],
+            journal=journal,
+        )
+        results.append(await restore.run(()))
+        assert (paths.app_dir / GENERAL_MODULE).read_bytes() == good.data, (
+            "the precondition: the first Module landed before the second was refused"
+        )
+
+    journal = with_transaction(tmp_path, model, scenario)
+
+    assert [result.outcome for result in results] == [ApplyOutcome.WRITE_FAILED]
+    newest = journal.entries()[-1]
+    assert newest.outcome == "write-failed"
+    assert newest.modules == (GENERAL_MODULE,)
+    change = newest.change(GENERAL_MODULE)
+    assert change is not None
+    assert journal.snapshot(change.before) == hand_edit
+    assert journal.recover() is None, "the pending record was released, not left behind"

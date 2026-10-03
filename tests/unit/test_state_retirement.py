@@ -1,0 +1,356 @@
+"""ADR-0012 §Retirement: a removed Option stops being emitted and its value is kept.
+
+Every test starts where a real session would: an App dir the Writer wrote from the pinned
+sample model, its Manifest, and a Schema (plus, sometimes, a live snapshot) that no longer
+holds one of the Options the user set. No sockets: the live snapshot is a plain value.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from pathlib import Path
+
+import pytest
+from _support import (
+    SAMPLE_APP_VERSION,
+    sample_model,
+    sample_schema,
+    schema_renaming,
+    schema_without,
+)
+
+from hyprtweaker.engine.model import ConfigModel
+from hyprtweaker.engine.paths import ConfigPaths
+from hyprtweaker.engine.schema import Schema
+from hyprtweaker.engine.state import Manifest, RetiredValue, RetireReason
+from hyprtweaker.engine.state.retirement import (
+    RetiredNotice,
+    Retirement,
+    capture,
+    detect,
+    landed,
+    restore,
+    retire,
+    unannounced,
+)
+from hyprtweaker.engine.writer import Writer
+
+ACTIVE_BORDER = {"colors": ["rgba(33ccffee)", "rgba(00ff99ee)"], "angle": 45}
+"""`general:col.active_border` as the sample model's Module spells it, read back."""
+
+
+@dataclass(frozen=True)
+class Live:
+    """A live snapshot as the Session holds one: a parsable version and the option names."""
+
+    version: str
+    names: frozenset[str]
+
+
+def live(version: str, *, without: tuple[str, ...] = ()) -> Live:
+    return Live(version, frozenset(o.name for o in sample_schema()) - set(without))
+
+
+@pytest.fixture
+def paths(tmp_path: Path) -> ConfigPaths:
+    paths = ConfigPaths.rooted_at(tmp_path)
+    Writer(paths, SAMPLE_APP_VERSION).write(sample_model())
+    return paths
+
+
+def load(paths: ConfigPaths) -> Manifest:
+    return Manifest.load(paths.manifest, app_version="x", schema_version="x")
+
+
+class TestDetect:
+    def test_an_owned_option_the_new_schema_lacks_is_retired(self, paths: ConfigPaths) -> None:
+        """Trigger (a): the app's update ships a schema without the Option.
+
+        `general:allow_tearing` goes too, but the user never set it, so nothing is retired."""
+        schema = schema_without(
+            "general:resize_on_border", "general:allow_tearing", version="0.57.0"
+        )
+
+        assert detect(load(paths), schema, None) == (
+            Retirement("general:resize_on_border", "options/general.lua", "0.57.0"),
+        )
+
+    def test_a_live_snapshot_names_the_release(self, paths: ConfigPaths) -> None:
+        schema = schema_without("general:resize_on_border", version="0.57.0")
+        gone = live("0.57.1", without=("general:resize_on_border",))
+
+        assert detect(load(paths), schema, gone) == (
+            Retirement("general:resize_on_border", "options/general.lua", "0.57.1"),
+        )
+
+    def test_a_name_only_the_schema_lacks_is_retired_quietly(self, paths: ConfigPaths) -> None:
+        """#214: the running Hyprland still describes it, so it was not removed -- the
+        startup read missed, and the supplement that would hold it is not loaded."""
+        schema = schema_without("general:resize_on_border", version="0.57.0")
+
+        assert detect(load(paths), schema, live("0.59.0")) == (
+            Retirement(
+                "general:resize_on_border",
+                "options/general.lua",
+                "0.59.0",
+                RetireReason.NOT_IN_SCHEMA,
+            ),
+        )
+
+    def test_an_option_a_newer_hyprland_dropped_is_retired(self, paths: ConfigPaths) -> None:
+        """Trigger (b): the schema still holds it; the running, newer compositor does not."""
+        found = detect(
+            load(paths),
+            sample_schema(),
+            live("0.57.0", without=("misc:disable_hyprland_logo",)),
+        )
+        assert found == ()
+
+        found = detect(
+            load(paths), sample_schema(), live("0.57.0", without=("decoration:rounding",))
+        )
+        assert found == (Retirement("decoration:rounding", "options/decoration.lua", "0.57.0"),)
+
+    def test_an_older_hyprland_lacking_an_option_is_not_retirement(
+        self, paths: ConfigPaths
+    ) -> None:
+        """Older than the schema, an absent name is an Option not added yet, not one removed."""
+        found = detect(
+            load(paths), sample_schema(), live("0.56.0", without=("decoration:rounding",))
+        )
+
+        assert found == ()
+
+
+class TestRetire:
+    """AC 1: retiring a set Option persists its value and retired-in version."""
+
+    def test_a_schema_update_keeps_the_value_on_disk(self, paths: ConfigPaths) -> None:
+        schema = schema_without(
+            "general:col.active_border", "general:resize_on_border", version="0.57.0"
+        )
+        found = detect(load(paths), schema, None)
+
+        retired = retire(load(paths), found, capture(paths.app_dir, found)).retired
+        Writer(paths, SAMPLE_APP_VERSION).set_retired(ConfigModel(schema), retired)
+
+        assert load(paths).retired == {
+            "general:col.active_border": RetiredValue("0.57.0", ACTIVE_BORDER),
+            "general:resize_on_border": RetiredValue("0.57.0", True),
+        }
+
+    def test_a_newer_hyprland_keeps_the_value_through_the_next_write(
+        self, paths: ConfigPaths
+    ) -> None:
+        """Trigger (b), then the write that stops emitting the key: the value stays."""
+        writer = Writer(paths, SAMPLE_APP_VERSION)
+        found = detect(
+            load(paths), sample_schema(), live("0.57.0", without=("decoration:shadow:offset",))
+        )
+        writer.set_retired(
+            sample_model(), retire(load(paths), found, capture(paths.app_dir, found)).retired
+        )
+
+        model = sample_model()
+        model.unset("decoration:shadow:offset")
+        writer.write(model)
+
+        assert load(paths).retired == {
+            "decoration:shadow:offset": RetiredValue("0.57.0", [0, 2]),
+        }
+        assert "offset" not in (paths.app_dir / "options/decoration.lua").read_text()
+        assert (
+            "decoration:shadow:offset"
+            not in load(paths).modules["options/decoration.lua"].options
+        )
+
+    def test_a_value_the_module_no_longer_holds_is_not_invented(
+        self, paths: ConfigPaths
+    ) -> None:
+        """Hand-deleted Module: nothing to keep, so nothing is recorded as kept."""
+        found = detect(
+            load(paths), schema_without("misc:force_default_wallpaper", version="0.57.0"), None
+        )
+        (paths.app_dir / "options/misc.lua").unlink()
+
+        assert found == (
+            Retirement("misc:force_default_wallpaper", "options/misc.lua", "0.57.0"),
+        )
+        assert capture(paths.app_dir, found) == {}
+        assert retire(load(paths), found, {}).retired == {}
+
+
+def kept(**retired: RetiredValue) -> Manifest:
+    """A Manifest keeping `retired`, with names spelled `section__key` -> `section:key`."""
+    return Manifest(
+        app_version="x",
+        schema_version="x",
+        retired={name.replace("__", ":"): value for name, value in retired.items()},
+    )
+
+
+class TestRestore:
+    """AC 2: a kept value comes back when its Option does -- by downgrade or by rename."""
+
+    def test_a_rename_restores_under_the_new_name_in_one_startup_pass(
+        self, paths: ConfigPaths
+    ) -> None:
+        """The sequence the Session runs, from a Module file and a Manifest."""
+        schema = schema_renaming(
+            "general:col.active_border", "general:col.border_active", version="0.57.0"
+        )
+        manifest = load(paths)
+
+        found = detect(manifest, schema, None)
+        manifest = retire(manifest, found, capture(paths.app_dir, found))
+        manifest, restored = restore(manifest, schema, None)
+        model = ConfigModel(schema)
+        for each in restored:
+            model.set(each.option.name, each.value)
+
+        assert [(r.retired_name, r.option.name, r.renamed) for r in restored] == [
+            ("general:col.active_border", "general:col.border_active", True)
+        ]
+        assert manifest.retired == {}
+        assert (
+            '      border_active = { colors = { "rgba(33ccffee)", "rgba(00ff99ee)" }, '
+            "angle = 45 },\n"
+        ) in Writer(paths, SAMPLE_APP_VERSION).render_modules(model)["options/general.lua"]
+
+    def test_a_downgrade_restores_under_the_same_name(self) -> None:
+        manifest, restored = restore(
+            kept(general__resize_on_border=RetiredValue("0.57.0", True)),
+            sample_schema(),
+            live("0.56.2"),
+        )
+
+        assert [(r.retired_name, r.option.name, r.value, r.renamed) for r in restored] == [
+            ("general:resize_on_border", "general:resize_on_border", True, False)
+        ]
+        assert manifest.retired == {}
+
+    def test_offline_a_schema_newer_than_the_retirement_restores(self) -> None:
+        """The Option came back in a later release: the schema alone is the evidence."""
+        manifest, restored = restore(
+            kept(decoration__rounding=RetiredValue("0.56.0", 10)), sample_schema(), None
+        )
+
+        assert [(r.retired_name, r.value) for r in restored] == [("decoration:rounding", 10)]
+        assert manifest.retired == {}
+
+    @pytest.mark.parametrize(
+        ("schema", "snapshot"),
+        [
+            pytest.param(
+                schema_without("decoration:rounding", version="0.57.0"), None, id="still-gone"
+            ),
+            pytest.param(
+                sample_schema(),
+                live("0.57.0", without=("decoration:rounding",)),
+                id="newer-hyprland-still-lacks-it",
+            ),
+            pytest.param(sample_schema(), None, id="offline-schema-older-than-retirement"),
+            pytest.param(
+                sample_schema(),
+                live("0.56.0", without=("decoration:rounding",)),
+                id="older-hyprland-than-the-schema-lacks-it",
+            ),
+        ],
+    )
+    def test_a_value_stays_kept_while_its_option_cannot_be_emitted(
+        self, schema: Schema, snapshot: Live | None
+    ) -> None:
+        """Offline with a schema older than the retiring release, nothing says the Option is
+        back: restoring would emit a key the user's Hyprland last refused."""
+        before = kept(decoration__rounding=RetiredValue("0.57.0", 10))
+
+        assert restore(before, schema, snapshot) == (before, ())
+
+    def test_a_value_the_new_option_will_not_take_stays_kept(self) -> None:
+        """A rename that changed the type: keeping the value beats a guessed conversion."""
+        before = kept(general__border_size=RetiredValue("0.56.2", "thick"))
+        schema = schema_renaming(
+            "general:border_size", "general:border_width", version="0.57.0"
+        )
+
+        assert restore(before, schema, None) == (before, ())
+
+    def test_an_explicit_null_restores_as_null(self, paths: ConfigPaths) -> None:
+        """The Module spells a null as the Option's `null_value` (`-1` here); parsing that as
+        a value would come back as four `-1` sides, a different statement."""
+        _, restored = restore(
+            kept(general__float_gaps=RetiredValue("0.56.0", -1)), sample_schema(), None
+        )
+        model = ConfigModel(sample_schema())
+        for each in restored:
+            model.set(each.option.name, each.value)
+
+        assert [(r.retired_name, r.value) for r in restored] == [("general:float_gaps", None)]
+        assert (
+            "    float_gaps = -1,\n"
+            in Writer(paths, SAMPLE_APP_VERSION).render_modules(model)["options/general.lua"]
+        )
+
+
+class TestNotice:
+    """ADR-0012: "a one-time notice lists the release's retired options"."""
+
+    def test_each_unseen_release_lists_its_own_options(self) -> None:
+        manifest = kept(
+            decoration__rounding=RetiredValue("0.57.0", 10),
+            general__resize_on_border=RetiredValue("0.57.0", True),
+            misc__vfr=RetiredValue("0.58.0", False),
+        )
+
+        assert unannounced(manifest) == (
+            RetiredNotice("0.57.0", ("decoration:rounding", "general:resize_on_border")),
+            RetiredNotice("0.58.0", ("misc:vfr",)),
+        )
+
+    def test_a_seen_release_is_not_listed_again(self) -> None:
+        manifest = kept(
+            decoration__rounding=RetiredValue("0.57.0", 10),
+            misc__vfr=RetiredValue("0.58.0", False),
+        ).with_retired_notice("0.57.0")
+
+        assert unannounced(manifest) == (RetiredNotice("0.58.0", ("misc:vfr",)),)
+
+    def test_a_value_kept_quietly_raises_no_notice(self) -> None:
+        manifest = kept(
+            decoration__rounding=RetiredValue("0.59.0", 10, RetireReason.NOT_IN_SCHEMA),
+            general__resize_on_border=RetiredValue("0.59.0", True),
+            misc__vfr=RetiredValue("0.59.0", False, RetireReason.PLUGIN_NOT_LOADED),
+        )
+
+        assert unannounced(manifest) == (
+            RetiredNotice("0.59.0", ("general:resize_on_border",)),
+        )
+
+    def test_nothing_kept_is_nothing_to_say(self) -> None:
+        assert unannounced(kept().with_retired_notice("0.57.0")) == ()
+
+
+class TestLanded:
+    """A restored value leaves `retired` only once a write has put it in a Module."""
+
+    def test_a_value_the_write_recorded_is_no_longer_kept(self, paths: ConfigPaths) -> None:
+        manifest = replace(
+            load(paths), retired={"general:resize_on_border": RetiredValue("0.57.0", True)}
+        )
+        (restoration,) = restore(manifest, sample_schema(), live("0.57.1"))[1]
+
+        assert landed(manifest, (restoration,)).retired == {}
+
+    def test_a_value_no_module_records_stays_kept(self, paths: ConfigPaths) -> None:
+        """The write skipped the Module (a hand edit) or never ran: the value is still only
+        in the Manifest, and the next start restores it again."""
+        manifest = replace(
+            load(paths),
+            modules={},
+            retired={"general:resize_on_border": RetiredValue("0.57.0", True)},
+        )
+        (restoration,) = restore(manifest, sample_schema(), live("0.57.1"))[1]
+
+        assert landed(manifest, (restoration,)).retired == {
+            "general:resize_on_border": RetiredValue("0.57.0", True)
+        }

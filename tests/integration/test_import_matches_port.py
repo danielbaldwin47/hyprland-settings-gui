@@ -8,10 +8,10 @@ rice's own author shipped, and compare what Hyprland ended up with.
 
 Two limits are deliberate and stated rather than worked around:
 
-- **Options only, for now.** The Writer renders Option Modules; Entity Modules (`binds.lua`,
-  `monitors.lua`) are #64. So the Entities this Importer produces are asserted in the unit
-  tier and cannot yet be booted. When the Entity writer lands, the comparison here widens
-  with no change to the shape of these tests.
+- **Options compared, Entities booted.** The imported config is written the way the
+  wizard writes it, Entity Modules included (#101), so every boot below loads its binds,
+  rules and monitor rules. The state comparison is over Options; the pixel comparison
+  with the port is the one place Entities are judged, and it is still an expected failure.
 - **The port is a port, not a transcript.** Upstream hand-wrote their Lua; where it
   deliberately differs from their `.conf`, agreement is the wrong expectation. So the
   comparison is over the options *both* configs set, and disagreements are reported with
@@ -41,9 +41,9 @@ RICE = "end-4"
 APP_VERSION = "0.0.0-test"
 
 KNOWN_PORT_DIVERGENCES: dict[str, str] = {
-    "general:col.active_border": "port takes its colours from a theme module, not the .conf",
-    "general:col.inactive_border": "port takes its colours from a theme module, not the .conf",
-    "misc:background_color": "port takes its colours from a theme module, not the .conf",
+    "general:col.active_border": "port takes its colors from a theme module, not the .conf",
+    "general:col.inactive_border": "port takes its colors from a theme module, not the .conf",
+    "misc:background_color": "port takes its colors from a theme module, not the .conf",
     "gestures:workspace_swipe_cancel_ratio": "commented out in the port; falls back to default",
     "gestures:workspace_swipe_distance": "commented out in the port; falls back to default",
     "gestures:workspace_swipe_min_speed_to_force": (
@@ -77,8 +77,9 @@ def _import_staged(staged, schema):  # type: ignore[no-untyped-def]
 
 
 def _write_model(result, hypr_dir: Path, state_dir: Path) -> Path:
-    """Render the imported model into a hypr dir and return its Entrypoint."""
+    """Render the imported model, Entities too, into a hypr dir and return its Entrypoint."""
     paths = ConfigPaths(hypr_dir=hypr_dir, state_dir=state_dir)
+    result.model.adopt_entities(result.entities)  # what the wizard's write step does
     Writer(paths, app_version=APP_VERSION).write(result.model)
     return paths.entrypoint
 
@@ -194,17 +195,17 @@ def test_the_imported_config_renders_the_same_screen_every_time(
 
 @pytest.mark.xfail(
     reason=(
-        "needs the monitor-rule writer (ADR-0008's Displays ticket). Binds (#64) and "
-        "window/layer rules (#67) now render, but monitor rules still do not, so the "
-        "booted output geometry differs from the port's. The state-level comparison "
+        "the imported end-4 still renders differently from its port: with every Entity "
+        "Module written (#101), 26.9% of pixels differ at a max delta of 35/255 "
+        "(measured 2026-10-02), cause not yet traced (#253). The state-level comparison "
         "above is the part that is checkable today."
     ),
-    strict=False,
+    strict=True,
 )
 def test_the_imported_config_renders_the_same_screen_as_the_port(
     tmp_path: Path, artifacts: Path, schema
 ) -> None:  # type: ignore[no-untyped-def]
-    """The full-fidelity pixel comparison, kept runnable so #64 can just delete the mark.
+    """The full-fidelity pixel comparison, kept runnable so a fix can just delete the mark.
 
     Left in place rather than deferred to a later ticket because it is the measurement that
     says how far there is to go: it prints the exact pixel delta between an imported rice

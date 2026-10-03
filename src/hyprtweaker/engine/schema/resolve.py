@@ -14,23 +14,28 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from . import generated as generated_module
 from . import overlay as overlay_module
+from .diff import added_names
 from .generated import GeneratedSchema
 from .overlay import Overlay
 from .types import (
     GeneratedOption,
     KnownValues,
     OverlayEntry,
+    OverlayGroup,
     Range,
     ResolvedOption,
     SectionOverlay,
     Visibility,
 )
+
+MINIMUM_HYPRLAND = "0.56"
+"""The first Hyprland with a Lua config, and so the oldest this app can write for."""
 
 SCHEMA_DIR_ENV = "HYPRTWEAKER_SCHEMA_DIR"
 OVERLAY_FILENAME = "overlay.json"
@@ -59,6 +64,44 @@ def version_key(version: str) -> tuple[int, ...]:
     schema than the one shipped for the running compositor.
     """
     return tuple(int(part) for part in re.findall(r"\d+", version))
+
+
+def stamp_added_in(
+    schema: GeneratedSchema, predecessor: GeneratedSchema | None
+) -> GeneratedSchema:
+    """Stamp each Option `predecessor` lacks with `added_in = schema`'s version.
+
+    The one definition of "added" between two consecutive Generated schemas is
+    `diff.added_names`: what the release check's diff classifies as added and what the
+    Tasks view groups under `New in <version>` come from the same rule. An Option the
+    predecessor has keeps the predecessor's stamp, so it stays in its `New in` group until
+    someone curates it (ADR-0012), not for one release only. No predecessor means no
+    stamps, and the provenance then names none. A predecessor that is not older is a
+    caller's mistake: every Option would read as old, silently.
+    """
+    if predecessor is None:
+        return schema
+    if version_key(predecessor.hyprland_version) >= version_key(schema.hyprland_version):
+        raise ValueError(
+            f"predecessor {predecessor.hyprland_version} is not older than "
+            f"{schema.hyprland_version}"
+        )
+    earlier = {option.name: option for option in predecessor.options}
+    added = added_names(schema, predecessor)
+    options = tuple(
+        replace(
+            option,
+            added_in=schema.hyprland_version
+            if option.name in added
+            else earlier[option.name].added_in,
+        )
+        for option in schema.options
+    )
+    return replace(
+        schema,
+        options=options,
+        provenance={**schema.provenance, "predecessor": predecessor.hyprland_version},
+    )
 
 
 def derive_title(option: GeneratedOption) -> str:
@@ -185,6 +228,8 @@ def resolve_option(
         device_overridable=generated.device_overridable,
         refresh=generated.refresh,
         curation_flags=generated.curation_flags,
+        renamed_from=entry.renamed_from,
+        added_in=generated.added_in,
     )
 
 
@@ -201,6 +246,12 @@ class Schema:
     Option, but its **title** has nowhere to land: it names a Page, not a Row. Dropping it
     here would leave the Config view -- one Page per Section -- with 21 raw config keys for
     headings and no way to reach the curated names sitting in the Overlay."""
+
+    animation_leaves: tuple[str, ...] | None = None
+    """The animation tree's leaves as this version's Generated schema recorded them.
+
+    `None` when the file has no block; read through `entities_catalog.animation_leaves`,
+    which supplies the shipped list for that case, rather than directly."""
 
     _by_name: dict[str, ResolvedOption] = field(init=False, repr=False, compare=False)
 
@@ -220,6 +271,7 @@ class Schema:
                 for option in schema.options
             ),
             sections=dict(overlay.sections),
+            animation_leaves=schema.animation_leaves,
         )
 
     def __getitem__(self, name: str) -> ResolvedOption:
@@ -260,6 +312,11 @@ class Schema:
             return overlay.title
         return derive_section_title(name)
 
+    def section_groups(self, name: str) -> tuple[OverlayGroup, ...]:
+        """The Section's curated Groups in display order; empty for an uncurated one."""
+        overlay = self.sections.get(name)
+        return overlay.groups if overlay is not None else ()
+
 
 def schema_dir() -> Path:
     """Where the committed schema files live.
@@ -299,19 +356,32 @@ def available_versions(directory: Path | None = None) -> tuple[str, ...]:
     return tuple(sorted(versions, key=version_key))
 
 
+def below_lua_floor(version: str) -> bool:
+    """Whether `version` predates the Lua config, so no Schema can describe it."""
+    return version_key(version) < version_key(MINIMUM_HYPRLAND)
+
+
 def select_version(wanted: str, available: tuple[str, ...]) -> str:
-    """Exact match, else the nearest lower version (ADR-0012 degradation)."""
+    """Exact match, else the nearest lower version (ADR-0012 degradation).
+
+    A Lua-config Hyprland older than every shipped schema gets the oldest one: ADR-0012's
+    Support window promises degradation for every version down to `MINIMUM_HYPRLAND`, and
+    the oldest schema is the nearest thing shipped. Its options the compositor lacks are
+    what "Not in this Hyprland" marks.
+    """
     if not available:
         raise FileNotFoundError("no generated schemas are shipped")
+    if below_lua_floor(wanted):
+        raise ValueError(
+            f"Hyprland {wanted} is older than {MINIMUM_HYPRLAND}, the first with a Lua config"
+        )
     if wanted in available:
         return wanted
 
     wanted_key = version_key(wanted)
     lower = [version for version in available if version_key(version) <= wanted_key]
     if not lower:
-        # Older than every shipped schema. Hyprland < 0.56 has no Lua config at all, so
-        # this is a misconfiguration rather than a degradation the app can absorb.
-        raise ValueError(f"Hyprland {wanted} is older than every shipped schema {available}")
+        return min(available, key=version_key)
     return max(lower, key=version_key)
 
 

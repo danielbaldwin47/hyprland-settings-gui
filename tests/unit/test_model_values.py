@@ -152,6 +152,14 @@ class TestFontWeight:
         assert str(FontWeight.parse("bold")) == "bold"
         assert str(FontWeight.parse(700)) == "700"
 
+    def test_a_name_reads_as_the_number_hyprland_gives_it_whatever_its_case(self) -> None:
+        assert FontWeight.parse("bold").number == 700
+        assert FontWeight.parse("Semilight").number == 350
+        assert FontWeight.parse("550").number == 550
+
+    def test_a_name_hyprland_does_not_know_has_no_number(self) -> None:
+        assert FontWeight.parse("extrabold").number is None
+
 
 class TestScalars:
     @pytest.mark.parametrize(
@@ -241,3 +249,43 @@ class TestGetOptionReplies:
 @pytest.fixture(scope="module")
 def schema() -> Schema:
     return load_schema(SAMPLE_VERSION, SCHEMA_DIR)
+
+
+@pytest.mark.parametrize(
+    ("option_type", "raw"),
+    [
+        (OptionType.INT, "inf"),
+        (OptionType.INT, "1e999"),
+        (OptionType.CSS_GAPS, "1e999"),
+        (OptionType.FLOAT, "nan"),
+        (OptionType.FLOAT, "-inf"),
+        (OptionType.FLOAT, float("inf")),
+    ],
+)
+def test_a_number_no_config_can_hold_is_a_value_error(
+    option_type: OptionType, raw: object
+) -> None:
+    """A Preset file or Theme archive is read through `parse_value` with `ValueError` caught:
+    an overflow or a non-finite float must land there, not as a traceback (#169)."""
+    with pytest.raises(ValueError):
+        parse_value(option_type, raw)
+
+
+def test_a_nul_before_a_digit_reads_back_as_the_same_two_characters() -> None:
+    """Finding 7 of the #153 review: `\\0` then `1` is Lua's `\\01`, a different character."""
+    import shutil
+    import subprocess
+
+    from hyprtweaker.engine.model.values import lua_string
+
+    literal = lua_string("a\x001")
+    assert literal == '"a\\0001"'
+    lua = shutil.which("lua") or shutil.which("lua5.4")
+    if lua is not None:
+        out = subprocess.run(
+            [lua, "-e", f"local s = {literal} io.write(#s, ',', s:byte(2), ',', s:sub(3))"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert out == "3,0,1"

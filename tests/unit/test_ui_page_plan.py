@@ -8,11 +8,14 @@ GTK still assembles what this planned.
 
 from __future__ import annotations
 
-import pytest
-from _support import SAMPLE_VERSION, SCHEMA_DIR
+from dataclasses import replace
 
-from hyprtweaker.engine.schema import Visibility, load_schema
+import pytest
+from _support import SAMPLE_VERSION, SCHEMA_DIR, curated
+
+from hyprtweaker.engine.schema import ResolvedOption, Visibility, load_schema, supplement
 from hyprtweaker.ui.pages.plan import (
+    Disclosure,
     PagePlan,
     View,
     group_title,
@@ -38,9 +41,9 @@ def test_every_section_gets_a_page() -> None:
 
 
 def test_a_section_whose_options_are_all_advanced_still_gets_a_page() -> None:
-    """`debug`, `quirks`, `experimental`, `input-capture` and `opengl` are entirely
-    non-default. The sidebar is the map of the config surface; a Section that disappears
-    when a switch flips is one the user cannot learn exists."""
+    """`debug`, `quirks`, `experimental` and `input-capture` are entirely non-default. The
+    sidebar is the map of the config surface; a Section that disappears when a switch flips
+    is one the user cannot learn exists."""
     plan = plan_section(SCHEMA, "debug")
 
     assert plan.groups == ()
@@ -50,7 +53,7 @@ def test_a_section_whose_options_are_all_advanced_still_gets_a_page() -> None:
 def test_with_advanced_on_every_option_in_the_schema_is_on_exactly_one_page() -> None:
     placed = [
         option.name
-        for plan in plan_config_view(SCHEMA, show_advanced=True)
+        for plan in plan_config_view(SCHEMA, Disclosure(show_advanced=True))
         for group in plan.groups
         for option in group.options
     ]
@@ -76,26 +79,44 @@ def test_the_hidden_tier_is_config_view_only_however_the_switch_is_set() -> None
     hidden = next(o for o in SCHEMA if o.visibility is Visibility.HIDDEN)
     advanced = next(o for o in SCHEMA if o.visibility is Visibility.ADVANCED)
 
-    assert not is_visible(hidden, show_advanced=True, view=View.TASKS)
-    assert is_visible(hidden, show_advanced=True, view=View.CONFIG)
-    assert is_visible(advanced, show_advanced=True, view=View.TASKS)
-    assert not is_visible(advanced, show_advanced=False, view=View.TASKS)
+    assert not is_visible(hidden, Disclosure(show_advanced=True, view=View.TASKS))
+    assert is_visible(hidden, Disclosure(show_advanced=True, view=View.CONFIG))
+    assert is_visible(advanced, Disclosure(show_advanced=True, view=View.TASKS))
+    assert not is_visible(advanced, Disclosure(show_advanced=False, view=View.TASKS))
 
 
-def test_a_tasks_page_withholds_the_hidden_tier_it_never_shows() -> None:
-    """Withheld, not lost: the count is what an empty Page uses to explain itself."""
-    plan = plan_section(SCHEMA, "debug", show_advanced=True, view=View.TASKS)
+def test_a_tasks_page_never_counts_the_hidden_tier_as_withheld() -> None:
+    """The count backs a hint that the Advanced switch shows more; in Tasks it cannot show
+    the hidden tier at any setting (ADR-0013 §5), so those Options are not withheld."""
+    for show_advanced in (False, True):
+        plan = plan_section(
+            SCHEMA, "input-capture", Disclosure(show_advanced=show_advanced, view=View.TASKS)
+        )
 
-    assert plan.groups == ()
-    assert plan.withheld == len(SCHEMA.section("debug"))
+        assert (plan.groups, plan.withheld) == ((), 0)
 
 
 def test_the_config_view_is_planned_as_the_config_view() -> None:
-    """The one caller today, stated rather than left to a default."""
-    plans = plan_config_view(SCHEMA, show_advanced=True)
+    """Whatever View the Disclosure names: the window falls back to the Config arrangement
+    while still in the Tasks view when the mapping will not load, and that fallback must
+    admit the hidden tier as the Config view always does."""
+    plans = plan_config_view(SCHEMA, Disclosure(show_advanced=True, view=View.TASKS))
     shown = {name for plan in plans for name in all_options(plan)}
 
     assert shown == {option.name for option in SCHEMA}
+
+
+def test_a_bare_disclosure_is_the_config_view_with_the_switch_off() -> None:
+    """What a fresh window sees: nothing beyond the default tier, and the View whose tier
+    rule admits `hidden` once the switch is on."""
+    hidden = SCHEMA[HIDDEN_OPTION]
+    advanced = next(o for o in SCHEMA if o.visibility is Visibility.ADVANCED)
+    default = next(o for o in SCHEMA if o.visibility is Visibility.DEFAULT)
+
+    assert is_visible(default, Disclosure())
+    assert not is_visible(advanced, Disclosure())
+    assert not is_visible(hidden, Disclosure())
+    assert is_visible(hidden, Disclosure(show_advanced=True))
 
 
 # --- shape ------------------------------------------------------------------------------------
@@ -106,8 +127,13 @@ def test_a_page_is_titled_from_the_overlay_not_from_the_config_key() -> None:
     assert plan_section(SCHEMA, "input-capture").title == "Input capture"
 
 
-def test_sub_prefixed_options_group_under_their_own_heading() -> None:
-    plan = plan_section(SCHEMA, "decoration")
+UNCURATED_DECORATION = curated("decoration", {}, {})
+"""`decoration` as a Section with no curated Groups: what a Section looks like before its
+curation, and what a plugin's Options get."""
+
+
+def test_an_uncurated_sections_sub_prefixed_options_group_under_their_own_heading() -> None:
+    plan = plan_section(UNCURATED_DECORATION, "decoration")
     headings = [group.title for group in plan.groups]
 
     assert headings[0] == "", "the Section's own options lead, in an untitled group"
@@ -119,12 +145,15 @@ def test_sub_prefixed_options_group_under_their_own_heading() -> None:
 
 
 def test_a_col_prefix_reads_as_a_word_rather_than_as_a_config_key() -> None:
-    assert group_title(SCHEMA["general:col.active_border"]) == "Colors"
-    assert group_title(SCHEMA["group:groupbar:col.active"]) == "Groupbar · Colors"
+    def uncurated(name: str) -> ResolvedOption:
+        return replace(SCHEMA[name], group=None, group_order=None)
+
+    assert group_title(uncurated("general:col.active_border")) == "Colors"
+    assert group_title(uncurated("group:groupbar:col.active")) == "Groupbar · Colors"
 
 
-def test_groups_and_rows_follow_hyprlands_own_declaration_order() -> None:
-    plan = plan_section(SCHEMA, "decoration")
+def test_an_uncurated_sections_groups_and_rows_follow_hyprlands_declaration_order() -> None:
+    plan = plan_section(UNCURATED_DECORATION, "decoration")
 
     firsts = [group.options[0].order for group in plan.groups]
     assert firsts == sorted(firsts)
@@ -134,11 +163,135 @@ def test_groups_and_rows_follow_hyprlands_own_declaration_order() -> None:
         assert orders == sorted(orders)
 
 
+# --- curated Groups (#157) -------------------------------------------------------------------
+
+
+SNAPPING_FIRST = curated(
+    "general",
+    {"Snapping": None, "Borders": "How thick borders are and what color."},
+    {
+        "Snapping": ["general:snap:respect_gaps", "general:snap:enabled"],
+        "Borders": ["general:border_size"],
+    },
+)
+
+
+def test_curated_groups_lead_in_the_order_their_section_declares_them() -> None:
+    """Then the Groups no curation names, in the order their first Option is declared."""
+    plan = plan_section(SNAPPING_FIRST, "general")
+
+    assert [group.title for group in plan.groups] == [
+        "Snapping",
+        "Borders",
+        "Other settings",
+        "Colors",
+        "Snap",
+    ]
+
+
+def test_a_curated_group_lists_its_options_in_curated_order() -> None:
+    plan = plan_section(SNAPPING_FIRST, "general")
+
+    assert [option.name for option in plan.groups[0].options] == [
+        "general:snap:respect_gaps",
+        "general:snap:enabled",
+    ]
+
+
+def test_a_curated_groups_description_reaches_the_page() -> None:
+    plan = plan_section(SNAPPING_FIRST, "general")
+
+    assert [(group.title, group.description) for group in plan.groups[:3]] == [
+        ("Snapping", ""),
+        ("Borders", "How thick borders are and what color."),
+        ("Other settings", ""),
+    ]
+
+
+def test_an_uncurated_option_of_a_curated_section_never_sits_in_an_untitled_group() -> None:
+    """An untitled Group after titled ones reads as a rendering fault, not a heading."""
+    plan = plan_section(SNAPPING_FIRST, "general")
+
+    other = next(group for group in plan.groups if group.title == "Other settings")
+    assert [option.name for option in other.options][:3] == [
+        "general:gaps_in",
+        "general:gaps_out",
+        "general:float_gaps",
+    ]
+    assert "" not in [group.title for group in plan.groups]
+
+
+def test_a_section_with_no_curated_groups_keeps_its_untitled_lead_group() -> None:
+    plan = plan_section(UNCURATED_DECORATION, "decoration")
+
+    assert plan.groups[0].title == ""
+    assert "Other settings" not in [group.title for group in plan.groups]
+
+
+def test_a_newer_hyprlands_options_follow_the_curated_and_uncurated_groups() -> None:
+    newer = supplement(
+        SNAPPING_FIRST,
+        ({"name": "general:new_gap", "description": "x", "default": 1},),
+        version="0.58.0",
+    )
+
+    titles = [group.title for group in plan_section(newer, "general").groups]
+
+    assert titles == [
+        "Snapping",
+        "Borders",
+        "Other settings",
+        "Colors",
+        "Snap",
+        "New in 0.58.0",
+    ]
+
+
 def test_option_count_is_what_the_page_actually_shows() -> None:
     plan = plan_section(SCHEMA, "input")
 
     assert plan.option_count == len(all_options(plan))
     assert plan.option_count + plan.withheld == len(SCHEMA.section("input"))
+
+
+# --- options a newer Hyprland added (#177, ADR-0012 §Pinning) ------------------------------
+
+
+NEWER = supplement(
+    SCHEMA,
+    (
+        {"name": "decoration:blur:new_noise", "description": "x", "default": 0.5},
+        {"name": "decoration:new_glow", "description": "x", "default": True},
+        {"name": "hotcorners:enabled", "description": "x", "default": True},
+    ),
+    version="0.58.0",
+)
+
+
+def test_a_newer_hyprlands_options_close_their_sections_page_in_a_new_in_group() -> None:
+    plan = plan_section(NEWER, "decoration")
+
+    *shipped, last = plan.groups
+    assert last.title == "New in 0.58.0"
+    assert [option.name for option in last.options] == [
+        "decoration:blur:new_noise",
+        "decoration:new_glow",
+    ]
+    assert last.description == (
+        "Your Hyprland has these settings and this version of the app does not know them "
+        "yet, so each gets a basic control. They are saved like any other setting."
+    )
+    assert tuple(shipped) == plan_section(SCHEMA, "decoration").groups, "the rest as before"
+
+
+def test_a_section_only_a_newer_hyprland_has_gets_a_page_of_its_new_options() -> None:
+    plans = {plan.section: plan for plan in plan_config_view(NEWER)}
+
+    page = plans["hotcorners"]
+    assert (page.title, [(group.title, len(group.options)) for group in page.groups]) == (
+        "Hotcorners",
+        [("New in 0.58.0", 1)],
+    )
 
 
 # --- the One-off reveal (ADR-0017) exempts the switch, never the View's tier rule ---------
@@ -151,8 +304,10 @@ def test_a_reveal_shows_a_withheld_row_without_the_switch() -> None:
     """What the One-off is for: search reaching a Row the Advanced switch is withholding."""
     option = next(o for o in SCHEMA if o.visibility is Visibility.ADVANCED)
 
-    assert not is_visible(option, show_advanced=False)
-    assert is_visible(option, show_advanced=False, revealed=frozenset({option.name}))
+    assert not is_visible(option, Disclosure(show_advanced=False))
+    assert is_visible(
+        option, Disclosure(show_advanced=False, revealed=frozenset({option.name}))
+    )
 
 
 @pytest.mark.parametrize("revealed", [frozenset(), frozenset({HIDDEN_OPTION})])
@@ -168,7 +323,7 @@ def test_a_reveal_never_puts_the_hidden_tier_in_tasks(revealed: frozenset[str]) 
 
     for show_advanced in (False, True):
         assert not is_visible(
-            option, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
+            option, Disclosure(show_advanced=show_advanced, view=View.TASKS, revealed=revealed)
         )
 
 
@@ -176,7 +331,8 @@ def test_a_reveal_reaches_the_hidden_tier_in_config() -> None:
     """The other half: in Config the tier is admissible, so the One-off applies there."""
     option = SCHEMA[HIDDEN_OPTION]
 
-    assert not is_visible(option, show_advanced=False, view=View.CONFIG)
+    assert not is_visible(option, Disclosure(show_advanced=False, view=View.CONFIG))
     assert is_visible(
-        option, show_advanced=False, view=View.CONFIG, revealed=frozenset({option.name})
+        option,
+        Disclosure(show_advanced=False, view=View.CONFIG, revealed=frozenset({option.name})),
     )

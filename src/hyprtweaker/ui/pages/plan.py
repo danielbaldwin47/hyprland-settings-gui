@@ -7,12 +7,14 @@ cannot: it is unit-testable on a machine with no GTK, and "did an Option go miss
 question about a tuple rather than about a widget tree.
 
 **Grouping is data, not code** (prototype #8's finding, and the reason it is a finding:
-`input` renders 60 flat rows without one). The Overlay's curated `group` wins wherever it
-exists. Nothing carries one yet -- that curation is #82 -- so until then a Group is derived
-from the Option's own path: `decoration:blur:size` sits under "Blur", `decoration:rounding`
-sits in the Section's untitled lead Group. The stub tree gives sub-prefixes for free, which
-is worth having; what it cannot give is the cross-cutting Groups a person expects
-("Scrolling" spans `input:*` and `input:touchpad:*`), and that is exactly what #82 adds.
+`input` renders 60 flat rows without one). A Section declares its curated Groups in the
+Overlay, in display order, and each Option names its own in `group` (#157): that is how
+"Scrolling" spans `input:*` and `input:touchpad:*`, which no stub-tree prefix can say. An
+Option no curation names -- a plugin's, or one a release added before its release check --
+falls back to a Group derived from its own path: `decoration:blur:size` under "Blur",
+`decoration:rounding` in the Section's untitled lead Group, or under "Other settings" on a
+Section whose curated Groups are titled. `plan_groups` is the one place that order lives,
+and both Views call it.
 
 Nothing here imports `gi`.
 """
@@ -20,9 +22,17 @@ Nothing here imports `gi`.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 
-from hyprtweaker.engine.schema import ResolvedOption, Schema, Visibility, humanise
+from hyprtweaker.engine.schema import (
+    ResolvedOption,
+    Schema,
+    SupplementKind,
+    Visibility,
+    humanise,
+)
+from hyprtweaker.engine.schema.resolve import version_key
 
 
 class View(enum.StrEnum):
@@ -36,6 +46,32 @@ class View(enum.StrEnum):
 
     CONFIG = "config"
     TASKS = "tasks"
+
+
+@dataclass(frozen=True, slots=True)
+class Disclosure:
+    """What the user can currently see: the inputs every visibility question is asked with.
+
+    Not `Visibility` -- that is the Schema's *tier* enum, a fact about an Option. This is a
+    fact about the window: where the Advanced switch stands, which View is active, and which
+    Options a search hit has revealed One-off (ADR-0013 §5, ADR-0017). One value rather than
+    three parameters so that a planner takes it whole and passes it on whole; the bare
+    constructor is a fresh window's state.
+    """
+
+    show_advanced: bool = False
+    view: View = View.CONFIG
+    revealed: frozenset[str] = frozenset()
+    """The One-off: Options a search hit has earned a place for on this visit.
+
+    Carried here rather than as a flag on the Option because the exemption belongs to *this*
+    rebuild -- an Option that carried its own "revealed" bit would stay revealed until
+    something thought to clear it, which is the state ADR-0017 rejected temporary visibility
+    modes to avoid."""
+
+
+DEFAULT_DISCLOSURE = Disclosure()
+"""A fresh window's: the Config view, the Advanced switch off, nothing revealed."""
 
 
 _SEGMENT_TITLES = {
@@ -65,25 +101,14 @@ def _segment_title(segment: str) -> str:
     return _SEGMENT_TITLES.get(segment) or humanise(segment)
 
 
-def is_visible(
-    option: ResolvedOption,
-    *,
-    show_advanced: bool,
-    view: View = View.CONFIG,
-    revealed: frozenset[str] = frozenset(),
-) -> bool:
+def is_visible(option: ResolvedOption, disclosure: Disclosure) -> bool:
     """Whether the Advanced switch lets this Option render right now.
 
     Both non-default tiers gate on the one global switch (ADR-0013 §5), and they differ in
     exactly one way: `hidden` -- `debug`, `quirks`, `experimental`, `input-capture` -- is
     Config-view-only, so no amount of switch-flipping puts "Crash Hyprland" on a curated
-    Tasks Page. Search reaches every tier regardless and reveals its hit one-off (ADR-0017).
-
-    `revealed` is that One-off: the Options a search hit has earned a place for on this
-    visit. It is a parameter rather than a flag on the Option because the exemption belongs
-    to *this* rebuild -- an Option that carried its own "revealed" bit would stay revealed
-    until something thought to clear it, which is the state ADR-0017 rejected temporary
-    visibility modes to avoid.
+    Tasks Page. Search reaches every tier regardless and reveals its hit one-off (ADR-0017),
+    through `disclosure.revealed`.
 
     A One-off exempts an Option from the **switch**, never from the **View's tier rule**,
     and the order of the tests below is that distinction. ADR-0013 §5 is unconditional --
@@ -95,11 +120,22 @@ def is_visible(
     """
     if option.visibility is Visibility.DEFAULT:
         return True
-    if option.visibility is Visibility.HIDDEN and view is not View.CONFIG:
+    if option.visibility is Visibility.HIDDEN and disclosure.view is not View.CONFIG:
         return False
-    if option.name in revealed:
+    if option.name in disclosure.revealed:
         return True
-    return show_advanced
+    return disclosure.show_advanced
+
+
+def is_withheld(option: ResolvedOption, disclosure: Disclosure) -> bool:
+    """Whether the Advanced switch, turned on, would render this Option where it now does not.
+
+    What a Page's withheld count counts, in both Views: its hint promises the switch shows
+    more, so an Option the View never renders (the hidden tier in Tasks) is not withheld.
+    """
+    return not is_visible(option, disclosure) and is_visible(
+        option, replace(disclosure, show_advanced=True)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,42 +172,128 @@ class PagePlan:
         return sum(len(group.options) for group in self.groups)
 
 
+def new_in_group_title(version: str) -> str:
+    """The heading uncurated Options appear under (ADR-0012, #7), in either View.
+
+    Named for the Hyprland version rather than a bare "Other" because the version is the
+    actionable part: it tells the user these arrived with an upgrade, and it tells whoever
+    curates next exactly which release to diff.
+    """
+    return f"New in {version}"
+
+
+NEW_IN_GROUP_DESCRIPTION = (
+    "Settings this version of Hyprland has that the curated pages do not place yet. "
+    "They work exactly as they do in the Config view."
+)
+"""The Tasks view's flag, which #7 and ADR-0012 ask for ("appears ... flagged, until it is
+curated").
+
+The heading alone reads as *new*, which is not the same claim: it would leave a user to
+wonder whether an uncurated setting is half-supported. Saying it plainly is what makes the
+degradation legible rather than merely visible.
+"""
+
+SUPPLEMENTED_GROUP_DESCRIPTION = (
+    "Your Hyprland has these settings and this version of the app does not know them yet, "
+    "so each gets a basic control. They are saved like any other setting."
+)
+"""The Config view's flag on a `New in <version>` Group: Options a Hyprland newer than every
+shipped schema described, inferred from that description alone (ADR-0012 §Pinning). Says
+why the controls are plain, and that nothing about them is half-working."""
+
+
+OTHER_SETTINGS_TITLE = "Other settings"
+"""The heading for an uncurated Option with no sub-path on a Section whose Groups are curated.
+
+Only an Option a release added before its release check lands here (or a plugin's, whose
+Section no curation reaches): an untitled Group after titled ones reads as a rendering
+fault rather than as a heading."""
+
+
+def plan_groups(
+    schema: Schema, section: str, options: Iterable[ResolvedOption]
+) -> tuple[GroupPlan, ...]:
+    """The Groups `options`, all of one Section, form on a Page, in display order.
+
+    The order, in both Views: the Section's curated Groups in the order the Overlay declares
+    them, each with its curated description; then the Groups no curation names, derived from
+    the Options' paths, in the order their first Option is declared. Within a Group, curated
+    `group_order` leads and declaration order follows, so an uncurated Option whose path
+    names a curated heading (a release's new `decoration:blur:*` under a curated "Blur")
+    joins that Group after its curated Rows. Options in, Groups out, one Group per Option:
+    nothing is dropped and nothing is repeated, whatever the curation says.
+
+    `options` are the ones the caller shows here; a caller that closes the Page with
+    `New in <version>` Groups leaves those Options out and appends the Groups after these.
+    """
+    curated = schema.section_groups(section)
+    rank = {group.title: index for index, group in enumerate(curated)}
+    descriptions = {group.title: group.description or "" for group in curated}
+
+    grouped: dict[str, list[ResolvedOption]] = {}
+    for option in sorted(options, key=lambda option: option.order):
+        title = group_title(option) or (OTHER_SETTINGS_TITLE if curated else "")
+        grouped.setdefault(title, []).append(option)
+
+    def position(item: tuple[str, list[ResolvedOption]]) -> tuple[int, int]:
+        title, members = item
+        if title in rank:
+            return (0, rank[title])
+        return (1, members[0].order)
+
+    return tuple(
+        GroupPlan(
+            title=title,
+            options=tuple(sorted(members, key=_within_group)),
+            description=descriptions.get(title, ""),
+        )
+        for title, members in sorted(grouped.items(), key=position)
+    )
+
+
 def plan_section(
     schema: Schema,
     section: str,
-    *,
-    show_advanced: bool = False,
-    view: View = View.CONFIG,
-    revealed: frozenset[str] = frozenset(),
+    disclosure: Disclosure = DEFAULT_DISCLOSURE,
 ) -> PagePlan:
     """Plan one Section's Page.
 
-    Ordering is Hyprland's own declaration order throughout -- Groups appear in the order
-    their first Option is declared, and Options within a Group likewise. Upstream's grouping
-    intent comes free with that order and no curation should silently rewrite it; a curated
-    `order` is a position *within* a Group, which is why it only ever breaks the tie.
+    Groups appear in `plan_groups` order: the Section's curated Groups as the Overlay
+    declares them, then the Groups derived from uncurated Options' paths in the order their
+    first Option is declared. Curation shapes a Page and never reorders Sections: the
+    Section sequence is Hyprland's declaration order (`Schema.section_names`).
+
+    Options a newer Hyprland added beyond the shipped schema close the Page in their own
+    `New in <version>` Group, oldest version first, rather than joining a curated or
+    sub-path Group, so they stand out as flagged (ADR-0012 §Pinning).
     """
     options = schema.section(section)
-    visible = [
-        option
-        for option in options
-        if is_visible(option, show_advanced=show_advanced, view=view, revealed=revealed)
-    ]
+    visible = [option for option in options if is_visible(option, disclosure)]
 
-    grouped: dict[str, list[ResolvedOption]] = {}
+    shown: list[ResolvedOption] = []
+    newer: dict[str, list[ResolvedOption]] = {}
     for option in visible:
-        grouped.setdefault(group_title(option), []).append(option)
+        flag = option.supplement
+        if flag is not None and flag.kind is SupplementKind.NEWER_VERSION:
+            newer.setdefault(flag.version, []).append(option)
+        else:
+            shown.append(option)
 
-    groups = tuple(
-        GroupPlan(title=title, options=tuple(sorted(members, key=_within_group)))
-        for title, members in sorted(grouped.items(), key=lambda item: item[1][0].order)
+    groups = plan_groups(schema, section, shown) + tuple(
+        GroupPlan(
+            title=new_in_group_title(version),
+            options=tuple(members),
+            description=SUPPLEMENTED_GROUP_DESCRIPTION,
+        )
+        for version, members in sorted(newer.items(), key=lambda item: version_key(item[0]))
     )
 
     return PagePlan(
         section=section,
         title=schema.section_title(section),
         groups=groups,
-        withheld=len(options) - len(visible),
+        withheld=sum(1 for option in options if is_withheld(option, disclosure)),
     )
 
 
@@ -183,24 +305,17 @@ def _within_group(option: ResolvedOption) -> tuple[int, int]:
 
 
 def plan_config_view(
-    schema: Schema,
-    *,
-    show_advanced: bool = False,
-    revealed: frozenset[str] = frozenset(),
+    schema: Schema, disclosure: Disclosure = DEFAULT_DISCLOSURE
 ) -> tuple[PagePlan, ...]:
     """Every Section's Page, in the order Hyprland declares the Sections.
 
     One Page per Section unconditionally, including the ones the Advanced switch empties:
     the sidebar is the map of the config surface, and a Section that vanishes when a switch
     flips is a Section the user cannot learn exists.
+
+    Planned under the Config view's tier rule whatever `disclosure.view` says: the window
+    falls back to this arrangement from the Tasks view when the curated mapping will not
+    load, and the arrangement it falls back to admits the `hidden` tier.
     """
-    return tuple(
-        plan_section(
-            schema,
-            section,
-            show_advanced=show_advanced,
-            view=View.CONFIG,
-            revealed=revealed,
-        )
-        for section in schema.section_names
-    )
+    config = replace(disclosure, view=View.CONFIG)
+    return tuple(plan_section(schema, section, config) for section in schema.section_names)

@@ -22,8 +22,8 @@ from pathlib import Path
 from _fake_hyprland import FakeHyprland, run_with_fake
 from _support import Runner, drain_events, section_conversation, session_for
 
-from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult, UndoStep
-from hyprtweaker.engine.model import UNSET, CssGaps
+from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult, EntityStep, Step, UndoStep
+from hyprtweaker.engine.model import UNSET, Bind, CssGaps, DispatcherCall, WindowRule
 from hyprtweaker.session import AutoRevert, Session
 
 BORDER_SIZE = "general:border_size"
@@ -541,5 +541,127 @@ def test_a_rejected_gesture_is_never_announced_as_recorded(tmp_path: Path) -> No
         await settle(session, runner)
 
         assert recorded == []
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+# --- entity steps (#189) ----------------------------------------------------------------------
+
+BINDS_MODULE = "binds.lua"
+
+
+def exec_bind(keys: str) -> Bind:
+    return Bind(keys=keys, dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
+
+
+def test_undoing_a_bind_delete_restores_it_in_place_byte_for_byte(tmp_path: Path) -> None:
+    """#104 (b): the bind comes back at its position, and `binds.lua` is the file it was."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        for keys in ("SUPER + A", "SUPER + B", "SUPER + C"):
+            session.add_bind(exec_bind(keys))
+        await settle(session, runner)
+        before = module_bytes(tmp_path, BINDS_MODULE)
+
+        session.remove_bind(1)
+        await settle(session, runner)
+        assert module_bytes(tmp_path, BINDS_MODULE) != before
+        step = session.last_gesture
+        assert isinstance(step, EntityStep) and step.title == "Keybind removed"
+
+        assert session.undo()
+        await settle(session, runner)
+
+        assert [bind.keys for bind in session.model.entities.binds] == [
+            "SUPER + A",
+            "SUPER + B",
+            "SUPER + C",
+        ]
+        assert module_bytes(tmp_path, BINDS_MODULE) == before
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_option_and_entity_steps_undo_in_the_order_they_landed(tmp_path: Path) -> None:
+    """One linear stack: an Option edit, then a rule move; Ctrl+Z takes the move back first."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.add_rule("window", WindowRule(match={"class": "foot"}))
+        session.add_rule("window", WindowRule(match={"class": "mpv"}))
+        await settle(session, runner)
+
+        fake.conversation.update(conversation(**{ROUNDING: 12}))
+        session.set_option(ROUNDING, 12)
+        await settle(session, runner)
+        session.move_rule("window", 1, 0)
+        await settle(session, runner)
+
+        def classes() -> list[object]:
+            return [rule.match["class"] for rule in session.rules("window")]
+
+        assert classes() == ["mpv", "foot"]
+        assert session.undo()
+        await settle(session, runner)
+        assert classes() == ["foot", "mpv"]
+        assert session.model.get(ROUNDING) == 12
+
+        fake.conversation.update(conversation())
+        assert session.undo()
+        await settle(session, runner)
+        assert session.model.get(ROUNDING) is UNSET
+        assert classes() == ["foot", "mpv"]
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_rejected_entity_write_records_no_step(tmp_path: Path) -> None:
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        recorded: list[Step] = []
+        session.on_recorded = recorded.append
+
+        reject_the_next_reload(fake, BINDS_MODULE)
+        session.add_bind(exec_bind("SUPER + A"))
+        await settle(session, runner)
+
+        assert recorded == []
+        assert session.last_gesture is None
+
+    run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))
+
+
+def test_a_foreign_reload_that_adopts_a_hand_edit_forgets_that_lists_steps(
+    tmp_path: Path,
+) -> None:
+    """S1.5 of #151: an old `binds` list replayed over a hand edit would erase it. Steps
+    over lists the re-read left alone, and Option steps, survive (ADR-0010 §Undo)."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        runner = Runner()
+        session = await live_session(fake, tmp_path, runner)
+        session.add_bind(exec_bind("SUPER + A"))
+        await settle(session, runner)
+        hand_edited = module_bytes(tmp_path, BINDS_MODULE)
+        session.add_bind(exec_bind("SUPER + B"))
+        await settle(session, runner)
+        session.add_rule("window", WindowRule(match={"class": "foot"}))
+        await settle(session, runner)
+
+        (tmp_path / "hypr" / "hyprtweaker" / BINDS_MODULE).write_bytes(hand_edited)
+        await fake.emit("configreloaded")
+        await drain_events(runner)
+        await settle(session, runner)
+
+        assert [bind.keys for bind in session.model.entities.binds] == ["SUPER + A"]
+        step = session.last_gesture
+        assert isinstance(step, EntityStep) and step.title == "Window rule added"
+        assert session.undo()
+        await settle(session, runner)
+        assert session.last_gesture is None, "a binds step outlived the hand edit"
 
     run_with_fake(scenario, FakeHyprland(conversation(), reload_emits_event=True))

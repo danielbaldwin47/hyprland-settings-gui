@@ -249,9 +249,6 @@ class ScriptSource:
         self._expressions[script_id] = text
         return text
 
-    def extractable(self, script_id: int) -> bool:
-        return self.expression(script_id) != UNEXTRACTABLE
-
     def _extract(self, script: Script) -> str:
         lines = self._lines(script.source)
         if lines is None:

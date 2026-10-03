@@ -37,8 +37,9 @@ sys.path.insert(0, str(ROOT / "src"))
 from hyprtweaker.engine.importer import import_config  # noqa: E402
 from hyprtweaker.engine.importer.mapping import ImportResult  # noqa: E402
 from hyprtweaker.engine.model import ConfigModel  # noqa: E402
+from hyprtweaker.engine.model.entities import Bind, DispatcherCall, EntitySet  # noqa: E402
 from hyprtweaker.engine.paths import ConfigPaths  # noqa: E402
-from hyprtweaker.engine.schema import load_schema  # noqa: E402
+from hyprtweaker.engine.schema import SupplementKind, load_schema, supplement  # noqa: E402
 from hyprtweaker.engine.writer import Writer  # noqa: E402
 
 SCHEMA_DIR = ROOT / "data" / "schema"
@@ -237,6 +238,116 @@ def test_the_entity_modules_were_actually_written(tmp_path: Path) -> None:
     } <= written
 
 
+def test_a_monitor_rule_with_every_row_field_is_a_config_hyprland_accepts(
+    tmp_path: Path,
+) -> None:
+    """Every field the Monitors rows write (#193), a custom modeline `mode` among them.
+
+    A modeline is a `mode` value: Hyprland has no `modeline` key ("unknown field").
+    """
+    from hyprtweaker.engine.model.entities import MonitorRule
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    model.entities.monitors.extend(
+        [
+            MonitorRule(
+                "DP-2",
+                {
+                    "mode": "modeline 148.5 1920 2008 2052 2200 1080 1084 1089 1125 "
+                    "+hsync +vsync",
+                    "scale": 1.6,
+                    "reserved": {"top": 32, "right": 0, "bottom": 0, "left": 8},
+                    "cm": "hdredid",
+                    "sdr_eotf": "gamma22force",
+                    "sdrbrightness": 1.4,
+                    "sdrsaturation": 0.9,
+                    "supports_wide_color": 1,
+                    "supports_hdr": 0,
+                    "sdr_min_luminance": 0.005,
+                    "sdr_max_luminance": 250,
+                    "min_luminance": 0.05,
+                    "max_luminance": 1000,
+                    "max_avg_luminance": 400,
+                },
+            ),
+            MonitorRule("DP-3", {"mode": "highrr", "scale": 0.25, "reserved": 32}),
+        ]
+    )
+    model.mark_entities_loaded()
+    Writer(paths, app_version="0.0.0-test").write(model)
+    assert (paths.app_dir / "monitors.lua").is_file()
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    assert result.returncode == 0, (
+        f"Hyprland rejected the monitor rule:\n{result.stdout}\n{result.stderr}"
+    )
+    assert "config ok" in result.stdout
+
+
+def test_workspace_rules_of_every_selector_class_with_layout_opts_are_a_config_hyprland_accepts(
+    tmp_path: Path,
+) -> None:
+    """One rule per selector class the editor writes (#160), each carrying every field kind.
+
+    Proves the writer spells selectors, css-gap tables and `layout_opts` the way Hyprland
+    loads them. It does not prove the selector *grammar*: `--verify-config` loads `x[1]`
+    and `w[tv1` as it loads `3` (checked during #160), which is why
+    `engine/workspace_selector` is the only judge of a typed selector.
+    """
+    from hyprtweaker.engine.model.entities import WorkspaceRule
+
+    fields = {
+        "monitor": "DP-1",
+        "default": True,
+        "persistent": True,
+        "gaps_in": 5,
+        "gaps_out": {"top": 10, "right": 20, "bottom": 10, "left": 20},
+        "float_gaps": 0,
+        "border_size": 2,
+        "no_border": False,
+        "no_rounding": True,
+        "no_shadow": True,
+        "decorate": False,
+        "on_created_empty": "[float] true",
+        "default_name": "main",
+        "layout": "master",
+        "animation": "slide",
+        "enabled": True,
+        "layout_opts": {"orientation": "top", "mfact": 0.6, "new_status": False},
+    }
+    selectors = [
+        "3",
+        "name:web",
+        "special:scratch",
+        "w[tv1]",
+        "r[2-4]",
+        "f[1]s[false]",
+        "r[2-4] w[t1]",
+        "m[DP-1]",
+    ]
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    model.entities.workspace_rules.extend(WorkspaceRule(s, fields) for s in selectors)
+    model.mark_entities_loaded()
+    Writer(paths, app_version="0.0.0-test").write(model)
+    assert (paths.app_dir / "workspace_rules.lua").is_file()
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    assert result.returncode == 0, (
+        f"Hyprland rejected the workspace rules:\n{result.stdout}\n{result.stderr}"
+    )
+    assert "config ok" in result.stdout
+
+
 def write_imported_conf(
     root: Path, version: str, conf: str
 ) -> tuple[ConfigPaths, ImportResult]:
@@ -302,3 +413,173 @@ def test_the_dead_keysym_binds_reached_the_file_as_comments(tmp_path: Path) -> N
     for line in written.splitlines():
         if "notakey" in line:
             assert line.strip().startswith("--"), line
+
+
+@pytest.mark.parametrize(
+    ("keys", "loads"),
+    [
+        ("SUPER + A + B", True),
+        ("SUPER + code:36 + code:37", True),
+        ("SUPER + mouse:272 + Q", False),
+    ],
+)
+def test_which_multi_key_triggers_hyprland_loads(
+    tmp_path: Path, keys: str, loads: bool
+) -> None:
+    """The probe behind `validate_trigger`'s multi-key verdict (#198, Hyprland 0.56.2).
+
+    Two keys after the modifiers load (the compositor binds only the last one), so they
+    warn; a mouse, wheel or switch trigger beside another key fails the whole config, so
+    that blocks. Written enabled on purpose: a disabled bind never reaches Lua.
+    """
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    call = DispatcherCall(path="exec_cmd", positional=("true",))
+    model.adopt_entities(EntitySet(binds=[Bind(keys=keys, dispatcher=call)]))
+    Writer(paths, app_version="0.0.0-test").write(model)
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    verified = verify(paths.entrypoint, runtime_dir)
+
+    assert (verified.returncode == 0) is loads, (
+        f"{keys!r}:\n{verified.stdout}\n{verified.stderr}"
+    )
+    assert ("config ok" in verified.stdout) is loads
+
+
+def test_the_switch_triggers_the_picker_writes_are_a_config_hyprland_accepts(
+    tmp_path: Path,
+) -> None:
+    """#107: `switch:on:`, `switch:off:` and the plain form, with a name holding spaces and
+    mixed case, written enabled. The picker only offers what this loads."""
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    call = DispatcherCall(path="exec_cmd", positional=("true",))
+    triggers = (
+        "switch:on:Lid Switch",
+        "switch:off:Lid Switch",
+        "switch:Tablet Mode Switch",
+    )
+    model.adopt_entities(
+        EntitySet(binds=[Bind(keys=keys, dispatcher=call) for keys in triggers])
+    )
+    Writer(paths, app_version="0.0.0-test").write(model)
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    verified = verify(paths.entrypoint, runtime_dir)
+
+    assert verified.returncode == 0, f"{verified.stdout}\n{verified.stderr}"
+    assert "config ok" in verified.stdout
+    written = (paths.app_dir / "binds.lua").read_text(encoding="utf-8")
+    for keys in triggers:
+        assert f'"{keys}"' in written
+
+
+def verify_window_rule_effects(tmp_path: Path, effects: dict[str, object]) -> str | None:
+    """Write one window rule carrying `effects`; the verify output when Hyprland rejects
+    the config, `None` when it says "config ok"."""
+    from hyprtweaker.engine.model.entities import WindowRule
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    model = ConfigModel(load_schema("0.56.2", SCHEMA_DIR))
+    model.entities.window_rules.append(WindowRule({"class": "kitty"}, effects))
+    model.mark_entities_loaded()
+    Writer(paths, app_version="0.0.0-test").write(model)
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    if result.returncode == 0 and "config ok" in result.stdout:
+        return None
+    return f"{result.stdout}\n{result.stderr}"
+
+
+def test_the_gradient_editor_writes_a_border_color_hyprland_accepts(tmp_path: Path) -> None:
+    """The table the gradient editor emits (#156), in each shape it takes: one stop, several,
+    translucent, and an angle at either end of the scale."""
+    from hyprtweaker.engine import rule_grammars
+    from hyprtweaker.engine.model.values import Color, Gradient
+
+    shapes = [
+        Gradient((Color.parse("#ff0000"),), 0.0),
+        Gradient(tuple(Color.parse(c) for c in ("#12345678", "#abcdef01", "#fff")), 360.0),
+        Gradient((Color.parse("rgba(33ccffee)"), Color.parse("rgba(00ff99ee)")), 45.0),
+    ]
+    for number, shape in enumerate(shapes):
+        rejected = verify_window_rule_effects(
+            tmp_path / str(number), {"border_color": rule_grammars.emit_border_color(shape)}
+        )
+        assert rejected is None, f"Hyprland rejected the gradient {shape}:\n{rejected}"
+
+
+def test_the_gradient_editors_text_forms_are_accepted_too(tmp_path: Path) -> None:
+    """What raw mode saves verbatim (#156): the active+inactive pair, a one-gradient legacy
+    string, and a plain colour. All three are strings the Lua API falls back to."""
+    forms = [
+        "rgba(33ccffee) rgba(595959aa)",
+        "rgba(33ccffee) rgba(00ff99ee) 45deg",
+        "rgba(33ccffee)",
+    ]
+    for number, text in enumerate(forms):
+        rejected = verify_window_rule_effects(tmp_path / str(number), {"border_color": text})
+        assert rejected is None, f"Hyprland rejected {text!r}:\n{rejected}"
+
+
+def test_a_border_color_hyprland_cannot_read_is_rejected(tmp_path: Path) -> None:
+    """Guards the two tests above: "accepted" must come from Hyprland reading the colour."""
+    rejected = verify_window_rule_effects(
+        tmp_path, {"border_color": {"colors": ["rgba(zzzzzzzz)"], "angle": 0}}
+    )
+
+    assert rejected is not None
+
+
+def write_plugin_setting(root: Path) -> ConfigPaths:
+    """A plugin's setting as the Writer writes it (#175), for a plugin that is not loaded."""
+    paths = ConfigPaths.rooted_at(root)
+    paths.hypr_dir.mkdir(parents=True, exist_ok=True)
+    record = {"name": "plugin:hyprbars:bar_height", "description": "x", "default": 15}
+    schema = supplement(
+        load_schema("0.56.2", SCHEMA_DIR),
+        [record],
+        version="0.56.2",
+        kind=SupplementKind.PLUGIN,
+    )
+    model = ConfigModel(schema)
+    model.set("plugin:hyprbars:bar_height", 20)
+    model.set("general:gaps_in", 7)
+    Writer(paths, app_version="0.0.0-test").write(model)
+    return paths
+
+
+def test_a_plugin_setting_without_its_plugin_is_a_config_hyprland_accepts(
+    tmp_path: Path,
+) -> None:
+    """Settled for #175: the app never causes a config error by setting a plugin's option."""
+    paths = write_plugin_setting(tmp_path)
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert "config ok" in result.stdout
+
+
+def test_the_same_setting_unguarded_is_rejected(tmp_path: Path) -> None:
+    """Guards the test above: accepted because of the guard, not because nothing checks."""
+    paths = write_plugin_setting(tmp_path)
+    module = paths.app_dir / "options" / "plugin.lua"
+    module.write_text("hl.config({ plugin = { hyprbars = { bar_height = 20 } } })\n")
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir()
+
+    result = verify(paths.entrypoint, runtime_dir)
+
+    assert "unknown config key 'plugin.hyprbars.bar_height'" in result.stdout + result.stderr

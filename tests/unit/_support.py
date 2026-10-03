@@ -30,8 +30,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from _fake_hyprland import FakeHyprland
 
+    from hyprtweaker.engine.ipc import LiveHyprland
     from hyprtweaker.engine.model import ConfigModel
     from hyprtweaker.engine.schema import Schema
+    from hyprtweaker.engine.wallpaper import Wallpapers
     from hyprtweaker.session import Session
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -104,6 +106,113 @@ def sample_schema() -> Schema:
     return load_schema(SAMPLE_VERSION, SCHEMA_DIR)
 
 
+def schema_without(*names: str, version: str) -> Schema:
+    """The sample Schema as a later release that removed `names` would ship it."""
+    from hyprtweaker.engine.schema import Schema
+
+    base = sample_schema()
+    return Schema(
+        hyprland_version=version,
+        options=tuple(o for o in base if o.name not in names),
+        sections=base.sections,
+    )
+
+
+def curated(
+    section: str, groups: dict[str, str | None], members: dict[str, list[str]]
+) -> Schema:
+    """The sample Schema with `section`'s Groups replaced by these, and no others.
+
+    `groups` maps each title to its description, in display order; `members` maps a title to
+    its Options in curated order. Every other Option of the Section is left uncurated, so a
+    test states the whole curation it plans rather than inheriting the shipped one.
+    """
+    from dataclasses import replace
+
+    from hyprtweaker.engine.schema import OverlayGroup, Schema, SectionOverlay
+
+    base = sample_schema()
+    placed = {
+        name: (title, order)
+        for title, names in members.items()
+        for order, name in enumerate(names, start=1)
+    }
+    sections = dict(base.sections)
+    sections[section] = replace(
+        sections.get(section, SectionOverlay()),
+        groups=tuple(OverlayGroup(title, description) for title, description in groups.items()),
+    )
+    return Schema(
+        hyprland_version=base.hyprland_version,
+        options=tuple(
+            replace(
+                option,
+                group=placed.get(option.name, (None, None))[0],
+                group_order=placed.get(option.name, (None, None))[1],
+            )
+            if option.section == section
+            else option
+            for option in base
+        ),
+        sections=sections,
+    )
+
+
+def schema_renaming(old: str, new: str, *, version: str) -> Schema:
+    """The sample Schema as a release that renamed `old` to `new` would ship it."""
+    from dataclasses import replace
+
+    from hyprtweaker.engine.schema import Schema
+
+    base = sample_schema()
+    path = tuple(new.replace(":", ".").split("."))
+    return Schema(
+        hyprland_version=version,
+        options=tuple(
+            replace(o, name=new, lua_key=".".join(path), path=path, renamed_from=old)
+            if o.name == old
+            else o
+            for o in base
+        ),
+        sections=base.sections,
+    )
+
+
+def synthetic_schema_dir(directory: Path, *versions: str) -> Path:
+    """A schema directory shipping exactly `versions`, one Option each, and an empty Overlay.
+
+    For version selection: what ships in `data/schema` changes with every release check,
+    and a test of "between two shipped schemas" must not change with it.
+    """
+    from hyprtweaker.engine.schema import GeneratedOption, GetOptionKey, OptionType, Widget
+    from hyprtweaker.engine.schema import generated as generated_module
+
+    option = GeneratedOption(
+        name="general:border_size",
+        lua_key="general.border_size",
+        section="general",
+        path=("general", "border_size"),
+        order=0,
+        type=OptionType.INT,
+        widget=Widget.INT_RANGE,
+        description="size of the border",
+        default=1,
+        default_raw=1,
+        sentinel_default=False,
+        getoption_key=GetOptionKey.INT,
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    for version in versions:
+        schema = generated_module.GeneratedSchema(
+            hyprland_version=version, options=(option,), provenance={}
+        )
+        (directory / f"hyprland-{version}.json").write_text(
+            generated_module.dumps(schema), encoding="utf-8"
+        )
+    (directory / "overlay.json").write_text('{"format_version": 1}', encoding="utf-8")
+    return directory
+
+
 class Runner:
     """A `Session.spawn` for tests: real tasks on the running loop, awaitable to quiescence.
 
@@ -153,7 +262,20 @@ def section_conversation(*sections: str, **set_values: Any) -> dict[str, str]:
     return conversation
 
 
-def session_for(fake: FakeHyprland, root: Path, runner: Runner) -> Session:
+def session_for(
+    fake: FakeHyprland,
+    root: Path,
+    runner: Runner,
+    *,
+    live_hyprland: LiveHyprland | None = None,
+    wallpapers: Wallpapers | None = None,
+) -> Session:
+    """A Session over `fake`, posing as the Hyprland `live_hyprland` describes, if any.
+
+    The snapshot is handed in rather than read: the startup read blocks, and `fake` serves
+    on the loop this is called from, so the read would wait out its timeout and answer
+    `None` in every test.
+    """
     from hyprtweaker.engine.paths import ConfigPaths
     from hyprtweaker.session import Session
 
@@ -163,6 +285,8 @@ def session_for(fake: FakeHyprland, root: Path, runner: Runner) -> Session:
         paths=ConfigPaths.rooted_at(root),
         app_version=SAMPLE_APP_VERSION,
         connect=lambda: fake.instance,
+        read_live=lambda: live_hyprland,
+        wallpapers=wallpapers,
     )
 
 
@@ -190,3 +314,73 @@ def assert_lists_match(declared: set[str], actual: set[str], meson_file: Path) -
 
     stale = declared - actual
     assert not stale, f"{meson_file.name} installs files that no longer exist: {sorted(stale)}"
+
+
+class SettlingApplier:
+    """An Applier stand-in that holds entity commits until `settle()` reports them.
+
+    Entity undo records where the verdict lands (`Session._applied`), so a stub whose
+    `commit_entities` only counts records nothing. This one numbers each commit as the real
+    queue does and, on `settle()`, reports everything since the last report as one
+    transaction -- the coalescing a real queue would do -- with `outcome` as its verdict.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+        self.serial = 0
+        self._reported = 0
+        self.commits: list[tuple[str, ...]] = []
+        """Option commits, as `Applier.commit` was called -- an Option undo's replay."""
+
+    def commit_entities(self) -> int:
+        self.serial += 1
+        return self.serial
+
+    def commit(self, *names: str) -> None:
+        self.commits.append(names)
+
+    def settle(self, outcome: str = "ok") -> None:
+        """Report every commit since the last report as one transaction ending in `outcome`.
+
+        `"config-errors"` is Hyprland rejecting a Module this transaction wrote -- the
+        rejection that does not stand (`Session._stands`); an error in a file the app did not
+        write is a different verdict, and stands.
+        """
+        from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+        from hyprtweaker.engine.writer import WriteResult
+
+        if self.serial == self._reported:
+            return
+        self._reported = self.serial
+        rejected = ApplyOutcome(outcome) is ApplyOutcome.CONFIG_ERRORS
+        self._session._applied(
+            ApplyResult(
+                ApplyOutcome(outcome),
+                entities=self.serial,
+                write=WriteResult(("binds.lua",), (), (), False, ()) if rejected else None,
+                errors=("/home/user/.config/hypr/hyprtweaker/binds.lua:4: unexpected symbol",)
+                if rejected
+                else (),
+            )
+        )
+
+
+def entity_session(root: Path) -> tuple[Session, SettlingApplier]:
+    """A live, compositor-less Session whose entity commits report on `settle()`."""
+    from hyprtweaker.engine.ipc import Instance, NoInstance
+    from hyprtweaker.engine.paths import ConfigPaths
+    from hyprtweaker.session import Session
+
+    def no_compositor() -> Instance:
+        raise NoInstance("headless")
+
+    session = Session(
+        spawn=lambda coro: coro.close(),
+        paths=ConfigPaths.rooted_at(root),
+        app_version=SAMPLE_APP_VERSION,
+        connect=no_compositor,
+    )
+    applier = SettlingApplier(session)
+    session._applier = applier  # type: ignore[assignment]
+    session._offline_reason = None
+    return session, applier

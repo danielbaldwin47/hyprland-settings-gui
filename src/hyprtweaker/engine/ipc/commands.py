@@ -177,6 +177,30 @@ class CommandClient:
             raise MalformedReply(f"binds answered {payload!r}")
         return len(payload)
 
+    async def workspace_rule_count(self) -> int:
+        """How many workspace rules the live config declares. The Migration switch's check.
+
+        The only rule listing Hyprland offers over IPC: there is no window-rule or layer-rule
+        command, and no `hl.get_*` getter for either (probed on 0.56.2), so those two kinds
+        are verified by `configerrors` alone (ADR-0009). A count, like `bind_count`, because
+        the switch compares sizes and never reconstructs rule state from the reply (ADR-0008).
+        """
+        reply = await self._request("workspacerules", json_output=True)
+        payload = _parse_json(reply, "workspacerules")
+        if not isinstance(payload, list):
+            raise MalformedReply(f"workspacerules answered {payload!r}")
+        return len(payload)
+
+    async def version(self) -> Any:
+        """`j/version`, parsed but unchecked: `live.fetch_live_hyprland` reads its shape, as
+        the blocking startup read does, so both answer the same thing for the same reply."""
+        return _parse_json(await self._request("version", json_output=True), "version")
+
+    async def descriptions(self) -> Any:
+        """`j/descriptions`, parsed but unchecked, for the same reason as `version`."""
+        reply = await self._request("descriptions", json_output=True)
+        return _parse_json(reply, "descriptions")
+
     async def clients(self) -> tuple[Mapping[str, Any], ...]:
         """Every open window, as Hyprland describes it. The Pick-a-window helper (#67).
 
@@ -231,6 +255,50 @@ class CommandClient:
         if not isinstance(payload, list):
             raise MalformedReply(f"monitors answered {payload!r}")
         return tuple(item for item in payload if isinstance(item, Mapping))
+
+    async def switches(self) -> tuple[Mapping[str, Any], ...]:
+        """Every switch device the compositor reports, by name. The switch picker (#107).
+
+        Asks `j/devices`, an object of arrays (`mice`, `keyboards`, `tablets`, `touch`,
+        `switches`), and returns the `switches` one. Each entry is `{"address", "name"}`;
+        the picker reads `name`, which a `switch:` trigger compares as an exact string, so
+        it is handed over untouched. An entry with no string `name` is dropped, because
+        it could not be written into a trigger. Helper data only (ADR-0008).
+
+        A reply with no `switches` key answers `()`: the compositor is there and has
+        nothing to list, which is the case on every desktop without a lid or tablet-mode
+        switch. Callers tell that from "nobody answered" (`IpcError`).
+        """
+        reply = await self._request("devices", json_output=True)
+        payload = _parse_json(reply, "devices")
+        if not isinstance(payload, Mapping):
+            raise MalformedReply(f"devices answered {payload!r}")
+        entries = payload.get("switches", [])
+        if not isinstance(entries, list):
+            raise MalformedReply(f"devices answered switches {entries!r}")
+        return tuple(
+            entry
+            for entry in entries
+            if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
+        )
+
+    async def loaded_plugins(self) -> tuple[str, ...]:
+        """The names of the plugins loaded right now, in `plugin list` order (#174).
+
+        A loaded plugin is reported by the name it gives itself, with its author, version,
+        description and a handle -- never its path -- so the name is all a caller can match
+        on. A plain read: unlike `eval`, it does not clear `configerrors`. An entry with no
+        string `name` is dropped.
+        """
+        reply = await self._request("plugin list", json_output=True)
+        payload = _parse_json(reply, "plugin list")
+        if not isinstance(payload, list):
+            raise MalformedReply(f"plugin list answered {payload!r}")
+        return tuple(
+            entry["name"]
+            for entry in payload
+            if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
+        )
 
     async def eval(self, code: str) -> EvalReply:
         """Run Lua in the live config state -- the Eval preview tier (ADR-0010).

@@ -20,14 +20,25 @@ a question about a tuple on a machine with no display.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from hyprtweaker.engine.schema import ResolvedOption, Schema
-from hyprtweaker.engine.schema.resolve import schema_dir
+from hyprtweaker.engine.schema import ResolvedOption, Schema, SupplementKind
+from hyprtweaker.engine.schema.resolve import schema_dir, version_key
 
-from .plan import GroupPlan, PagePlan, View, group_title, is_visible
+from .plan import (
+    DEFAULT_DISCLOSURE,
+    NEW_IN_GROUP_DESCRIPTION,
+    Disclosure,
+    GroupPlan,
+    PagePlan,
+    View,
+    is_visible,
+    is_withheld,
+    new_in_group_title,
+    plan_groups,
+)
 
 TASKS_FILENAME = "tasks.json"
 FORMAT_VERSION = 1
@@ -47,28 +58,6 @@ A plain word rather than the `New in <version>` heading: that string names a *Gr
 uncurated Options (`CONTEXT.md`: a Group is the titled block inside a Page), and reusing it
 one level up would put a Group's name where a category's belongs, telling the reader that a
 whole sidebar section is a version rather than a subject.
-"""
-
-
-def new_in_group_title(version: str) -> str:
-    """The heading uncurated Options appear under (ADR-0012, #7).
-
-    Named for the Hyprland version rather than a bare "Other" because the version is the
-    actionable part: it tells the user these arrived with an upgrade, and it tells whoever
-    curates next exactly which release to diff.
-    """
-    return f"New in {version}"
-
-
-NEW_IN_GROUP_DESCRIPTION = (
-    "Settings this version of Hyprland has that the curated pages do not place yet. "
-    "They work exactly as they do in the Config view."
-)
-"""The flag #7 and ADR-0012 ask for ("appears ... flagged, until it is curated").
-
-The heading alone reads as *new*, which is not the same claim: it would leave a user to
-wonder whether an uncurated setting is half-supported. Saying it plainly is what makes the
-degradation legible rather than merely visible.
 """
 
 
@@ -94,6 +83,23 @@ class PageSpec:
     title: str
     sections: tuple[str, ...] = ()
     groups: tuple[GroupSpec, ...] = ()
+
+
+ENTITY_PAGE_PREFIX = "entity:"
+
+
+def entity_page_id(kind: str) -> str:
+    """The sidebar id (and stack name) of the Entity Page for `kind`.
+
+    The one place that spells the `entity:` prefix. It exists because Hyprland has Sections
+    and Entity kinds of the same name (`binds`, `animations`, `gestures`), and the Config
+    view stacks one page per Section beside one per Entity kind: a bare `binds` is two pages
+    under one name, and GTK keeps the first and drops the second (#70, #120).
+
+    `kind` is the id suffix, not the `EntitySet` attribute name: the startup commands are
+    `entity_page_id("autostart")`, though `EntitySet` calls them `startup`.
+    """
+    return f"{ENTITY_PAGE_PREFIX}{kind}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +200,7 @@ def _destination(entry: Any, path: Path) -> Destination:
     if not isinstance(entry, dict):
         raise ValueError(f"{path}: a destination must be an object")
     if "entity" in entry:
-        return EntitySpec(section=str(entry["entity"]))
+        return EntitySpec(section=entity_page_id(str(entry["entity"])))
     return PageSpec(
         id=str(entry["id"]),
         title=str(entry["title"]),
@@ -228,9 +234,7 @@ class CategoryPlan:
 def plan_tasks_view(
     schema: Schema,
     mapping: TasksMapping,
-    *,
-    show_advanced: bool = False,
-    revealed: frozenset[str] = frozenset(),
+    disclosure: Disclosure = DEFAULT_DISCLOSURE,
 ) -> tuple[CategoryPlan, ...]:
     """Every curated Page, plus a fallback Page for any Section the mapping never placed.
 
@@ -238,7 +242,11 @@ def plan_tasks_view(
     behaviour on every Hyprland release between the release and its curation (ADR-0012).
     Exercise it in tests with a Section the mapping omits, never by trusting that the
     shipped mapping happens to be complete today.
+
+    Planned under the Tasks view's tier rule whatever `disclosure.view` says, so the
+    `hidden` tier has no route onto a curated Page (ADR-0013 §5).
     """
+    tasks = replace(disclosure, view=View.TASKS)
     placed = _placements(mapping)
     planned: list[CategoryPlan] = []
 
@@ -248,22 +256,10 @@ def plan_tasks_view(
             if isinstance(destination, EntitySpec):
                 pages.append(destination)
                 continue
-            pages.append(
-                _plan_page(
-                    schema,
-                    destination,
-                    placed,
-                    show_advanced=show_advanced,
-                    revealed=revealed,
-                )
-            )
+            pages.append(_plan_page(schema, destination, placed, tasks))
         planned.append(CategoryPlan(id=category.id, title=category.title, pages=tuple(pages)))
 
-    return tuple(
-        _with_fallbacks(
-            planned, schema, mapping, placed, show_advanced=show_advanced, revealed=revealed
-        )
-    )
+    return tuple(_with_fallbacks(planned, schema, mapping, placed, tasks))
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,51 +284,49 @@ def _placements(mapping: TasksMapping) -> dict[str, _Placement]:
     return placements
 
 
-def _claimed_elsewhere(placed: dict[str, _Placement], name: str, page_id: str) -> bool:
-    """Whether some *other* Page named this Option, so its Section's home must not take it.
-
-    The one predicate the home-versus-named precedence turns on (`groups` outrank
-    `sections`), spelled once: written inline it reads as a comparison between a placement
-    and a page id, which is not the question being asked.
-    """
-    claim = placed.get(name)
-    return claim is not None and claim.page_id != page_id
-
-
 def _plan_page(
     schema: Schema,
     spec: PageSpec,
     placed: dict[str, _Placement],
-    *,
-    show_advanced: bool,
-    revealed: frozenset[str],
+    disclosure: Disclosure,
 ) -> PagePlan:
     """One curated Page: its homed Sections first, then the Groups it curated by name.
 
     Sections first because they are what the Page is *about* -- the curated Groups on a Page
     like Rendering are settings pulled in from `misc`, and leading with borrowed settings
     would read as though `misc` were the subject.
+
+    A homed Section's Groups are the Config view's (`plan_groups`: curated Groups first,
+    then path-derived ones), Section by Section in the order the mapping names them; on a
+    Page spanning several, each heading leads with its Section's title.
+
+    An Option the mapping places by name sits only where it was placed, on this Page or on
+    another: one Option, one Row. One no group places, that a newer Hyprland added
+    (`added_in`) and that no Overlay Group places yet, leaves its Section's Groups for a
+    `New in <version>` Group at the foot of its home Page, so it stands out among the
+    settings that were always there until curation places it (ADR-0012).
     """
     withheld = 0
 
-    section_groups: dict[str, list[ResolvedOption]] = {}
+    groups: list[GroupPlan] = []
+    new_in: dict[str, list[ResolvedOption]] = {}
     multi = len(spec.sections) > 1
     for section in spec.sections:
+        shown: list[ResolvedOption] = []
         for option in schema.section(section):
-            if _claimed_elsewhere(placed, option.name, spec.id):
+            if option.name in placed:
                 continue
-            if not is_visible(
-                option, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
-            ):
-                withheld += 1
+            if not is_visible(option, disclosure):
+                withheld += is_withheld(option, disclosure)
                 continue
-            title = _section_group_title(schema, option, section, multi=multi)
-            section_groups.setdefault(title, []).append(option)
-
-    groups = [
-        GroupPlan(title=title, options=tuple(options))
-        for title, options in sorted(section_groups.items(), key=lambda item: item[1][0].order)
-    ]
+            if option.added_in is not None and option.group is None:
+                new_in.setdefault(option.added_in, []).append(option)
+                continue
+            shown.append(option)
+        groups.extend(
+            _under_section(schema, group, section, spec.title) if multi else group
+            for group in plan_groups(schema, section, shown)
+        )
 
     for group in spec.groups:
         members: list[ResolvedOption] = []
@@ -343,14 +337,21 @@ def _plan_page(
                 # shipped mapping honest for the shipped Schema; at runtime an older or
                 # newer compositor simply has fewer settings, which is not an error.
                 continue
-            if not is_visible(
-                curated, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
-            ):
-                withheld += 1
+            if not is_visible(curated, disclosure):
+                withheld += is_withheld(curated, disclosure)
                 continue
             members.append(curated)
         if members:
             groups.append(GroupPlan(title=group.title, options=tuple(members)))
+
+    groups.extend(
+        GroupPlan(
+            title=new_in_group_title(version),
+            options=tuple(options),
+            description=NEW_IN_GROUP_DESCRIPTION,
+        )
+        for version, options in sorted(new_in.items(), key=lambda item: version_key(item[0]))
+    )
 
     return PagePlan(
         section=spec.id,
@@ -360,21 +361,29 @@ def _plan_page(
     )
 
 
-def _section_group_title(
-    schema: Schema, option: ResolvedOption, section: str, *, multi: bool
-) -> str:
-    """The heading an Option sits under on a curated Page.
+def _under_section(
+    schema: Schema, group: GroupPlan, section: str, page_title: str
+) -> GroupPlan:
+    """A Group on a Page spanning several Sections, headed by its Section's title when that
+    says something.
 
-    On a single-Section Page this is exactly the Config view's answer, so a Page that
-    happens to be one Section reads the same in both views. On a Page spanning several --
-    Layouts is four -- the Section's own title leads, because the alternative is every
-    Section's untitled lead Group merging into one heap of unrelated settings.
+    On a single-Section Page the Group is exactly the Config view's, so a Page that happens
+    to be one Section reads the same in both Views. On a Page spanning several -- Layouts
+    is four -- the Section's own title leads ("Dwindle layout · Split direction"), because
+    "Split direction" alone would not say whose. Not when it says nothing (ruling A4 of the
+    #148 review): the Section the Page is named for ("Rendering" on Rendering), and
+    Miscellaneous, which names no thing. An untitled lead Group keeps the bare Section title.
     """
-    derived = group_title(option)
-    if not multi:
-        return derived
     section_title = schema.section_title(section)
-    return f"{section_title} · {derived}" if derived else section_title
+    if not group.title:
+        return replace(group, title=section_title)
+    if section == "misc" or section_title == page_title:
+        return group
+    return replace(group, title=f"{section_title} · {group.title}")
+
+
+PLUGIN_GROUP_TITLE = "Plugin options"
+"""The fallback Group of a loaded plugin's settings: no release added them (#175)."""
 
 
 def _with_fallbacks(
@@ -382,20 +391,14 @@ def _with_fallbacks(
     schema: Schema,
     mapping: TasksMapping,
     placed: dict[str, _Placement],
-    *,
-    show_advanced: bool,
-    revealed: frozenset[str],
+    disclosure: Disclosure,
 ) -> list[CategoryPlan]:
     """Append a Page per uncurated Section: a release adds settings rather than hiding them.
 
-    Keyed on the Section rather than on the individual Option, which is a real limit worth
-    stating: an Option added to a Section the mapping *already* homes lands on that home
-    Page unflagged, because nothing here can tell it apart from the Options that were always
-    there. Detecting that needs a per-Option "added in" fact the Schema does not carry -- it
-    would come from diffing two shipped Generated schemas (ADR-0012's standing drift loop),
-    not from anything visible at plan time. Whole uncurated Sections are what this catches,
-    and they are the case where an Option would otherwise be unreachable rather than merely
-    unsorted.
+    Keyed on the Section: a Section the mapping never homed has no Page for its Options to
+    land on, so each gets one here. An Option a release adds to a Section the mapping
+    already homes needs no Page of its own -- `_plan_page` groups it by its `added_in` stamp
+    on the home Page. Between them, an uncurated Option is always shown and always flagged.
     """
     homed = mapping.homed_sections
 
@@ -403,30 +406,46 @@ def _with_fallbacks(
     for section in schema.section_names:
         if section in homed:
             continue
-        visible = [
-            option
-            for option in schema.section(section)
-            if option.name not in placed
-            and is_visible(
-                option, show_advanced=show_advanced, view=View.TASKS, revealed=revealed
-            )
-        ]
-        if not visible:
-            # Every Option here is either curated elsewhere by name or is the hidden tier,
-            # which has no Tasks home at any switch setting (ADR-0013 §5). Nothing to show.
+        unplaced = [option for option in schema.section(section) if option.name not in placed]
+        visible = [option for option in unplaced if is_visible(option, disclosure)]
+        # The hidden tier has no Tasks home at any switch setting (ADR-0013 §5), so it is not
+        # withheld: counting it would hint at a setting the switch cannot bring here.
+        withheld = sum(1 for option in unplaced if is_withheld(option, disclosure))
+        if not visible and not withheld:
+            # Every Option here is either curated elsewhere by name or is the hidden tier.
+            # Nothing to show, and nothing the user could turn on to see.
             continue
+        # Titled with the release that added each Option where it is known (`added_in`,
+        # which a runtime-supplemented Option carries too), so a Section only the running
+        # Hyprland has is not announced as new in the shipped one.
+        # A loaded plugin's setting has no release at all (#175): it is never "new in" one.
+        by_version: dict[str, list[ResolvedOption]] = {}
+        plugins: list[ResolvedOption] = []
+        for option in visible:
+            if (
+                option.supplement is not None
+                and option.supplement.kind is SupplementKind.PLUGIN
+            ):
+                plugins.append(option)
+            else:
+                version = option.added_in or schema.hyprland_version
+                by_version.setdefault(version, []).append(option)
+        groups = tuple(
+            GroupPlan(
+                title=new_in_group_title(version),
+                options=tuple(members),
+                description=NEW_IN_GROUP_DESCRIPTION,
+            )
+            for version, members in sorted(
+                by_version.items(), key=lambda item: version_key(item[0])
+            )
+        ) + ((GroupPlan(title=PLUGIN_GROUP_TITLE, options=tuple(plugins)),) if plugins else ())
         fallbacks.append(
             PagePlan(
                 section=f"tasks.new.{section}",
                 title=schema.section_title(section),
-                groups=(
-                    GroupPlan(
-                        title=new_in_group_title(schema.hyprland_version),
-                        options=tuple(visible),
-                        description=NEW_IN_GROUP_DESCRIPTION,
-                    ),
-                ),
-                withheld=0,
+                groups=groups,
+                withheld=withheld,
             )
         )
 

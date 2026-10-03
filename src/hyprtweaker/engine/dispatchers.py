@@ -9,13 +9,15 @@ So the catalog is curated, and honest about which half is which:
 
 - **the path set** is transcribed from the stub's namespace classes and is complete;
 - **argument specs** are hand-written, and exist for the dispatchers whose argument shape
-  is actually known from research and probing. Everything else is `free_form`: the editor
-  offers a key/value table rather than a generated form.
+  is actually known from probing. Everything else is free-form (it carries a
+  `free_form_reason`): the editor offers a key/value table rather than a generated form
+  (`coverage()` counts them).
 
-`free_form` is a real answer, not a placeholder for one. A guessed form is worse than no
+Free-form is a real answer, not a placeholder for one. A guessed form is worse than no
 form -- it would present invented field names as though Hyprland documented them, and a
-wrong key is a config error, not a no-op. A free-form table lets a user write the call they
-already know how to write, and the round-trip through `binds.lua` preserves it exactly.
+wrong key is either a config error or a silently ignored no-op. A free-form table lets a
+user write the call they already know how to write, and the round-trip through `binds.lua`
+preserves it exactly.
 
 **`positional` is load-bearing and was settled by probing 0.56.2, not by reading.** The two
 forms are not interchangeable and the compositor refuses the wrong one outright:
@@ -27,8 +29,19 @@ forms are not interchangeable and the compositor refuses the wrong one outright:
 
 So exec takes a bare string and `window.tag` takes a table, in opposite directions, and
 nothing in the stub says so. The same probe found `workspace.move` requires `monitor` --
-not the `workspace` its name suggests -- which is why it stays `free_form` rather than
-carrying a field this module would have got wrong.
+not the `workspace` its name suggests.
+
+**Every dispatcher below was then asked of a nested 0.56.2, not read from docs (#126).**
+`tests/integration/harness/dispatcher_probe.py` records, per dispatcher, the call forms the
+compositor accepts, the keys it requires, and the keys it *reads*: an unknown key is silently
+ignored, so a key is only listed here when a wrong-typed value for it raises or a fired call
+visibly changes state. The record is `tests/golden/dispatcher-probe-0.56.2.json`. An entry
+lists every key a probe saw act (#211 refined "read"): a key fired and seen to do nothing
+(`window` on the group dispatchers, `layout_aware` on the fullscreen ones) is no row, its
+verdict is in the comment above the entry, and a saved call that carries it keeps it in the
+editor's kept group. A shape `ArgSpec` cannot say (exactly-one-of keys, alternative call
+shapes) stays free-form, with its reason on the entry: the sentence the bind editor shows
+the user above the raw table, and a comment beside the entry for the probe evidence.
 
 Engine-side and GTK-free on purpose: the picker is UI, but "what dispatchers exist" is a
 fact about Hyprland, and the Binds writer needs it to validate a path it is about to emit.
@@ -36,7 +49,7 @@ fact about Hyprland, and the Binds writer needs it to validate a path it is abou
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 ArgType = Literal["string", "int", "bool", "window", "workspace", "direction"]
@@ -67,10 +80,12 @@ class Dispatcher:
     """What the picker calls it."""
 
     args: tuple[ArgSpec, ...] = ()
-    """Curated argument specs. Empty plus `free_form` means "shape unknown"."""
+    """Curated argument specs. Empty plus a `free_form_reason` means "shape unknown"."""
 
-    free_form: bool = False
-    """Offer a raw key/value table instead of a generated form."""
+    free_form_reason: str | None = None
+    """Set, the editor offers a raw key/value table instead of a generated form, and shows
+    this sentence above it: what the action takes, or why no form is honest, in the user's
+    words (#150 review, finding 17). `None` for a curated or plain entry."""
 
     positional: bool = False
     """Takes bare arguments rather than a table (`hl.dsp.submap("resize")`)."""
@@ -89,9 +104,9 @@ def _plain(path: str, label: str) -> Dispatcher:
     return Dispatcher(path=path, label=label)
 
 
-def _unknown(path: str, label: str) -> Dispatcher:
-    """A dispatcher whose argument shape is not documented anywhere machine-readable."""
-    return Dispatcher(path=path, label=label, free_form=True)
+def _free_form(path: str, label: str, why: str) -> Dispatcher:
+    """A dispatcher no generated form can describe truthfully, and the reason, in one line."""
+    return Dispatcher(path=path, label=label, free_form_reason=why)
 
 
 WINDOW = ArgSpec(
@@ -100,6 +115,14 @@ WINDOW = ArgSpec(
     label="Window",
     placeholder="class:firefox, title:.*, activewindow",
 )
+
+ACTION = ArgSpec(
+    name="action",
+    label="Action",
+    placeholder="toggle, enable or disable",
+)
+"""`float`, `pin`, `pseudo` and the group lock and deny dispatchers read it (probed:
+`enable` twice holds still, a toggle would not)."""
 
 CATALOG: tuple[Dispatcher, ...] = (
     # --- root -------------------------------------------------------------------------
@@ -143,43 +166,147 @@ CATALOG: tuple[Dispatcher, ...] = (
     ),
     _plain("exit", "Exit Hyprland"),
     _plain("force_renderer_reload", "Reload the renderer"),
-    _plain("force_idle", "Force idle"),
+    Dispatcher(
+        path="force_idle",
+        label="Force idle",
+        args=(ArgSpec(name="seconds", type="int", required=True, label="Seconds"),),
+        positional=True,
+    ),
     _plain("no_op", "Do nothing"),
-    _plain("pass", "Pass the key through"),
+    Dispatcher(
+        path="pass",
+        label="Pass the key through",
+        args=(replace(WINDOW, required=True),),
+    ),
     _plain("release_input_capture", "Release input capture"),
-    _unknown("dpms", "Turn displays on or off"),
-    _unknown("event", "Emit a custom event"),
-    _unknown("focus", "Move focus"),
-    _unknown("layout", "Send a layout message"),
-    _unknown("send_key_state", "Send a key state"),
-    _unknown("send_shortcut", "Send a shortcut to a window"),
+    Dispatcher(
+        path="dpms",
+        label="Turn displays on or off",
+        args=(
+            ArgSpec(name="action", label="Action", placeholder="on, off or toggle"),
+            ArgSpec(name="monitor", label="Monitor", placeholder="DP-1"),
+        ),
+    ),
+    Dispatcher(
+        path="event",
+        label="Emit a custom event",
+        args=(ArgSpec(name="data", required=True, label="Event data"),),
+        positional=True,
+    ),
+    _free_form(  # exactly-one-of keys, which `ArgSpec` cannot say
+        "focus",
+        "Move focus",
+        "Give exactly one of: direction, monitor, workspace, window, urgent_or_last or last.",
+    ),
+    Dispatcher(
+        path="layout",
+        label="Send a layout message",
+        args=(
+            ArgSpec(
+                name="message",
+                required=True,
+                label="Message",
+                placeholder="togglesplit",
+            ),
+        ),
+        positional=True,
+    ),
+    Dispatcher(
+        path="send_key_state",
+        label="Send a key state",
+        args=(
+            ArgSpec(name="mods", required=True, label="Modifiers", placeholder="SUPER"),
+            ArgSpec(name="key", required=True, label="Key", placeholder="a"),
+            ArgSpec(
+                name="state", required=True, label="State", placeholder="down, up or repeat"
+            ),
+            WINDOW,
+        ),
+    ),
+    Dispatcher(
+        path="send_shortcut",
+        label="Send a shortcut to a window",
+        args=(
+            ArgSpec(name="mods", required=True, label="Modifiers", placeholder="SUPER"),
+            ArgSpec(name="key", required=True, label="Key", placeholder="a"),
+            WINDOW,
+        ),
+    ),
     # --- cursor -----------------------------------------------------------------------
-    _unknown("cursor.move", "Move the cursor"),
-    _unknown("cursor.move_to_corner", "Move the cursor to a corner"),
+    Dispatcher(
+        path="cursor.move",
+        label="Move the cursor",
+        args=(
+            ArgSpec(name="x", type="int", required=True, label="X"),
+            ArgSpec(name="y", type="int", required=True, label="Y"),
+        ),
+    ),
+    Dispatcher(
+        path="cursor.move_to_corner",
+        label="Move the cursor to a corner",
+        args=(
+            ArgSpec(
+                name="corner",
+                type="int",
+                required=True,
+                label="Corner",
+                placeholder="0 to 3",
+            ),
+            WINDOW,
+        ),
+    ),
     # --- group ------------------------------------------------------------------------
-    _plain("group.toggle", "Toggle group"),
-    _plain("group.lock", "Lock the group"),
-    _plain("group.lock_active", "Lock the active group"),
-    _plain("group.next", "Focus the next window in the group"),
-    _plain("group.prev", "Focus the previous window in the group"),
-    _unknown("group.active", "Focus a group member"),
-    _unknown("group.move_window", "Move a window out of the group"),
+    Dispatcher(path="group.toggle", label="Toggle group", args=(WINDOW,)),
+    # `action` probed on 0.56.2 (#211): fired at a group of two with a third window trying to
+    # join, `enable, enable, disable, disable` read back refused, refused, joined, joined (a
+    # toggle would alternate). `window` fired too, and `lock_active` locked the active window's
+    # group whichever window it named, `group.lock` locks every group: no effect, no row.
+    Dispatcher(path="group.lock", label="Lock all groups", args=(ACTION,)),
+    Dispatcher(path="group.lock_active", label="Lock the active group", args=(ACTION,)),
+    Dispatcher(path="group.next", label="Focus the next window in the group", args=(WINDOW,)),
+    Dispatcher(
+        path="group.prev", label="Focus the previous window in the group", args=(WINDOW,)
+    ),
+    Dispatcher(
+        path="group.active",
+        label="Focus a group member",
+        args=(ArgSpec(name="index", type="int", required=True, label="Index"), WINDOW),
+    ),
+    # `forward` probed on 0.56.2 (#211): from a fresh group `pa pb pc` with `pb` focused, no key
+    # and `forward = true` gave `pa pc pb` and `forward = false` gave `pb pa pc`. `window` fired
+    # too (`class:pc` while `pb` was focused) and the same window moved as without it: no
+    # effect, no row.
+    Dispatcher(
+        path="group.move_window",
+        label="Move the window forwards or back in its group",
+        args=(ArgSpec(name="forward", type="bool", label="Forwards"),),
+    ),
     # --- window -----------------------------------------------------------------------
     Dispatcher(path="window.close", label="Close the window", args=(WINDOW,)),
     Dispatcher(path="window.kill", label="Force-kill the window", args=(WINDOW,)),
-    Dispatcher(path="window.center", label="Centre the window", args=(WINDOW,)),
-    Dispatcher(path="window.float", label="Toggle floating", args=(WINDOW,)),
-    Dispatcher(path="window.pin", label="Pin the window", args=(WINDOW,)),
-    Dispatcher(path="window.pseudo", label="Toggle pseudo-tiling", args=(WINDOW,)),
-    Dispatcher(path="window.bring_to_top", label="Bring the window to the top", args=(WINDOW,)),
-    Dispatcher(path="window.toggle_swallow", label="Toggle swallowing", args=(WINDOW,)),
+    Dispatcher(path="window.center", label="Center the window", args=(WINDOW,)),
+    Dispatcher(path="window.float", label="Toggle floating", args=(WINDOW, ACTION)),
+    Dispatcher(path="window.pin", label="Pin the window", args=(WINDOW, ACTION)),
+    Dispatcher(path="window.pseudo", label="Toggle pseudo-tiling", args=(WINDOW, ACTION)),
+    _plain("window.bring_to_top", "Bring the window to the top"),
+    _plain("window.toggle_swallow", "Toggle swallowing"),
+    # `action` probed on 0.56.2 (#211) like the locks: fired at a group member, a window trying
+    # to join read back refused, refused, joined, joined. `window` fired too (`class:pc` from a
+    # member): the member was still the one denied, so no effect, no row.
     Dispatcher(
-        path="window.deny_from_group", label="Deny the window from a group", args=(WINDOW,)
+        path="window.deny_from_group", label="Keep the window out of groups", args=(ACTION,)
     ),
+    # `layout_aware` fired on 0.56.2 (#211) at a grouped and a free window, in both modes, with
+    # `true`, `false` and left out: every client's fullscreen state, position and size came out
+    # the same, so it has no row. The same goes for `window.fullscreen_state` below.
     Dispatcher(
         path="window.fullscreen",
         label="Toggle fullscreen",
-        args=(WINDOW, ArgSpec(name="mode", label="Mode", placeholder="maximize")),
+        args=(
+            WINDOW,
+            ArgSpec(name="mode", label="Mode", placeholder="fullscreen or maximized"),
+            ArgSpec(name="action", label="Action", placeholder="toggle, set or unset"),
+        ),
     ),
     Dispatcher(
         path="window.tag",
@@ -192,20 +319,100 @@ CATALOG: tuple[Dispatcher, ...] = (
         label="Send a signal to the window",
         args=(WINDOW, ArgSpec(name="signal", type="int", required=True, label="Signal")),
     ),
-    _unknown("window.alter_zorder", "Change the window's z-order"),
-    _unknown("window.cycle_next", "Focus the next window"),
-    _unknown("window.drag", "Drag the window"),
-    _unknown("window.fullscreen_state", "Set the fullscreen state"),
-    _unknown("window.move", "Move the window"),
-    _unknown("window.resize", "Resize the window"),
-    _unknown("window.set_prop", "Set a window property"),
-    _unknown("window.swap", "Swap the window"),
+    Dispatcher(
+        path="window.alter_zorder",
+        label="Change the window's z-order",
+        args=(
+            ArgSpec(name="mode", required=True, label="Mode", placeholder="top or bottom"),
+            WINDOW,
+        ),
+    ),
+    Dispatcher(
+        path="window.cycle_next",
+        label="Focus the next window",
+        args=(
+            WINDOW,
+            ArgSpec(name="next", type="bool", label="Forwards"),
+            ArgSpec(name="tiled", type="bool", label="Tiled only"),
+            ArgSpec(name="floating", type="bool", label="Floating only"),
+        ),
+    ),
+    _plain("window.drag", "Drag the window"),
+    # No `layout_aware` row, for the reason given at `window.fullscreen`.
+    Dispatcher(
+        path="window.fullscreen_state",
+        label="Set the fullscreen state",
+        args=(
+            ArgSpec(name="internal", type="int", required=True, label="Internal state"),
+            ArgSpec(name="client", type="int", required=True, label="Client state"),
+            ArgSpec(name="action", label="Action", placeholder="toggle, set or unset"),
+            WINDOW,
+        ),
+    ),
+    _free_form(  # exactly-one-of keys, as the compositor's own error lists them
+        "window.move",
+        "Move the window",
+        "Give exactly one of: direction, x and y, workspace, into_group or out_of_group.",
+    ),
+    _free_form(  # three alternative call shapes
+        "window.resize",
+        "Resize the window",
+        "Leave it empty, give x and y (add relative = true to resize by that much), or give "
+        "keep_aspect_ratio.",
+    ),
+    Dispatcher(
+        path="window.set_prop",
+        label="Set a window property",
+        args=(
+            ArgSpec(name="prop", required=True, label="Property", placeholder="opaque"),
+            ArgSpec(name="value", required=True, label="Value", placeholder="1"),
+            WINDOW,
+        ),
+    ),
+    _free_form(  # exactly-one-of keys
+        "window.swap",
+        "Swap the window",
+        "Give exactly one of: direction, target, next or prev.",
+    ),
     # --- workspace --------------------------------------------------------------------
-    _unknown("workspace.change_id", "Change a workspace's id"),
-    _unknown("workspace.move", "Move to a workspace"),
-    _unknown("workspace.rename", "Rename a workspace"),
-    _unknown("workspace.swap_monitors", "Swap workspaces between monitors"),
-    _unknown("workspace.toggle_special", "Toggle the special workspace"),
+    Dispatcher(
+        path="workspace.change_id",
+        label="Change a workspace's id",
+        args=(
+            ArgSpec(name="workspace", type="workspace", required=True, label="Workspace"),
+            ArgSpec(name="id", type="int", required=True, label="New id"),
+        ),
+    ),
+    Dispatcher(
+        path="workspace.move",
+        label="Move to a workspace",
+        args=(
+            ArgSpec(name="monitor", required=True, label="Monitor", placeholder="DP-1"),
+            ArgSpec(name="workspace", type="workspace", label="Workspace"),
+        ),
+    ),
+    Dispatcher(
+        path="workspace.rename",
+        label="Rename a workspace",
+        args=(
+            ArgSpec(name="workspace", type="workspace", required=True, label="Workspace"),
+            ArgSpec(name="name", label="Name"),
+        ),
+    ),
+    Dispatcher(
+        path="workspace.swap_monitors",
+        label="Swap workspaces between monitors",
+        args=(
+            ArgSpec(name="monitor1", required=True, label="First monitor", placeholder="DP-1"),
+            ArgSpec(name="monitor2", required=True, label="Second monitor", placeholder="DP-2"),
+        ),
+    ),
+    Dispatcher(
+        path="workspace.toggle_special",
+        label="Toggle the special workspace",
+        args=(ArgSpec(name="name", label="Name", placeholder="magic"),),
+        positional=True,
+    ),
 )
 
 BY_PATH: dict[str, Dispatcher] = {entry.path: entry for entry in CATALOG}
@@ -230,6 +437,35 @@ def namespaces() -> dict[str, list[Dispatcher]]:
     return {name: entries for name, entries in grouped.items() if entries}
 
 
+@dataclass(frozen=True, slots=True)
+class Coverage:
+    """How much of the catalog has a generated form, by path, in catalog order."""
+
+    curated: tuple[str, ...]
+    """Entries with argument specs: the editor offers a generated form."""
+
+    plain: tuple[str, ...]
+    """Entries that take nothing."""
+
+    free_form: tuple[str, ...]
+    """Entries the editor leaves to a raw key/value table, each with its reason."""
+
+
+def coverage() -> Coverage:
+    """The curated / plain / free-form split of the catalog (#126).
+
+    Free-form is a valid answer and this is where it is counted, so the number can only
+    fall for a reason a probe gave: an entry leaves the group when a nested compositor has
+    shown a form that does not lose a key (`tests/integration/test_dispatcher_probe.py`).
+    """
+    curated = tuple(entry.path for entry in CATALOG if entry.args)
+    free = tuple(entry.path for entry in CATALOG if entry.free_form_reason is not None)
+    plain = tuple(
+        entry.path for entry in CATALOG if not entry.args and entry.free_form_reason is None
+    )
+    return Coverage(curated=curated, plain=plain, free_form=free)
+
+
 def lookup(path: str) -> Dispatcher | None:
     """The catalog entry for a dotted path, or `None` for one this build has never heard of.
 
@@ -247,7 +483,9 @@ __all__ = [
     "NAMESPACE_LABELS",
     "ArgSpec",
     "ArgType",
+    "Coverage",
     "Dispatcher",
+    "coverage",
     "lookup",
     "namespaces",
 ]

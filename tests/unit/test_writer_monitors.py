@@ -21,6 +21,27 @@ VERSION = "0.1.0"
 
 GOLDEN = Path(__file__).parent.parent / "golden" / "writer"
 
+EVERY_ROW_FIELD = MonitorRule(
+    output="DP-2",
+    fields={
+        "mode": "modeline 148.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync",
+        "scale": 1.6,
+        "reserved": {"top": 32, "right": 0, "bottom": 0, "left": 8},
+        "cm": "hdredid",
+        "sdr_eotf": "gamma22force",
+        "sdrbrightness": 1.4,
+        "sdrsaturation": 0.9,
+        "supports_wide_color": 1,
+        "supports_hdr": 0,
+        "sdr_min_luminance": 0.005,
+        "sdr_max_luminance": 250,
+        "min_luminance": 0.05,
+        "max_luminance": 1000,
+        "max_avg_luminance": 400,
+    },
+)
+"""A rule using every field the Monitors rows added in #193 (the static tier verifies it)."""
+
 
 class TestRenderMonitorRule:
     def test_identity_comes_first(self) -> None:
@@ -95,6 +116,7 @@ class TestRenderModules:
                 },
             ),
             MonitorRule(output="HDMI-A-1", fields={"disabled": True}),
+            EVERY_ROW_FIELD,
             MonitorRule(output="", fields={"mode": "preferred", "position": "auto"}),
         ]
         text = render_monitors_module(rules, app_version=VERSION)
@@ -139,6 +161,38 @@ class TestRoundTrip:
             "position": "0x0",
             "scale": 1.5,
         }
+
+    def test_every_row_field_round_trips_without_loss(self) -> None:
+        text = render_monitors_module([EVERY_ROW_FIELD], app_version=VERSION)
+        assert text is not None
+
+        parsed = parse_monitors_module(text)
+
+        assert parsed.ok
+        assert parsed.monitors[0].fields == {
+            "mode": "modeline 148.5 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync",
+            "scale": 1.6,
+            "reserved": {"top": 32, "right": 0, "bottom": 0, "left": 8},
+            "cm": "hdredid",
+            "sdr_eotf": "gamma22force",
+            "sdrbrightness": 1.4,
+            "sdrsaturation": 0.9,
+            "supports_wide_color": 1,
+            "supports_hdr": 0,
+            "sdr_min_luminance": 0.005,
+            "sdr_max_luminance": 250,
+            "min_luminance": 0.05,
+            "max_luminance": 1000,
+            "max_avg_luminance": 400,
+        }
+
+    def test_a_uniform_reserved_area_round_trips_as_one_number(self) -> None:
+        text = render_monitors_module(
+            [MonitorRule(output="DP-2", fields={"reserved": 32})], app_version=VERSION
+        )
+        assert text is not None
+
+        assert parse_monitors_module(text).monitors[0].fields == {"reserved": 32}
 
     def test_hand_edited_duplicate_output_merges(self) -> None:
         """A hand edit declaring an output twice comes back as the one merged rule."""

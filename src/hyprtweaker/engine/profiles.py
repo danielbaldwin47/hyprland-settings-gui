@@ -192,10 +192,10 @@ def _shape(
 # --- the store ---------------------------------------------------------------------------
 
 
-def slugify(name: str) -> str:
-    """The filename half of a profile name: lowered, dashed, never empty."""
+def slugify(name: str, *, fallback: str = "profile") -> str:
+    """The filename half of a profile (or Preset) name: lowered, dashed, never empty."""
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return slug or "profile"
+    return slug or fallback
 
 
 class ProfileStore:
@@ -209,10 +209,21 @@ class ProfileStore:
 
     def __init__(self, directory: Path) -> None:
         self._dir = directory
+        self._revision = 0
 
     @property
     def directory(self) -> Path:
         return self._dir
+
+    @property
+    def revision(self) -> int:
+        """Bumped by every write this store makes: `save`, `replace` and `delete`.
+
+        The settings finder's change signal for profiles (#75): they live in files, not the
+        model, so nothing else says the list moved. A counter rather than a callback, so a
+        reader asks when it needs to know and no writer has to remember to tell it.
+        """
+        return self._revision
 
     def list(self) -> tuple[tuple[str, MonitorProfile], ...]:
         """Every readable profile as `(slug, profile)`, sorted by name then slug."""
@@ -243,6 +254,7 @@ class ProfileStore:
             slug = f"{base}-{counter}"
             counter += 1
         self.replace(slug, profile)
+        self._revision += 1
         return slug
 
     def replace(self, slug: str, profile: MonitorProfile) -> None:
@@ -254,10 +266,12 @@ class ProfileStore:
             json.dumps(_to_json(profile), indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         scratch.replace(path)
+        self._revision += 1
 
     def delete(self, slug: str) -> None:
         """Remove a profile; an active pointer at it goes with it."""
         (self._dir / f"{slug}.json").unlink(missing_ok=True)
+        self._revision += 1
         if self.active_slug() == slug:
             self.set_active(None)
 

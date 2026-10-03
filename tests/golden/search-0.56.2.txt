@@ -1,28 +1,24 @@
 # search index -- Hyprland 0.56.2
 options indexed: 353
 
-## query: border (18 hits)
+## query: border (14 hits)
 field | match | tier | key | title
 title | prefix | default | general.border_size | Border size
+title | prefix | default | general.col.nogroup_border | Border color for windows kept out of groups
 title | prefix | default | general.extend_border_grab_area | Border grab area
 title | prefix | default | decoration.border_part_of_window | Border counts as part of the window
-title | word-prefix | default | general.col.inactive_border | Inactive border colour
-title | word-prefix | default | general.col.active_border | Active border colour
-title | word-prefix | default | general.col.nogroup_border | Ungrouped border colour
-title | word-prefix | default | general.col.nogroup_border_active | Active ungrouped border colour
+title | word-prefix | default | general.col.inactive_border | Inactive border color
+title | word-prefix | default | general.col.active_border | Active border color
+title | word-prefix | default | general.col.nogroup_border_active | Active border color for windows kept out of groups
 title | word-prefix | default | general.resize_on_border | Resize windows by dragging their border
 title | word-prefix | default | general.hover_icon_on_border | Show the resize cursor on borders
 title | word-prefix | default | general.snap.border_overlap | Overlap borders when snapping
-title | word-prefix | default | group.col.border_active | Active group border colour
-title | word-prefix | default | group.col.border_inactive | Inactive group border colour
-title | word-prefix | default | group.col.border_locked_inactive | Locked inactive group border colour
-title | word-prefix | default | group.col.border_locked_active | Locked active group border colour
-description | word-prefix | default | group.groupbar.col.active | Active background
-description | word-prefix | default | group.groupbar.col.inactive | Inactive background
-description | word-prefix | default | group.groupbar.col.locked_active | Locked active background
-description | word-prefix | default | group.groupbar.col.locked_inactive | Locked inactive background
+title | word-prefix | default | group.col.border_active | Active group border color
+title | word-prefix | default | group.col.border_inactive | Inactive group border color
+title | word-prefix | default | group.col.border_locked_inactive | Locked inactive group border color
+title | word-prefix | default | group.col.border_locked_active | Locked active group border color
 
-## query: size (16 hits)
+## query: size (20 hits)
 field | match | tier | key | title
 title | word-prefix | default | general.border_size | Border size
 title | word-prefix | default | decoration.shadow.range | Shadow size
@@ -38,7 +34,11 @@ title | substring | default | general.hover_icon_on_border | Show the resize cur
 title | substring | default | general.resize_corner | Resize corner
 title | substring | default | misc.animate_manual_resizes | Animate manual resizes
 title | substring | default | render.expand_undersized_textures | Expand undersized textures
+description | prefix | default | decoration.shadow.scale | Shadow scale
 description | substring | default | general.extend_border_grab_area | Border grab area
+description | substring | default | decoration.motion_blur.enabled | Motion blur
+description | substring | default | dwindle.smart_resizing | Smart resizing
+description | substring | default | master.smart_resizing | Smart resizing
 description | substring | default | scrolling.explicit_column_widths | Preset column widths
 
 ## query: group (51 hits)
@@ -46,20 +46,20 @@ field | match | tier | key | title
 title | prefix | default | group.auto_group | Group new windows automatically
 title | prefix | default | group.group_on_movetoworkspace | Group when moving to a workspace
 title | prefix | default | group.groupbar.enabled | Group bar
+title | word-prefix | default | general.col.nogroup_border | Border color for windows kept out of groups
+title | word-prefix | default | general.col.nogroup_border_active | Active border color for windows kept out of groups
 title | word-prefix | default | group.focus_removed_window | Focus a window removed from a group
 title | word-prefix | default | group.merge_groups_on_drag | Merge groups on drag
 title | word-prefix | default | group.merge_groups_on_groupbar | Merge groups dropped on a group bar
-title | word-prefix | default | group.col.border_active | Active group border colour
-title | word-prefix | default | group.col.border_inactive | Inactive group border colour
-title | word-prefix | default | group.col.border_locked_inactive | Locked inactive group border colour
-title | word-prefix | default | group.col.border_locked_active | Locked active group border colour
+title | word-prefix | default | group.col.border_active | Active group border color
+title | word-prefix | default | group.col.border_inactive | Inactive group border color
+title | word-prefix | default | group.col.border_locked_inactive | Locked inactive group border color
+title | word-prefix | default | group.col.border_locked_active | Locked active group border color
 title | word-prefix | default | group.drag_into_group | Drag windows into groups
 title | word-prefix | default | group.merge_floated_into_tiled_on_groupbar | Merge floating windows into tiled groups
 title | word-prefix | default | group.groupbar.disable_when_only | Hide when the group has one window
 title | word-prefix | default | binds.ignore_group_lock | Ignore group lock
 title | word-prefix | default | binds.movefocus_cycles_groupfirst | Move focus cycles the group first
-title | substring | default | general.col.nogroup_border | Ungrouped border colour
-title | substring | default | general.col.nogroup_border_active | Active ungrouped border colour
 key | prefix | default | group.insert_after_current | Insert after the current window
 key | prefix | default | group.groupbar.font_family | Font
 key | prefix | default | group.groupbar.font_weight_active | Active title weight
@@ -80,14 +80,14 @@ key | prefix | default | group.groupbar.gradient_rounding | Gradient corner roun
 key | prefix | default | group.groupbar.gradient_rounding_power | Gradient rounding power
 key | prefix | default | group.groupbar.round_only_edges | Round only the outer edges
 key | prefix | default | group.groupbar.gradient_round_only_edges | Round only the outer gradient edges
-key | prefix | default | group.groupbar.text_color | Title colour
-key | prefix | default | group.groupbar.text_color_inactive | Inactive title colour
-key | prefix | default | group.groupbar.text_color_locked_active | Locked active title colour
-key | prefix | default | group.groupbar.text_color_locked_inactive | Locked inactive title colour
-key | prefix | default | group.groupbar.col.active | Active background
-key | prefix | default | group.groupbar.col.inactive | Inactive background
-key | prefix | default | group.groupbar.col.locked_active | Locked active background
-key | prefix | default | group.groupbar.col.locked_inactive | Locked inactive background
+key | prefix | default | group.groupbar.text_color | Title color
+key | prefix | default | group.groupbar.text_color_inactive | Inactive title color
+key | prefix | default | group.groupbar.text_color_locked_active | Locked active title color
+key | prefix | default | group.groupbar.text_color_locked_inactive | Locked inactive title color
+key | prefix | default | group.groupbar.col.active | Active tab color
+key | prefix | default | group.groupbar.col.inactive | Inactive tab color
+key | prefix | default | group.groupbar.col.locked_active | Locked active tab color
+key | prefix | default | group.groupbar.col.locked_inactive | Locked inactive tab color
 key | prefix | default | group.groupbar.gaps_out | Outer gaps
 key | prefix | default | group.groupbar.gaps_in | Inner gaps
 key | prefix | default | group.groupbar.keep_upper_gap | Keep the upper gap
@@ -95,13 +95,17 @@ key | prefix | default | group.groupbar.text_offset | Text offset
 key | prefix | default | group.groupbar.text_padding | Text padding
 key | prefix | default | group.groupbar.blur | Blur the background
 
-## query: tile (5 hits)
+## query: tile (9 hits)
 field | match | tier | key | title
-title | word-prefix | default | input.float_switch_override_focus | Refocus on float/tile switch
+title | word-prefix | default | input.float_switch_override_focus | Focus across tiled and floating
 title | word-prefix | default | group.merge_floated_into_tiled_on_groupbar | Merge floating windows into tiled groups
 title | word-prefix | default | misc.size_limits_tiled | Apply size limits to tiled windows
+description | word-prefix | default | general.gaps_in | Inner gaps
+description | word-prefix | default | general.gaps_out | Outer gaps
+description | word-prefix | default | decoration.blur.new_optimizations | Blur optimisations
 description | word-prefix | default | decoration.blur.xray | X-ray blur
 description | word-prefix | default | misc.on_focus_under_fullscreen | Focusing a window under a fullscreen one
+description | word-prefix | default | layout.single_window_aspect_ratio | Single window aspect ratio
 
 ## query: kb_layout (1 hits)
 field | match | tier | key | title

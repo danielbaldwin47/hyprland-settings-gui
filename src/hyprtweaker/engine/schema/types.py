@@ -226,6 +226,9 @@ class GeneratedOption:
     device_overridable: bool = False
     refresh: tuple[str, ...] = ()
     curation_flags: tuple[CurationFlag, ...] = ()
+    added_in: str | None = None
+    """The Hyprland version that first had this Option, stamped by the generator from the
+    predecessor schema (`resolve.stamp_added_in`). `None` for the whole back catalog."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,8 +266,17 @@ class OverlayEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class OverlayGroup:
+    """One curated Group a Section declares: the heading its Options name in `group`."""
+
+    title: str
+    description: str | None = None
+    """One sentence under the heading, when the title alone does not say what is in it."""
+
+
+@dataclass(frozen=True, slots=True)
 class SectionOverlay:
-    """Per-Section curation: a title, a wiki anchor, and a visibility floor.
+    """Per-Section curation: a title, a wiki anchor, a visibility floor and its Groups.
 
     The floor is how `debug`/`quirks`/`experimental`/`input-capture` become hidden without
     27 repeated per-option entries -- and it stays data, so a new dangerous section is an
@@ -274,6 +286,33 @@ class SectionOverlay:
     title: str | None = None
     help_url: str | None = None
     visibility: Visibility | None = None
+    groups: tuple[OverlayGroup, ...] = ()
+    """The Section's curated Groups in display order. Each Option's `group` names one of
+    them; the loader rejects a name its Section does not declare (#157)."""
+
+
+class SupplementKind(enum.StrEnum):
+    """Why an Option came from the running compositor rather than a shipped schema."""
+
+    NEWER_VERSION = "newer-version"
+    """A Hyprland newer than every shipped schema has it (ADR-0012 §Pinning, #177)."""
+
+    PLUGIN = "plugin"
+    """A loaded plugin declares it (`plugin:*`, #175)."""
+
+
+@dataclass(frozen=True, slots=True)
+class Supplement:
+    """An Option inferred at runtime from the live `descriptions` reply (ADR-0012).
+
+    Minimal and shape-inferred: no stub, no source, no Overlay entry, so a conservative
+    control. A degradation state, not a schema source -- the next release check replaces
+    it with a real Generated record.
+    """
+
+    kind: SupplementKind
+    version: str
+    """The running Hyprland's version, whose `descriptions` reply the record came from."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,6 +360,17 @@ class ResolvedOption:
     device_overridable: bool = False
     refresh: tuple[str, ...] = ()
     curation_flags: tuple[CurationFlag, ...] = field(default=())
+    renamed_from: str | None = None
+    """The Option's previous name, from the Overlay: where a value retired under that name
+    restores to (ADR-0012, `state/retirement.py`)."""
+
+    added_in: str | None = None
+    """The Hyprland version that added this Option, from the Generated schema. The Tasks
+    view groups an uncurated Option with one under `New in <added_in>` (ADR-0012)."""
+
+    supplement: Supplement | None = None
+    """Set only on an Option no shipped schema has, inferred from the running compositor's
+    own description of it (`engine/schema/supplement.py`). Its Row is flagged."""
 
     @property
     def dotted_key(self) -> str:

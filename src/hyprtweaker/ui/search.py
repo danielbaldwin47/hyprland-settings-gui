@@ -1,4 +1,4 @@
-"""The finder's index: which Options a query names, and in what order (ADR-0017).
+"""The finder's index: which Options and Entities a query names, and in what order (ADR-0017).
 
 Search is view-independent and all-indexing. It sees every Option of the Schema --
 including the `hidden` tier the Config view alone renders -- because the whole point of
@@ -15,14 +15,54 @@ dotted keys are what an expert types precisely so that the match can be exact. T
 refinement is the word-prefix boost -- `round` should reach "Rounding" before it reaches
 "Blur passes (rounding aware)" -- and it is a *tie-break within a field*, not a rank of its
 own, so the field order below still decides first.
+
+**Two groups** (ADR-0017 §Index scope): Settings, then Keybinds, rules, displays & presets. The
+Options are indexed once, at construction; the Entities are not, because they change under
+the window -- an edit, an undo, a foreign reload, a profile saved. Rather than a change
+signal fired from every site that mutates a list (and forgotten at the next one), the index
+*pulls*: each query compares the model's lists with the ones its entity entries were built
+from and rebuilds only when they differ (settled S2b, amended into ADR-0017 §Index build
+during #75). Monitor profiles and Presets live in files, not the model, so their stores'
+revision counters stand in for the comparison there (settled S7: no change signal).
 """
 
 from __future__ import annotations
 
 import enum
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import ClassVar, Protocol
 
+from hyprtweaker.engine.binds_analysis import empty_submaps
+from hyprtweaker.engine.model.entities import (
+    Bind,
+    EntitySet,
+    LayerRule,
+    MonitorRule,
+    WindowRule,
+)
+from hyprtweaker.engine.model.options import ConfigModel
+from hyprtweaker.engine.monitors_catalog import CATCH_ALL_OUTPUT
+from hyprtweaker.engine.presets import Preset
+from hyprtweaker.engine.profiles import MonitorProfile
 from hyprtweaker.engine.schema import ResolvedOption, Schema
+from hyprtweaker.ui.pages.entity_text import (
+    action_text,
+    bind_badge,
+    effects_text,
+    fields_summary,
+    match_text,
+    preset_summary,
+    profile_summary,
+    rule_subtitle,
+    rule_summary,
+    rule_title,
+    trigger_text,
+)
+
+SETTINGS_GROUP = "Settings"
+ENTITIES_GROUP = "Keybinds, rules, displays & presets"
+"""ADR-0017's two result groups, in the order the finder lists them."""
 
 
 class Field(enum.StrEnum):
@@ -86,7 +126,7 @@ def match_kind(haystack: str, needle: str) -> Match | None:
 
 
 @dataclass(frozen=True, slots=True)
-class Hit:
+class OptionHit:
     """One Option a query found, and why -- enough to rank it and to render it.
 
     Carries the Option itself rather than its name alone: ranking needs its declaration
@@ -94,6 +134,8 @@ class Hit:
     opening the hit costs a One-off reveal. Re-reading those out of the Schema by name is a
     lookup the index has already done.
     """
+
+    group: ClassVar[str] = SETTINGS_GROUP
 
     option: ResolvedOption
     field: Field
@@ -124,6 +166,96 @@ class Hit:
         return (_FIELD_ORDER.index(self.field), int(self.match), self.option.order)
 
 
+class EntityKind(enum.StrEnum):
+    """The Entity kinds the finder indexes, in the order their hits tie-break.
+
+    Each kind names the Page it opens (fed to `tasks.entity_page_id`) and the noun its result
+    row is labelled with. Workspace rules sit with the other rules; Presets come last, as
+    the one kind that is not part of the config itself (#172).
+    """
+
+    BIND = "bind"
+    WINDOW_RULE = "window_rule"
+    LAYER_RULE = "layer_rule"
+    WORKSPACE_RULE = "workspace_rule"
+    MONITOR_RULE = "monitor_rule"
+    MONITOR_PROFILE = "monitor_profile"
+    PRESET = "preset"
+
+    @property
+    def page_kind(self) -> str:
+        """The Entity Page this kind lives on, as `entity_page_id` takes it."""
+        return _PAGE_KINDS[self]
+
+    @property
+    def noun(self) -> str:
+        """What a result row calls an entity of this kind -- the words the Pages use."""
+        return _NOUNS[self]
+
+
+_PAGE_KINDS = {
+    EntityKind.BIND: "binds",
+    EntityKind.WINDOW_RULE: "window_rules",
+    EntityKind.LAYER_RULE: "layer_rules",
+    EntityKind.WORKSPACE_RULE: "workspace_rules",
+    EntityKind.MONITOR_RULE: "monitors",
+    EntityKind.MONITOR_PROFILE: "monitors",
+    EntityKind.PRESET: "theming",
+}
+
+_NOUNS = {
+    EntityKind.BIND: "Keybind",
+    EntityKind.WINDOW_RULE: "Window rule",
+    EntityKind.LAYER_RULE: "Layer rule",
+    EntityKind.WORKSPACE_RULE: "Workspace rule",
+    EntityKind.MONITOR_RULE: "Display rule",
+    EntityKind.MONITOR_PROFILE: "Display profile",
+    EntityKind.PRESET: "Preset",
+}
+
+EntityTarget = Bind | WindowRule | LayerRule | MonitorRule | str
+"""What a hit points at: the entity object itself, or the string that is its identity -- a
+workspace rule's selector, a Monitor profile's or a Preset's slug."""
+
+
+@dataclass(frozen=True, slots=True)
+class EntityHit:
+    """One Entity a query found: what it is, what its row says, and why it matched.
+
+    Carries the entity object rather than its position alone, because the position is
+    exactly what goes stale: a hit opened after an insert above it must land on *its* bind,
+    not on whatever now sits where it was. `resolve` finds it again at open.
+    """
+
+    group: ClassVar[str] = ENTITIES_GROUP
+
+    kind: EntityKind
+    target: EntityTarget
+    index: int
+    """The position the entity had in its list when the entries were built -- the
+    tie-break between two identical binds (ADR-0007), never an address on its own."""
+
+    title: str
+    subtitle: str
+    """The row's own detail line: the Action, the Label's summary, the rule's fields."""
+
+    badge: str | None
+    """The row's badge words (#139's vocabulary for a bind, "Disabled" for a rule)."""
+
+    field: Field
+    match: Match
+    order: int
+    """Kind order then list order: the Entity half's "Page order" tie-break."""
+
+    @property
+    def rank(self) -> tuple[int, int, int]:
+        return (_FIELD_ORDER.index(self.field), int(self.match), self.order)
+
+
+Hit = OptionHit | EntityHit
+"""One result row. Each carries its own `group`, so the finder heads groups by asking."""
+
+
 @dataclass(frozen=True, slots=True)
 class _Entry:
     """One indexed Option: the Option plus its three fields, pre-folded.
@@ -138,24 +270,106 @@ class _Entry:
     """Folded title, dotted key and description, in `_FIELD_ORDER`."""
 
 
-class SearchIndex:
-    """Every Option, findable by title, dotted key or description (ADR-0017).
+@dataclass(frozen=True, slots=True)
+class _EntityEntry:
+    """One indexed Entity: the hit it becomes, less the match, plus its folded fields.
 
-    One in-memory index built at startup -- no persistence and no per-query rebuild. The
-    corpus is under a thousand entries, so the whole scan is a few hundred `str.find` calls
-    and there is nothing here worth caching harder than this.
+    Title is what the row shows; key is the text an expert addresses it by (a raw Trigger
+    and dispatcher path, a Match); description is everything else worth finding it by.
     """
 
-    def __init__(self, entries: tuple[_Entry, ...]) -> None:
+    kind: EntityKind
+    target: EntityTarget
+    index: int
+    title: str
+    subtitle: str
+    badge: str | None
+    order: int
+    texts: tuple[str, str, str]
+
+    def hit(self, field: Field, match: Match) -> EntityHit:
+        return EntityHit(
+            kind=self.kind,
+            target=self.target,
+            index=self.index,
+            title=self.title,
+            subtitle=self.subtitle,
+            badge=self.badge,
+            field=field,
+            match=match,
+            order=self.order,
+        )
+
+
+Profiles = tuple[tuple[str, MonitorProfile], ...]
+Presets = tuple[tuple[str, Preset], ...]
+
+
+class EntitySource(Protocol):
+    """What the index reads Entities from: the Session, or a test's stand-in for one."""
+
+    @property
+    def model(self) -> ConfigModel: ...
+
+    @property
+    def monitor_profiles_revision(self) -> int: ...
+
+    def monitor_profiles(self) -> Profiles: ...
+
+    @property
+    def presets_revision(self) -> int: ...
+
+    def presets(self) -> Presets: ...
+
+
+_Snapshot = tuple[tuple[object, ...], ...]
+
+
+def _snapshot(entities: EntitySet, profiles: Profiles, presets: Presets) -> _Snapshot:
+    """The inputs the entity entries are a function of, as comparable tuples.
+
+    Submaps are in it because a bind's empty-submap badge reads them. Comparing is cheap
+    where it matters: tuple `==` checks identity per element first, and an unchanged list
+    holds the very objects the entries were built from.
+    """
+    return (
+        tuple(entities.binds),
+        tuple(entities.submaps),
+        tuple(entities.window_rules),
+        tuple(entities.layer_rules),
+        tuple(entities.workspace_rules),
+        tuple(entities.monitors),
+        profiles,
+        presets,
+    )
+
+
+class SearchIndex:
+    """Every Option and Entity, findable by its salient text (ADR-0017).
+
+    One in-memory index, no persistence. The Option entries are built at construction;
+    the Entity entries on the first query, and again whenever a query finds the model's
+    lists (or a profile or Preset store's revision) moved since -- see the module docstring.
+    """
+
+    def __init__(self, entries: tuple[_Entry, ...], source: EntitySource | None = None) -> None:
         self._entries = entries
+        self._source = source
+        self._entity_entries: tuple[_EntityEntry, ...] | None = None
+        self._built_from: _Snapshot | None = None
+        self._profiles: Profiles = ()
+        self._profiles_revision: int | None = None
+        self._presets: Presets = ()
+        self._presets_revision: int | None = None
 
     @classmethod
-    def build(cls, schema: Schema) -> SearchIndex:
-        """Index the whole Schema -- every tier, unfiltered.
+    def build(cls, schema: Schema, source: EntitySource | None = None) -> SearchIndex:
+        """Index the whole Schema -- every tier, unfiltered -- and Entities from `source`.
 
         Deliberately not given the Advanced switch or the active View: an index that knew
         about either would be an index that goes stale when they change, and ADR-0017's
-        first sentence is that search sees everything regardless.
+        first sentence is that search sees everything regardless. No `source`, no Entity
+        group: the Options alone, which is what the Option golden pins.
         """
         return cls(
             tuple(
@@ -168,30 +382,65 @@ class SearchIndex:
                     ),
                 )
                 for option in schema
-            )
+            ),
+            source,
         )
 
     def __len__(self) -> int:
+        """How many Options are indexed."""
         return len(self._entries)
 
-    def query(self, text: str, *, limit: int | None = None) -> tuple[Hit, ...]:
-        """The Options matching `text`, best first.
+    @property
+    def entity_count(self) -> int | None:
+        """How many Entity entries the last query built over, `None` before the first."""
+        return None if self._entity_entries is None else len(self._entity_entries)
 
-        An all-whitespace or empty query returns nothing rather than everything: the finder
-        shows the ordinary nav list while the entry is empty (ADR-0017), and "no query" is
-        that state, not a request for all 353 Rows.
+    def query(self, text: str, *, limit: int | None = None) -> tuple[Hit, ...]:
+        """The Options then the Entities matching `text`, each group best first.
+
+        `limit` caps each group separately, so a query that names fifty Options still lists
+        the bind it also names. An all-whitespace or empty query returns nothing rather than
+        everything: the finder shows the ordinary nav list while the entry is empty
+        (ADR-0017), and "no query" is that state, not a request for all 353 Rows.
         """
         needle = text.strip().casefold()
         if not needle:
             return ()
 
-        hits = [hit for entry in self._entries if (hit := _best(entry, needle)) is not None]
-        hits.sort(key=lambda hit: hit.rank)
-        return tuple(hits if limit is None else hits[:limit])
+        options = [hit for entry in self._entries if (hit := _best(entry, needle)) is not None]
+        options.sort(key=lambda hit: hit.rank)
+        entities = [
+            hit
+            for entry in self._current_entities()
+            if (hit := _best(entry, needle)) is not None
+        ]
+        entities.sort(key=lambda hit: hit.rank)
+        if limit is not None:
+            options, entities = options[:limit], entities[:limit]
+        return (*options, *entities)
+
+    def _current_entities(self) -> tuple[_EntityEntry, ...]:
+        """The entity entries as of now, rebuilt only when their inputs moved."""
+        if self._source is None:
+            return ()
+        revision = self._source.monitor_profiles_revision
+        if revision != self._profiles_revision:
+            self._profiles = self._source.monitor_profiles()
+            self._profiles_revision = revision
+        revision = self._source.presets_revision
+        if revision != self._presets_revision:
+            self._presets = self._source.presets()
+            self._presets_revision = revision
+        entities = self._source.model.entities
+        snapshot = _snapshot(entities, self._profiles, self._presets)
+        if self._entity_entries is None or snapshot != self._built_from:
+            self._entity_entries = entity_entries(entities, self._profiles, self._presets)
+            self._built_from = snapshot
+        return self._entity_entries
 
 
-def _best(entry: _Entry, needle: str) -> Hit | None:
-    """The strongest field match on one Option, or `None` if the query misses it.
+def _best(entry: _Entry | _EntityEntry, needle: str) -> Hit | None:
+    """The strongest field match on one entry, or `None` if the query misses it.
 
     Strongest by the *field* order first, so an Option whose title merely contains the query
     still outranks one whose description begins with it -- which is ADR-0017's ranking read
@@ -201,5 +450,168 @@ def _best(entry: _Entry, needle: str) -> Hit | None:
     for field, haystack in zip(_FIELD_ORDER, entry.texts, strict=True):
         match = match_kind(haystack, needle)
         if match is not None:
-            return Hit(option=entry.option, field=field, match=match)
+            if isinstance(entry, _Entry):
+                return OptionHit(option=entry.option, field=field, match=match)
+            return entry.hit(field, match)
     return None
+
+
+# --- the Entity entries ----------------------------------------------------------------------
+
+
+def entity_entries(
+    entities: EntitySet,
+    profiles: Sequence[tuple[str, MonitorProfile]],
+    presets: Sequence[tuple[str, Preset]],
+) -> tuple[_EntityEntry, ...]:
+    """Every indexed Entity, in kind order then list order, worded as its row words it.
+
+    The words come from `entity_text`, the functions the Pages build their rows with, so a
+    bind found here reads exactly as the Binds Page lists it -- Trigger, Action and badge.
+    """
+    empty = frozenset(empty_submaps(entities))
+    texts: list[
+        tuple[EntityKind, EntityTarget, int, str, str, str | None, tuple[str, ...]]
+    ] = []
+
+    for index, bind in enumerate(entities.binds):
+        badge = bind_badge(bind, empty_submaps=empty)
+        call = bind.dispatcher
+        texts.append(
+            (
+                EntityKind.BIND,
+                bind,
+                index,
+                trigger_text(bind),
+                action_text(bind),
+                badge.text if badge is not None else None,
+                (
+                    f"{bind.keys}\n{call.path if call is not None else ''}",
+                    f"{action_text(bind)}\n{bind.options.description}\n{bind.submap or ''}",
+                ),
+            )
+        )
+    rule_lists: tuple[tuple[EntityKind, Sequence[WindowRule | LayerRule]], ...] = (
+        (EntityKind.WINDOW_RULE, entities.window_rules),
+        (EntityKind.LAYER_RULE, entities.layer_rules),
+    )
+    for kind, rules in rule_lists:
+        for index, rule in enumerate(rules):
+            texts.append(
+                (
+                    kind,
+                    rule,
+                    index,
+                    rule_title(rule),
+                    rule_subtitle(rule),
+                    None if rule.enabled else "Disabled",
+                    (match_text(rule), effects_text(rule)),
+                )
+            )
+    for index, workspace in enumerate(entities.workspace_rules):
+        summary = fields_summary(workspace.fields)
+        texts.append(
+            (
+                EntityKind.WORKSPACE_RULE,
+                workspace.workspace,
+                index,
+                workspace.workspace,
+                summary,
+                None,
+                ("", summary),
+            )
+        )
+    for index, monitor in enumerate(entities.monitors):
+        catch_all = monitor.output == CATCH_ALL_OUTPUT
+        texts.append(
+            (
+                EntityKind.MONITOR_RULE,
+                monitor,
+                index,
+                "Any other display" if catch_all else monitor.output,
+                rule_summary(monitor),
+                None,
+                (monitor.output, rule_summary(monitor)),
+            )
+        )
+    for index, (slug, profile) in enumerate(profiles):
+        texts.append(
+            (
+                EntityKind.MONITOR_PROFILE,
+                slug,
+                index,
+                profile.name,
+                profile_summary(profile),
+                None,
+                ("", ""),
+            )
+        )
+    for index, (slug, preset) in enumerate(presets):
+        texts.append(
+            (
+                EntityKind.PRESET,
+                slug,
+                index,
+                preset.name,
+                preset_summary(preset),
+                None,
+                ("", ""),
+            )
+        )
+
+    return tuple(
+        _EntityEntry(
+            kind=kind,
+            target=target,
+            index=index,
+            title=title,
+            subtitle=subtitle,
+            badge=badge,
+            order=order,
+            texts=(title.casefold(), key.casefold(), description.casefold()),
+        )
+        for order, (
+            kind,
+            target,
+            index,
+            title,
+            subtitle,
+            badge,
+            (key, description),
+        ) in enumerate(texts)
+    )
+
+
+def resolve(hit: EntityHit, source: EntitySource) -> int | None:
+    """Where `hit`'s entity sits in its list *now*, or `None` when it is gone.
+
+    By identity first: an unchanged entity is the very object the hit holds, wherever an
+    insert or a move has put it. Then by equality, which is what survives a reload that
+    re-read every entity as a new object; of several equal ones (two identical binds are
+    legal, ADR-0007) the one still at the hit's own position wins. Never by position alone,
+    which is how a stale hit would open the wrong row.
+    """
+    items: Sequence[object]
+    match hit.kind:
+        case EntityKind.BIND:
+            items = source.model.entities.binds
+        case EntityKind.WINDOW_RULE:
+            items = source.model.entities.window_rules
+        case EntityKind.LAYER_RULE:
+            items = source.model.entities.layer_rules
+        case EntityKind.WORKSPACE_RULE:
+            items = [rule.workspace for rule in source.model.entities.workspace_rules]
+        case EntityKind.MONITOR_RULE:
+            items = source.model.entities.monitors
+        case EntityKind.MONITOR_PROFILE:
+            items = [slug for slug, _profile in source.monitor_profiles()]
+        case EntityKind.PRESET:
+            items = [slug for slug, _preset in source.presets()]
+
+    for position, item in enumerate(items):
+        if item is hit.target:
+            return position
+    equal = [position for position, item in enumerate(items) if item == hit.target]
+    if hit.index in equal:
+        return hit.index
+    return equal[0] if equal else None

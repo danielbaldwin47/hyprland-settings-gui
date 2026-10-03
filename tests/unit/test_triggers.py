@@ -9,15 +9,22 @@ from __future__ import annotations
 import pytest
 
 from hyprtweaker.engine.importer.keysyms import known_keysym, validator_available
+from hyprtweaker.engine.model.entities import Bind
 from hyprtweaker.engine.triggers import (
     CATCHALL,
+    AmpMultiKey,
+    Blocked,
     CaptureRecorder,
+    DeadKeys,
     Severity,
     Trigger,
+    TriggerProblem,
     button_token,
     format_trigger,
     normalise_keysym,
     parse_trigger,
+    switch_trigger,
+    trigger_load_problem,
     validate_trigger,
     wheel_token,
 )
@@ -189,20 +196,26 @@ def test_exclusive_sym_combined_with_another_key_is_blocked(text: str) -> None:
     assert problem is not None and problem.blocking
 
 
+def test_a_multi_key_trigger_warns_and_names_the_key_that_fires() -> None:
+    """Probed under #198 on Hyprland 0.56.2: `SUPER + A + B` passes `--verify-config` and
+    registers as SUPER + B, so it is a loadable bind that fires on only the last key."""
+    problem = validate_trigger("SUPER + A + B")
+    assert problem == TriggerProblem(
+        Severity.WARN,
+        "Multi-key binds are shown as written and cannot be captured.",
+        "Hyprland loads it but binds only the last key, so it fires as SUPER + B.",
+    )
+
+
 def test_keycodes_are_not_exclusive_syms() -> None:
     """`code:N` sits in parseKeyString's "one or more keysyms" branch, not the exclusive
-    one -- so a multi-key bind of two key codes is legal and must not be blocked."""
+    one: `SUPER + code:36 + code:37` passes `--verify-config` (#198), so it is not blocked."""
     problem = validate_trigger("SUPER + code:36 + code:37")
-    assert problem is not None
-    assert problem.severity is Severity.WARN  # multi-key: read-only, not invalid
-    assert not problem.blocking
-
-
-def test_multi_key_warns_rather_than_blocks() -> None:
-    """Imported multi-key binds are read-only, not invalid (ADR-0007)."""
-    problem = validate_trigger("SUPER + A + B")
-    assert problem is not None
-    assert problem.severity is Severity.WARN
+    assert problem == TriggerProblem(
+        Severity.WARN,
+        "Multi-key binds are shown as written and cannot be captured.",
+        "Hyprland loads it but binds only the last key, so it fires as SUPER + key code 37.",
+    )
 
 
 @needs_xkb
@@ -224,6 +237,102 @@ def test_validation_is_silent_when_xkb_cannot_be_asked(monkeypatch: pytest.Monke
     """No validator must mean no opinion -- never a guess that files false errors."""
     monkeypatch.setattr("hyprtweaker.engine.triggers.known_keysym", lambda _name: None)
     assert validate_trigger("SUPER + whatever") is None
+
+
+# --- can the trigger load (#199) ------------------------------------------------------
+
+
+@pytest.fixture
+def xkb_knows_all_but_notakey(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stand-in for libxkbcommon, for both the Importer's oracle and Capture's."""
+
+    def known(name: str) -> bool:
+        return name.lower() not in ("notakey", "alsonotakey", "a&b")
+
+    monkeypatch.setattr("hyprtweaker.engine.importer.binds.known_keysym", known)
+    monkeypatch.setattr("hyprtweaker.engine.triggers.known_keysym", known)
+
+
+@pytest.mark.usefixtures("xkb_knows_all_but_notakey")
+class TestTriggerLoadProblem:
+    """One per Binds-row badge state, plus a plain trigger and #198's verdicts."""
+
+    def test_a_dead_keysym_names_the_dead_keys(self) -> None:
+        assert trigger_load_problem("SUPER + notakey") == DeadKeys(("notakey",))
+
+    def test_a_dead_keysym_inside_a_multi_key_trigger_is_still_dead(self) -> None:
+        assert trigger_load_problem("SUPER + notakey + alsonotakey") == DeadKeys(
+            ("notakey", "alsonotakey")
+        )
+
+    def test_an_ampersand_multi_key_cannot_load_and_is_not_a_dead_key(self) -> None:
+        assert trigger_load_problem("SUPER + A&B") == AmpMultiKey()
+
+    def test_a_lua_function_binds_trigger_is_judged_like_any_other(self) -> None:
+        function = Bind(keys="SUPER + F", dispatcher=None)
+        assert trigger_load_problem(function.keys) is None
+
+    def test_a_plain_disabled_binds_trigger_loads(self) -> None:
+        disabled = Bind(keys="SUPER + SHIFT + Q", enabled=False)
+        assert trigger_load_problem(disabled.keys) is None
+
+    def test_a_plain_valid_trigger_loads(self) -> None:
+        assert trigger_load_problem("SUPER + Return") is None
+
+    def test_a_trigger_that_only_warns_still_loads(self) -> None:
+        """#198: `SUPER + A + B` loads on 0.56.2 and fires as SUPER + B."""
+        assert trigger_load_problem("SUPER + A + B") is None
+
+    def test_a_blocking_problem_is_carried(self) -> None:
+        assert trigger_load_problem("SUPER + mouse:272 + Q") == Blocked(
+            TriggerProblem(
+                Severity.BLOCK,
+                "Mouse, wheel and switch triggers cannot be combined with other keys.",
+                "Use just one of: mouse:272.",
+            )
+        )
+
+    @pytest.mark.parametrize(
+        ("keys", "message"),
+        [
+            (
+                "SUPER + notakey",
+                "'notakey' is not a key name xkb knows, so this bind would never fire — "
+                "and Lua rejects the whole config rather than ignoring it. "
+                "Try capturing it instead.",
+            ),
+            (
+                "SUPER + notakey + alsonotakey",
+                "'notakey', 'alsonotakey' are not key names xkb knows, so this bind would "
+                "never fire — and Lua rejects the whole config rather than ignoring it. "
+                "Try capturing it instead.",
+            ),
+            (
+                "SUPER + A&B",
+                "Hyprland can't load a multi-key trigger joined with &: enabled, this "
+                "keybind would stop your whole config from loading. Use a single key.",
+            ),
+            (
+                "SUPER",
+                "That is only modifiers. "
+                "Hold the modifiers and press the key you want to bind.",
+            ),
+        ],
+    )
+    def test_each_problem_says_why_in_words(self, keys: str, message: str) -> None:
+        problem = trigger_load_problem(keys)
+        assert problem is not None
+        assert problem.message == message
+
+
+def test_without_xkb_a_dead_key_cannot_be_told_and_the_trigger_reads_as_loadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No validator, no opinion: the callers own the fail-safe for Importer-disabled binds."""
+    monkeypatch.setattr("hyprtweaker.engine.importer.binds.known_keysym", lambda _name: None)
+    monkeypatch.setattr("hyprtweaker.engine.triggers.known_keysym", lambda _name: None)
+    assert trigger_load_problem("SUPER + notakey") is None
+    assert trigger_load_problem("SUPER + A&B") == AmpMultiKey()
 
 
 # --- keysym normalisation -------------------------------------------------------------
@@ -389,3 +498,41 @@ def test_captured_triggers_validate_clean() -> None:
     assert trigger is not None
     assert validate_trigger(str(trigger)) is None
     assert str(trigger) == "SHIFT + SUPER + Q"
+
+
+# --- picking a switch (#107) ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("when", "name", "expected"),
+    [
+        ("on", "Lid Switch", "switch:on:Lid Switch"),
+        ("off", "Lid Switch", "switch:off:Lid Switch"),
+        ("", "Lid Switch", "switch:Lid Switch"),
+        # Exact: case and inner spaces are the device's, never normalised.
+        ("on", "Tablet  Mode switch", "switch:on:Tablet  Mode switch"),
+    ],
+)
+def test_switch_trigger_spells_the_name_exactly(when: str, name: str, expected: str) -> None:
+    assert switch_trigger(name, when) == expected
+    assert trigger_load_problem(expected) is None
+
+
+@pytest.mark.parametrize("name", ["Foo + Bar", "Foo+Bar", "Foo & Bar"])
+def test_a_switch_name_holding_a_key_separator_is_refused_with_its_reason(name: str) -> None:
+    """`+` and `&` separate keys in a trigger, so the app cannot write such a name back as
+    the one switch it is: the bind would be read as two keys."""
+    problem = switch_trigger(name, "on")
+    assert isinstance(problem, TriggerProblem) and problem.blocking
+    assert name in problem.message
+
+
+def test_a_blank_switch_name_is_refused() -> None:
+    problem = switch_trigger("  ", "on")
+    assert isinstance(problem, TriggerProblem) and problem.blocking
+
+
+def test_a_switch_trigger_round_trips_through_parse_and_str() -> None:
+    assert (
+        str(parse_trigger(str(switch_trigger("Lid Switch", "off")))) == "switch:off:Lid Switch"
+    )

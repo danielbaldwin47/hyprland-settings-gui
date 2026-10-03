@@ -40,6 +40,7 @@ from hyprtweaker.ui.pages.declaration_kinds import (  # noqa: E402
     row_subtitle,
     row_title,
 )
+from hyprtweaker.ui.release import release  # noqa: E402
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +75,10 @@ class DeclarationRow:
             # going to work has one thing worth reading, and burying it after the values
             # that caused it is how a warning gets skimmed past.
             subtitle = findings[0].message
-        self.widget = Adw.ActionRow(title=row_title(kind, entity), subtitle=subtitle)
+        # The title is user text (an autostart `a && b`): as Pango markup it renders blank.
+        self.widget = Adw.ActionRow(use_markup=False)
+        self.widget.set_title(row_title(kind, entity))
+        self.widget.set_subtitle(subtitle)
 
         if findings:
             warning = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
@@ -90,19 +94,25 @@ class DeclarationRow:
             )
             self.widget.add_suffix(badge)
 
-        if editable and not self.scripted:
+        # Shown greyed on a read-only session, as the Binds, Rules and Workspaces Pages do
+        # (owner call 7 of #159; F21 of the #148 review): a hidden button says nothing.
+        self.edit_button: Gtk.Button | None = None
+        if not self.scripted:
             edit = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER)
             edit.add_css_class("flat")
             edit.set_tooltip_text("Edit")
+            edit.set_sensitive(editable)
             edit.connect("clicked", lambda _button: actions.edit(index))
             self.widget.add_suffix(edit)
+            self.edit_button = edit
 
-        if editable:
-            remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
-            remove.add_css_class("flat")
-            remove.set_tooltip_text("Remove")
-            remove.connect("clicked", lambda _button: actions.remove(index))
-            self.widget.add_suffix(remove)
+        remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
+        remove.add_css_class("flat")
+        remove.set_tooltip_text("Remove")
+        remove.set_sensitive(editable)
+        remove.connect("clicked", lambda _button: actions.remove(index))
+        self.widget.add_suffix(remove)
+        self.remove_button = remove
 
 
 class DeclarationsPage:
@@ -211,6 +221,7 @@ class DeclarationsPage:
         """
         for widget in self._listed:
             self._group.remove(widget)
+            release(widget)
         self._listed = []
         self._rows = []
 
@@ -263,7 +274,9 @@ class DeclarationsPage:
         the culprit and its victim.
         """
         grouped: dict[int, list[Finding]] = {}
-        for index, finding in self._descriptor.findings_for(self._session.model.entities):
+        for index, finding in self._descriptor.findings_for(
+            self._session.model.entities, self._session.schema
+        ):
             grouped.setdefault(index, []).append(finding)
         return {index: tuple(items) for index, items in grouped.items()}
 

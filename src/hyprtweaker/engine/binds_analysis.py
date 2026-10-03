@@ -25,6 +25,7 @@ from dataclasses import replace
 
 from .model.entities import Bind, EntitySet, Submap
 from .triggers import parse_trigger
+from .writer.binds import render_bind
 
 SUBMAP_DISPATCHER = "submap"
 """`hl.dsp.submap("name")` -- the one dispatcher that enters a submap."""
@@ -119,6 +120,28 @@ def submap_target(bind: Bind) -> str | None:
     return target if target and target != RESET else None
 
 
+def empty_submaps(entities: EntitySet) -> set[str]:
+    """The Submaps Hyprland cannot enter: none of their binds renders and fires (#208).
+
+    `hl.define_submap(name, function() end)` with no `hl.bind` inside never registers the
+    submap, and `hl.dsp.submap(name)` into it errors "submap doesn't exist (wasn't
+    registered!)" (probed on a nested 0.56.2, #111). The Writer still emits such a block, so
+    a submap the user just created survives the next write; this says which ones are inert.
+
+    Enterable means at least one bind that `render_bind` emits as live Lua: a disabled bind
+    renders as a comment, a function action renders as nothing, and an `hl.unbind` line
+    registers nothing, so none of those count. Asked of `render_bind` itself, like
+    `live_bind_count`, so the two cannot drift when the Writer learns another reason not to
+    emit.
+    """
+    enterable = {
+        bind.submap
+        for bind in entities.binds
+        if bind.submap is not None and bind.enabled and render_bind(bind) is not None
+    }
+    return set(submap_names(entities)) - enterable
+
+
 def unreachable_submaps(entities: EntitySet) -> set[str]:
     """The Submaps that can never be active -- ADR-0007's unreachable badge.
 
@@ -141,6 +164,10 @@ def unreachable_submaps(entities: EntitySet) -> set[str]:
     while changed:
         changed = False
         for bind, target in entries:
+            # A `submap_universal` bind is live even inside a submap nothing enters:
+            # probed on Hyprland 0.56.2 (nested, wtype key input, #111), it fires at root
+            # and inside another submap, and its entry dispatch lands. A plain bind in
+            # the same submap does not fire. `test_universal_bind_probe.py` re-asks.
             live = (
                 bind.submap is None or bind.options.submap_universal or bind.submap in reachable
             )

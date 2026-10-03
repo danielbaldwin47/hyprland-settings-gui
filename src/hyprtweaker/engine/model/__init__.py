@@ -27,6 +27,9 @@ Typical use::
 from __future__ import annotations
 
 from .entities import (
+    DISPLAY_KINDS,
+    ENTITY_NOUNS,
+    KEYBIND_KINDS,
     Animation,
     Bind,
     BindDevice,
@@ -46,6 +49,8 @@ from .entities import (
     Unbind,
     WindowRule,
     WorkspaceRule,
+    entity_noun,
+    entity_title,
 )
 from .options import (
     UNSET,
@@ -56,6 +61,8 @@ from .options import (
 )
 from .values import (
     COMPLEX_TYPES,
+    FONT_WEIGHT_NAMES,
+    FONT_WEIGHT_RANGE,
     Color,
     ComplexValue,
     CssGaps,
@@ -76,6 +83,11 @@ from .values import (
 
 __all__ = [
     "COMPLEX_TYPES",
+    "DISPLAY_KINDS",
+    "ENTITY_NOUNS",
+    "FONT_WEIGHT_NAMES",
+    "FONT_WEIGHT_RANGE",
+    "KEYBIND_KINDS",
     "UNSET",
     "Animation",
     "Bind",
@@ -108,6 +120,8 @@ __all__ = [
     "WindowRule",
     "WorkspaceRule",
     "display_text",
+    "entity_noun",
+    "entity_title",
     "getoption_raw",
     "has_emittable_null",
     "lua_literal",

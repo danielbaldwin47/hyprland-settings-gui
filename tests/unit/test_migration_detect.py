@@ -76,6 +76,35 @@ class TestFourCases:
         assert not found.hand_edited
         assert not found.offers_import
 
+    def test_the_users_own_file_under_a_leftover_manifest_is_foreign(
+        self, paths: ConfigPaths
+    ) -> None:
+        """#148 hand-test 20: a Roll back put the user's hyprland.lua back and left the
+        Manifest, and the launch called the config the app's: edits went to Modules nothing
+        loads. A Manifest the Entrypoint does not load claims nothing."""
+        write_manifest_claiming(paths, 'require("hyprtweaker/options/general")\n')
+        paths.entrypoint.write_text(
+            "hl.config({ decoration = { rounding = 8 } })\n", encoding="utf-8"
+        )
+
+        found = run(paths)
+
+        assert found.kind is ConfigKind.FOREIGN_LUA
+        assert found.offers_import
+
+    def test_a_hand_edit_of_the_apps_own_entrypoint_is_still_the_apps(
+        self, paths: ConfigPaths
+    ) -> None:
+        write_manifest_claiming(paths, 'require("hyprtweaker/options/general")\n')
+        paths.entrypoint.write_text(
+            'require("hyprtweaker/options/general")\nrequire("mine")\n', encoding="utf-8"
+        )
+
+        found = run(paths)
+
+        assert found.kind is ConfigKind.APP_GENERATED
+        assert found.hand_edited
+
     def test_a_lua_file_no_manifest_claims_is_foreign(self, paths: ConfigPaths) -> None:
         paths.entrypoint.write_text(
             "hl.config({ general = { gaps_in = 5 } })\n", encoding="utf-8"
@@ -116,8 +145,11 @@ class TestTheUncertainCase:
         Offering to "import" here would mean offering the user their own generated config
         back over itself.
         """
-        write_manifest_claiming(paths, "-- what we wrote\n")
-        paths.entrypoint.write_text("-- what they edited it into\n", encoding="utf-8")
+        write_manifest_claiming(paths, 'require("hyprtweaker/options/general")\n')
+        paths.entrypoint.write_text(
+            'require("hyprtweaker/options/general")\n-- what they edited it into\n',
+            encoding="utf-8",
+        )
 
         found = run(paths)
 

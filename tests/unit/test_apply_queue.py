@@ -519,3 +519,22 @@ class TestEntityCommits:
             return transaction
 
         assert run(scenario).calls == [()]
+
+    def test_a_result_names_the_last_entity_commit_it_carried(self) -> None:
+        """The serial is how the session knows which entity gestures a verdict covers:
+        two commits coalesced into one transaction come back as the later serial, and a
+        transaction with no entity commit says so with `None`."""
+
+        async def scenario() -> tuple[list[int], list[int | None]]:
+            heard: list[ApplyResult] = []
+            async with ApplyQueue(
+                StubTransaction(), debounce=FAST, on_result=heard.append
+            ) as queue:
+                serials = [queue.commit_entities(), queue.commit_entities()]
+                await queue.drain()
+                serials.append(queue.commit_entities())
+                await queue.drain()
+                await queue.apply("decoration:rounding")
+            return serials, [result.entities for result in heard]
+
+        assert run(scenario) == ([1, 2, 3], [2, 3, None])

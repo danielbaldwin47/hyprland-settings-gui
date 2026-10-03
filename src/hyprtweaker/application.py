@@ -67,19 +67,23 @@ class HyprtweakerApplication(Adw.Application):
         session.on_state_changed = window.sync
         session.on_applied = window.show_result
         session.on_reverted = window.show_revert
+        session.on_notice = window.show_notice
         session.on_recorded = window.offer_undo
+        session.on_refused = window.show_refused
+        session.on_preset_note = window.show_preset_note
 
         # Before the session goes live: which of ADR-0009's four cases this machine is in
         # decides whether there is anything to go live *with*. A fresh user has no App dir
         # until this runs, and an unmigrated one must come up read-only rather than write
         # over a config the app does not own.
-        detection = window.route_first_run()
+        window.route_first_run()
 
         # Started only once the window is listening: the session's first act is a re-read,
         # and it reports the result through those two callbacks.
         if not self._runner.available:
             session.set_read_only(self._runner.unavailable_reason or "cannot apply changes")
-        elif not detection.offers_import:
-            session.start()
+        else:
+            # Read-only behind an offer; the user's answer to it is what starts it.
+            window.start_when_answered(session.start)
 
         return window

@@ -92,22 +92,117 @@ read-only. The array shape is the captured one (one element per error line); the
 messages are the spellings research #5 §6 documents: a `file:line`-prefixed `hl.config`
 complaint and a failed `require`."""
 
-CLIENTS = (
-    "[\n"
-    '{\n    "address": "0x556e03b36ef0",\n    "class": "kitty",\n    "title": "~",\n'
-    '    "initialClass": "kitty",\n    "initialTitle": "kitty",\n    "xwayland": false,\n'
-    '    "workspace": {"id": 1, "name": "1"},\n    "floating": false\n},\n'
-    '{\n    "address": "0x556e03b37000",\n    "class": "helium",\n'
-    '    "title": "Issue #67 - Helium",\n    "initialClass": "helium",\n'
-    '    "initialTitle": "Helium Setup - Helium",\n    "xwayland": false,\n'
-    '    "workspace": {"id": 2, "name": "2"},\n    "floating": true\n}\n'
-    "]\n"
-)
-"""Captured off a live Hyprland 0.56.2 (trimmed to the keys the picker reads).
+CLIENTS = """\
+[
+    {
+        "address": "0x563a2ba47e30",
+        "class": "probe.tiled",
+        "title": "probe.tiled",
+        "initialClass": "probe.tiled",
+        "initialTitle": "probe.tiled",
+        "xwayland": false,
+        "workspace": {
+            "id": 1,
+            "name": "1"
+        },
+        "floating": false,
+        "pinned": false,
+        "fullscreen": 0,
+        "fullscreenClient": 0,
+        "grouped": [],
+        "tags": [],
+        "xdgTag": "",
+        "contentType": "none",
+        "focusHistoryID": 2
+    },
+    {
+        "address": "0x563a2c394cf0",
+        "class": "probe.float",
+        "title": "probe.float",
+        "initialClass": "probe.float",
+        "initialTitle": "probe.float",
+        "xwayland": false,
+        "workspace": {
+            "id": 1,
+            "name": "1"
+        },
+        "floating": true,
+        "pinned": true,
+        "fullscreen": 0,
+        "fullscreenClient": 0,
+        "grouped": [],
+        "tags": [
+            "demo*"
+        ],
+        "xdgTag": "",
+        "contentType": "none",
+        "focusHistoryID": 1
+    },
+    {
+        "address": "0x563a2c1f82a0",
+        "class": "probe.fs",
+        "title": "probe.fs",
+        "initialClass": "probe.fs",
+        "initialTitle": "probe.fs",
+        "xwayland": false,
+        "workspace": {
+            "id": 1,
+            "name": "1"
+        },
+        "floating": false,
+        "pinned": false,
+        "fullscreen": 2,
+        "fullscreenClient": 2,
+        "grouped": [],
+        "tags": [],
+        "xdgTag": "",
+        "contentType": "none",
+        "focusHistoryID": 0
+    }
+]
+"""
+"""Captured off a nested Hyprland 0.56.2 (the Harness, `HARNESS_DRM_CARD=/dev/dri/card0`,
+windowless) with three probe windows opened inside it: a tiled one, a floating pinned one
+tagged `demo` by a window rule, and a fullscreen one. Never the desktop's window list.
+Trimmed to the keys a window rule's Match can read, plus `title`/`address`; the compositor
+sends about twice as many (geometry, `pid`, `monitor`, ...).
 
 `j/clients` answers a JSON **array** of window objects; `class`/`initialClass` are the
 camelCase spellings the wire actually uses, which is exactly the sort of thing worth
-capturing rather than guessing (#67, Pick a window)."""
+capturing rather than guessing (#67, Pick a window). What #113's matches-N count reads:
+`floating`, `pinned`, `fullscreen`/`fullscreenClient` (ints 0-3), `grouped` (a list),
+`tags` (a rule-set tag arrives as `demo*`, trailing star included), `xdgTag`,
+`contentType` (a name) and `workspace{id,name}`. There is no `modal` field and `focus`
+is only `focusHistoryID` (0 = most recently focused)."""
+
+DEVICES = (
+    "{\n"
+    '"mice": [\n\n],\n'
+    '"keyboards": [\n\n],\n'
+    '"tablets": [\n\n],\n'
+    '"touch": [\n\n],\n'
+    '"switches": [\n'
+    "    {\n"
+    '        "address": "0x5581a0c3d2f0",\n'
+    '        "name": "Lid Switch"\n'
+    "    },\n"
+    "    {\n"
+    '        "address": "0x5581a0c3e110",\n'
+    '        "name": "Tablet Mode Switch"\n'
+    "    }\n"
+    "]\n"
+    "}\n"
+)
+"""**Mixed.** Captured off a nested headless Hyprland 0.56.2 (`guarded_hyprland`, no input
+devices): the envelope, an object with the five keys `mice`, `keyboards`, `tablets`,
+`touch` and `switches`, each an array, the arrays empty and blank-line separated exactly as
+here. **From source**, not captured, because a headless compositor has no switch device
+and the desktop session is off limits: the two entries in `switches`. Each is
+`{"address": "0x<hex>", "name": "<name>"}`, read off the format string in the 0.56.2
+binary (`strings /usr/bin/Hyprland`, the `{{"address": "0x{:x}", "name": "{}"}}` template
+that follows the keyboards'). The names are what a laptop's lid and a convertible's
+tablet-mode switch report; the addresses are made up. Switch names reach the bind as typed
+here, so they are never normalised (research `hyprlang-to-lua.md` on `switch:` names)."""
 
 LAYERS = (
     "{\n"
@@ -127,6 +222,22 @@ LAYERS = (
 `levels` object of arrays -- nested where `clients` is flat, which is why the client
 flattens it (#67, Pick a layer)."""
 
+WORKSPACE_RULES = (
+    "[{\n"
+    '    "workspaceString": "1",\n'
+    '    "enabled": true,\n'
+    '    "gapsIn": [3, 3, 3, 3]\n'
+    "},{\n"
+    '    "workspaceString": "2",\n'
+    '    "enabled": true,\n'
+    '    "gapsIn": [4, 4, 4, 4]\n'
+    "}]\n"
+)
+"""Captured off a live Hyprland 0.56.2 (nested, two `hl.workspace_rule` calls). A JSON
+**array**, one record per rule: the count is its length. This is the only rule listing the
+compositor offers -- `hyprctl` has no window-rule or layer-rule command and `hl.*` no
+getter for either (probed 2026-10-02, #101)."""
+
 OK = "ok"
 """From source: `reload` answers this unconditionally, and `eval` answers it on success."""
 
@@ -137,10 +248,59 @@ EVAL_UNSUPPORTED = UNSUPPORTED_EVAL
 """Captured -- from a hyprlang session, which refuses `eval` outright. Safe to provoke
 live precisely because the refusal happens before anything is evaluated."""
 
+VERSION = """{
+    "branch": "v0.56.2",
+    "commit": "efb50993780079460b0cbed1363e2166a2de1d9f",
+    "version": "0.56.2",
+    "dirty": false,
+    "tag": "v0.56.2",
+    "commits": "7661",
+    "flags": []
+}"""
+"""Captured off a live Hyprland 0.56.2 (trimmed: the `build*`/`system*` library versions
+and the commit message and date dropped). `version` is the bare release number; a git
+build's distance from its tag shows in `tag` and `commits`, not here."""
+
+DESCRIPTIONS = """[
+
+    {
+        "name": "general:border_size",
+        "description": "size of the border around windows",
+        "default": 1,
+        "current": 1,
+        "min": 0,
+        "max": 20,
+        "map": null
+    },
+    {
+        "name": "general:gaps_in",
+        "description": "gaps between windows",
+        "default": "5 5 5 5",
+        "current": "5 5 5 5",
+        "min": null,
+        "max": null
+    }
+]"""
+"""Captured off a live Hyprland 0.56.2 (trimmed to its first two of 353 records, blank line
+after the bracket included)."""
+
+PLUGIN_LIST = (
+    '[{"name": "probeplug", "author": "hyprtweaker", "handle": "56404960b5a0", '
+    '"version": "1.0", "description": "A no-op plugin for #174\'s probe"}]'
+)
+"""`j/plugin list`, captured off a nested Hyprland 0.56.2 with one plugin loaded (#174).
+The plugin is a no-op built against the installed headers; with none loaded the reply is
+`[]`. No path: a loaded plugin is known by the name it gives itself."""
+
 CONVERSATION: Mapping[str, str] = {
+    "j/plugin list": PLUGIN_LIST,
+    "j/version": VERSION,
+    "j/descriptions": DESCRIPTIONS,
     "j/binds": BINDS,
     "j/clients": CLIENTS,
+    "j/devices": DEVICES,
     "j/layers": LAYERS,
+    "j/workspacerules": WORKSPACE_RULES,
     "j/getoption general:gaps_in": GAPS_IN,
     "j/getoption general:layout": LAYOUT,
     "j/getoption misc:disable_autoreload": AUTORELOAD,

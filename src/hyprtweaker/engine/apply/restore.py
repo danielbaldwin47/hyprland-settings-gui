@@ -6,16 +6,15 @@ worth stating, because it is what every part of this module is answering.
 
 An Apply transaction runs model -> bytes. Modules are rendered whole and deterministically,
 so the model is always the source and the file is always the derivative. Restore runs the
-other way: the bytes are the source, and they are bytes *this* model cannot produce -- they
-are what an earlier model rendered, and the app cannot read its own Lua back to reconstruct
-that one (#62). Laying them down alone would leave the model still holding the broken
-version, and the next edit would re-render straight over the recovery.
+other way: the bytes are the source. Laying them down alone would leave the model still
+holding the broken version, and the next edit would re-render straight over the recovery.
 
-So the model is brought into step from the one place that does know what the restored bytes
-mean: **the compositor that just loaded them**. Write the Snapshot, reload once, then re-read
-exactly the Options the Journal recorded those bytes as setting. That is the same mechanism
-the app already recovers its model with at startup (`reread.py`), pointed at one Module
-instead of the whole App dir -- not a new trick, and not one that waits on #62.
+So the model is brought into step from the restored bytes themselves, read through Lua as
+launch reads them (`overrides.written_values`), and not from the compositor: `user.lua` and
+a theming tool load after the app's Modules, so a live value may be theirs, and adopting it
+would write it into the app's file on the next edit (F3 of the #148 review). Only a key the
+bytes could not answer -- or every key, without a Lua interpreter, less the ones a loading
+Bridge module sets -- is read off the compositor after the one reload.
 
 Two things this deliberately does **not** do:
 
@@ -29,14 +28,19 @@ Two things this deliberately does **not** do:
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
+from ..bridge import owners
+from ..importer.lua.sandbox import LuaUnavailable
 from ..ipc import CommandClient, IpcError
 from ..model import ConfigModel
+from ..paths import ENTRYPOINT_NAME
 from ..schema import ResolvedOption
 from ..state import Draft, Journal, LastKnownGood
-from ..writer import LuaSyntaxError, ProtectedFile, Writer
+from ..writer import BeforeReplace, LuaSyntaxError, ProtectedFile, Writer, module_relpath
+from .overrides import written_values
 from .reread import read_state
 from .result import ApplyOutcome, ApplyResult
 from .transaction import Reloader
@@ -50,6 +54,7 @@ async def reload_and_reread(
     client: CommandClient,
     model: ConfigModel,
     names: Sequence[str],
+    live: Sequence[str] | None = None,
 ) -> ApplyResult:
     """One reload behind the shared in-flight flag, then bring the model into step.
 
@@ -61,6 +66,10 @@ async def reload_and_reread(
 
     The flag is what keeps this reload from being read as somebody else's and answered with
     a full re-read of the config the app is in the middle of repairing (`Reloader`).
+
+    `live` narrows which of `names` are read off the compositor (all of them by default):
+    a key the app's own restored bytes already answered must not be, since `user.lua` or a
+    theming tool may set it after them (F3 of the #148 review).
     """
     keys = tuple(names)
     with reloader.confirming():
@@ -73,7 +82,7 @@ async def reload_and_reread(
             # loaded while a *different* one is what is broken, and re-reading is how the
             # model finds out which -- refusing to look would leave it describing the
             # version that was just replaced.
-            await read_state(model, client, _resolve(model, keys))
+            await read_state(model, client, _resolve(model, keys if live is None else live))
         except IpcError as error:
             return ApplyResult(ApplyOutcome.COMPOSITOR_GONE, keys=keys, detail=str(error))
 
@@ -101,17 +110,20 @@ def _resolve(model: ConfigModel, names: Sequence[str]) -> tuple[ResolvedOption, 
     return tuple(resolved)
 
 
-class ReloadTransaction:
-    """Reload and re-read, writing nothing -- what an Entrypoint change needs.
+class EntrypointTransaction:
+    """Rewrite the Entrypoint, reload, and re-read -- ADR-0016's Quarantine and Entrypoint Fix.
 
-    ADR-0016's Quarantine and its Entrypoint Fix both work by rewriting `hyprland.lua` and
-    then needing the compositor to notice. An Apply transaction cannot do that job: it
-    renders the model over the App dir, and the Entrypoint is the one app-owned file the
-    model does not describe, so the apply would reload with the require list it *would* have
-    generated rather than the one the recovery just wrote.
+    Both work by rewriting `hyprland.lua` and then needing the compositor to notice. An
+    Apply transaction cannot do that job: it renders the model over the App dir, and the
+    Entrypoint is the one app-owned file the model does not describe, so the apply would
+    reload with the require list it *would* have generated rather than the one the recovery
+    just wrote.
 
-    Still a queued operation rather than a bare `reload()` call, because it ends in reading
-    `configerrors` -- which an apply or a preview running alongside would overwrite.
+    The write runs *inside* the operation, under the queue's lock, rather than before it is
+    queued. The Journal has one pending record, and the draft that guards the overwritten
+    bytes stays open until the reload answers; every other `Journal.begin` caller runs
+    through the same queue, so none can open its own draft in that window and journal this
+    one's as `interrupted` (ADR-0010 §Rollback).
     """
 
     def __init__(
@@ -120,11 +132,18 @@ class ReloadTransaction:
         model: ConfigModel,
         client: CommandClient,
         reloader: Reloader,
+        write: Callable[[BeforeReplace | None], bool],
+        journal: Journal | None = None,
         options: Sequence[str] = (),
     ) -> None:
+        """`write` replaces the Entrypoint, calling its argument before the rename, and
+        returns whether any byte moved -- `Writer.regenerate_entrypoint` or `set_quarantine`.
+        """
         self._model = model
         self._client = client
         self._reloader = reloader
+        self._write = write
+        self._journal = journal
         self._options = tuple(options)
 
     @property
@@ -139,11 +158,59 @@ class ReloadTransaction:
 
     async def run(self, keys: Sequence[str]) -> ApplyResult:
         """`keys` is ignored -- the Options to re-read were fixed at construction."""
-        return await reload_and_reread(
+        names = self._options
+        # Opened before the first byte moves: the Entrypoint Fix overwrites a hand edit by
+        # design, and that edit is kept the way Restore last good keeps one.
+        draft = self._journal.begin([ENTRYPOINT_NAME]) if self._journal is not None else None
+        try:
+            changed = self._write(draft.preserve if draft is not None else None)
+        except (LuaSyntaxError, ProtectedFile, ValueError, OSError) as error:
+            landed = draft.dirty() if draft is not None else ()
+            if not landed:
+                _log.error("Entrypoint rewrite refused before writing: %s", error)
+                if draft is not None:
+                    draft.discard()
+                outcome = (
+                    ApplyOutcome.WRITE_FAILED
+                    if isinstance(error, OSError)
+                    else ApplyOutcome.ABORTED
+                )
+                return ApplyResult(outcome, keys=names, detail=str(error))
+            _log.error("Entrypoint rewrite failed after the file moved: %s", error)
+            result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
+            self._record(draft, result)
+            return result
+
+        if not changed and draft is not None:
+            # Nothing was overwritten, so there is nothing to keep. The reload still runs:
+            # the user asked for the recovery to take effect, and the compositor may not
+            # have loaded what is on disk.
+            draft.discard()
+            draft = None
+
+        result = await reload_and_reread(
             reloader=self._reloader,
             client=self._client,
             model=self._model,
-            names=self._options,
+            names=names,
+        )
+        self._record(draft, result)
+        return result
+
+    @staticmethod
+    def _record(draft: Draft | None, result: ApplyResult) -> None:
+        """Journal the rewrite; `confirmed` only on a clean reload, as for any other write.
+
+        A still-broken Entrypoint must never become what a later Restore last good puts back.
+        The Entrypoint sets no Options, so none are recorded.
+        """
+        if draft is None:
+            return
+        draft.commit(
+            keys=result.keys,
+            outcome=str(result.outcome),
+            confirmed=result.outcome is ApplyOutcome.OK,
+            changed=[ENTRYPOINT_NAME],
         )
 
 
@@ -213,16 +280,29 @@ class RestoreTransaction:
             changed = [
                 good.module
                 for good in self._restores
-                if self._writer.restore(self._model, good.module, good.data, good.options)
+                if self._writer.restore(
+                    self._model,
+                    good.module,
+                    good.data,
+                    good.options,
+                    before_replace=draft.preserve if draft is not None else None,
+                )
             ]
         except (LuaSyntaxError, ProtectedFile, ValueError) as error:
             # A Snapshot that will not parse, or one aimed at a file the app must not write.
-            # Nothing partial is left behind that the caller can act on, and saying so beats
-            # reporting a recovery that did not happen.
-            _log.error("restore refused before writing: %s", error)
-            if draft is not None:
-                draft.discard()
-            return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
+            # The Writer gates per Module, so an earlier Module may already have been
+            # replaced: then the App dir is half-restored, which is `WRITE_FAILED`'s
+            # sentence, and the bytes it overwrote are journalled like any other write's.
+            landed = draft.dirty() if draft is not None else ()
+            if not landed:
+                _log.error("restore refused before writing: %s", error)
+                if draft is not None:
+                    draft.discard()
+                return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
+            _log.error("restore refused part-way, after %s: %s", ", ".join(landed), error)
+            result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
+            self._record(draft, result, landed)
+            return result
         except OSError as error:
             _log.error("restore failed mid-write: %s", error)
             result = ApplyResult(ApplyOutcome.WRITE_FAILED, keys=names, detail=str(error))
@@ -237,14 +317,49 @@ class RestoreTransaction:
                 draft.discard()
             return ApplyResult(ApplyOutcome.NOTHING_TO_DO, keys=names)
 
+        live = await self._settle_from_bytes(names)
         result = await reload_and_reread(
             reloader=self._reloader,
             client=self._client,
             model=self._model,
             names=names,
+            live=live,
         )
         self._record(draft, result, changed)
         return result
+
+    async def _settle_from_bytes(self, names: Sequence[str]) -> tuple[str, ...]:
+        """Put the model in step with the restored Modules from their own bytes, as launch
+        does; return the keys that still have to be read off the compositor.
+
+        Not off the compositor first: `user.lua` and a theming tool load after the app's
+        Modules, so the live value of a key may be theirs, and the next write would render
+        it into the app's file (F3 of the #148 review). A key the restored Module used to
+        carry and the Snapshot does not is unset. Without Lua the keys are read live, minus
+        the ones a loading Bridge module sets, whose live answer is always the tool's.
+        """
+        paths = self._writer.paths
+        manifest = self._writer.manifest(self._model)
+        restored = {good.module for good in self._restores}
+        for option, _value in self._model.set_options():
+            if module_relpath(option) in restored and option.name not in names:
+                self._model.unset(option.name)
+        try:
+            values = await asyncio.to_thread(
+                written_values, paths.app_dir, self._model.schema, manifest, only=restored
+            )
+        except LuaUnavailable as error:
+            _log.warning("no Lua, so the restored Modules are read off Hyprland: %s", error)
+            tools = owners(manifest.bridges, quarantined=manifest.quarantined)
+            return tuple(name for name in names if name not in tools)
+        for name, value in values.items():
+            if name not in names:
+                continue
+            if value is None:
+                self._model.set_null(name)
+            else:
+                self._model.set(name, value)
+        return tuple(name for name in names if name not in values)
 
     def _record(self, draft: Draft | None, result: ApplyResult, changed: Sequence[str]) -> None:
         """Journal the restore like any other write that reached disk.

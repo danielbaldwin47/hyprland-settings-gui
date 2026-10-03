@@ -33,19 +33,27 @@ from hyprtweaker.engine.model.entities import MonitorRule  # noqa: E402
 from hyprtweaker.engine.monitors_catalog import (  # noqa: E402
     CATCH_ALL_OUTPUT,
     DISPLAY_BREAKING_FIELDS,
-    SPECIAL_MODES,
     TRANSFORM_NAMES,
     description_of,
     disconnected_rules,
     format_mode,
     format_position,
     logical_size,
-    parse_mode,
     preferred_identity,
     rule_for,
     snap_position,
 )
 from hyprtweaker.engine.profiles import MonitorProfile  # noqa: E402
+from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import profile_summary, rule_summary  # noqa: E402
+from hyprtweaker.ui.pages.monitor_rows import (  # noqa: E402
+    ColourRows,
+    ModeRows,
+    ScaleRows,
+    reserved_row,
+)
+from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
@@ -58,7 +66,21 @@ _VRR_CHOICES: tuple[tuple[str, int], ...] = (
     ("Fullscreen video", 3),
 )
 
-_SCALE_PRESETS: tuple[str, ...] = ("auto", "1", "1.25", "1.5", "2")
+_RowKey = tuple[str, str]
+"""Which display row an expander is, across rebuilds: `("connected", connector)`,
+`("rule", output)` for a display that is not plugged in, or `("catch-all", "")`."""
+
+
+@dataclass(frozen=True, slots=True)
+class _FocusSpot:
+    """Where keyboard focus sat before a rebuild, by what survives one: the display row,
+    the setting's title inside it (`None` for the display row itself), and the focused
+    widget's place among that setting's descendants (`-1` for the setting itself)."""
+
+    row: _RowKey
+    setting: str | None
+    index: int
+    kind: type
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +132,8 @@ class SaveProfileDialog(Adw.AlertDialog):
         )
         self._on_save = on_save
         self.entry = Gtk.Entry(placeholder_text="Docked", activates_default=True)
+        # A placeholder is not a name: a screen reader announced nothing (ruling A10).
+        self.entry.update_property([Gtk.AccessibleProperty.LABEL], ["Profile name"])
         self.set_extra_child(self.entry)
         self.add_response("cancel", "Cancel")
         self.add_response("save", "Save")
@@ -139,20 +163,6 @@ class DisplayRect:
     width: int
     height: int
     has_rule: bool
-
-
-def rule_summary(rule: MonitorRule) -> str:
-    """A rule's fields as one dim line: `mode 1920x1080@60 · position 0x0`."""
-    parts = []
-    for key, value in rule.fields.items():
-        if value is True:
-            parts.append(key)
-        elif isinstance(value, Mapping):
-            inner = " ".join(f"{k}={v}" for k, v in value.items())
-            parts.append(f"{key} {inner}")
-        else:
-            parts.append(f"{key} {value}")
-    return " · ".join(parts) or "no fields yet"
 
 
 class ArrangementCanvas(Gtk.DrawingArea):
@@ -280,15 +290,19 @@ class ArrangementCanvas(Gtk.DrawingArea):
     def _draw(self, _area: Gtk.DrawingArea, cr: Any, _width: int, _height: int) -> None:
         color = self.get_color()
         for display in self._displays:
-            x, y, w, h = self.canvas_rect(display)
+            # On whole pixels, the outline stroked just inside the box: a 1 px line centred
+            # on a pixel edge smears into two half-strength pixels, and the dashed outline of
+            # a display with no rule fell to 2.5:1 on the light ground (#183).
+            x, y, w, h = (round(value) for value in self.canvas_rect(display))
+            line = 2 if display.has_rule else 1
             cr.set_source_rgba(color.red, color.green, color.blue, 0.12)
             cr.rectangle(x, y, w, h)
             cr.fill()
             cr.set_source_rgba(color.red, color.green, color.blue, 0.55)
-            cr.set_line_width(2 if display.has_rule else 1)
+            cr.set_line_width(line)
             if not display.has_rule:
                 cr.set_dash([4.0, 4.0])
-            cr.rectangle(x, y, w, h)
+            cr.rectangle(x + line / 2, y + line / 2, w - line, h - line)
             cr.stroke()
             cr.set_dash([])
             cr.set_source_rgba(color.red, color.green, color.blue, 0.9)
@@ -302,7 +316,7 @@ class ArrangementCanvas(Gtk.DrawingArea):
 class MonitorsPage:
     """The Displays destination: canvas, connected rows, Not connected, catch-all."""
 
-    section = "monitors"
+    section = entity_page_id("monitors")
     title = "Displays"
 
     def __init__(
@@ -363,6 +377,13 @@ class MonitorsPage:
         self._profile_rows: list[Adw.ActionRow] = []
         self._catch_all_row: Adw.ExpanderRow | None = None
         self._listed: dict[Adw.PreferencesGroup, list[Gtk.Widget]] = {}
+        self._rule_rows: dict[str, Gtk.Widget] = {}
+        """Each rule's row by its identity, the `output` string: what a search hit reveals.
+        Keyed rather than parallel to a list, because a rule's row may sit in Connected,
+        Not connected or the catch-all group depending on what is plugged in."""
+        self._profile_rows_by_slug: dict[str, Adw.ActionRow] = {}
+        self._expanders: dict[_RowKey, Adw.ExpanderRow] = {}
+        self._colours: dict[str, ColourRows] = {}
 
         self.refresh()
 
@@ -462,14 +483,26 @@ class MonitorsPage:
         monitors = self._connected or ()
         editable = bool(self._session.live)
 
+        # Every applied edit rebuilds the page, and the rows that take several edits in a
+        # row (the four reserved sides, the luminance fields) sit inside a display's
+        # expander: what the user had open, and where their cursor was, comes back.
+        expanded = {key for key, row in self._expanders.items() if row.get_expanded()}
+        colours = {name for name, colour in self._colours.items() if colour.shown}
+        focus = self._focus_spot()
+        self._expanders = {}
+        self._colours = {}
+
         for group, widgets in self._listed.items():
             for widget in widgets:
                 group.remove(widget)
+                release(widget)
         self._listed = {}
         self._connected_rows = []
         self._disconnected_rows = []
         self._profile_rows = []
         self._catch_all_row = None
+        self._rule_rows = {}
+        self._profile_rows_by_slug = {}
 
         # The canvas: live outputs at logical size, IPC geometry (ADR-0008).
         displays = []
@@ -499,7 +532,13 @@ class MonitorsPage:
                 connector=str(monitor.get("name", "")),
                 description=str(monitor.get("description", "")),
             )
-            row = self._connected_row(monitor, rule, editable=editable)
+            connector = str(monitor.get("name", ""))
+            row = self._connected_row(
+                monitor, rule, editable=editable, colour_shown=connector in colours
+            )
+            self._keep(("connected", connector), row, expanded)
+            if rule is not None:
+                self._rule_rows[rule.output] = row
             self._connected_group.add(row)
             self._connected_rows.append(row)
             self._listed.setdefault(self._connected_group, []).append(row)
@@ -514,6 +553,8 @@ class MonitorsPage:
         leftover = disconnected_rules(rules, monitors)
         for rule in leftover:
             row = self._disconnected_row(rule, editable=editable)
+            self._rule_rows[rule.output] = row
+            self._keep(("rule", rule.output), row, expanded)
             self._disconnected_group.add(row)
             self._disconnected_rows.append(row)
             self._listed.setdefault(self._disconnected_group, []).append(row)
@@ -528,6 +569,8 @@ class MonitorsPage:
             removable=catch_all is not None,
             breaking=True,
         )
+        self._rule_rows[CATCH_ALL_OUTPUT] = self._catch_all_row
+        self._keep(("catch-all", ""), self._catch_all_row, expanded)
         self._catch_all_group.add(self._catch_all_row)
         self._listed.setdefault(self._catch_all_group, []).append(self._catch_all_row)
 
@@ -545,6 +588,7 @@ class MonitorsPage:
             )
             self._profiles_group.add(row)
             self._profile_rows.append(row)
+            self._profile_rows_by_slug[slug] = row
             self._listed.setdefault(self._profiles_group, []).append(row)
         if not profiles:
             hint = Adw.ActionRow(
@@ -553,6 +597,73 @@ class MonitorsPage:
             )
             self._profiles_group.add(hint)
             self._listed.setdefault(self._profiles_group, []).append(hint)
+
+        if focus is not None:
+            self._restore_focus(focus)
+
+    def _keep(self, key: _RowKey, row: Adw.ExpanderRow, expanded: set[_RowKey]) -> None:
+        """Track `row` under `key`, open if it was open: before it is added, so it opens
+        without the reveal animation and the page does not scroll while it grows."""
+        self._expanders[key] = row
+        row.set_expanded(key in expanded)
+
+    def _focus_spot(self) -> _FocusSpot | None:
+        root = self._page.get_root()
+        focus = root.get_focus() if root is not None else None
+        if focus is None:
+            return None
+        for key, expander in self._expanders.items():
+            if not focus.is_ancestor(expander):
+                continue
+            setting = focus.get_ancestor(Adw.PreferencesRow)
+            if setting is None or setting.get_title() == expander.get_title():
+                setting = expander  # the display row's own header
+            index = -1 if focus is setting else _descendants(setting).index(focus)
+            title = None if setting is expander else setting.get_title()
+            return _FocusSpot(key, title, index, type(focus))
+        return None
+
+    def _restore_focus(self, spot: _FocusSpot) -> None:
+        expander = self._expanders.get(spot.row)
+        if expander is None:
+            return
+        setting: Gtk.Widget | None = expander
+        if spot.setting is not None:
+            setting = next(
+                (
+                    widget
+                    for widget in _descendants(expander)
+                    if isinstance(widget, Adw.PreferencesRow)
+                    and widget.get_title() == spot.setting
+                ),
+                None,
+            )
+        if setting is None:
+            return
+        inside = _descendants(setting)
+        target = (
+            setting
+            if spot.index < 0
+            else inside[spot.index]
+            if spot.index < len(inside)
+            else None
+        )
+        if type(target) is spot.kind and target is not None:
+            target.grab_focus()
+
+    # -- search reveals --
+
+    def reveal_rule(self, output: str) -> Gtk.Widget | None:
+        """Bring the row for the monitor rule `output` into view and flash it.
+
+        Wherever it is listed -- Connected, Not connected, or the catch-all. Navigate +
+        flash as `BindsPage.reveal`; returns the row for an explicit scroll, or `None`.
+        """
+        return _reveal(self._rule_rows.get(output))
+
+    def reveal_profile(self, slug: str) -> Gtk.Widget | None:
+        """Bring Monitor profile `slug`'s row, in the Profiles group, into view and flash it."""
+        return _reveal(self._profile_rows_by_slug.get(slug))
 
     # -- profiles --
 
@@ -565,12 +676,9 @@ class MonitorsPage:
         drifted: bool,
         editable: bool,
     ) -> Adw.ActionRow:
-        rules = len(profile.monitors)
-        pins = sum(1 for pin in profile.pins.values() if pin is not None)
-        summary = f"{rules} display {'rule' if rules == 1 else 'rules'}"
-        if pins:
-            summary += f" · {pins} workspace {'pin' if pins == 1 else 'pins'}"
-        row = Adw.ActionRow(title=profile.name, subtitle=summary)
+        row = Adw.ActionRow(use_markup=False)
+        row.set_title(profile.name)
+        row.set_subtitle(profile_summary(profile))
 
         if active and drifted:
             # The drift badge (ADR-0015): reality and the capture disagree.
@@ -617,16 +725,22 @@ class MonitorsPage:
     # -- connected rows --
 
     def _connected_row(
-        self, monitor: Mapping[str, Any], rule: MonitorRule | None, *, editable: bool
+        self,
+        monitor: Mapping[str, Any],
+        rule: MonitorRule | None,
+        *,
+        editable: bool,
+        colour_shown: bool,
     ) -> Adw.ExpanderRow:
         connector = str(monitor.get("name", ""))
         description = str(monitor.get("description", "")).strip()
         width, height = int(monitor.get("width", 0)), int(monitor.get("height", 0))
         refresh = float(monitor.get("refreshRate", 0.0))
         row = Adw.ExpanderRow(
-            title=description or connector,
-            subtitle=f"{connector} · {format_mode(width, height, refresh)}",
+            use_markup=False,  # the EDID description is the vendor's text, not markup
         )
+        row.set_title(description or connector)
+        row.set_subtitle(f"{connector} · {format_mode(width, height, refresh)}")
         if rule is None:
             badge = Gtk.Label(label="No rule yet", css_classes=["dim-label", "caption"])
             badge.set_tooltip_text(
@@ -641,15 +755,16 @@ class MonitorsPage:
             # The per-rule identity toggle (ADR-0008): the same rule addressed by what
             # the display *is* or by where it is plugged in. Only offered once a rule
             # exists -- before that, the first edit picks desc-when-unique on its own.
+            # The description leads the subtitle rather than the choice, where it was cut
+            # short (ruling A11 of the #148 review).
             match_by = Adw.ComboRow(
-                title="Match by",
-                subtitle="A description survives replug; a port survives identical twins.",
-                model=Gtk.StringList.new(
-                    [
-                        f"This exact display ({description or 'no description'})",
-                        f"Port {connector}",
-                    ]
-                ),
+                use_markup=False,
+                model=Gtk.StringList.new(["This display", f"Port {connector}"]),
+            )
+            match_by.set_title("Match by")
+            match_by.set_subtitle(
+                f"{description or 'This display has no description'}. "
+                "A description survives replug; a port survives identical twins."
             )
             match_by.set_selected(0 if description_of(rule.output) is not None else 1)
             match_by.set_sensitive(editable and bool(description))
@@ -670,27 +785,15 @@ class MonitorsPage:
         )
         row.add_row(enabled)
 
-        modes = list(SPECIAL_MODES) + [str(m) for m in monitor.get("availableModes", ())]
-        resolution = Adw.ComboRow(
-            title="Resolution",
-            subtitle="What this display is asked to run, not merely what it runs now.",
-            model=Gtk.StringList.new(modes),
-        )
-        resolution.set_selected(_mode_index(modes, fields.get("mode"), monitor))
-        resolution.set_sensitive(editable)
-        resolution.connect("notify::selected", self._on_mode_selected, output, modes)
-        row.add_row(resolution)
+        def apply(changed: Mapping[str, Any]) -> None:
+            self._apply(output, changed)
 
-        scales = list(_SCALE_PRESETS)
         current_scale = fields.get("scale", monitor.get("scale", 1.0))
-        scale_text = _scale_text(current_scale)
-        if scale_text not in scales:
-            scales.append(scale_text)
-        scale = Adw.ComboRow(title="Scale", model=Gtk.StringList.new(scales))
-        scale.set_selected(scales.index(scale_text))
-        scale.set_sensitive(editable)
-        scale.connect("notify::selected", self._on_scale_selected, output, scales)
-        row.add_row(scale)
+        for setting in (
+            *ModeRows(monitor, fields, apply, editable=editable).rows,
+            *ScaleRows(current_scale, apply, editable=editable).rows,
+        ):
+            row.add_row(setting)
 
         rotation = Adw.ComboRow(
             title="Rotation", model=Gtk.StringList.new(list(TRANSFORM_NAMES))
@@ -751,6 +854,11 @@ class MonitorsPage:
         )
         row.add_row(vrr)
 
+        row.add_row(reserved_row(fields.get("reserved"), apply, editable=editable))
+        colour = ColourRows(fields, apply, editable=editable, shown=colour_shown)
+        self._colours[connector] = colour
+        for setting in colour.rows:
+            row.add_row(setting)
         return row
 
     def _on_match_by_selected(
@@ -766,27 +874,6 @@ class MonitorsPage:
         wanted = f"desc:{description}" if combo.get_selected() == 0 else connector
         if wanted != current:
             self._actions.rename(current, wanted)
-
-    def _on_mode_selected(
-        self, combo: Adw.ComboRow, _param: Any, output: str, modes: list[str]
-    ) -> None:
-        choice = modes[combo.get_selected()]
-        parsed = parse_mode(choice)
-        if parsed is None:
-            self._apply(output, {"mode": choice})  # preferred / highres / highrr / maxwidth
-        else:
-            width, height, refresh = parsed
-            self._apply(output, {"mode": format_mode(width, height, refresh)})
-
-    def _on_scale_selected(
-        self, combo: Adw.ComboRow, _param: Any, output: str, scales: list[str]
-    ) -> None:
-        choice = scales[combo.get_selected()]
-        if choice == "auto":
-            self._apply(output, {"scale": "auto"})
-            return
-        value = float(choice)
-        self._apply(output, {"scale": int(value) if value.is_integer() else value})
 
     # -- off-canvas rows --
 
@@ -813,19 +900,28 @@ class MonitorsPage:
         breaking: bool,
     ) -> Adw.ExpanderRow:
         """The raw-fields editor for rules with no live display to build combos from."""
-        row = Adw.ExpanderRow(title=title, subtitle=subtitle)
+        row = Adw.ExpanderRow(use_markup=False)
+        row.set_title(title)
+        row.set_subtitle(subtitle)
         output = rule.output
         lane = self._actions.apply_breaking if breaking else self._actions.apply_benign
 
         def entry(field_title: str, key: str) -> Adw.EntryRow:
-            widget = Adw.EntryRow(title=field_title, show_apply_button=True)
+            widget = Adw.EntryRow(use_markup=False, show_apply_button=True)
+            widget.set_title(field_title)
             value = rule.fields.get(key)
             if value is not None:
                 widget.set_text(str(value))
             widget.set_sensitive(editable)
-            widget.connect(
-                "apply", lambda w: self._apply_text(output, key, w.get_text(), lane=lane)
-            )
+            refusal = Gtk.Label(css_classes=["error", "caption"], visible=False)
+            widget.add_suffix(refusal)
+
+            def applied(w: Adw.EntryRow) -> None:
+                message = self._apply_text(output, key, w.get_text(), lane=lane)
+                refusal.set_label(message or "")
+                refusal.set_visible(message is not None)
+
+            widget.connect("apply", applied)
             return widget
 
         row.add_row(entry("Mode", "mode"))
@@ -858,17 +954,21 @@ class MonitorsPage:
         text: str,
         *,
         lane: Callable[[str, Mapping[str, Any]], None],
-    ) -> None:
+    ) -> str | None:
+        """Write one raw field, or answer why not: the refusal the entry shows inline."""
         value: Any = text.strip()
         if not value:
-            return
+            return None
         if key == "scale" and value != "auto":
             try:
                 number = float(value)
             except ValueError:
-                return
+                return "Scale must be a number or auto"
+            if number < 0.25:  # Hyprland's parser rejects it (`--verify-config`)
+                return "Scale must be at least 0.25"
             value = int(number) if number.is_integer() else number
         self._apply(output, {key: value}, lane=lane)
+        return None
 
     # -- the apply seam --
 
@@ -911,6 +1011,24 @@ class MonitorsPage:
         self._apply(output, {"position": format_position(x, y)})
 
 
+def _reveal(row: Gtk.Widget | None) -> Gtk.Widget | None:
+    if row is not None:
+        row.grab_focus()
+        flash(row)
+    return row
+
+
+def _descendants(widget: Gtk.Widget) -> list[Gtk.Widget]:
+    """Every widget under `widget`, depth first: the same order for the same shape."""
+    found: list[Gtk.Widget] = []
+    child = widget.get_first_child()
+    while child is not None:
+        found.append(child)
+        found.extend(_descendants(child))
+        child = child.get_next_sibling()
+    return found
+
+
 def _logical(monitor: Mapping[str, Any]) -> tuple[int, int]:
     return logical_size(
         int(monitor.get("width", 0)),
@@ -918,42 +1036,6 @@ def _logical(monitor: Mapping[str, Any]) -> tuple[int, int]:
         scale=monitor.get("scale", 1.0),
         transform=monitor.get("transform", 0),
     )
-
-
-def _mode_index(modes: list[str], rule_mode: Any, monitor: Mapping[str, Any]) -> int:
-    """Which combo entry describes this display: the rule's ask, else the live mode."""
-    if isinstance(rule_mode, str):
-        if rule_mode in modes:
-            return modes.index(rule_mode)
-        wanted = parse_mode(rule_mode)
-        if wanted is not None:
-            for index, mode in enumerate(modes):
-                have = parse_mode(mode)
-                if have is None or have[0] != wanted[0] or have[1] != wanted[1]:
-                    continue
-                if wanted[2] is None or abs((have[2] or 0) - wanted[2]) < 1:
-                    return index
-    current = (int(monitor.get("width", 0)), int(monitor.get("height", 0)))
-    refresh = float(monitor.get("refreshRate", 0.0))
-    for index, mode in enumerate(modes):
-        have = parse_mode(mode)
-        if (
-            have is not None
-            and (have[0], have[1]) == current
-            and (have[2] is None or abs(have[2] - refresh) < 1)
-        ):
-            return index
-    return 0
-
-
-def _scale_text(value: Any) -> str:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return "auto"
-    if number.is_integer():
-        return str(int(number))
-    return f"{number:g}"
 
 
 def _int_or(value: Any, fallback: int) -> int:

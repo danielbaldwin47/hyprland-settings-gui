@@ -20,6 +20,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from started_app import started_application
+
 APP_VERSION = "0.0.0-test"
 
 USER_ERROR = "/home/user/.config/hypr/user.lua:12: unexpected symbol near '}'"
@@ -55,8 +57,15 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
         def health(self) -> Any:
             return Health(recovery=recovery, **health)
 
-        def restore_last_good(self, *modules: str) -> bool:
+        can_restore = True
+
+        def restorable(self, module: str) -> bool:
+            return self.can_restore
+
+        def restore_last_good(self, *modules: str, done: Any = None) -> bool:
             self.calls.append(("restore", modules[0]))
+            if done is not None:
+                done(True)
             return True
 
         def regenerate_entrypoint(self) -> bool:
@@ -79,7 +88,7 @@ def build_window(tmp_path: Path, errors: tuple[str, ...] = (), **health: Any) ->
         connect=no_compositor,
     )
     session.calls = []
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     window = MainWindow(session, application=app)
 
     # Toasts are counted at the door: `AdwToastOverlay` exposes no queue to read back, and
@@ -293,8 +302,12 @@ def test_restore_reaches_the_session(tmp_path: Path) -> None:
     dialog = window.show_errors()
 
     _click(dialog, "Restore last good")
+    confirm = window.get_visible_dialog()
+    assert confirm.get_heading() == "Restore general.lua?"
+    confirm.emit("response", "restore")
 
     assert session.calls == [("restore", "options/general.lua")]
+    assert window._toast_log[-1] == "general.lua is back to the last version Hyprland accepted."
 
 
 def test_regenerate_reaches_the_session(tmp_path: Path) -> None:
@@ -395,3 +408,78 @@ def _labels(widget: Any) -> set[str]:
             stack.append(child)
             child = child.get_next_sibling()
     return found
+
+
+LONG_USER_ERROR = (
+    "/home/alex/.config/hypr/user.lua:2: syntax error near 'is' while loading the user "
+    "module required last by hyprland.lua"
+)
+
+
+def test_the_error_and_its_buttons_fit_inside_the_dialog(tmp_path: Path) -> None:
+    """Hand-test 14 of #148: the error was one unwrapped line in a sideways-scrolling box,
+    cut at "user.lua:2: s", and "Disable until fixed" sat past the dialog's right edge."""
+    import main_loop
+    from gi.repository import Gtk
+
+    _session, window = build_window(tmp_path, (LONG_USER_ERROR,))
+    window.set_default_size(1090, 800)
+    window.present()
+    dialog = window.show_errors()
+    main_loop.settle("the error dialog to lay out")
+
+    viewport = dialog.get_extra_child()  # what the dialog shows of the errors
+    width = viewport.get_width()
+    assert width > 0
+    shown = [*buttons(dialog.get_extra_child())]
+    shown += [
+        label
+        for label in _all(dialog.get_extra_child())
+        if isinstance(label, Gtk.Label) and label.get_label() == LONG_USER_ERROR
+    ]
+    assert len(shown) == 3
+    for widget in shown:
+        ok, bounds = widget.compute_bounds(viewport)
+        assert ok
+        assert bounds.origin.x >= 0, widget
+        assert bounds.origin.x + bounds.size.width <= width, (widget, bounds.size.width, width)
+
+
+def _all(widget: Any) -> list[Any]:
+    """Every widget under `widget`, in tree order."""
+    found = []
+    stack = [widget]
+    while stack:
+        current = stack.pop()
+        found.append(current)
+        child = current.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    return found
+
+
+def test_restore_is_not_offered_without_a_restore_point(tmp_path: Path) -> None:
+    """#148 hand-test 17: offered for a Module with no confirmed write, it closed the
+    dialog and did nothing. Without one the card says so and offers Open file."""
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    session.can_restore = False
+
+    dialog = window.show_errors()
+
+    labels = {button.get_label() for button in buttons(dialog.get_extra_child())}
+    assert labels == {"Open file"}
+    assert (
+        "This app has no earlier version of general.lua that Hyprland accepted, so there is "
+        "nothing to restore. Open the file to fix the error."
+    ) in _labels(dialog.get_extra_child())
+
+
+def test_cancelling_the_restore_confirm_restores_nothing(tmp_path: Path) -> None:
+    session, window = build_window(tmp_path, (APP_ERROR,))
+    dialog = window.show_errors()
+
+    _click(dialog, "Restore last good")
+    window.get_visible_dialog().emit("response", "cancel")
+
+    assert session.calls == []

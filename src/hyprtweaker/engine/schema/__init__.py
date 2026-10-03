@@ -26,11 +26,14 @@ Typical use::
 
 from __future__ import annotations
 
+from .diff import SchemaDiff, diff_schemas
 from .generated import GeneratedSchema
 from .overlay import Overlay
 from .resolve import (
+    MINIMUM_HYPRLAND,
     Schema,
     available_versions,
+    below_lua_floor,
     derive_section_title,
     derive_title,
     humanise,
@@ -38,7 +41,9 @@ from .resolve import (
     resolve_option,
     schema_dir,
     select_version,
+    stamp_added_in,
 )
+from .supplement import is_plugin_option, newer_than_shipped, supplement
 from .types import (
     CurationFlag,
     Dependency,
@@ -47,16 +52,20 @@ from .types import (
     KnownValues,
     OptionType,
     OverlayEntry,
+    OverlayGroup,
     Range,
     ResolvedOption,
     Restart,
     SectionOverlay,
+    Supplement,
+    SupplementKind,
     Vec2Range,
     Visibility,
     Widget,
 )
 
 __all__ = [
+    "MINIMUM_HYPRLAND",
     "CurationFlag",
     "Dependency",
     "GeneratedOption",
@@ -66,20 +75,30 @@ __all__ = [
     "OptionType",
     "Overlay",
     "OverlayEntry",
+    "OverlayGroup",
     "Range",
     "ResolvedOption",
     "Restart",
     "Schema",
+    "SchemaDiff",
     "SectionOverlay",
+    "Supplement",
+    "SupplementKind",
     "Vec2Range",
     "Visibility",
     "Widget",
     "available_versions",
+    "below_lua_floor",
     "derive_section_title",
     "derive_title",
+    "diff_schemas",
     "humanise",
+    "is_plugin_option",
     "load_schema",
+    "newer_than_shipped",
     "resolve_option",
     "schema_dir",
     "select_version",
+    "stamp_added_in",
+    "supplement",
 ]

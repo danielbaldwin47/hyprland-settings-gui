@@ -28,6 +28,7 @@ from harness import (
     capture,
     diff,
     option_names,
+    session_compositor_reason,
     write_determinism_preamble,
 )
 
@@ -66,11 +67,12 @@ def test_the_nested_compositor_is_not_the_one_we_are_sitting_in(
     package sends -- and the first one a test sends is a reload.
     """
     entrypoint = write_config(harness_home, MINIMAL_CONFIG)
-    host_signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
 
     with NestedHyprland(entrypoint, home=harness_home, log=artifacts / "nested.log") as nested:
         assert nested.signature, "nested compositor never reported an instance signature"
-        assert nested.signature != host_signature
+        # The tier's fence has already dropped the host signature from os.environ, so the
+        # comparison is the desktop guard's own: is this the session's compositor?
+        assert session_compositor_reason(nested.instance) is None
         assert nested.env["WAYLAND_DISPLAY"] != os.environ.get("WAYLAND_DISPLAY")
         assert nested.instance.command_socket.is_socket()
         # The engine's own Instance must point at the nested sockets, since that is what

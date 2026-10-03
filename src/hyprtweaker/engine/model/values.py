@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, fields, is_dataclass
+from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
 from ..schema import GetOptionKey, OptionType, ResolvedOption
@@ -55,7 +57,7 @@ class Color:
 
     def __post_init__(self) -> None:
         if not 0 <= self.argb <= 0xFFFFFFFF:
-            raise ValueError(f"colour out of 32-bit range: {self.argb}")
+            raise ValueError(f"color out of 32-bit range: {self.argb}")
 
     @classmethod
     def parse(cls, raw: object) -> Color:
@@ -69,12 +71,12 @@ class Color:
         if isinstance(raw, Color):
             return raw
         if isinstance(raw, bool):
-            raise ValueError(f"not a colour: {raw!r}")
+            raise ValueError(f"not a color: {raw!r}")
         if isinstance(raw, int):
             return cls(raw)
 
         if not isinstance(raw, str):
-            raise ValueError(f"not a colour: {raw!r}")
+            raise ValueError(f"not a color: {raw!r}")
         value = raw.strip()
 
         if (match := _HEX8.match(value)) is not None:
@@ -99,7 +101,7 @@ class Color:
         if value.isdigit():
             return cls(int(value))
 
-        raise ValueError(f"not a colour: {raw!r}")
+        raise ValueError(f"not a color: {raw!r}")
 
     @classmethod
     def _from_css(cls, digits: str) -> Color:
@@ -110,14 +112,14 @@ class Color:
         if len(digits) == 8:
             rgba = int(digits, 16)
             return cls(((rgba & 0xFF) << 24) | (rgba >> 8))
-        raise ValueError(f"not a CSS colour: #{digits}")
+        raise ValueError(f"not a CSS color: #{digits}")
 
     @classmethod
     def _from_channels(cls, body: str, *, with_alpha: bool) -> Color:
         parts = [part.strip() for part in body.split(",")]
         expected = 4 if with_alpha else 3
         if len(parts) != expected:
-            raise ValueError(f"expected {expected} colour channels, got {len(parts)}")
+            raise ValueError(f"expected {expected} color channels, got {len(parts)}")
 
         red, green, blue = (_clamp_byte(float(part)) for part in parts[:3])
         # `rgba(r,g,b,a)` takes alpha as a 0..1 float, unlike the 0..255 channels.
@@ -128,7 +130,7 @@ class Color:
     def from_getoption(cls, payload: object) -> Color:
         """`getoption` reports a colour under the `int` key, already packed ARGB."""
         if isinstance(payload, bool) or not isinstance(payload, int):
-            raise ValueError(f"getoption colour is not an integer: {payload!r}")
+            raise ValueError(f"getoption color is not an integer: {payload!r}")
         return cls(payload & 0xFFFFFFFF)
 
     def __str__(self) -> str:
@@ -167,7 +169,7 @@ class Gradient:
 
     def __post_init__(self) -> None:
         if not self.colors:
-            raise ValueError("a gradient needs at least one colour")
+            raise ValueError("a gradient needs at least one color")
 
     @classmethod
     def parse(cls, raw: object) -> Gradient:
@@ -186,7 +188,7 @@ class Gradient:
                 angle = float(match.group(1))
                 tokens = tokens[:-1]
             if not tokens:
-                raise ValueError(f"gradient has an angle but no colours: {raw!r}")
+                raise ValueError(f"gradient has an angle but no colors: {raw!r}")
 
             return cls(tuple(Color.parse(token) for token in tokens), angle)
 
@@ -206,7 +208,7 @@ class Gradient:
         if isinstance(payload, dict):
             colors = payload.get("colors", ())
             if not isinstance(colors, list | tuple):
-                raise ValueError(f"getoption gradient colours are not a list: {colors!r}")
+                raise ValueError(f"getoption gradient colors are not a list: {colors!r}")
             angle = payload.get("angle", 0.0)
             if isinstance(angle, bool) or not isinstance(angle, int | float):
                 raise ValueError(f"getoption gradient angle is not a number: {angle!r}")
@@ -346,6 +348,17 @@ class FontWeight:
 
     weight: int | str
 
+    @property
+    def number(self) -> int | None:
+        """The weight Hyprland reads this as, or `None` for a name it does not know.
+
+        Names match case-insensitively, as Hyprland lowercases before its lookup
+        (`LuaConfigFontWeight.cpp:28-31`).
+        """
+        if isinstance(self.weight, int):
+            return self.weight
+        return FONT_WEIGHT_NAMES.get(self.weight.lower())
+
     def __post_init__(self) -> None:
         if isinstance(self.weight, int) and self.weight < 0:
             raise ValueError(f"font weight cannot be negative: {self.weight}")
@@ -376,6 +389,39 @@ class FontWeight:
         return str(self.weight) if isinstance(self.weight, int) else lua_string(self.weight)
 
 
+FONT_WEIGHT_NAMES: Mapping[str, int] = MappingProxyType(
+    {
+        "thin": 100,
+        "ultralight": 200,
+        "light": 300,
+        "semilight": 350,
+        "book": 380,
+        "normal": 400,
+        "medium": 500,
+        "semibold": 600,
+        "bold": 700,
+        "ultrabold": 800,
+        "heavy": 900,
+        "ultraheavy": 1000,
+    }
+)
+"""Every font-weight name Hyprland 0.56.2 accepts, in weight order, with its weight.
+
+Copied from Hyprland's own table, `CFontWeightConfigValueData::WEIGHTS`
+(`src/config/shared/complex/ComplexDataTypes.hpp:159-160` at v0.56.2), which the Lua parser
+looks names up in (`src/config/lua/types/LuaConfigFontWeight.cpp:31`). Any other name is a
+config error ("font weight "extrabold" was not found"). A number is any non-negative integer
+to that parser; the app offers 100 to 1000, the range Pango's weights span
+(`FONT_WEIGHT_RANGE`). Proven against the binary by
+`tests/integration/test_font_weight_verify.py`.
+The Overlay's `labels` for the two font-weight settings name exactly these keys, in this
+order (`tests/unit/test_font_weight_labels.py`).
+"""
+
+FONT_WEIGHT_RANGE = range(100, 1001)
+"""The numbers a font-weight Row accepts: thin (100) to ultraheavy (1000)."""
+
+
 _LUA_ESCAPES = {
     "\\": "\\\\",
     '"': '\\"',
@@ -386,7 +432,7 @@ _LUA_ESCAPES = {
     "\b": "\\b",
     "\f": "\\f",
     "\v": "\\v",
-    "\0": "\\0",
+    "\0": "\\000",  # three digits: a short escape followed by a digit reads as one
 }
 
 
@@ -436,7 +482,16 @@ def parse_value(option_type: OptionType, raw: Any) -> Any:
     output and UI edits all land here, so an option can only ever hold a value of its own
     type. Rejecting early is the point -- a string in an `int` option is a config error at
     the next reload, and finding it at set time names the option instead.
+
+    Every rejection is a `ValueError` or `TypeError`, an overflowing number included.
     """
+    try:
+        return _parse(option_type, raw)
+    except OverflowError as error:
+        raise ValueError(f"out of range: {raw!r}") from error
+
+
+def _parse(option_type: OptionType, raw: Any) -> Any:
     if (complex_type := COMPLEX_TYPES.get(option_type)) is not None:
         return complex_type.parse(raw)
 
@@ -448,7 +503,9 @@ def parse_value(option_type: OptionType, raw: Any) -> Any:
         case OptionType.FLOAT:
             if isinstance(raw, bool) or not isinstance(raw, int | float | str):
                 raise ValueError(f"not a number: {raw!r}")
-            return float(raw)
+            if not math.isfinite(number := float(raw)):
+                raise ValueError(f"not a finite number: {raw!r}")
+            return number
         case _:
             if isinstance(raw, str):
                 return raw
@@ -557,6 +614,18 @@ def has_emittable_null(option: ResolvedOption) -> bool:
     return True
 
 
+def is_null_spelling(option: ResolvedOption, raw: Any) -> bool:
+    """Whether a value read from a config is this Option's "no value", not a value.
+
+    `raw` as the Lua importer decodes it (`-1`, `""`) or as hyprlang text (`"-1"`). Only
+    an emittable null counts: the colour fallbacks' `-1` is no Lua value at all, so a
+    config spelling it was never loaded and reads as the value it says.
+    """
+    if not (option.nullable and has_emittable_null(option)):
+        return False
+    return bool(raw == option.null_value or raw == str(option.null_value))
+
+
 def lua_literal_for(option: ResolvedOption, value: Any) -> str:
     """The Lua literal for one Option's model value, explicit null included.
 
@@ -595,10 +664,34 @@ def parse_getoption(option: ResolvedOption, payload: dict[str, Any]) -> Any:
     records the expected key and `custom` stays a fallback, so the same reader survives
     both engines (`schema/types.py`).
     """
+    if (
+        option.type is OptionType.STRING
+        and GetOptionKey.STR.value not in payload
+        and GetOptionKey.INT.value in payload
+    ):
+        return ColorText.from_getoption(payload[GetOptionKey.INT.value])
     raw = getoption_raw(option, payload)
     if (complex_type := COMPLEX_TYPES.get(option.type)) is not None:
         return complex_type.from_getoption(raw)
     return parse_value(option.type, raw)
+
+
+class ColorText(str):
+    """A STRING Option's live value that `getoption` answered as a colour (#213).
+
+    A colour the app knows only from `descriptions` (the runtime supplement, ADR-0012)
+    types as STRING, so the user writes it as text, but Hyprland stores a colour and answers
+    under `int`. The reply reads back as the `rgba(rrggbbaa)` text Hyprland's Lua accepts,
+    and `values_match` compares it with what the user wrote as colours: `"0xee33ccff"` and
+    `"rgba(33ccffee)"` are the same write. Only a reply can make one, so a real string
+    Option is still compared as text.
+    """
+
+    __slots__ = ()
+
+    @classmethod
+    def from_getoption(cls, payload: object) -> ColorText:
+        return cls(f"rgba({Color.from_getoption(payload).rgba:08x})")
 
 
 def parse_lua(option: ResolvedOption, raw: Any) -> Any:
@@ -613,7 +706,16 @@ def parse_lua(option: ResolvedOption, raw: Any) -> Any:
 
     Falls back to the display-text parser for scalars and for anyone who wrote a complex
     value as the string form, which the engine also accepts.
+
+    The Option's null spelling comes back as `None`, explicit null, because that is what
+    the Writer emits for it (`lua_literal_for`): `general:float_gaps = -1` is Hyprland's
+    "same as the outer gaps", and parsed as a value it would become four `-1` sides that
+    re-emit as a table the user never wrote (#207). Hyprland 0.56.2 reads both forms the
+    same way, any negative side meaning `gaps_out` (`src/layout/space/Space.cpp`), but only
+    the null shows the user what it means.
     """
+    if is_null_spelling(option, raw):
+        return None
     if option.type is OptionType.GRADIENT and isinstance(raw, dict):
         colors = raw.get("colors")
         entries = colors if isinstance(colors, list) else []
@@ -661,6 +763,11 @@ def values_match(expected: Any, actual: Any) -> bool:
     Used by the Apply transaction's Read-back and, later, by the ADR-0005 drift scan --
     which ask the same question of the same pair of values.
     """
+    if isinstance(actual, ColorText) and isinstance(expected, str):
+        try:
+            return Color.parse(expected) == Color.parse(actual)
+        except ValueError:
+            return False
     if isinstance(expected, bool) or isinstance(actual, bool):
         # Checked before the numeric branch: `True` is an `int`, and `isclose(True, 1)` is
         # true, which would make a bool Option agree with a value it does not have.

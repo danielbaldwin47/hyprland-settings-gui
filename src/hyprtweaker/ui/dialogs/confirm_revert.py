@@ -5,6 +5,9 @@ when this opens, and *silence means revert*. A black screen cannot click "Keep",
 default response, the close response, and the countdown expiring all revert -- keeping
 the new settings is the one outcome that requires a deliberate, visible click.
 
+One dialog serves a whole batch: a display-breaking change made while it is open joins it,
+and `restart()` gives the clock back in full rather than stacking a second dialog (#192).
+
 The countdown itself is a plain `tick()` a GLib timer calls once a second, so the UI
 smoke tier drives it by hand: no main loop, no waiting fifteen real seconds to see the
 revert fire.
@@ -42,6 +45,7 @@ class ConfirmRevertDialog(Adw.AlertDialog):
         )
         self._on_keep = on_keep
         self._on_revert = on_revert
+        self._seconds = seconds
         self._remaining = seconds
         self._decided = False
         self._source: int | None = None
@@ -66,6 +70,20 @@ class ConfirmRevertDialog(Adw.AlertDialog):
     def present(self, parent: object = None) -> None:  # type: ignore[override]
         self._source = GLib.timeout_add_seconds(1, self.tick)
         super().present(parent)
+
+    def restart(self) -> None:
+        """Back to a full countdown: a change that joined it gets the whole clock (#192).
+
+        The one timer is re-armed rather than a second one added, so the next second the
+        user sees is a whole one and the clock still ticks once a second.
+        """
+        if self._decided:
+            return
+        self._remaining = self._seconds
+        self.set_body(_body(self._remaining))
+        if self._source is not None:
+            GLib.source_remove(self._source)
+            self._source = GLib.timeout_add_seconds(1, self.tick)
 
     def tick(self) -> bool:
         """One second passed; `True` while the countdown should keep running.

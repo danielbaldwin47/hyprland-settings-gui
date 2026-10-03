@@ -1,7 +1,8 @@
 -- The recording stub ADR-0009 specifies: a foreign hyprland.lua evaluated under a
 -- fake `hl` and a stdlib that refuses to touch the world, dumping what it saw as JSON.
 --
--- Usage: lua5.5 runner.lua <entry.lua> <basedir> <out.json> <policy>
+-- Usage: lua5.5 runner.lua <entry.lua> <basedir> <out.json> <policy> <run|keep> <plugins>
+--                          <print-limit-bytes>
 --   policy "block"       -- side effects intercepted and faked; the default
 --   policy "passthrough" -- side effects really happen, and are still recorded
 --
@@ -26,7 +27,18 @@ local entry, basedir, outpath, policy = arg[1], arg[2], arg[3], arg[4] or "block
 -- where the handler is a block this app generated, holds nothing but `hl.exec_cmd` calls,
 -- and is the only place those calls can be seen from.
 local run_handlers = (arg[5] == "run")
+-- Whether a plugin's setting answers `hl.get_config` as if its plugin were loaded. Off for
+-- any foreign config, whose guards must take the branch the engine would. On for exactly
+-- one caller -- retirement reading a plugin setting back out of the Module this app wrote
+-- (#175): each one is guarded on `hl.get_config`, and what the app wrote is the question,
+-- not whether the plugin happens to be loaded.
+local assume_plugins_loaded = (arg[6] == "plugins-loaded")
 local passthrough = policy == "passthrough"
+-- What the config's own `print` and `io.write` may add up to before the read is abandoned
+-- (the sandbox's `OUTPUT_LIMIT_BYTES`, #242). They are recorded here rather than written to
+-- stdout, so a printing loop would otherwise fill this process's memory until the timeout.
+local print_limit = tonumber(arg[7])
+local PRINT_LIMIT_EXIT = 77 -- the sandbox's `OUTPUT_LIMIT_EXIT`
 
 ----------------------------------------------------------------------
 -- record state
@@ -44,6 +56,17 @@ local record = {
   exited = false, -- the config called os.exit and we trapped it
   policy = policy,
 }
+
+local printed = 0
+local PRINT_ENTRY_COST = 16 -- a recorded entry is never free: an empty print in a loop adds up
+local function note_print(text)
+  printed = printed + #text + PRINT_ENTRY_COST
+  if print_limit and printed > print_limit then
+    -- The real `os`, which the config never reaches: it cannot catch this or fake it.
+    os.exit(PRINT_LIMIT_EXIT, true)
+  end
+  record.prints[#record.prints + 1] = text
+end
 
 local script_id = 0
 local current_submap = nil
@@ -334,6 +357,14 @@ local function query_fn(name, ret)
 end
 for name, ret in pairs(QUERIES) do hl[name] = query_fn(name, ret) end
 for _, name in ipairs(NIL_QUERIES) do hl[name] = query_fn(name, nil) end
+if assume_plugins_loaded then
+  local ask = hl.get_config
+  hl.get_config = function(key, ...)
+    local answer = ask(key, ...)
+    if type(key) == "string" and key:find("^plugin[:.]") then return true end
+    return answer
+  end
+end
 
 ----------------------------------------------------------------------
 -- sandboxed stdlib
@@ -411,14 +442,14 @@ local sandbox_io = {
   end,
   lines = function(...) return real_io.lines(...) end,
   read = function() return nil end,
-  write = function(...) record.prints[#record.prints + 1] = table.concat({ ... }, "") return sandbox_io end,
+  write = function(...) note_print(table.concat({ ... }, "")) return sandbox_io end,
   popen = function(cmd, mode)
     note_shell("io.popen", cmd)
     if passthrough then return real_io.popen(cmd, mode) end
     return fake_pipe("")
   end,
-  stderr = { write = function(_, ...) record.prints[#record.prints + 1] = table.concat({ ... }, "") return sandbox_io.stderr end },
-  stdout = { write = function(_, ...) record.prints[#record.prints + 1] = table.concat({ ... }, "") return sandbox_io.stdout end },
+  stderr = { write = function(_, ...) note_print(table.concat({ ... }, "")) return sandbox_io.stderr end },
+  stdout = { write = function(_, ...) note_print(table.concat({ ... }, "")) return sandbox_io.stdout end },
 }
 
 ----------------------------------------------------------------------
@@ -463,6 +494,12 @@ end
 -- conservative character set first: the string comes from the config being imported, and
 -- interpolating it into a shell command unchecked is a command injection.
 local SAFE_WILDCARD = "^[%w%._/%-]*$"
+-- The config's directory is the user's own and may hold any character, a quote included,
+-- so it is quoted for the shell rather than checked: one single-quoted word, each `'`
+-- closed, escaped and reopened.
+local function shell_quote(s)
+  return "'" .. (s:gsub("'", "'\\''")) .. "'"
+end
 local function list_lua_modules(dir)
   if not dir:match(SAFE_WILDCARD) or dir:find("%.%.") then
     record.errors[#record.errors + 1] = "wildcard require refused for path: " .. dir
@@ -472,7 +509,7 @@ local function list_lua_modules(dir)
   -- Recorded like any other shell-out: this one is the importer's own, not the config's,
   -- but an unrecorded process start is exactly the thing this file promises not to do.
   note_shell("importer.listdir", dir)
-  local p = real_io.popen("ls -1 '" .. basedir .. "/" .. dir .. "' 2>/dev/null")
+  local p = real_io.popen("ls -1 " .. shell_quote(basedir .. "/" .. dir) .. " 2>/dev/null")
   if not p then return names end
   for f in p:lines() do
     if f:sub(-4) == ".lua" then names[#names + 1] = f:sub(1, -5) end
@@ -525,7 +562,7 @@ ENV = {
   print = function(...)
     local parts = {}
     for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
-    record.prints[#record.prints + 1] = table.concat(parts, "\t")
+    note_print(table.concat(parts, "\t"))
   end,
   string = string, table = table, math = math, utf8 = utf8, coroutine = coroutine,
   ipairs = ipairs, pairs = pairs, next = next, type = type, tostring = tostring,

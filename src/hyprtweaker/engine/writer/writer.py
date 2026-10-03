@@ -22,10 +22,17 @@ this; the Writer stays synchronous and ignorant of the compositor.
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from ..bridge import (
+    BridgeEntry,
+    bridges_from_entrypoint,
+    in_require_order,
+    render_line,
+    same_module,
+)
 from ..model.options import ConfigModel
 from ..paths import (
     ANIMATIONS_MODULE,
@@ -38,18 +45,21 @@ from ..paths import (
     LAYER_RULES_MODULE,
     MONITORS_MODULE,
     PERMISSIONS_MODULE,
+    PLUGINS_MODULE,
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
 )
-from ..state.manifest import Manifest, ModuleRecord
+from ..state.manifest import Manifest, ModuleRecord, RetiredValue
 from ..state.manifest import is_damaged as manifest_is_damaged
 from . import syntax
 from .animations import render_animations_module
 from .binds import render_binds_module
 from .inputs import render_devices_module, render_gestures_module
+from .lua import GENERATED_BANNER
 from .modules import (
     ENTITY_MODULES,
+    BridgeRequire,
     is_entity_module,
     is_generated_module,
     module_relpath,
@@ -57,6 +67,7 @@ from .modules import (
     render_module,
 )
 from .monitors import render_monitors_module, render_workspace_rules_module
+from .plugins import render_plugins_module
 from .rules import render_layer_rules_module, render_window_rules_module
 from .session_scope import (
     render_autostart_module,
@@ -77,11 +88,14 @@ class ModuleSet:
 
     modules: tuple[str, ...]
     legacy: str | None
-    bridges: tuple[str, ...]
+    bridges: tuple[BridgeRequire, ...]
+    """Every Bridge line: the Manifest's entries in require order, each loading or commented
+    with its reason, then any `bridge/*.lua` no entry names, loading as it always has."""
+
     user: str | None
 
     quarantined: tuple[str, ...] = ()
-    """Requires held out of the four tiers above, and present on disk (ADR-0016).
+    """The lines held out of the four tiers above, of files present on disk (ADR-0016).
 
     Carried rather than discarded because the Entrypoint states them as commented-out lines:
     a `user.lua` that stopped loading has to be legible as a decision in the file itself,
@@ -90,27 +104,28 @@ class ModuleSet:
     """
 
     @property
-    def foreign(self) -> tuple[str, ...]:
-        """Every require the app does not own: `legacy`, the Bridges, `user`.
+    def foreign(self) -> tuple[tuple[str, str], ...]:
+        """Every require the app does not own, with its hypr-dir-relative file: `legacy`,
+        the Bridges, `user`.
 
         The three tiers Quarantine may touch, and the ones the Writer must never rewrite.
         """
-        return tuple(
-            name for name in (self.legacy, self.user, *self.bridges) if name is not None
-        )
+        named = [(name, f"{name}.lua") for name in (self.legacy, self.user) if name is not None]
+        return (*named, *((bridge.require, bridge.file) for bridge in self.bridges))
 
     def require_for(self, path: str) -> str | None:
         """The foreign `require` a printed error path names, or `None` for none of them.
 
-        Matched by suffix against the requires this app would actually emit, never derived
+        Matched by suffix against the files this app would actually require, never derived
         from the printed path by stripping a prefix -- the path Hyprland printed is the one
         it opened, which may have travelled through a symlinked dotfile directory or a `$HOME`
         resolved differently (`ownership.py` documents the same hazard). A quarantine recorded
         under a name the Entrypoint never emits would be a Banner claiming a file is disabled
-        while the config went on loading it.
+        while the config went on loading it. A `require("<name>")` failure names the require
+        itself, in either spelling.
         """
-        for require in self.foreign:
-            if path == f"{require}.lua" or path.endswith(f"/{require}.lua"):
+        for require, file in self.foreign:
+            if path == file or path.endswith(f"/{file}") or same_module(path, require):
                 return require
         return None
 
@@ -120,6 +135,7 @@ class ModuleSet:
         paths: ConfigPaths,
         module_paths: Sequence[str],
         quarantined: Sequence[str] = (),
+        bridges: Sequence[BridgeEntry] = (),
     ) -> ModuleSet:
         """The require order for `module_paths` plus whatever else is on disk.
 
@@ -128,6 +144,12 @@ class ModuleSet:
         never from the generated Modules: those are rendered from the model, so leaving one
         out would put the Entrypoint and the model permanently at odds. A quarantine naming a
         generated Module is therefore ignored rather than obeyed.
+
+        `bridges` are the Manifest's entries (ADR-0006 §Placement). Each renders its line,
+        native path or not; one whose file is missing renders as waiting, never as a require
+        that would fail. A `bridge/*.lua` no entry names keeps loading as before #163: a
+        hand-placed module, or one whose entry went with a lost Manifest, must not silently
+        stop.
         """
         disabled = frozenset(quarantined)
         generated = []
@@ -136,27 +158,64 @@ class ModuleSet:
             generated.append(paths.require_path(paths.vars_lua))
         generated += [paths.require_path(paths.app_dir / name) for name in sorted(module_paths)]
 
-        bridges = (
-            sorted(
-                paths.require_path(path)
-                for path in paths.bridge_dir.glob("*.lua")
-                if path.is_file()
-            )
+        held: list[str] = []
+        lines: list[BridgeRequire] = []
+        for entry in in_require_order(bridges):
+            present = (paths.hypr_dir / entry.file).is_file()
+            if entry.module in disabled and present:
+                held.append(entry.line)
+            else:
+                text = render_line(entry, present=present)
+                lines.append(BridgeRequire(entry.module, entry.file, text))
+        named = {entry.file for entry in bridges}
+        unregistered = (
+            sorted(path for path in paths.bridge_dir.glob("*.lua") if path.is_file())
             if paths.bridge_dir.is_dir()
             else []
         )
+        for path in unregistered:
+            file = path.relative_to(paths.hypr_dir).as_posix()
+            if file in named:
+                continue
+            require = paths.require_path(path)
+            if require in disabled:
+                held.append(f'require("{require}")')
+            else:
+                lines.append(BridgeRequire(require, file, f'require("{require}")'))
+
         legacy = paths.require_path(paths.legacy_lua) if paths.legacy_lua.is_file() else None
         user = paths.require_path(paths.user_lua) if paths.user_lua.is_file() else None
-
-        foreign = (legacy, user, *bridges)
-        held = [name for name in foreign if name is not None and name in disabled]
+        held += [f'require("{name}")' for name in (legacy, user) if name in disabled]
         return cls(
             modules=tuple(generated),
             legacy=None if legacy in disabled else legacy,
-            bridges=tuple(name for name in bridges if name not in disabled),
+            bridges=tuple(lines),
             user=None if user in disabled else user,
             quarantined=tuple(sorted(held)),
         )
+
+
+def load_manifest(paths: ConfigPaths, *, app_version: str, schema_version: str) -> Manifest:
+    """The Manifest, with its Bridge entries rebuilt from the Entrypoint if it was lost.
+
+    Once requires come from the Manifest, an absent or unreadable one would drop every Bridge
+    line from the next Entrypoint and silently end the user's theming. The app's own
+    Entrypoint states every entry as a line (S4), so it is read back into entries instead
+    (`bridges_from_entrypoint`). Only the app's own: a foreign `hyprland.lua` is the
+    Migration wizard's to import, not this function's to adopt.
+    """
+    manifest = Manifest.load(
+        paths.manifest, app_version=app_version, schema_version=schema_version
+    )
+    if paths.manifest.is_file() and not manifest_is_damaged(paths.manifest):
+        return manifest
+    try:
+        text = paths.entrypoint.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return manifest
+    if not text.startswith(GENERATED_BANNER.split("{", 1)[0]):
+        return manifest
+    return manifest.with_bridges(bridges_from_entrypoint(text))
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +247,15 @@ class WriteResult:
     @property
     def changed(self) -> bool:
         return bool(self.written or self.removed or self.entrypoint_written)
+
+
+BeforeReplace = Callable[[Path], None]
+"""Called with a file's path just before the Writer replaces or deletes it.
+
+How a transaction's Journal Draft makes the bytes about to go durable (`Draft.preserve`)
+while they still exist. Per call rather than held: the Draft is one transaction's, and the
+Writer outlives every transaction.
+"""
 
 
 class ProtectedFile(Exception):
@@ -265,6 +333,7 @@ class Writer:
                 render_permissions_module(entities.permissions, app_version=version),
             ),
             (AUTOSTART_MODULE, render_autostart_module(entities.startup, app_version=version)),
+            (PLUGINS_MODULE, render_plugins_module(entities.plugins, app_version=version)),
         )
         for relpath, text in entity_modules:
             if text is not None:
@@ -323,7 +392,14 @@ class Writer:
 
     # --- writing ------------------------------------------------------------------------
 
-    def write(self, model: ConfigModel, *, overwrite_hand_edits: bool = False) -> WriteResult:
+    def write(
+        self,
+        model: ConfigModel,
+        *,
+        overwrite_hand_edits: bool = False,
+        overwrite: Collection[str] = (),
+        before_replace: BeforeReplace | None = None,
+    ) -> WriteResult:
         """Render, gate, and land the whole Module set plus the Entrypoint.
 
         Files an editor got to first are **skipped**, not rewritten. ADR-0005 makes that a
@@ -331,10 +407,11 @@ class Writer:
         overwrite" -- and ADR-0016 spells out the recovery: a Banner offering
         restore-last-known-good or open-in-editor, never an automatic write. So the default
         reports and stands down; `overwrite_hand_edits=True` is the caller carrying the
-        user's answer back in.
+        user's answer back in for every such file, and `overwrite` for the files named.
 
         Nothing reaches disk until every rendered file has passed the syntax gate: a
-        half-written Module set is worse than no write at all.
+        half-written Module set is worse than no write at all. `before_replace` sees each
+        Module and the Entrypoint before it is replaced or pruned.
         """
         manifest = self._manifest_for(model)
 
@@ -342,7 +419,9 @@ class Writer:
         # Read before the Entrypoint is rendered, because Quarantine is a fact about which
         # requires the Entrypoint may emit -- a write that discovered the require list first
         # would regenerate the very line the user disabled.
-        module_set = ModuleSet.discover(self._paths, list(rendered), manifest.quarantined)
+        module_set = ModuleSet.discover(
+            self._paths, list(rendered), manifest.quarantined, manifest.bridges
+        )
         entrypoint_text = self.render_entrypoint(module_set)
 
         gate_ran = syntax.gate_available()
@@ -358,7 +437,7 @@ class Writer:
 
         hand_edited = manifest.hand_edited(self._paths)
         off_limits: frozenset[str] = (
-            frozenset() if overwrite_hand_edits else frozenset(hand_edited)
+            frozenset() if overwrite_hand_edits else frozenset(hand_edited) - set(overwrite)
         )
 
         self._paths.options_dir.mkdir(parents=True, exist_ok=True)
@@ -369,7 +448,7 @@ class Writer:
         for name, text in sorted(rendered.items()):
             if name in off_limits:
                 skipped.append(name)
-            elif self._write_if_changed(self._paths.app_dir / name, text):
+            elif self._write_if_changed(self._paths.app_dir / name, text, before_replace):
                 written.append(name)
             else:
                 unchanged.append(name)
@@ -379,13 +458,16 @@ class Writer:
             keep=set(rendered),
             off_limits=off_limits,
             prune_entities=model.entities_loaded,
+            before_replace=before_replace,
         )
 
         if ENTRYPOINT_NAME in off_limits:
             skipped.append(ENTRYPOINT_NAME)
             entrypoint_written = False
         else:
-            entrypoint_written = self._write_if_changed(self._paths.entrypoint, entrypoint_text)
+            entrypoint_written = self._write_if_changed(
+                self._paths.entrypoint, entrypoint_text, before_replace
+            )
 
         # A record is the claim "the app wrote exactly these bytes", so it is only ever made
         # for a file this write actually laid down. A skipped file keeps the record it had,
@@ -438,6 +520,8 @@ class Writer:
         module: str,
         data: bytes,
         options: Sequence[str] = (),
+        *,
+        before_replace: BeforeReplace | None = None,
     ) -> bool:
         """Lay a Snapshot's bytes back down as `module`, and record them as the app's own.
 
@@ -452,8 +536,8 @@ class Writer:
         **Overwrites a hand edit on purpose.** Every other path in this class stands down
         from a file an editor touched; this one is only ever reached because the user chose
         Restore last good, or because they are stranded without keybinds (§Zero-binds). The
-        overwritten bytes are not lost -- the Journal snapshotted them, which is what makes
-        the ADR willing to spend them.
+        overwritten bytes are not lost -- `before_replace` hands them to the Journal before
+        the rename, which is what makes the ADR willing to spend them.
 
         Recording the hash is what makes the restored file the app's own again. It has to
         be: leaving the old record would make the file it just wrote read as hand-edited, so
@@ -472,35 +556,56 @@ class Writer:
         # and a Snapshot store is a file tree a user can corrupt like any other.
         syntax.gate(text, module)
 
-        changed = self._write_if_changed(path, text)
+        changed = self._write_if_changed(path, text, before_replace)
         self._record_one(model, module, ModuleRecord.of(text, options))
         return changed
 
-    def regenerate_entrypoint(self, model: ConfigModel) -> bool:
+    def regenerate_entrypoint(
+        self, model: ConfigModel, *, before_replace: BeforeReplace | None = None
+    ) -> bool:
         """Rewrite `hyprland.lua` from the Module set, whatever is in it now.
 
         ADR-0016's Entrypoint recovery, and the reason that class gets a one-click Fix while
         a broken Module gets a Banner: the Entrypoint holds no user decisions at all. It is
-        derived entirely from which files exist and which requires are quarantined, so
-        regenerating it can lose nothing -- there is no hand edit here worth the name, only a
-        file that has stopped doing its one job.
+        derived entirely from which files exist, which requires are quarantined and what the
+        Manifest's Bridge entries say, so regenerating it can lose nothing -- there is no
+        hand edit here worth the name, only a file that has stopped doing its one job.
 
         Unconditional, unlike `write`, which stands down from a hand-edited Entrypoint. That
         is the whole point: a hand edit is exactly how the Entrypoint gets broken in the
         first place (the app syntax-gates its own writes), so a recovery that respected it
         would refuse in precisely the case it exists for.
+
+        `before_replace` is called just before the rename, as in `write`: the recovery's
+        Journal draft keeps the bytes being overwritten (ADR-0010 §Rollback).
         """
         manifest = self._manifest_for(model)
-        rendered = self.render_modules(model)
-        module_set = ModuleSet.discover(self._paths, list(rendered), manifest.quarantined)
-        text = self.render_entrypoint(module_set)
-        syntax.gate(text, ENTRYPOINT_NAME)
-
-        changed = self._write_if_changed(self._paths.entrypoint, text)
+        text = self.entrypoint_text(model, manifest)
+        changed = self._write_if_changed(self._paths.entrypoint, text, before_replace)
         self._save(replace(manifest, entrypoint=ModuleRecord.of(text)))
         return changed
 
-    def set_quarantine(self, model: ConfigModel, requires: Sequence[str]) -> bool:
+    def entrypoint_text(self, model: ConfigModel, manifest: Manifest) -> str:
+        """The Entrypoint this model renders under `manifest`'s Quarantine and Bridge
+        entries, syntax-gated.
+
+        Writes nothing, so a recovery can find out it would be refused before it is queued.
+        """
+        rendered = self.render_modules(model)
+        module_set = ModuleSet.discover(
+            self._paths, list(rendered), manifest.quarantined, manifest.bridges
+        )
+        text = self.render_entrypoint(module_set)
+        syntax.gate(text, ENTRYPOINT_NAME)
+        return text
+
+    def set_quarantine(
+        self,
+        model: ConfigModel,
+        requires: Sequence[str],
+        *,
+        before_replace: BeforeReplace | None = None,
+    ) -> bool:
         """Record exactly `requires` as quarantined and regenerate the Entrypoint.
 
         One call for both halves, because they are one act: the Manifest is where the
@@ -512,13 +617,55 @@ class Writer:
         "one-click re-enable" one click rather than an undo path of its own.
         """
         self._save(self._manifest_for(model).with_quarantine(requires))
-        return self.regenerate_entrypoint(model)
+        return self.regenerate_entrypoint(model, before_replace=before_replace)
+
+    def set_bridges(
+        self,
+        model: ConfigModel,
+        entries: Sequence[BridgeEntry],
+        *,
+        before_replace: BeforeReplace | None = None,
+    ) -> bool:
+        """Record exactly `entries` as the Bridge entries and regenerate the Entrypoint.
+
+        `set_quarantine`'s shape and for its reason: the Manifest is where a Color source
+        choice lives and the Entrypoint is where it takes effect (ADR-0014). Returns whether
+        the Entrypoint's bytes changed.
+        """
+        self.record_bridges(model, entries)
+        return self.regenerate_entrypoint(model, before_replace=before_replace)
+
+    def record_bridges(self, model: ConfigModel, entries: Sequence[BridgeEntry]) -> None:
+        """Record exactly `entries`, Manifest only: the next `write` renders their lines.
+
+        For a caller whose own Apply transaction carries the Entrypoint -- a Preset applying
+        its colours with the bridges gated in the same write (#170, S6) -- so one reload
+        lands both rather than two.
+        """
+        self._save(self._manifest_for(model).with_bridges(entries))
+
+    def set_retired(self, model: ConfigModel, retired: Mapping[str, RetiredValue]) -> None:
+        """Record exactly `retired` as the kept values of removed Options (ADR-0012).
+
+        Manifest only: the Module stops carrying a retired key on the next `write`, because
+        the model no longer renders it. Loaded fresh and saved, like `set_quarantine`, so it
+        never reverts a record another write made a moment earlier.
+        """
+        self._save(self._manifest_for(model).with_retired(retired))
+
+    def record_retired_notice(self, model: ConfigModel, release: str) -> None:
+        """Record that the user saw `release`'s Retired notice (ADR-0012). Manifest only."""
+        self._save(self._manifest_for(model).with_retired_notice(release))
+
+    def manifest(self, model: ConfigModel) -> Manifest:
+        """The Manifest as the next write would read it."""
+        return self._manifest_for(model)
 
     # --- internals ----------------------------------------------------------------------
 
     def _manifest_for(self, model: ConfigModel) -> Manifest:
-        return Manifest.load(
-            self._paths.manifest,
+        return load_manifest(
+            self._paths,
             app_version=self._app_version,
             schema_version=model.schema.hyprland_version,
         )
@@ -563,7 +710,9 @@ class Writer:
             )
         )
 
-    def _write_if_changed(self, path: Path, text: str) -> bool:
+    def _write_if_changed(
+        self, path: Path, text: str, before_replace: BeforeReplace | None = None
+    ) -> bool:
         """Write `text` atomically unless the file already holds exactly those bytes."""
         if path in self._paths.protected:
             raise ProtectedFile(f"{path} is never rewritten by hyprtweaker")
@@ -580,6 +729,8 @@ class Writer:
         # compositor's watcher, or an editor) sees either the old file or the new one.
         temporary = path.with_name(f".{path.name}.tmp")
         temporary.write_bytes(data)
+        if before_replace is not None:
+            before_replace(path)
         os.replace(temporary, path)
         return True
 
@@ -590,6 +741,7 @@ class Writer:
         off_limits: frozenset[str],
         *,
         prune_entities: bool = True,
+        before_replace: BeforeReplace | None = None,
     ) -> list[str]:
         """Delete Modules the model no longer produces.
 
@@ -617,6 +769,8 @@ class Writer:
                 continue
             path = self._paths.app_dir / name
             if path.is_file():
+                if before_replace is not None:
+                    before_replace(path)
                 path.unlink()
                 removed.append(name)
         return removed

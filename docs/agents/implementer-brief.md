@@ -23,8 +23,8 @@ You build one ticket of a spec. Your prompt names the ticket, your worktree and 
 ## Done
 
 1. `git merge <spec branch>`: its tip may have moved. Settle a conflict in your favour only where your ticket owns the lines.
-2. The done checks (`local-checks.md` § Done checks) pass in your worktree.
-3. Run the real artifact. A UI-facing ticket (a page, dialog or widget the user sees) gets a widget probe of the state it changes, and a cropped screenshot from `tools/sandbox.py` where the change is visual (`local-checks.md` § Running the app); green UI-tier tests are assembly proof, not appearance proof. An Engine ticket proves itself in its unit and static tiers, plus the Harness tier where it changes what reaches the compositor.
+2. The done checks (`local-checks.md` § Done checks) pass in your worktree. pytest queues behind every other run on the machine: a `pytest: waiting for` line is your place in that queue, so let the run go on.
+3. Run the real artifact. A UI-facing ticket (a page, dialog or widget the user sees) gets a widget probe of the state it changes, and a cropped screenshot (`widget_probe.shoot`) where the change is visual. Both run only through `.venv/bin/python tools/widget_probe.py <probe.py>`, whose first line is `import widget_probe` (`local-checks.md` § Widget probes); green UI-tier tests are assembly proof, not appearance proof. An Engine ticket proves itself in its unit and static tiers, plus the Harness tier where it changes what reaches the compositor.
 4. Report in under 25 lines:
    - the branch and its head commit;
    - each acceptance criterion with how you verified it (the test's name, or what the probe read);

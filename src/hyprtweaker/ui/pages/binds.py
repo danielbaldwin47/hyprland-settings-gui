@@ -9,10 +9,10 @@ both kinds in one list without asking which it has.
 the layout-independent number-row binds the corpus is full of. This list is built from the
 model, which came from the file.
 
-**Nothing is hidden for being uneditable.** A function-valued action lives in `user.lua`
-and a multi-key `A&B` bind maps only approximately, so both are shown with their controls
-insensitive and a badge saying why. Dropping them would be the app quietly claiming a
-config is smaller than it is.
+**Nothing is hidden for being uneditable.** A function-valued action lives in `user.lua`,
+a multi-key `A&B` bind cannot load in Hyprland 0.56, and a dead-keysym bind was imported
+commented out, so each is shown with a badge saying why (`BadgeKind`). Dropping them would
+be the app quietly claiming a config is smaller than it is.
 """
 
 from __future__ import annotations
@@ -26,60 +26,28 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, GObject, Gtk  # noqa: E402
 
 from hyprtweaker.engine.binds_analysis import (  # noqa: E402
+    empty_submaps,
     find_conflicts,
     submap_names,
     unreachable_submaps,
 )
-from hyprtweaker.engine.dispatchers import EXEC_PATH, lookup  # noqa: E402
 from hyprtweaker.engine.model.entities import Bind  # noqa: E402
 from hyprtweaker.ui.flash import flash  # noqa: E402
+from hyprtweaker.ui.pages.entity_text import (  # noqa: E402
+    EMPTY_SUBMAP,
+    BadgeKind,
+    action_text,
+    bind_badge,
+    trigger_text,
+)
+from hyprtweaker.ui.pages.tasks import entity_page_id  # noqa: E402
+from hyprtweaker.ui.release import release  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - a cycle at runtime, a type here
     from hyprtweaker.session import Session
-
-MULTI_KEY = "&"
-"""The multi-key separator. Read-only: 0 uses in the corpus, and the mapping is approximate
-(ADR-0007), so a capture UX for it would be effort spent on a case nobody has."""
-
-
-def trigger_text(bind: Bind) -> str:
-    """The Trigger as the list shows it.
-
-    `code:N` gets spelled out rather than left as jargon: it is the one Trigger a user
-    cannot recognise from its own text, and the one the compositor will not help identify.
-    """
-    parts = []
-    for token in bind.keys.split("+"):
-        token = token.strip()
-        if token.startswith("code:"):
-            parts.append(f"key code {token[5:]}")
-        else:
-            parts.append(token)
-    return " + ".join(part for part in parts if part)
-
-
-def action_text(bind: Bind) -> str:
-    """The Action as one line of prose, falling back to the raw call.
-
-    An unknown path is rendered, not hidden: a config written for a newer Hyprland or a
-    plugin dispatcher is something this build cannot know about, and showing the call is
-    more use than showing nothing (ADR-0012's contract for unknown keys).
-    """
-    if bind.dispatcher is None:
-        return "Runs a Lua function"
-    call = bind.dispatcher
-    if call.path == EXEC_PATH:
-        command = call.args.get("command") or (call.positional[0] if call.positional else "")
-        return str(command) or "Run a command"
-    entry = lookup(call.path)
-    label = entry.label if entry else f"hl.dsp.{call.path}"
-    detail = ", ".join(f"{key}: {value}" for key, value in call.args.items())
-    if not detail and call.positional:
-        detail = ", ".join(str(arg) for arg in call.positional)
-    return f"{label} ({detail})" if detail else label
 
 
 def flag_text(bind: Bind) -> str:
@@ -168,19 +136,6 @@ def rival_label(bind: Bind, order: int | None) -> str:
     return f"{prefix}{action_text(bind)} ({place})"
 
 
-def read_only_reason(bind: Bind) -> str:
-    """Why this bind cannot be edited here, or `""` when it can be.
-
-    A reason rather than a bool: the row shows it on the badge, and "read-only" with no
-    explanation is the kind of dead end that sends a user looking for a bug.
-    """
-    if bind.dispatcher is None:
-        return "Defined by a Lua function in user.lua"
-    if MULTI_KEY in bind.keys:
-        return "Multi-key binds are edited as text"
-    return ""
-
-
 @dataclass(frozen=True, slots=True)
 class BindActions:
     """The verbs the window wires into the Page, bundled once.
@@ -197,10 +152,73 @@ class BindActions:
     enable: Callable[[int, bool], None]
     rebind: Callable[[int], None]
     """Open Capture directly on the bind at this index (the conflict verb)."""
+    recapture: Callable[[int], None]
+    """Open Capture on an error-badged bind; a captured trigger also enables it."""
     swap: Callable[[int, int], None]
     """Exchange two binds' positions -- which same-submap duplicate fires first."""
+    move: Callable[[int, int], None]
+    """Move the bind at the first index to the second, in its group -- the drag reorder."""
     edit_submap: Callable[[str | None], None]
     """Open the Submap editor; `None` means create one."""
+
+
+@dataclass(slots=True)
+class BindDrag:
+    """The one bind drag in flight on a Page: whose it is and which group it belongs to.
+
+    The payload GTK carries is only the origin's index, and a drop target has to decide
+    whether to light up *before* the drop delivers it. So the handle records the drag here
+    when it starts, and every row of the Page reads it: a row of another group stays dark
+    and refuses the drop, because `binds.lua` keeps no order between groups.
+    """
+
+    origin: int | None = None
+    submap: str | None = None
+
+    def start(self, row: BindRow) -> None:
+        self.origin, self.submap = row.index, row.bind.submap
+
+    def accepts(self, origin: int | None, target: BindRow) -> bool:
+        """Whether a drop of the bind at `origin` on `target` moves anything."""
+        return (
+            origin is not None
+            and origin == self.origin
+            and origin != target.index
+            and self.submap == target.bind.submap
+        )
+
+
+REORDER_HINT = "Drag to reorder within this group, or press Alt+Up or Alt+Down"
+
+
+@dataclass(frozen=True, slots=True)
+class RowVerb:
+    """The button a badged row offers to turn its bind on, and the action it calls."""
+
+    label: str
+    tooltip: str
+    run: Callable[[BindActions, int], None]
+
+
+_VERBS = {
+    BadgeKind.DISABLED: RowVerb(
+        "Enable",
+        "Uncomment this bind so it fires again",
+        lambda actions, index: actions.enable(index, True),
+    ),
+    # Never a bare Enable (ADR-0007): as it stands this bind fails the whole config, so the
+    # way back is a new trigger, and a captured one turns it on.
+    BadgeKind.ERROR: RowVerb(
+        "Fix trigger…",
+        "Record a key Hyprland knows, then enable this bind with it",
+        lambda actions, index: actions.recapture(index),
+    ),
+}
+
+
+def row_verb(kind: BadgeKind) -> RowVerb | None:
+    """The button a row with this badge offers to turn its bind on, if any."""
+    return _VERBS.get(kind)
 
 
 class BindRow:
@@ -225,14 +243,25 @@ class BindRow:
         on_jump: Callable[[int], None],
         editable: bool,
         conflict: RowConflict | None = None,
+        drag: BindDrag | None = None,
+        neighbours: tuple[int | None, int | None] = (None, None),
+        empty_submaps: frozenset[str] = frozenset(),
     ) -> None:
+        """`drag` is the Page's one `BindDrag`, shared by its rows; `neighbours` are the
+        flat indices of the binds just above and below this one *in its group*, where the
+        keyboard move goes. `empty_submaps` are the submaps no bind makes enterable."""
         self.bind = bind
         self.index = index
+        self.drag_handle: Gtk.Image | None = None
+        """The drag source, on rows the app may move: those whose badge offers Edit."""
         self.conflict = conflict
         self.conflict_badge: Gtk.MenuButton | None = None
-        self.disabled_badge: Gtk.Label | None = None
-
-        reason = read_only_reason(bind)
+        self.badge = bind_badge(bind, empty_submaps=empty_submaps)
+        self.badge_label: Gtk.Label | None = None
+        self.enable_button: Gtk.Button | None = None
+        """Enable for a plain disabled bind; "Fix trigger…" (re-capture) for an error one."""
+        self.edit_button: Gtk.Button | None = None
+        self.remove_button: Gtk.Button | None = None
 
         # The description is what the user named this bind, so it is the line they will scan
         # for -- shown, not hidden in a tooltip. The call itself stays visible underneath:
@@ -242,29 +271,26 @@ class BindRow:
             lines.append(flags)
 
         self.widget = Adw.ActionRow(
-            title=trigger_text(bind),
-            subtitle="\n".join(lines),
             subtitle_lines=len(lines),
+            # A trigger (`A&B`) or command (`a && b`) is text: as Pango markup it renders blank.
+            use_markup=False,
         )
+        self.widget.set_title(trigger_text(bind))
+        self.widget.set_subtitle("\n".join(lines))
         if description := bind.options.description:
             label = Gtk.Label(label=description, css_classes=["dim-label"], wrap=True)
             label.set_max_width_chars(28)
             self.widget.add_suffix(label)
 
-        if not bind.enabled:
-            self.disabled_badge = Gtk.Label(
-                label="Disabled", css_classes=["dim-label", "caption"]
+        badge = self.badge
+        if badge is not None:
+            self.badge_label = Gtk.Label(
+                label=badge.text, css_classes=[badge.kind.style, "caption"]
             )
-            self.disabled_badge.set_tooltip_text(
-                "Kept in place but commented out in binds.lua; it does not fire."
-            )
-            self.widget.add_suffix(self.disabled_badge)
-            self.widget.add_css_class("dim-label")
-
-        if reason:
-            badge = Gtk.Label(label="Read-only", css_classes=["dim-label", "caption"])
-            badge.set_tooltip_text(reason)
-            self.widget.add_suffix(badge)
+            self.badge_label.set_tooltip_text(badge.tooltip)
+            self.widget.add_suffix(self.badge_label)
+            if not bind.enabled and badge.kind.dims_row:
+                self.widget.add_css_class("dim-label")
 
         # A read-only bind still fires, so it still conflicts -- the badge is not gated
         # on editability.
@@ -274,27 +300,129 @@ class BindRow:
             )
             self.widget.add_suffix(self.conflict_badge)
 
-        if reason or not editable:
+        # On a read-only session the buttons show insensitive, as on the Workspaces page:
+        # the Banner says why, and the row still says what could be done once it is live.
+        # Only the move routes (drag, Alt+Up/Down) and the conflict's rival verbs stay out.
+        kind = badge.kind if badge is not None else None
+        if editable:
+            self._wire_reorder(
+                actions, drag or BindDrag(), neighbours, movable=kind is None or kind.editable
+            )
+
+        if kind is not None and (verb := row_verb(kind)) is not None:
+            self.enable_button = Gtk.Button(label=verb.label, valign=Gtk.Align.CENTER)
+            self.enable_button.set_tooltip_text(verb.tooltip)
+            self.enable_button.set_sensitive(editable)
+            self.enable_button.connect("clicked", lambda _button: verb.run(actions, index))
+            self.enable_button.add_css_class("flat")
+            self.widget.add_suffix(self.enable_button)
+
+        if kind is None or kind.editable:
+            self.edit_button = Gtk.Button(
+                icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER
+            )
+            self.edit_button.add_css_class("flat")
+            self.edit_button.set_tooltip_text("Edit this bind")
+            self.edit_button.set_sensitive(editable)
+            self.edit_button.connect("clicked", lambda _button: actions.edit(index))
+            self.widget.add_suffix(self.edit_button)
+
+        if kind is None or kind.removable:
+            self.remove_button = Gtk.Button(
+                icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER
+            )
+            self.remove_button.add_css_class("flat")
+            self.remove_button.set_tooltip_text("Remove this bind")
+            self.remove_button.set_sensitive(editable)
+            self.remove_button.connect("clicked", lambda _button: actions.remove(index))
+            self.widget.add_suffix(self.remove_button)
+
+    def _wire_reorder(
+        self,
+        actions: BindActions,
+        drag: BindDrag,
+        neighbours: tuple[int | None, int | None],
+        *,
+        movable: bool,
+    ) -> None:
+        """The handle and keys that move this bind, and the drop target every row is.
+
+        Only a bind the app may edit gets a handle: a Lua-function or multi-key bind is
+        otherwise untouchable here, so moving it would be the one change the row allows.
+        Every row still takes drops, so other binds of its group can move past it. The
+        handle is the drag *source* -- dragging anywhere else on the row would fight scrolling
+        and button presses -- while the whole row is the target, for its full height.
+        """
+        target = Gtk.DropTarget.new(GObject.TYPE_INT, Gdk.DragAction.MOVE)
+        target.connect("enter", self._on_hover, drag)
+        target.connect("motion", self._on_hover, drag)
+        target.connect("drop", self._on_drop, drag, actions)
+        self.widget.add_controller(target)
+
+        handle = Gtk.Image.new_from_icon_name("list-drag-handle-symbolic")
+        if not movable:
+            # Holds the handle's width, so this row's trigger lines up with its neighbours'.
+            handle.set_opacity(0)
+            self.widget.add_prefix(handle)
             return
 
-        if not bind.enabled:
-            enable = Gtk.Button(label="Enable", valign=Gtk.Align.CENTER)
-            enable.add_css_class("flat")
-            enable.set_tooltip_text("Uncomment this bind so it fires again")
-            enable.connect("clicked", lambda _button: actions.enable(index, True))
-            self.widget.add_suffix(enable)
+        self.drag_handle = handle
+        self.drag_handle.add_css_class("dim-label")
+        self.drag_handle.set_tooltip_text(REORDER_HINT)
+        self.widget.add_prefix(self.drag_handle)
+        source = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+        source.connect("prepare", self._on_drag_prepare, drag)
+        self.drag_handle.add_controller(source)
 
-        edit = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER)
-        edit.add_css_class("flat")
-        edit.set_tooltip_text("Edit this bind")
-        edit.connect("clicked", lambda _button: actions.edit(index))
-        self.widget.add_suffix(edit)
+        keys = Gtk.ShortcutController()
+        for accelerator, neighbour in zip(("<Alt>Up", "<Alt>Down"), neighbours, strict=True):
+            keys.add_shortcut(
+                Gtk.Shortcut.new(
+                    Gtk.ShortcutTrigger.parse_string(accelerator),
+                    Gtk.CallbackAction.new(self._on_step, neighbour, actions),
+                )
+            )
+        self.widget.add_controller(keys)
 
-        remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
-        remove.add_css_class("flat")
-        remove.set_tooltip_text("Remove this bind")
-        remove.connect("clicked", lambda _button: actions.remove(index))
-        self.widget.add_suffix(remove)
+    def _on_drag_prepare(
+        self, _source: Gtk.DragSource, _x: float, _y: float, drag: BindDrag
+    ) -> Gdk.ContentProvider:
+        drag.start(self)
+        return Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_INT, self.index))
+
+    def _on_hover(
+        self, _target: Gtk.DropTarget, _x: float, _y: float, drag: BindDrag
+    ) -> Gdk.DragAction:
+        # No action means no drop highlight and no drop: the row says "not here" while the
+        # pointer is still over it, rather than after the user lets go.
+        if drag.accepts(drag.origin, self):
+            return Gdk.DragAction.MOVE
+        return Gdk.DragAction(0)
+
+    def _on_drop(
+        self,
+        _target: Gtk.DropTarget,
+        value: int,
+        _x: float,
+        _y: float,
+        drag: BindDrag,
+        actions: BindActions,
+    ) -> bool:
+        # Only the action: it refreshes the Page, which rebuilds every row, this one too.
+        origin = int(value)
+        if not drag.accepts(origin, self):
+            return False
+        actions.move(origin, self.index)
+        return True
+
+    def _on_step(
+        self, widget: Gtk.Widget, _args: object, neighbour: int | None, actions: BindActions
+    ) -> bool:
+        if neighbour is None:
+            widget.error_bell()  # already first (or last) in its group
+            return True
+        actions.move(self.index, neighbour)
+        return True
 
     def _conflict_button(
         self,
@@ -403,8 +531,9 @@ class BindsPage:
     re-derive them all anyway, and a stale index is an edit landing on the wrong bind.
     """
 
-    section = "binds"
-    """The stack name. Matches the Section vocabulary the shell keys pages by."""
+    section = entity_page_id("binds")
+    """The stack name, namespaced `entity:` because Hyprland also has a `binds` Section
+    (see `DeclarationKind.section`, #120)."""
 
     title = "Keybinds"
 
@@ -412,6 +541,7 @@ class BindsPage:
         self._session = session
         self._actions = actions
         self._rows: list[BindRow] = []
+        self._drag = BindDrag()
 
         self._page = Adw.PreferencesPage(title=self.title)
         self._groups: list[Adw.PreferencesGroup] = []
@@ -457,14 +587,18 @@ class BindsPage:
         """
         for group in self._groups:
             self._page.remove(group)
+            release(group)
         self._groups = []
         self._rows = []
+        # A drag begun on a row just replaced is over: its index may now name another bind.
+        self._drag.origin = self._drag.submap = None
 
         editable = bool(self._session.live)
         entities = self._session.model.entities
         binds = self.binds
         conflicts = find_conflicts(binds)
         unreachable = unreachable_submaps(entities)
+        empty = frozenset(empty_submaps(entities))
 
         root = Adw.PreferencesGroup(title="Keybinds")
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -490,8 +624,8 @@ class BindsPage:
         indexed = list(enumerate(binds))
         rooted = [(index, bind) for index, bind in indexed if bind.submap is None]
         if rooted:
-            for index, bind in rooted:
-                root.add(self._row(bind, index, editable, binds, conflicts))
+            for (index, bind), neighbours in zip(rooted, _neighbours(rooted), strict=True):
+                root.add(self._row(bind, index, editable, binds, conflicts, neighbours, empty))
         else:
             root.add(
                 Adw.ActionRow(
@@ -502,9 +636,14 @@ class BindsPage:
 
         for name in submap_names(entities):
             description = "These keybinds only fire while this submap is active."
+            if name in empty:
+                description += f" {EMPTY_SUBMAP}"
             if name in unreachable:
                 description += f" {UNREACHABLE}"
-            group = Adw.PreferencesGroup(title=f"Submap: {name}", description=description)
+            # The title is Pango markup: a name with `&` would render blank unescaped.
+            group = Adw.PreferencesGroup(
+                title=f"Submap: {GLib.markup_escape_text(name)}", description=description
+            )
             suffix = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
             suffix.append(
                 self._header_button(
@@ -526,8 +665,8 @@ class BindsPage:
             self._add_group(group)
 
             owned = [(index, bind) for index, bind in indexed if bind.submap == name]
-            for index, bind in owned:
-                group.add(self._row(bind, index, editable, binds, conflicts))
+            for (index, bind), neighbours in zip(owned, _neighbours(owned), strict=True):
+                group.add(self._row(bind, index, editable, binds, conflicts, neighbours, empty))
             if not owned:
                 group.add(
                     Adw.ActionRow(
@@ -536,18 +675,21 @@ class BindsPage:
                     )
                 )
 
-    def reveal(self, index: int) -> None:
-        """Bring the Row for the bind at `index` into view -- the conflict jump.
+    def reveal(self, index: int) -> Gtk.Widget | None:
+        """Bring the Row for the bind at `index` into view -- the conflict jump, a search hit.
 
         Navigate + flash (ADR-0007): grabbing focus makes every ancestor scroll the row
         into view, and a short background pulse marks which row that was for a reader
-        whose eyes were on the popover, not the focus ring.
+        whose eyes were on the popover, not the focus ring. Returns the row, so a caller
+        whose row may be insensitive (a read-only session) can scroll it explicitly; `None`
+        when no row has that index.
         """
         for row in self._rows:
             if row.index == index:
                 row.widget.grab_focus()
                 flash(row.widget)
-                return
+                return row.widget
+        return None
 
     @property
     def groups(self) -> tuple[Adw.PreferencesGroup, ...]:
@@ -565,6 +707,8 @@ class BindsPage:
         editable: bool,
         binds: list[Bind],
         conflicts: dict[int, tuple[int, ...]],
+        neighbours: tuple[int | None, int | None],
+        empty: frozenset[str],
     ) -> Gtk.Widget:
         conflict: RowConflict | None = None
         if index in conflicts:
@@ -595,6 +739,15 @@ class BindsPage:
             on_jump=self.reveal,
             editable=editable,
             conflict=conflict,
+            drag=self._drag,
+            neighbours=neighbours,
+            empty_submaps=empty,
         )
         self._rows.append(row)
         return row.widget
+
+
+def _neighbours(group: list[tuple[int, Bind]]) -> list[tuple[int | None, int | None]]:
+    """For each bind of one group, the flat indices of the binds above and below it there."""
+    indices: list[int | None] = [None, *(index for index, _bind in group), None]
+    return list(zip(indices, indices[2:], strict=False))

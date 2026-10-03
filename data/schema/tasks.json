@@ -6,7 +6,7 @@
     "one-line diff rather than a patch. `hyprtweaker.ui.pages.tasks` is the reader.",
     "",
     "A destination is either an option Page -- `id`, `title`, and what it claims -- or an",
-    "`entity` reference naming a Page the shell already builds (binds, the rule lists,",
+    "`entity` reference (the bare kind, `binds`; `entity_page_id` adds the stack prefix) naming a Page the shell already builds (binds, the rule lists,",
     "Displays, and the seven declarative Pages of #70). Entities are referenced rather than",
     "described because their content comes from the model, not from the Schema.",
     "",
@@ -20,9 +20,11 @@
     "Absent from this file on purpose: the hidden tier (`debug`, `quirks`, `experimental`,",
     "`input-capture`). ADR-0013 §5 makes it Config-view-only, so it has no Tasks home at any",
     "switch setting. The canvas's 19th page was an Advanced page holding exactly those; the",
-    "ADR is later and wins, so that page is not here.",
+    "ADR is later and wins, so that page is not here. The four settings of those Sections the",
+    "Overlay raises to the advanced tier (HDR and logging, review of spec #154) are homed on",
+    "Rendering, beside the settings they go with.",
     "",
-    "Counts, so a curator can check them: 23 destinations in all -- 12 option Pages and 11",
+    "Counts, so a curator can check them: 26 destinations in all -- 12 option Pages and 14",
     "entity references. That is more rows than the canvas's 19 because its consolidated",
     "Pages are split here: an Entity Page comes from the model and cannot be merged into an",
     "option Page, so 'Animations' is a Page of `animations` options *beside* the Animation",
@@ -39,7 +41,7 @@
           "sections": ["general"],
           "groups": [
             {
-              "title": "Splash & wallpaper",
+              "title": "Wallpaper and splash",
               "options": [
                 "misc:disable_hyprland_logo",
                 "misc:disable_splash_rendering",
@@ -57,13 +59,14 @@
           "title": "Decoration",
           "sections": ["decoration"]
         },
+        { "entity": "theming" },
         {
           "id": "look.animations",
           "title": "Animations",
           "sections": ["animations"]
         },
-        { "entity": "entity:animations" },
-        { "entity": "entity:curves" },
+        { "entity": "animations" },
+        { "entity": "curves" },
         {
           "id": "look.layouts",
           "title": "Layouts",
@@ -81,7 +84,8 @@
           "sections": ["group", "misc"]
         },
         { "entity": "window_rules" },
-        { "entity": "layer_rules" }
+        { "entity": "layer_rules" },
+        { "entity": "workspace_rules" }
       ]
     },
     {
@@ -131,11 +135,11 @@
           "title": "Gestures",
           "sections": ["gestures"]
         },
-        { "entity": "entity:gestures" },
-        { "entity": "entity:devices" },
+        { "entity": "gestures" },
+        { "entity": "devices" },
         {
           "id": "input.shortcuts",
-          "title": "Shortcut behaviour",
+          "title": "Shortcut behavior",
           "sections": ["binds"]
         },
         { "entity": "binds" }
@@ -151,28 +155,27 @@
           "title": "Cursor",
           "sections": ["cursor"]
         },
-        { "entity": "entity:env" },
-        { "entity": "entity:autostart" },
+        { "entity": "env" },
+        { "entity": "autostart" },
         {
           "id": "system.ecosystem",
           "title": "Popups & permissions",
           "sections": ["ecosystem"]
         },
-        { "entity": "entity:permissions" },
+        { "entity": "permissions" },
         {
           "id": "system.rendering",
           "title": "Rendering",
           "sections": ["render", "opengl", "xwayland"],
           "groups": [
             {
-              "title": "Power & displays",
+              "title": "Displays and power",
               "options": [
                 "misc:vrr",
                 "misc:mouse_move_enables_dpms",
                 "misc:key_press_enables_dpms",
                 "misc:render_unfocused_fps",
-                "misc:screencopy_force_8b",
-                "misc:disable_scale_notification"
+                "misc:screencopy_force_8b"
               ]
             },
             {
@@ -185,18 +188,28 @@
               ]
             },
             {
-              "title": "Diagnostics",
+              "title": "Reloads and warnings",
               "options": [
                 "misc:disable_autoreload",
                 "misc:disable_xdg_env_checks",
                 "misc:disable_hyprland_guiutils_check",
                 "misc:disable_watchdog_warning",
                 "misc:enable_anr_dialog",
-                "misc:anr_missed_pings"
+                "misc:anr_missed_pings",
+                "misc:disable_scale_notification"
               ]
+            },
+            {
+              "title": "HDR compatibility",
+              "options": ["quirks:prefer_hdr", "debug:full_cm_proto"]
+            },
+            {
+              "title": "Logging and overlay",
+              "options": ["debug:disable_logs", "debug:overlay"]
             }
           ]
-        }
+        },
+        { "entity": "scripting" }
       ]
     }
   ]

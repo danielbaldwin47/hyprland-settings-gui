@@ -20,92 +20,72 @@ Set ``HYPRTWEAKER_REQUIRE_UI=1`` to turn the skip into a hard failure. CI sets i
 on the job that installs GTK, so a broken install surfaces as a red build rather
 than a green one that quietly skipped everything.
 
-The tier draws on an Xvfb display of its own, one per pytest process, never on the
-desktop session it was started from: its windows would map there, and Hyprland
-would show its "Application Not Responding" dialog over the developer's work
-(#146). ``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display on purpose,
-for example to watch it. The display opens in ``pytest_configure``, before
-collection: importing ``Gtk`` initialises GTK, and some ``tests/unit`` modules
-import UI pages at collection time.
+The tier draws on an Xvfb display and a session bus of its own, one pair per pytest
+process, never on the desktop session it was started from: its windows would map there,
+and Hyprland would show its "Application Not Responding" dialog over the developer's work
+(#146). The bus is a ``dbus-daemon`` with no service directory, so the desktop's
+settings portal is not on it and nothing the owner runs can be activated (#212).
+``private_display.py`` starts both and pins GTK to them, for this tier and for the
+widget probe route (``tools/widget_probe.py``) alike.
+``HYPRTWEAKER_UI_HOST_DISPLAY=1`` puts it on the host display and the host bus on
+purpose. It is the owner's switch, for watching the tier, and CI's; the desktop fence
+refuses it from an agent's shell. The display opens in ``pytest_configure``, before
+collection: importing ``Gtk`` initialises GTK, and some ``tests/unit`` modules import UI
+pages at collection time.
 """
 
 from __future__ import annotations
 
-import ctypes
+import atexit
 import os
-import select
 import shutil
-import signal
-import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
+import log_gate
+import main_loop
 import pytest
+from private_display import (
+    PINNED,
+    pin_environment,
+    session_display,
+    session_display_clash,
+    start_bus,
+    start_xvfb,
+)
 
 UI_TESTS_DIR = Path(__file__).parent
 
 
 @pytest.fixture(autouse=True)
-def sandboxed_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point every UI test at a throwaway config dir and away from any live compositor.
+def released_windows() -> Iterator[None]:
+    """Destroy and release every window a test opened, when the test ends (#219).
 
-    Autouse and unconditional, because the machine most likely to run this tier is a
-    developer's own Hyprland box: `HyprtweakerApplication` builds a `Session` over
-    `ConfigPaths.default()` and `Instance.current()`, and a test that boots the app would
-    otherwise attach to the user's running session and their real `~/.config/hypr`.
-    Read-only today, but "the test suite cannot reach your config" should be a property of
-    the tier rather than of what the code currently happens to do.
+    GTK keeps a toplevel until it is destroyed, and a destroyed `MainWindow` still holds
+    itself through its handlers until `release` cuts them. A dozen `build_window` helpers
+    left both undone, so a serial run of this tier held 150 windows and aborted. Windows
+    open before the test began, such as a module-scoped one, are their fixture's to close.
+
+    The main loop runs first and last, as the app's would around a close: first for the
+    idles the test left queued, which may present a dialog on the window, and last for the
+    idle that releases a dialog the test closed.
     """
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.delenv("HYPRLAND_INSTANCE_SIGNATURE", raising=False)
+    from gi.repository import Gtk
+
+    before = set(Gtk.Window.get_toplevels())
+    yield
+    if not any(window not in before for window in Gtk.Window.get_toplevels()):
+        return
+    from hyprtweaker.ui.release import release
+
+    main_loop.settle("the test's queued idles, before its windows close")
+    for window in [each for each in Gtk.Window.get_toplevels() if each not in before]:
+        window.destroy()
+        release(window)
+    main_loop.settle("the closed windows' and dialogs' release")
 
 
 HOST_DISPLAY_OPT_IN = "HYPRTWEAKER_UI_HOST_DISPLAY"
-
-_libc = ctypes.CDLL(None, use_errno=True)
-_PR_SET_PDEATHSIG = 1
-
-
-def start_xvfb(xvfb: str) -> str | None:
-    """Start a headless X server and return its display name, or None if it failed.
-
-    It dies with this process (PR_SET_PDEATHSIG), including a `timeout` kill that runs no
-    cleanup. Nothing stops it earlier on purpose: GTK keeps the connection until exit, and
-    GDK exits the process when its X server goes away under it.
-    """
-    read_fd, write_fd = os.pipe()
-    try:
-        xvfb_process = subprocess.Popen(
-            [
-                xvfb,
-                "-displayfd",
-                str(write_fd),
-                "-screen",
-                "0",
-                "1280x1024x24",
-                "-nolisten",
-                "tcp",
-            ],
-            pass_fds=(write_fd,),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            preexec_fn=lambda: _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM),
-        )
-    except OSError:
-        os.close(read_fd)
-        return None
-    finally:
-        os.close(write_fd)
-    # Xvfb writes the number once it accepts connections; EOF means it exited first. CI
-    # jobs have no timeout of their own, so a wedged Xvfb must not hang the run.
-    with os.fdopen(read_fd) as pipe:
-        ready, _, _ = select.select([pipe], [], [], 10)
-        number = pipe.readline().strip() if ready else ""
-    if not number:
-        xvfb_process.kill()
-        return None
-    return f":{number}"
 
 
 def ui_unavailable() -> str | None:
@@ -127,18 +107,42 @@ def ui_unavailable() -> str | None:
 
     xvfb = shutil.which("Xvfb")
     if xvfb is None:
-        return f"Xvfb is not installed; set {HOST_DISPLAY_OPT_IN}=1 to use the host display"
+        return "Xvfb is not installed (pacman -S xorg-server-xvfb)"
+    dbus_daemon = shutil.which("dbus-daemon")
+    if dbus_daemon is None:
+        return "dbus-daemon is not installed, for the private session bus (pacman -S dbus)"
     display = start_xvfb(xvfb)
     if display is None:
         return "Xvfb did not open a display within 10 s"
+    if clash := session_display_clash(display, session_display()):
+        return clash
+    bus = start_bus(dbus_daemon)
+    if bus is None:
+        return "dbus-daemon did not open a private session bus within 10 s"
+    # It dies with this process whatever happens (PR_SET_PDEATHSIG); this ends it and
+    # removes its directory on a normal exit, an xdist worker's included.
+    atexit.register(bus.stop)
 
     # GDK reads these only while it opens its display, and the Harness tier reads the host
     # session from them at test time when both tiers share a process, so restore them.
-    saved = {
-        name: os.environ.get(name) for name in ("DISPLAY", "GDK_BACKEND", "WAYLAND_DISPLAY")
-    }
-    os.environ.update(DISPLAY=display, GDK_BACKEND="x11")
-    os.environ.pop("WAYLAND_DISPLAY", None)
+    # DISPLAY stays on the Xvfb: the NVIDIA EGL driver opens `$DISPLAY` again when a
+    # window first realizes, so a restored one sends it to the session's X server, and
+    # it crashes when nothing serves that display. Not GTK_A11Y: GTK reads it at the
+    # first widget, after this returns, and restored it put every test widget on the
+    # desktop's accessibility bus. Nor the bus and the GSettings backend: GIO reads them
+    # at the first portal, settings or GApplication call, long after the display opens,
+    # and a restored bus address sent those to the owner's session bus. Nor GDK_DISABLE: it
+    # must still hold when the first window picks its renderer.
+    kept = (
+        "DISPLAY",
+        "GTK_A11Y",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "GSETTINGS_BACKEND",
+        "ADW_DISABLE_PORTAL",
+        "GDK_DISABLE",
+    )
+    saved = {name: os.environ.get(name) for name in PINNED if name not in kept}
+    pin_environment(os.environ, display, bus.address)
     try:
         return open_display()
     finally:
@@ -167,6 +171,33 @@ _UI_SKIP_REASON = pytest.StashKey[str | None]()
 
 def pytest_configure(config: pytest.Config) -> None:
     config.stash[_UI_SKIP_REASON] = ui_unavailable()
+    if config.stash[_UI_SKIP_REASON] is None:
+        log_gate.install()
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    # What importing the toolkit and the Pages logged belongs to no test.
+    log_gate.take()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> pytest.TestReport:
+    """Fail the phase during which the toolkit logged or a callback raised (`log_gate.py`)."""
+    report: pytest.TestReport = yield
+    logged = log_gate.take()
+    if not logged:
+        return report
+    text = "\n".join(
+        [f"GTK, libadwaita or GLib complained during {call.when} ({len(logged)}):", *logged]
+    )
+    if report.failed:
+        report.sections.append(("log gate", text))
+    else:
+        report.outcome = "failed"
+        report.longrepr = text
+    return report
 
 
 # trylast: pytest applies -k/-m deselection in its own copy of this hook, so

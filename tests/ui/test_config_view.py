@@ -16,11 +16,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from started_app import started_application
+
 APP_VERSION = "0.0.0-test"
 
 
-def build_window(tmp_path: Path) -> Any:
+def build_window(tmp_path: Path, live_hyprland: Any = None) -> Any:
     """A window over a read-only session rooted in a throwaway directory.
+
+    `live_hyprland` poses as the Hyprland that is running (a `LiveHyprland`); by default
+    none was described.
 
     Switched to the Config view explicitly: since #71 the app opens in the curated Tasks
     view (#7), and every assertion in this file is about the *generated* arrangement -- one
@@ -44,8 +49,9 @@ def build_window(tmp_path: Path) -> Any:
         paths=ConfigPaths.rooted_at(tmp_path),
         app_version=APP_VERSION,
         connect=no_compositor,
+        read_live=lambda: live_hyprland,
     )
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     window = MainWindow(session, application=app)
     window.set_view(View.CONFIG)
     return session, window
@@ -78,6 +84,48 @@ def test_the_advanced_switch_reveals_every_remaining_option(tmp_path: Path) -> N
     built = {row.option.name for page in window.pages for row in page.rows}
     assert built == {option.name for option in session.schema}
     assert len(window.pages) == len(session.schema.section_names)
+
+
+def test_a_page_that_shows_some_options_says_how_many_the_switch_withholds(
+    tmp_path: Path,
+) -> None:
+    """#136: Config ▸ Cursor shows 21 settings and withholds 1. The hint row closes the Page,
+    after its Groups, so the 1 is discoverable; the switch shows it and drops the hint."""
+    from gi.repository import Adw
+
+    _session, window = build_window(tmp_path)
+
+    def descendants(widget: Any) -> Any:
+        child = widget.get_first_child()
+        while child is not None:
+            yield child
+            yield from descendants(child)
+            child = child.get_next_sibling()
+
+    def foot(section: str) -> tuple[int, list[tuple[str, str]]]:
+        """(Rows built, hint rows in the Page's last Group) for one Config Page."""
+        page = next(page for page in window.pages if page.plan.section == section)
+        groups = [w for w in descendants(page.page) if isinstance(w, Adw.PreferencesGroup)]
+        hints = [
+            (w.get_title(), w.get_subtitle())
+            for w in descendants(groups[-1])
+            if isinstance(w, Adw.ActionRow) and "advanced setting" in w.get_title()
+        ]
+        return len(page.rows), hints
+
+    assert foot("cursor") == (
+        21,
+        [
+            (
+                "1 advanced setting",
+                "Turn on “Show advanced settings” in the main menu to see them.",
+            )
+        ],
+    )
+
+    window.activate_action("win.show-advanced")
+
+    assert foot("cursor") == (22, [])
 
 
 def test_a_read_only_session_leaves_controls_insensitive_but_rows_readable(
@@ -149,5 +197,158 @@ def test_a_restart_flagged_row_says_so_before_anything_is_written(tmp_path: Path
     assert row.chrome.pill_labels == ("Restart",)
 
 
+def test_a_newer_hyprlands_own_options_render_flagged_in_a_new_in_group(
+    tmp_path: Path,
+) -> None:
+    """ADR-0012 §Pinning, end to end: a Hyprland newer than every shipped schema describes
+    an option the app has never seen, and its Section's Page closes on it, flagged."""
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.ipc import LiveHyprland
+
+    live = LiveHyprland(
+        "0.99.0",
+        ({"name": "decoration:new_glow", "description": "glow", "default": True},),
+    )
+    _session, window = build_window(tmp_path, live)
+
+    page = next(page for page in window.pages if page.plan.section == "decoration")
+    row = page.row("decoration:new_glow")
+    assert row is not None
+    assert row.chrome.pill_labels == ("New in 0.99.0",)
+    group = row.widget.get_ancestor(Adw.PreferencesGroup)
+    assert group.get_title() == "New in 0.99.0"
+    assert group.get_description().startswith("Your Hyprland has these settings")
+
+
 def _planned_options(plan: Any) -> list[Any]:
     return [option for group in plan.groups for option in group.options]
+
+
+def test_a_loaded_plugins_setting_is_a_flagged_row_in_its_own_page(tmp_path: Path) -> None:
+    """#175 AC 3: a descriptions payload carrying `plugin:foo:bar` yields a Row in the
+    Config view, wearing `Plugin option`, and in no `New in` group."""
+    from gi.repository import Adw
+
+    from hyprtweaker.engine.ipc import LiveHyprland
+
+    live = LiveHyprland(
+        "0.56.2", ({"name": "plugin:foo:bar", "description": "a bar", "default": 3},)
+    )
+    _session, window = build_window(tmp_path, live)
+
+    page = next(page for page in window.pages if page.plan.section == "plugin")
+    row = page.row("plugin:foo:bar")
+    assert row is not None
+    assert row.chrome.pill_labels == ("Plugin option",)
+    group = row.widget.get_ancestor(Adw.PreferencesGroup)
+    assert not group.get_title().startswith("New in")
+
+
+LAYOUT_PROVIDER = "{ recalculate = function(ctx) end }"
+
+
+def layout_window(tmp_path: Path, *, user: str = "foo", legacy: str = "bar") -> Any:
+    """A window over a config whose `user.lua` and `legacy.lua` each register a layout."""
+    from hyprtweaker.engine.paths import ConfigPaths
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    paths.app_dir.mkdir(parents=True, exist_ok=True)
+    paths.user_lua.write_text(f'hl.layout.register("{user}", {LAYOUT_PROVIDER})\n')
+    paths.legacy_lua.write_text(f'hl.layout.register("{legacy}", {LAYOUT_PROVIDER})\n')
+    return build_window(tmp_path)
+
+
+def layout_dropdown(window: Any) -> Any:
+    page = next(page for page in window.pages if page.plan.section == "general")
+    row = page.row("general:layout")
+    assert row is not None
+    return row.control
+
+
+AUTHORING_WORDS = ("add", "new", "edit", "create", "register")
+
+
+class CommittingApplier:
+    """Stands where `_go_live` puts the real Applier, so the session accepts an edit."""
+
+    def __init__(self) -> None:
+        self.committed: list[str] = []
+
+    def commit(self, name: str) -> None:
+        self.committed.append(name)
+
+    def touch(self, name: str) -> None:
+        self.committed.append(name)
+
+
+def descendants(widget: Any) -> list[Any]:
+    found = []
+    child = widget.get_first_child()
+    while child is not None:
+        found += [child, *descendants(child)]
+        child = child.get_next_sibling()
+    return found
+
+
+def offered(dropdown: Any) -> list[str]:
+    model = dropdown.get_model()
+    return [model.get_string(i) for i in range(model.get_n_items())]
+
+
+def test_layouts_your_lua_files_register_are_choices_of_the_layout_combo(
+    tmp_path: Path,
+) -> None:
+    """#175 AC 1 and 2: `user.lua` and `legacy.lua` both count; a choice, never authored."""
+    from gi.repository import Gtk
+
+    from hyprtweaker.engine.writer import Writer
+
+    session, window = layout_window(tmp_path)
+    dropdown = layout_dropdown(window)
+
+    assert offered(dropdown) == [
+        "Dwindle",
+        "Master",
+        "Scrolling",
+        "Monocle",
+        "bar (Lua layout)",
+        "foo (Lua layout)",
+    ]
+
+    session._applier = CommittingApplier()
+    session._offline_reason = None
+    dropdown.set_selected(5)
+
+    assert session._applier.committed == ["general:layout"]
+    Writer(session.paths, app_version=APP_VERSION).write(session.model)
+    module = session.paths.app_dir / "options" / "general.lua"
+    assert 'layout = "lua:foo",' in module.read_text()
+    texts = [
+        f"{button.get_label()} | {button.get_tooltip_text()}"
+        for button in descendants(layout_dropdown(window).get_parent())
+        if isinstance(button, Gtk.Button)
+    ]
+    # A Discovered layout is a choice only: the Row carries its ordinary chrome (reset,
+    # copy key, wiki) and nothing that creates or edits a layout.
+    assert len(texts) == 6
+    assert not [text for text in texts if any(w in text.lower() for w in AUTHORING_WORDS)]
+
+
+def test_a_held_layout_the_scan_does_not_find_is_shown_as_itself_and_kept(
+    tmp_path: Path,
+) -> None:
+    """Settled AC 2: a value the choices lack joins them and is selected, never blank and
+    never rewritten to the first choice."""
+    session, window = layout_window(tmp_path)
+    session.model.set("general:layout", "lua:gone")
+    window.sync()
+    dropdown = layout_dropdown(window)
+
+    assert offered(dropdown)[-1] == "gone (not found)"
+    assert dropdown.get_selected() == 6
+    assert dropdown.get_tooltip_text() == (
+        "No Lua file of yours registers a layout named “gone”. "
+        "The setting is kept as it is until you choose another layout."
+    )
+    assert session.value_of(session.schema["general:layout"]) == "lua:gone"

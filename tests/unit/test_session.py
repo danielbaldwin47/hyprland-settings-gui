@@ -57,7 +57,7 @@ def test_without_a_compositor_the_session_is_read_only_and_says_why(tmp_path: Pa
 
         assert not session.live
         assert session.offline_reason is not None
-        assert "not running under Hyprland" in session.offline_reason
+        assert session.offline_reason == "Hyprland is not running in this session"
 
     run_with_fake(scenario)
 
@@ -296,12 +296,14 @@ def test_a_foreign_reload_also_re_reads_owned_keys_the_model_does_not_hold(
     """The half a "re-read what the model holds" would miss.
 
     The app owns `general:gaps_in` -- the Manifest records it having written the Module that
-    sets it -- but this session recovered nothing, because at startup the compositor was
-    running a config that never loaded that Module. When the config is fixed and reloaded,
-    a re-read scoped to `model.set_options()` asks about nothing at all and the app stays
-    blind to its own value. ADR-0010 asks for a *full* re-read for this reason.
+    sets it -- but this session recovered nothing, because at startup the Module was not
+    there. When the file is back and reloaded, a re-read scoped to `model.set_options()`
+    asks about nothing at all and the app stays blind to its own value. ADR-0010 asks for a
+    *full* re-read for this reason. The value comes off the Module's own text, not the
+    compositor's answer, which may be `user.lua`'s (#148 review R3).
     """
-    _write_manifest(tmp_path, {"options/general.lua": (GAPS_IN,)})
+    text = "hl.config({ general = { gaps_in = 9 } })\n"
+    _write_manifest(tmp_path, {"options/general.lua": (GAPS_IN,)}, text)
 
     async def scenario(fake: FakeHyprland) -> None:
         runner = Runner()
@@ -309,10 +311,13 @@ def test_a_foreign_reload_also_re_reads_owned_keys_the_model_does_not_hold(
         session.start()
         await runner.settle()
 
-        assert len(session.model) == 0, "the Module was owned but not loaded"
+        assert len(session.model) == 0, "the Module was owned but not there"
 
+        general = tmp_path / "hypr" / "hyprtweaker" / "options" / "general.lua"
+        general.parent.mkdir(parents=True, exist_ok=True)
+        general.write_text(text)
         fake.conversation[f"j/getoption {GAPS_IN}"] = option_reply(
-            SCHEMA[GAPS_IN], CssGaps(9, 9, 9, 9)
+            SCHEMA[GAPS_IN], CssGaps(20, 20, 20, 20)
         )
         await fake.emit("configreloaded")
         await drain_events(runner)
@@ -348,16 +353,16 @@ def _no_instance() -> Instance:
     raise NoInstance("HYPRLAND_INSTANCE_SIGNATURE is unset -- not running under Hyprland")
 
 
-def _write_manifest(root: Path, modules: dict[str, tuple[str, ...]]) -> None:
+def _write_manifest(
+    root: Path, modules: dict[str, tuple[str, ...]], text: str = "-- unread"
+) -> None:
     """An App dir that records what an earlier session wrote, with no Modules on disk."""
     paths = ConfigPaths.rooted_at(root)
     paths.app_dir.mkdir(parents=True, exist_ok=True)
     manifest = Manifest(
         app_version=APP_VERSION,
         schema_version=SCHEMA.hyprland_version,
-        modules={
-            name: ModuleRecord.of("-- unread", options) for name, options in modules.items()
-        },
+        modules={name: ModuleRecord.of(text, options) for name, options in modules.items()},
     )
     paths.manifest.write_text(manifest.render(), encoding="utf-8")
 
@@ -382,3 +387,106 @@ def test_closing_a_session_that_never_connected_still_reports_done(tmp_path: Pat
     session.close(lambda: done.append(None))
 
     assert done == [None]
+
+
+def test_without_hyprland_the_window_shows_the_users_own_files(tmp_path: Path) -> None:
+    """#148 hand-test 12: with no compositor the model stayed empty, so every Row showed
+    Hyprland's default, the Keybinds page said "No keybinds yet" over 186 binds, and Save as
+    preset said everything was at Hyprland's default."""
+    from hyprtweaker.engine.model import Bind, ConfigModel, DispatcherCall
+    from hyprtweaker.engine.presets import CaptureScope, PresetSaved
+    from hyprtweaker.engine.writer import Writer
+
+    paths = ConfigPaths.rooted_at(tmp_path)
+    written = ConfigModel(SCHEMA)
+    written.set("general:gaps_workspaces", 17)
+    written.set("decoration:rounding", 18)
+    written.entities.binds.append(
+        Bind(keys="SUPER + Q", dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
+    )
+    written.mark_entities_loaded()
+    Writer(paths, app_version=APP_VERSION).write(written)
+
+    async def scenario() -> None:
+        runner = Runner()
+        session = Session(
+            spawn=runner.spawn,
+            schema=SCHEMA,
+            paths=paths,
+            app_version=APP_VERSION,
+            connect=_no_instance,
+        )
+        session.start()
+        await runner.settle()
+
+        assert not session.live
+        assert session.model_read
+        assert session.model.get("general:gaps_workspaces") == 17
+        assert session.model.get("decoration:rounding") == 18
+        assert [b.keys for b in session.model.entities.binds] == ["SUPER + Q"]
+        saved: list[object] = []
+        session.save_preset("Mine", {CaptureScope.GAPS_LAYOUT}, done=saved.append)
+        assert isinstance(saved[0], PresetSaved)
+        assert saved[0].preset.options["general:gaps_workspaces"] == 17
+
+    asyncio.run(scenario())
+
+
+def test_without_hyprland_or_files_preset_save_says_the_settings_were_not_read(
+    tmp_path: Path,
+) -> None:
+    from hyprtweaker.engine.presets import CaptureScope, PresetNotSaved
+
+    session = Session(
+        spawn=lambda coro: coro.close(),
+        schema=SCHEMA,
+        paths=ConfigPaths.rooted_at(tmp_path),
+        app_version=APP_VERSION,
+        connect=_no_instance,
+    )
+    saved: list[object] = []
+    session.save_preset("Mine", {CaptureScope.GAPS_LAYOUT}, done=saved.append)
+
+    assert not session.model_read
+    assert isinstance(saved[0], PresetNotSaved)
+    assert saved[0].reason.startswith("Your settings have not been read")
+
+
+def test_without_hyprland_the_banner_says_so_in_plain_words(tmp_path: Path) -> None:
+    """#148 hand-test 2: the Banner read "HYPRLAND_INSTANCE_SIGNATURE is unset -- not running
+    under Hyprland — settings are read-only.", an environment variable and two dashes."""
+
+    async def scenario() -> None:
+        runner = Runner()
+        session = Session(
+            spawn=runner.spawn,
+            schema=SCHEMA,
+            paths=ConfigPaths.rooted_at(tmp_path),
+            app_version=APP_VERSION,
+            connect=_no_instance,
+        )
+        session.start()
+        await runner.settle()
+
+        assert session.health.title == (
+            "Hyprland is not running in this session — settings are read-only."
+        )
+        assert session.offline_sentence == "This app is not connected to Hyprland."
+
+    asyncio.run(scenario())
+
+
+def test_a_read_only_reason_can_carry_its_own_sentence(tmp_path: Path) -> None:
+    """F20 of the #148 review: an unconverted config read "This app is not connected to
+    Hyprland." on Theming and in the preset dialogs, while the Banner said to convert."""
+    session = Session(
+        spawn=lambda coro: coro.close(),
+        schema=SCHEMA,
+        paths=ConfigPaths.rooted_at(tmp_path),
+        app_version=APP_VERSION,
+        connect=_no_instance,
+    )
+
+    session.set_read_only("You are still on hyprland.conf", sentence="Convert it first.")
+
+    assert session.offline_sentence == "Convert it first."

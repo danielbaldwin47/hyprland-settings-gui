@@ -30,7 +30,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from ..model.entities import Bind, BindDevice, BindOptions, Submap, Unbind
+from ..model.entities import Bind, BindDevice, BindOptions, DispatcherCall, Submap, Unbind
 from .dispatchers import ScriptLookup, translate_dispatcher
 from .keysyms import known_keysym
 from .loss import LossCode, LossContext, LossReport
@@ -200,12 +200,59 @@ def note_dead_keysyms(ctx: LossContext, dead: Sequence[str], *, disabled: bool) 
     """
     names = ", ".join(repr(name) for name in dead)
     consequence = (
-        "so this bind never fired in hyprlang and is imported commented out -- enabled, it "
+        "so this bind never fired in hyprlang and is imported commented out — enabled, it "
         "would fail the whole config at bind time rather than be ignored"
         if disabled
         else "so this unbind names a bind that never fired"
     )
     ctx.note(LossCode.UNKNOWN_KEYSYM, f"{names} is not a key name xkb knows, {consequence}")
+
+
+#: Direction letters both engines accept: hyprlang read the first character through
+#: `Math::fromChar` (`l/r/u/d/t/b`), and Lua's `parseDirection` takes the same six.
+KNOWN_DIRECTIONS = frozenset("lrudtb")
+
+#: The one reading an unknown letter has: vim's `hjkl` (`l` is already a direction).
+VIM_DIRECTIONS = {"h": ("l", "left"), "j": ("d", "down"), "k": ("u", "up")}
+
+#: The `DispatcherCall` fields the dispatcher grammars fill from a direction argument.
+DIRECTION_FIELDS = ("direction", "into_group", "into_or_create_group")
+
+
+def _unknown_direction(call: DispatcherCall) -> str | None:
+    """The field of `call` holding a direction neither engine knows, or None."""
+    for name in DIRECTION_FIELDS:
+        value = call.args.get(name)
+        if isinstance(value, str) and value not in KNOWN_DIRECTIONS:
+            return name
+    return None
+
+
+def _note_unknown_direction(
+    ctx: LossContext, call: DispatcherCall, name: str
+) -> DispatcherCall:
+    """File the finding for a bind whose direction hyprlang ignored, and give it the vim
+    reading when it has one, so enabling the disabled bind gives a working one."""
+    letter = call.args[name]
+    fact = (
+        f"direction {letter!r} is not one Hyprland knows (l, r, u, d), so this bind never fired"
+    )
+    vim = VIM_DIRECTIONS.get(letter)
+    if vim is None:
+        ctx.note(
+            LossCode.DEAD_DISPATCHER,
+            f"{fact} in hyprlang and is imported commented out -- enabled as written, it "
+            "would fail the whole config at bind time",
+        )
+        return call
+    reading, word = vim
+    ctx.note(
+        LossCode.DEAD_DISPATCHER,
+        f"{fact} in hyprlang; it is imported commented out, with {letter!r} read as the vim "
+        f"key for {word} -- enable it if that is what you meant",
+        replacement=f'{name} = "{reading}"',
+    )
+    return replace(call, args={**call.args, name: reading})
 
 
 def _key_string(mods_field: str, key_field: str, ctx: LossContext, *, multikey: bool) -> str:
@@ -242,7 +289,7 @@ def _key_string(mods_field: str, key_field: str, ctx: LossContext, *, multikey: 
     if mods_field.strip() and not mods:
         ctx.note(
             LossCode.MODS_SPELLING,
-            f"modifier field {mods_field.strip()!r} matches no modifier -- hyprlang "
+            f"modifier field {mods_field.strip()!r} matches no modifier — hyprlang "
             "treated this as an error too",
         )
     elif mods and _respelled(mods_field, mods):
@@ -369,12 +416,16 @@ def map_bind(
         # will not load. Disabled keeps the line -- and its position, which is a bind's
         # identity (ADR-0007) -- visible and one edit away from working.
         note_dead_keysyms(ctx, dead, disabled=True)
+    # Likewise a direction hyprlang ignored at press time, which Lua refuses at bind time.
+    unknown = _unknown_direction(call)
+    if unknown is not None:
+        call = _note_unknown_direction(ctx, call, unknown)
     return Bind(
         keys=keys,
         dispatcher=call,
         options=options,
         submap=submap,
-        enabled=not dead,
+        enabled=not dead and unknown is None,
         origin=origin,
     )
 

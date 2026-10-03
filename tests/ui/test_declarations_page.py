@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
 
@@ -24,7 +25,7 @@ from hyprtweaker.ui.pages.declaration_kinds import BY_KIND  # noqa: E402
 KINDS = ("animations", "curves", "gestures", "devices", "env", "startup", "permissions")
 
 
-def build_window(tmp_path: Path) -> Any:
+def build_window(tmp_path: Path, schema: Any = None) -> Any:
     from gi.repository import Adw
 
     from hyprtweaker.engine.ipc import Instance, NoInstance
@@ -38,11 +39,12 @@ def build_window(tmp_path: Path) -> Any:
     Adw.init()
     session = Session(
         spawn=lambda coro: coro.close(),
+        schema=schema,
         paths=ConfigPaths.rooted_at(tmp_path),
         app_version=APP_VERSION,
         connect=no_compositor,
     )
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     return session, MainWindow(session, application=app)
 
 
@@ -71,24 +73,82 @@ def test_the_pages_reach_the_sidebar_under_their_own_sections(tmp_path: Path) ->
     assert len(window.declaration_pages) == len(KINDS)
 
 
+def _every_page(window: Any) -> list[tuple[str, str, Any]]:
+    """`(stack id, title, page widget)` for every Page the window built, Schema and Entity."""
+    pages = [(page.plan.section, page.plan.title, page.page) for page in window.pages]
+    entity_pages = [
+        window.binds_page,
+        window.window_rules_page,
+        window.layer_rules_page,
+        window.workspace_rules_page,
+        window.monitors_page,
+        *window.declaration_pages,
+    ]
+    pages += [(page.section, page.title, page.page) for page in entity_pages]
+    return pages
+
+
 def test_no_page_shares_a_stack_id_or_a_title_with_another(tmp_path: Path) -> None:
-    """Hyprland has an `animations` Section *and* an animation tree; likewise `gestures`.
+    """Hyprland has an `animations` Section *and* an animation tree; likewise `gestures`,
+    and `binds` beside the Keybinds Page (#120).
 
-    A stack child name used twice is not an error GTK raises -- it keeps the first page,
-    drops the second, and writes a warning to stderr that no test tier reads. The Page then
-    simply is not in the app, which is how this shipped past a green suite the first time.
-    Two sidebar rows with the same title are the same defect one layer up: legible, and
-    still a puzzle.
+    A stack child name used twice is not an error GTK raises -- it warns on stderr, keeps
+    both children, and resolves the name to the first, so the second Page's sidebar row
+    opens the other Page. That shipped past a green suite twice. Asserted in the Config
+    view, the one with a Page per Section: the Tasks view names its Schema Pages
+    differently and never collides. Two sidebar rows with the same title are the same
+    defect one layer up: legible, and still a puzzle.
     """
-    _session, window = build_window(tmp_path)
+    from hyprtweaker.ui.pages.plan import View
 
-    ids = [page.plan.section for page in window.pages]
-    titles = [page.plan.title for page in window.pages]
-    ids += [page.section for page in window.declaration_pages]
-    titles += [page.title for page in window.declaration_pages]
+    _session, window = build_window(tmp_path)
+    window.set_view(View.CONFIG)
+
+    pages = _every_page(window)
+    ids = [section for section, _title, _page in pages]
+    titles = [title for _section, title, _page in pages]
 
     assert len(set(ids)) == len(ids), f"duplicate stack id: {sorted(_repeats(ids))}"
     assert len(set(titles)) == len(titles), f"duplicate title: {sorted(_repeats(titles))}"
+
+
+def test_every_sidebar_row_opens_its_own_page_in_the_config_view(tmp_path: Path) -> None:
+    """Selecting a row shows the Page it names, not another Page filed under its id (#120)."""
+    from hyprtweaker.ui.pages.plan import View
+
+    _session, window = build_window(tmp_path)
+    window.set_view(View.CONFIG)
+
+    for section, title, page in _every_page(window):
+        window._select_section(section)
+        assert window.visible_section == section
+        assert page.is_ancestor(window._stack.get_visible_child()), (section, title)
+
+
+def test_the_keybinds_page_and_the_binds_section_are_two_pages(tmp_path: Path) -> None:
+    """The case #120 found: the Keybinds row opened "Keybind behaviour"."""
+    from hyprtweaker.ui.pages.plan import View
+
+    _session, window = build_window(tmp_path)
+    window.set_view(View.CONFIG)
+
+    window._select_section("entity:binds")
+    assert window._content_page.get_title() == "Keybinds"
+
+    window._select_section("binds")
+    assert window._content_page.get_title() == "Keybind behavior"
+
+
+def test_building_the_config_view_warns_about_no_duplicate_stack_child(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """GTK's only report of a reused stack id is a line on stderr, so read stderr."""
+    from hyprtweaker.ui.pages.plan import View
+
+    _session, window = build_window(tmp_path)
+    window.set_view(View.CONFIG)
+
+    assert "duplicate child name" not in capfd.readouterr().err
 
 
 def _repeats(values: list[str]) -> set[str]:
@@ -153,6 +213,28 @@ def test_every_entity_becomes_a_row_in_model_order(tmp_path: Path) -> None:
 
     assert [row.widget.get_title() for row in page.rows] == ["waybar", "swaync", "nm-applet"]
     assert [row.index for row in page.rows] == [0, 1, 2]
+
+
+def test_a_command_with_an_ampersand_shows_as_typed(tmp_path: Path) -> None:
+    """Row titles are Pango markup unless told otherwise: `a && b` would render blank."""
+    from gi.repository import Gtk
+
+    from hyprtweaker.engine.model.entities import StartupCommand
+
+    session, window = build_window(tmp_path)
+    session.model.entities.startup.append(StartupCommand("a && b"))
+    page = window.declaration_page("startup")
+    page.refresh()
+
+    def shown(widget: Any) -> Any:
+        child = widget.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Label):
+                yield child.get_text()
+            yield from shown(child)
+            child = child.get_next_sibling()
+
+    assert "a && b" in list(shown(page.rows[0].widget))
 
 
 def test_the_filter_narrows_without_renumbering_the_rows(tmp_path: Path) -> None:
@@ -262,6 +344,61 @@ def test_an_unknown_device_field_is_shown_on_the_device(tmp_path: Path) -> None:
 
     assert page.rows[0].findings
     assert "eraser_button_mode" in page.rows[0].findings[0].message
+
+
+def _tree_schema(*leaves: str) -> Any:
+    from hyprtweaker.engine.schema import Schema
+
+    return Schema("0.57.0", (), animation_leaves=leaves)
+
+
+def test_a_leaf_the_sessions_schema_records_is_not_flagged_on_the_page(tmp_path: Path) -> None:
+    """The Page asks the schema for the tree, not the list shipped with the app (#121)."""
+    from hyprtweaker.engine.model.entities import Animation
+
+    held = [
+        Animation("brandNewLeaf", {"enabled": False}),
+        Animation("windowsIn", {"enabled": False}),
+    ]
+    session, window = build_window(tmp_path, _tree_schema("brandNewLeaf"))
+    session.model.entities.animations.extend(held)
+    page = window.declaration_page("animations")
+    page.refresh()
+
+    assert [bool(row.findings) for row in page.rows] == [False, True]
+    assert "no such leaf" in page.rows[1].findings[0].message
+
+
+def test_the_editor_offers_the_leaves_it_is_handed_in_place_of_the_shipped_list() -> None:
+    dialog = editor("animations", choices={"leaf": ("brandNewLeaf", "fade")})
+
+    model = dialog._rows["leaf"].get_model()
+
+    assert [model.get_string(i) for i in range(model.get_n_items())] == ["brandNewLeaf", "fade"]
+    assert dialog.collect()["leaf"] == "brandNewLeaf"
+
+
+def test_the_window_hands_the_editor_the_session_schemas_leaves(tmp_path: Path) -> None:
+    """The tree's own leaves, in the tree's order: a leaf the app has no place for yet
+    comes after the ones it knows."""
+    _session, window = build_window(tmp_path, _tree_schema("brandNewLeaf", "fade"))
+
+    dialog = window.declaration_editor("animations", on_done=lambda _entity: None)
+
+    model = dialog._rows["leaf"].get_model()
+    assert [model.get_string(i) for i in range(model.get_n_items())] == ["fade", "brandNewLeaf"]
+
+
+def test_a_new_animation_opens_on_global_not_the_first_leaf_alphabetically(
+    tmp_path: Path,
+) -> None:
+    """#150 review finding 9: the schema records its leaves alphabetically, so an untouched
+    Save wrote `border`; the root of the tree is the one every other leaf inherits from."""
+    _session, window = build_window(tmp_path)
+
+    dialog = window.declaration_editor("animations", on_done=lambda _entity: None)
+
+    assert dialog.collect()["leaf"] == "global"
 
 
 # --- the editor -------------------------------------------------------------------------------
@@ -385,6 +522,86 @@ def test_removing_an_optional_field_takes_the_key_out_of_the_entity(tmp_path: Pa
     dialog._on_remove(None, DEVICE_FIELD_SPECS["sensitivity"])
 
     assert dialog.build() == Device("mouse", {})
+
+
+def optional_tier_rows(dialog: Any) -> list[Any]:
+    """Every preferences row under the optional group, in tree order.
+
+    Adw rows parent to an internal list box, so the group's own children are no help;
+    this walks the whole subtree the way a user sees it.
+    """
+    from gi.repository import Adw
+
+    rows: list[Any] = []
+
+    def walk(widget: Any) -> None:
+        child = widget.get_first_child()
+        while child is not None:
+            if isinstance(child, Adw.PreferencesRow):
+                rows.append(child)
+            walk(child)
+            child = child.get_next_sibling()
+
+    walk(dialog._optional_group)
+    return rows
+
+
+def optional_tier_titles(dialog: Any) -> list[str]:
+    return [row.get_title() for row in optional_tier_rows(dialog)]
+
+
+def pick_from_add_row(dialog: Any, label: str) -> None:
+    """Choose `label` in the "Add a setting" picker, as the user does."""
+    (picker,) = [
+        row for row in optional_tier_rows(dialog) if row.get_title() == "Add a setting"
+    ]
+    model = picker.get_model()
+    labels = [model.get_string(i) for i in range(model.get_n_items())]
+    picker.set_selected(labels.index(label))
+
+
+def test_adding_and_removing_optional_fields_leaves_one_row_per_present_key(
+    tmp_path: Path,
+) -> None:
+    from hyprtweaker.engine.entities_catalog import DEVICE_FIELD_SPECS
+    from hyprtweaker.engine.model.entities import Device
+
+    dialog = editor("devices", entity=Device("mouse", {"sensitivity": -0.5}))
+    assert optional_tier_titles(dialog) == ["Sensitivity", "Add a setting"]
+
+    # The add handler runs inside `notify::selected` of the picker row the rebuild then
+    # removes, so drive it through the picker rather than calling the rebuild directly.
+    pick_from_add_row(dialog, "Acceleration profile")
+    assert optional_tier_titles(dialog) == [
+        "Sensitivity",
+        "Acceleration profile",
+        "Add a setting",
+    ]
+
+    dialog._on_remove(None, DEVICE_FIELD_SPECS["sensitivity"])
+    assert optional_tier_titles(dialog) == ["Acceleration profile", "Add a setting"]
+    assert "sensitivity" not in dialog._rows
+
+    pick_from_add_row(dialog, "Sensitivity")
+    dialog._on_remove(None, DEVICE_FIELD_SPECS["accel_profile"])
+    pick_from_add_row(dialog, "Acceleration profile")
+    assert sorted(optional_tier_titles(dialog)) == [
+        "Acceleration profile",
+        "Add a setting",
+        "Sensitivity",
+    ]
+    assert set(dialog.build().fields) == {"sensitivity", "accel_profile"}
+
+
+def test_the_add_row_goes_once_every_optional_field_is_present(tmp_path: Path) -> None:
+    from hyprtweaker.engine.model.entities import Device
+
+    every = {spec.name: "" for spec in editor("devices")._descriptor.optional}
+    dialog = editor("devices", entity=Device("mouse", every))
+
+    titles = optional_tier_titles(dialog)
+    assert "Add a setting" not in titles
+    assert len(titles) == len(set(titles)) == len(every)
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -643,3 +860,19 @@ def test_two_gestures_with_one_trigger_badge_only_the_later_row(tmp_path: Path) 
 
     assert page.rows[0].findings == ()
     assert page.rows[1].findings
+
+
+def test_a_read_only_session_greys_edit_and_remove_rather_than_hiding_them(
+    tmp_path: Path,
+) -> None:
+    """F21 of the #148 review: Binds, Rules and Workspaces grey them; these hid them."""
+    from hyprtweaker.engine.model.entities import EnvVar
+
+    session, window = build_window(tmp_path)
+    session.model.entities.env.append(EnvVar(name="XCURSOR_SIZE", value="24"))
+    page = window.declaration_page("env")
+    page.refresh()
+    row = page.rows[0]
+
+    assert row.edit_button is not None and not row.edit_button.get_sensitive()
+    assert not row.remove_button.get_sensitive()

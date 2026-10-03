@@ -4,18 +4,26 @@ from __future__ import annotations
 
 from hyprtweaker.engine.model.entities import MonitorRule
 from hyprtweaker.engine.monitors_catalog import (
+    arrangement_mismatches,
+    breaks_display,
     connected_rules,
     disconnected_rules,
     format_mode,
     format_position,
     logical_size,
+    mode_rates,
+    mode_sizes,
     parse_mode,
     parse_position,
     preferred_identity,
+    revert_breaking,
     rule_for,
     rule_matches_output,
+    sdr_eotf_name,
     snap_position,
 )
+
+AVAILABLE = ["2560x1440@59.95Hz", "1920x1080@60.00Hz", "2560x1440@143.91Hz", "foo"]
 
 
 class TestLogicalSize:
@@ -54,6 +62,20 @@ class TestModes:
         assert format_mode(1920, 1080, 60.0) == "1920x1080@60"
         assert format_mode(1920, 1080, 59.94) == "1920x1080@59.94"
         assert format_mode(1920, 1080) == "1920x1080"
+
+    def test_sizes_are_distinct_in_the_displays_order(self) -> None:
+        assert mode_sizes(AVAILABLE) == [(2560, 1440), (1920, 1080)]
+
+    def test_rates_are_the_sizes_own_highest_first(self) -> None:
+        assert mode_rates(AVAILABLE, (2560, 1440)) == [143.91, 59.95]
+        assert mode_rates(AVAILABLE, (1280, 720)) == []
+
+
+class TestColour:
+    def test_a_legacy_sdr_eotf_code_reads_as_its_name(self) -> None:
+        assert sdr_eotf_name(2) == "gamma22"
+        assert sdr_eotf_name("1") == "srgb"
+        assert sdr_eotf_name("gamma22force") == "gamma22force"
 
 
 class TestPositions:
@@ -143,3 +165,166 @@ class TestRuleAssignment:
         ]
         leftover = disconnected_rules(rules, MONITORS)
         assert [rule.output for rule in leftover] == ["DP-9"]
+
+
+def live(
+    name: str = "DP-1",
+    *,
+    description: str = "Dell U2720Q",
+    size: tuple[int, int] = (2560, 1440),
+    at: tuple[int, int] = (0, 0),
+    scale: float = 1.0,
+    transform: int = 0,
+) -> dict[str, object]:
+    """One `hyprctl -j monitors` record, trimmed to the keys the comparison reads."""
+    return {
+        "name": name,
+        "description": description,
+        "width": size[0],
+        "height": size[1],
+        "x": at[0],
+        "y": at[1],
+        "scale": scale,
+        "transform": transform,
+    }
+
+
+class TestArrangementMismatches:
+    """The Migration switch's monitor check: what the rules ask for against what is live."""
+
+    def test_a_display_set_up_as_asked_has_nothing_to_report(self) -> None:
+        rules = [
+            MonitorRule(
+                output="DP-1",
+                fields={"mode": "2560x1440@144", "position": "1920x0", "scale": 1.0},
+            )
+        ]
+        assert arrangement_mismatches(rules, [live(at=(1920, 0))]) == ()
+
+    def test_no_rules_asks_for_nothing(self) -> None:
+        assert arrangement_mismatches([], [live()]) == ()
+
+    def test_a_different_scale_is_named_with_both_values(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"scale": 1.5})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1 is at scale 1, the configuration asks for 1.5",
+        )
+
+    def test_a_different_position_is_named_with_both_values(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"position": "1920x0"})]
+        assert arrangement_mismatches(rules, [live(at=(0, 0))]) == (
+            "DP-1 is at position 0, 0, the configuration asks for 1920, 0",
+        )
+
+    def test_a_different_resolution_is_named_and_the_refresh_rate_is_not_compared(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"mode": "1920x1080@60"})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1 runs 2560x1440, the configuration asks for 1920x1080",
+        )
+        same_size = [MonitorRule(output="DP-1", fields={"mode": "2560x1440@59.94"})]
+        assert arrangement_mismatches(same_size, [live()]) == ()
+
+    def test_a_different_rotation_is_named(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"transform": 1})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1's rotation is normal, the configuration asks for rotated 90°",
+        )
+
+    def test_words_that_are_not_numbers_ask_for_nothing_in_particular(self) -> None:
+        rules = [
+            MonitorRule(
+                output="DP-1",
+                fields={"mode": "preferred", "position": "auto", "scale": "auto"},
+            )
+        ]
+        assert arrangement_mismatches(rules, [live(at=(640, 0), scale=1.25)]) == ()
+
+    def test_the_catch_all_speaks_for_a_display_with_no_rule_of_its_own(self) -> None:
+        rules = [
+            MonitorRule(output="eDP-1", fields={"scale": 2}),
+            MonitorRule(output="", fields={"scale": 1.5}),
+        ]
+        displays = [live("eDP-1", description="BOE", scale=2.0), live("DP-3")]
+        assert arrangement_mismatches(rules, displays) == (
+            "DP-3 is at scale 1, the configuration asks for 1.5",
+        )
+
+    def test_a_desc_rule_speaks_for_the_display_it_describes(self) -> None:
+        rules = [MonitorRule(output="desc:Dell U2720Q", fields={"scale": 2})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1 is at scale 1, the configuration asks for 2",
+        )
+
+    def test_a_rule_for_a_display_that_is_not_connected_is_not_a_mismatch(self) -> None:
+        rules = [MonitorRule(output="DP-9", fields={"scale": 2, "position": "0x0"})]
+        assert arrangement_mismatches(rules, [live()]) == ()
+
+    def test_a_display_the_configuration_disables_but_is_still_listed(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"disabled": True})]
+        assert arrangement_mismatches(rules, [live()]) == (
+            "DP-1 is still active, the configuration disables it",
+        )
+
+    def test_a_mirrored_display_is_not_held_to_a_position(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"mirror": "eDP-1", "position": "1920x0"})]
+        assert arrangement_mismatches(rules, [live(at=(0, 0))]) == ()
+
+    def test_every_difference_on_a_display_is_reported(self) -> None:
+        rules = [MonitorRule(output="DP-1", fields={"scale": 2, "position": "100x0"})]
+        assert len(arrangement_mismatches(rules, [live()])) == 2
+
+
+class TestRevertBreaking:
+    """What a Confirm-or-revert revert writes back (#192): the display, not the benign edits."""
+
+    def test_puts_breaking_fields_back_and_keeps_a_benign_edit_made_meanwhile(self) -> None:
+        snapshot = [MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 0})]
+        current = [MonitorRule("eDP-1", {"mode": "1920x1080@48", "scale": 2, "vrr": 1})]
+
+        assert revert_breaking(snapshot, current) == [
+            MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 1})
+        ]
+
+    def test_nothing_benign_moved_gives_the_snapshot_back(self) -> None:
+        snapshot = [
+            MonitorRule("DP-3", {"position": "0x0"}),
+            MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 0}),
+        ]
+        current = [
+            MonitorRule("DP-3", {"position": "1920x0", "transform": 1}),
+            MonitorRule("eDP-1", {"mode": "preferred", "vrr": 0}),
+        ]
+
+        assert revert_breaking(snapshot, current) == [
+            MonitorRule("DP-3", {"position": "0x0"}),
+            MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 0}),
+        ]
+
+    def test_a_rule_the_batch_created_keeps_only_its_benign_fields(self) -> None:
+        current = [
+            MonitorRule("DP-3", {"mode": "2560x1440@144", "vrr": 1}),
+            MonitorRule("HDMI-A-1", {"scale": 2}),
+        ]
+
+        assert revert_breaking([], current) == [MonitorRule("DP-3", {"vrr": 1})]
+
+    def test_a_rule_removed_meanwhile_comes_back_whole(self) -> None:
+        snapshot = [MonitorRule("eDP-1", {"mode": "1920x1080@60", "vrr": 1})]
+
+        assert revert_breaking(snapshot, []) == snapshot
+
+
+class TestBreaksDisplay:
+    def test_a_breaking_field_change_breaks(self) -> None:
+        before = (MonitorRule("eDP-1", {"scale": 1, "vrr": 0}),)
+        after = (MonitorRule("eDP-1", {"scale": 2, "vrr": 0}),)
+        assert breaks_display(before, after) is True
+
+    def test_a_benign_field_change_does_not(self) -> None:
+        before = (MonitorRule("eDP-1", {"scale": 1, "vrr": 0}),)
+        after = (MonitorRule("eDP-1", {"scale": 1, "vrr": 1}),)
+        assert breaks_display(before, after) is False
+
+    def test_a_rule_with_breaking_fields_appearing_breaks(self) -> None:
+        assert breaks_display((), (MonitorRule("DP-3", {"mode": "preferred"}),)) is True
+        assert breaks_display((), (MonitorRule("DP-3", {"vrr": 1}),)) is False

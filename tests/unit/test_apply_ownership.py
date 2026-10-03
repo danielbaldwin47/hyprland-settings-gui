@@ -90,6 +90,25 @@ def test_a_bridge_module_is_foreign() -> None:
     assert one(line, written=(GENERAL,)) == (Ownership.FOREIGN, None)
 
 
+def test_a_bridge_at_its_native_path_is_foreign_once_the_manifest_names_it() -> None:
+    """noctalia and DMS write outside the App dir (#163). Without the Manifest's entry the
+    file is nobody's the app knows of, and no recovery is guessed at."""
+    bridges = ("noctalia.lua", "dms/colors.lua")
+    noctalia = f"{HOME}/noctalia.lua:4: invalid color"
+    dms = 'require("dms.colors"): module not found'
+
+    attributed = attribute([noctalia, dms], bridges=bridges)
+
+    assert [(e.ownership, e.module) for e in attributed] == [
+        (Ownership.FOREIGN, None),
+        (Ownership.FOREIGN, None),
+    ]
+    assert [e.ownership for e in attribute([noctalia, dms])] == [
+        Ownership.UNKNOWN,
+        Ownership.UNKNOWN,
+    ]
+
+
 def test_the_entrypoint_is_its_own_class() -> None:
     """App-owned and always regenerable, so its recovery is "regenerate", not "revert"."""
     assert one(f"{HOME}/hyprland.lua:2: oops") == (Ownership.ENTRYPOINT, "hyprland.lua")

@@ -36,7 +36,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import Protocol
 
@@ -85,11 +85,12 @@ class ApplyQueue:
         debounce: float = DEBOUNCE_SECONDS,
         on_result: Callable[[ApplyResult], None] | None = None,
     ) -> None:
-        """`on_result` sees every transaction, including ones nobody is awaiting.
+        """`on_result` sees every Apply transaction, including ones nobody is awaiting.
 
         A debounced `touch` has no caller left to hand a result to by the time it applies,
         so the callback is the only way error surfacing hears about the apply that a
-        slider drag ended in.
+        slider drag ended in. A `run_now` operation is not an Apply: its result goes to the
+        caller awaiting it, and to nobody else (#227).
         """
         self._transaction = transaction
         self._debounce = debounce
@@ -97,6 +98,8 @@ class ApplyQueue:
 
         self._dirty: set[str] = set()
         self._entities_dirty = False
+        self._entity_serial = 0
+        """The newest `commit_entities` serial, stamped on the result that carries it."""
         self._waiters: list[asyncio.Future[ApplyResult]] = []
         self._priority: list[_Priority] = []
         self._immediate = False
@@ -170,7 +173,7 @@ class ApplyQueue:
         """
         self._mark(names, immediate=True)
 
-    def commit_entities(self) -> None:
+    def commit_entities(self) -> int:
         """An Entity changed -- a Bind added, edited, reordered or removed (ADR-0007).
 
         Carries no keys, and that is not an omission. A transaction renders the *whole*
@@ -182,9 +185,16 @@ class ApplyQueue:
         Hence the separate flag rather than an empty `commit()`: the worker drops a batch
         with nothing dirty in it, and without this an edit to a bind would be silently
         swallowed by the queue instead of reaching disk.
+
+        Returns a serial, increasing per call, that the result of the transaction carrying
+        this commit reports as `ApplyResult.entities` (or exceeds, when later commits joined
+        the same batch). It is how a caller learns the verdict on *its* edit: entity commits
+        carry no keys for `ApplyResult.keys` to name.
         """
         self._entities_dirty = True
+        self._entity_serial += 1
         self._mark((), immediate=True)
+        return self._entity_serial
 
     async def apply(self, *names: str) -> ApplyResult:
         """Commit `names` and return the result of the transaction that carries them.
@@ -223,7 +233,9 @@ class ApplyQueue:
         comes from the caller and the serialization comes from here.
 
         `keys` is what the result reports itself as accountable for; the operation is free to
-        ignore it and derive its own.
+        ignore it and derive its own. The result is the caller's alone, never `on_result`'s:
+        the caller knows what it ran, and a subscriber reading it as an Apply would close
+        gestures over its keys and report it a second time.
         """
         return await self._enqueue_priority(operation, tuple(keys))
 
@@ -295,7 +307,7 @@ class ApplyQueue:
 
             keys = tuple(sorted(self._dirty))
             waiters = self._waiters
-            entities = self._entities_dirty
+            entities = self._entity_serial if self._entities_dirty else None
             self._dirty.clear()
             self._entities_dirty = False
             self._waiters = []
@@ -303,11 +315,11 @@ class ApplyQueue:
             self._commit_now.clear()
             self._work_available.clear()
 
-            if not keys and not entities:
+            if not keys and entities is None:
                 self._settle()
                 continue
 
-            await self._run_once(keys, waiters)
+            await self._run_once(keys, waiters, entities=entities)
 
     async def _debounced(self) -> None:
         """Wait out the quiet period, or return at once if a commit gesture arrived.
@@ -346,10 +358,13 @@ class ApplyQueue:
         waiters: list[asyncio.Future[ApplyResult]],
         *,
         operation: Transaction | None = None,
+        entities: int | None = None,
     ) -> None:
         self._busy = True
         try:
             result = await (operation or self._transaction).run(keys)
+            if entities is not None:
+                result = replace(result, entities=entities)
         except asyncio.CancelledError:
             for waiter in waiters:
                 if not waiter.done():
@@ -371,7 +386,8 @@ class ApplyQueue:
         for waiter in waiters:
             if not waiter.done():
                 waiter.set_result(result)
-        self._notify(result)
+        if operation is None:
+            self._notify(result)
         # Last, so a `drain()` that returns has already seen every subscriber run.
         self._settle()
 

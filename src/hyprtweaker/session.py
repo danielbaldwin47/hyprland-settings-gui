@@ -23,17 +23,22 @@ in a transaction. Four css-gaps spinners typed into in one breath become one ste
 the queue's debounce already coalesced them into one reload, and a gesture the *compositor*
 saw as one change is one change. And a gesture that fails becomes no step at all: it is never
 pushed, so ADR-0016's "drop the failed gesture from the undo stack (it never becomes a redo)"
-holds by construction rather than by remembering to pop.
+holds by construction rather than by remembering to pop. Entity edits follow the same rule
+(#189): the step is built at the edit, held against its commit's serial, and pushed only when
+the transaction that carried it comes back ok (`_commit_entity_edit`, `_settle_entities`).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Collection, Coroutine, Iterable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from hyprtweaker.engine import binds_analysis
 from hyprtweaker.engine.apply import (
@@ -42,22 +47,53 @@ from hyprtweaker.engine.apply import (
     ApplyOutcome,
     ApplyResult,
     Edit,
+    EntityEdit,
+    EntityStep,
     Mismatch,
+    PresetStep,
     Problem,
     Recovery,
     ReRead,
+    SourceChange,
+    Step,
+    UndoGroup,
     UndoStack,
     UndoStep,
+    WallpaperChange,
     app_owned_options,
+    overrides,
     own_write_modules,
     plan,
     read_state,
 )
+from hyprtweaker.engine.apply.reread import Answer, classify_reply
+from hyprtweaker.engine.bridge import (
+    REGISTRY,
+    BridgeEntry,
+    ChosenSource,
+    ColorSource,
+    ManualColors,
+    Off,
+    PresetColors,
+    Several,
+    ToolSpec,
+    Wallpaper,
+    bridge_states_for,
+    color_source_of,
+    entries_for,
+    files_present,
+    owners,
+    with_presence,
+)
+from hyprtweaker.engine.bridge.wire import bridge_output
+from hyprtweaker.engine.bridge.wire import shown as tilde_path
 from hyprtweaker.engine.entities_catalog import (
     IDENTITY_FIELD,
     device_field_bounds,
     overridden_options,
 )
+from hyprtweaker.engine.files import write_atomic
+from hyprtweaker.engine.importer.lua.sandbox import LuaUnavailable, lua_missing_reason
 from hyprtweaker.engine.ipc import (
     MONITOR_ADDED,
     MONITOR_REMOVED,
@@ -65,10 +101,15 @@ from hyprtweaker.engine.ipc import (
     EventStream,
     Instance,
     IpcError,
+    LiveHyprland,
     NoInstance,
+    NoSuchOption,
+    fetch_live_hyprland,
+    read_live_hyprland,
 )
 from hyprtweaker.engine.model import UNSET, ConfigModel, OptionValue
 from hyprtweaker.engine.model.entities import (
+    DISPLAY_KINDS,
     Animation,
     Bind,
     Curve,
@@ -78,24 +119,53 @@ from hyprtweaker.engine.model.entities import (
     LayerRule,
     MonitorRule,
     Permission,
+    PluginLoad,
     StartupCommand,
     WindowRule,
     WorkspaceRule,
+    entity_title,
 )
+from hyprtweaker.engine.model.values import parse_lua, parse_value
 from hyprtweaker.engine.paths import (
     ANIMATIONS_MODULE,
     AUTOSTART_MODULE,
     BINDS_MODULE,
     DEVICES_MODULE,
+    ENTRYPOINT_NAME,
     ENV_MODULE,
     GESTURES_MODULE,
     LAYER_RULES_MODULE,
     MONITORS_MODULE,
     PERMISSIONS_MODULE,
+    PLUGINS_MODULE,
     WINDOW_RULES_MODULE,
     WORKSPACE_RULES_MODULE,
     ConfigPaths,
 )
+from hyprtweaker.engine.presets import MAX_NAME as MAX_PRESET_NAME
+from hyprtweaker.engine.presets import (
+    CaptureScope,
+    ColorChoice,
+    Preset,
+    PresetApplied,
+    PresetApplyResult,
+    PresetChange,
+    PresetColorConflict,
+    PresetImported,
+    PresetImportResult,
+    PresetNameTaken,
+    PresetNotApplied,
+    PresetNotImported,
+    PresetNotSaved,
+    PresetPreview,
+    PresetSaved,
+    PresetSaveResult,
+    PresetSection,
+    PresetStore,
+    scoped_options,
+    stored_value,
+)
+from hyprtweaker.engine.presets_archive import ThemeArchive
 from hyprtweaker.engine.profiles import (
     MonitorProfile,
     MonitorStateSnapshot,
@@ -106,15 +176,52 @@ from hyprtweaker.engine.profiles import (
     drift,
     matches,
 )
-from hyprtweaker.engine.schema import ResolvedOption, Schema, load_schema
-from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash
-from hyprtweaker.engine.writer import LuaSyntaxError, ModuleSet, ProtectedFile, Writer
+from hyprtweaker.engine.schema import (
+    MINIMUM_HYPRLAND,
+    ResolvedOption,
+    Schema,
+    SupplementKind,
+    below_lua_floor,
+    load_schema,
+    newer_than_shipped,
+    supplement,
+)
+from hyprtweaker.engine.state import Journal, LastKnownGood, Manifest, content_hash, retirement
+from hyprtweaker.engine.state.retirement import (
+    RenamedNotice,
+    Restoration,
+    RetiredNotice,
+    UnkeptNotice,
+)
+from hyprtweaker.engine.triggers import trigger_load_problem
+from hyprtweaker.engine.wallpaper import Daemon, WallpaperError, Wallpapers
+from hyprtweaker.engine.writer import (
+    ENTITY_KIND_MODULES,
+    BeforeReplace,
+    LuaSyntaxError,
+    ModuleSet,
+    Writer,
+    is_entity_module,
+    is_option_module,
+    load_manifest,
+    module_relpath,
+)
 from hyprtweaker.engine.writer.binds import parse_binds_module
 from hyprtweaker.engine.writer.declarations import parse_declarations_module
 from hyprtweaker.engine.writer.monitors import parse_monitors_module
 from hyprtweaker.engine.writer.rules import parse_rules_module
 
 _log = logging.getLogger(__name__)
+
+ENTRYPOINT_EDITED = (
+    "hyprland.lua was edited outside this app. Press “Regenerate hyprland.lua…” on the "
+    "Theming page, then change where colors come from."
+)
+"""Why the Color source cannot change while the Entrypoint holds a hand edit: the next step
+is named by the button the Theming page shows beside it (finding 19 of the #153 review)."""
+
+_Answer = TypeVar("_Answer")
+"""What one helper-data query answers: a tuple of mappings, or of names."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +239,8 @@ class AutoRevert:
     """The Options whose values were put back."""
 
     modules: tuple[str, ...]
-    """The App-dir Modules the errors blamed on this transaction's own write."""
+    """The App-dir Modules put back: the ones the errors blamed on this transaction's own
+    write, or the ones a failed write changed."""
 
     errors: tuple[str, ...]
     """The `configerrors` lines, `file:line` prefixes intact."""
@@ -143,6 +251,10 @@ class AutoRevert:
     False is the escalation ADR-0016 names -- "if the restore transaction itself errors ...
     escalate to the Banner and stop auto-writing until the user acts". The toast still says
     what was attempted; what it must not do is claim a recovery that did not happen."""
+
+    outcome: ApplyOutcome = ApplyOutcome.CONFIG_ERRORS
+    """What the reverted transaction ran into: Hyprland's rejection, or `WRITE_FAILED`
+    when the disk refused the write. The toast says which."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +290,14 @@ class Health:
     half, and it needs its own field because it is an unhealthy state with no `configerrors`
     behind it at all -- nothing in `recovery` could derive it."""
 
+    edited_files: tuple[str, ...] = ()
+    """App Modules that refused a change because they were edited outside the app.
+
+    The app does not write over a hand-edited Module (ADR-0005), so a change that belongs in
+    one is refused at once (#148 review R3-R6). Unhealthy until the user keeps, replaces or
+    puts back the file: every later change to it is refused the same way, and saying so
+    once in a toast that times out would leave the next refusal unexplained."""
+
     rescued: tuple[str, ...] = ()
     """Modules the emergency restore overwrote without asking (ADR-0016 §Zero-binds).
 
@@ -195,6 +315,7 @@ class Health:
             or self.halted
             or self.unapplied
             or self.rescued
+            or self.edited_files
         )
 
     @property
@@ -226,6 +347,14 @@ class Health:
             return "Hyprland rejected a change, and the app could not put it back."
         if self.recovery.unhealthy:
             return "Hyprland reported a problem with your config."
+        if self.edited_files:
+            if len(self.edited_files) == 1:
+                name = self.edited_files[0].rsplit("/", 1)[-1]
+                return f"{name} was edited outside this app, so changes to it are not saved."
+            return (
+                f"{len(self.edited_files)} files were edited outside this app, "
+                f"so changes to them are not saved."
+            )
         if self.rescued:
             # Ranked *below* the error line, not above it. A rescue that did not fix things
             # leaves both true at once, and in that case the live problem is what the user
@@ -239,7 +368,7 @@ class Health:
         if self.unapplied:
             return f"{self._unapplied_summary} was written but did not take effect."
         if self.quarantined:
-            disabled = ", ".join(f"{name}.lua" for name in self.quarantined)
+            disabled = ", ".join(f"{name.replace('.', '/')}.lua" for name in self.quarantined)
             return f"{disabled} is disabled until you fix it."
         return ""
 
@@ -258,7 +387,7 @@ class Health:
         or a session with no compositor -- gets no button rather than one opening an empty
         dialog.
         """
-        if self.recovery.unhealthy:
+        if self.recovery.unhealthy or self.edited_files:
             return "Details"
         if self.quarantined:
             return "Re-enable"
@@ -284,11 +413,93 @@ Spawn = Callable[[Coroutine[Any, Any, None]], None]
 """How this session gets a coroutine running. The GTK app passes the main loop's own
 scheduler, so engine callbacks land on the thread that owns the widgets."""
 
+Notice = RetiredNotice | UnkeptNotice | RenamedNotice
+"""A one-time Info notice of ADR-0012's: a release removed settings (kept, or not), or
+renamed them."""
+
 _NOT_CONNECTED_YET = "Connecting to Hyprland…"
+
+
+class Replaced(Enum):
+    """How "Replace file" ended (`Session.replace_edited_file`). Only `DONE` wrote."""
+
+    DONE = "done"
+    READ_ONLY = "read-only"
+    NOT_EDITED = "not edited"
+    NOT_KNOWN = "not known"
+    """The file does not read, and there is no earlier version of the app's to rebuild
+    it from: writing it from the model would write it empty (#148 fix review R9)."""
+    NO_COPY = "no copy"
+
+    def __bool__(self) -> bool:
+        return self is Replaced.DONE
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingEntityStep:
+    """An Entity step waiting for the verdict on the commit that carries it."""
+
+    serial: int
+    """`commit_entities`'s serial: the step stands or falls with the result that reports it."""
+    step: EntityStep
+    group: UndoGroup | None
+    """The undo group holding it, when one was open over its kinds at commit time."""
+
+
 """The reason a session is read-only between construction and `start()` finishing.
 
 A reason rather than a fourth state: the Rows are genuinely not editable yet, and a Banner
 that says why is better than one that appears a moment later."""
+
+
+@dataclass(frozen=True, slots=True)
+class _WallpaperOrder:
+    """A Preset's image, to be shown through `daemon` once its transaction stands."""
+
+    daemon: Daemon
+    image: Path
+
+
+@dataclass(frozen=True, slots=True)
+class _AppliedPreset:
+    """A Preset whose Options are queued: its name, each Option's value before it, the
+    Bridge entries it gated ("Use preset's colors"), and the wallpaper it will set."""
+
+    name: str
+    before: dict[str, OptionValue]
+    after: dict[str, OptionValue]
+    """The values it sets: its step's "after" when a later Preset lands in the same batch."""
+    source: SourceChange | None = None
+    wallpaper: _WallpaperOrder | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _UndonePreset:
+    """A Preset step whose Options are being put back: what follows once that stands."""
+
+    names: frozenset[str]
+    source: SourceChange | None
+    wallpaper: WallpaperChange | None
+    notes: tuple[str, ...]
+
+
+def _gates(entries: Sequence[BridgeEntry]) -> tuple[tuple[str, str, object], ...]:
+    """What the Color source is made of: each entry on or gated off, and by what. A tool's
+    entry going from waiting to loaded is not the user changing where colors come from."""
+    return tuple(
+        (entry.tool, entry.module, entry.state if isinstance(entry.state, Off) else "on")
+        for entry in entries
+    )
+
+
+def _typed(option: ResolvedOption, value: Any) -> Any:
+    """`value` as the model types it: a Schema default is display text, a set value is not."""
+    if value is None:
+        return None
+    try:
+        return parse_value(option.type, value)
+    except (ValueError, TypeError):
+        return value
 
 
 class Session:
@@ -302,15 +513,55 @@ class Session:
         paths: ConfigPaths | None = None,
         app_version: str,
         connect: Callable[[], Instance] = Instance.current,
+        read_live: Callable[[], LiveHyprland | None] | None = None,
+        wallpapers: Wallpapers | None = None,
     ) -> None:
         """`connect` names the compositor to talk to; by default, the one we run under.
 
         Injected for the same reason the Harness can drive the real `Applier`: an `Instance`
         is a frozen dataclass over a socket directory, so a nested Hyprland or a scripted
         pair of sockets is a first-class session and needs no monkeypatching.
+
+        `read_live` answers which Hyprland that is, before anything else here runs: the
+        model is built from the Schema for that version (ADR-0012 §Pinning). By default a
+        blocking read over `connect`, bounded at one second; tests that have no compositor
+        to ask, or want to pose as another version, hand in the answer. It runs whether or
+        not `schema` is injected, so `live_hyprland` means the same thing in every session.
+
+        `wallpapers` is where a wallpaper daemon is looked for and how it is called: by
+        default the tool search path and this process's environment (`engine/tools.py`).
         """
         self._spawn = spawn
-        self._schema = schema if schema is not None else load_schema()
+        self._wallpapers = wallpapers if wallpapers is not None else Wallpapers()
+        self._live_hyprland = (
+            read_live() if read_live is not None else read_live_hyprland(connect)
+        )
+        live_version = self._live_hyprland.version if self._live_hyprland else None
+        self._unsupported_reason = (
+            f"Hyprland {live_version} is running, and this app needs Hyprland "
+            f"{MINIMUM_HYPRLAND} or newer"
+            if live_version is not None and below_lua_floor(live_version)
+            else None
+        )
+        """Why this session can never go live, or `None`. Set only for a Hyprland too old to
+        have a Lua config: no amount of reconnecting changes that, so `start` honours it."""
+        if schema is None:
+            # Below the floor, the oldest shipped Schema: the nearest to what is running,
+            # and a read-only session only displays it.
+            wanted = MINIMUM_HYPRLAND if self._unsupported_reason else live_version
+            schema = load_schema(wanted)
+        live = self._live_hyprland
+        if live is not None and newer_than_shipped(live.version):
+            # ADR-0012 §Pinning: what a newer compositor added beyond every shipped schema
+            # still gets a Row, inferred from its own description and flagged as such.
+            schema = supplement(schema, live.descriptions, version=live.version)
+        if live is not None:
+            # ADR-0018 §Plugins: a loaded plugin's settings, whatever the version, flagged as
+            # a plugin's. Only a plugin loaded at this read adds any (no rebuild mid-session).
+            schema = supplement(
+                schema, live.descriptions, version=live.version, kind=SupplementKind.PLUGIN
+            )
+        self._schema = schema
         self._paths = paths if paths is not None else ConfigPaths.default()
         self._app_version = app_version
         self._connect = connect
@@ -333,7 +584,29 @@ class Session:
         self.on_reverted: Callable[[AutoRevert], None] | None = None
         """Called when the app has just taken back its own rejected write (ADR-0016)."""
 
-        self.on_recorded: Callable[[UndoStep], None] | None = None
+        self.on_notice: Callable[[Notice], None] | None = None
+        """Called at startup with each notice ADR-0012 owes the user: per release that
+        retired Options they set, and once for values that moved to a renamed Option.
+
+        A Retired notice keeps coming, start after start, until `notice_seen` records it."""
+
+        self.on_refused: Callable[[str, str], None] | None = None
+        """Called with a change refused because the Module it belongs in was edited outside
+        the app (ADR-0005), and that Module: the model is as it was, and no undo step was
+        recorded. The user's ways on are `keep_edited_file`, `edited_file_path` and
+        `replace_edited_file`; after a Replace they make the change again."""
+
+        self._edited_files: list[str] = []
+        """Modules that refused a change and are still edited: `Health.edited_files`."""
+        self._read_off_text: frozenset[str] = frozenset()
+        self._not_known: set[str] = set()
+        """Edited Modules whose values neither their text nor a Snapshot could give (R9)."""
+        """The options Modules the last re-read took off their own text (`_read_model`)."""
+        self._model_read = False
+        self._lua_missing: str | None = None
+        self._offline_sentence: str | None = None
+
+        self.on_recorded: Callable[[Step], None] | None = None
         """Called with the gesture a finished transaction put on the undo stack.
 
         The step is handed over rather than left for the window to read off the stack top.
@@ -345,11 +618,16 @@ class Session:
         self._model = ConfigModel(self._schema)
         self._writer = Writer(self._paths, app_version=app_version)
         self._journal = Journal(self._paths)
+        self._retired = self._manifest().retired
+        """The Options still Retired, by name, as `retired_in` reads them for a Row's pill.
+
+        Copied from the Manifest at construction and replaced by the startup pass, so a Row
+        asks no file; an offline session still badges what earlier sessions retired."""
 
         self._events: EventStream | None = None
         self._client: CommandClient | None = None
         self._applier: Applier | None = None
-        self._offline_reason: str | None = _NOT_CONNECTED_YET
+        self._offline_reason: str | None = self._unsupported_reason or _NOT_CONNECTED_YET
         self._closing = False
         self._pending_restart: set[str] = set()
         self._monitor_watchers: list[Callable[[], None]] = []
@@ -361,6 +639,20 @@ class Session:
 
         self._profiles: ProfileStore | None = None
         """The Monitor-profile store, built lazily over `monitor-profiles/` (#69)."""
+        self._presets: PresetStore | None = None
+        """The Preset store, built lazily over `presets/` (ADR-0014)."""
+        self._applying_presets: list[_AppliedPreset] = []
+        """Presets whose Options are queued and not yet reported (`apply_preset`), oldest
+        first. A list, not a slot: a second Preset applied before the first lands is its own
+        gesture, with its own step (finding 14 of the #153 review). A foreign reload leaves
+        them: the transaction carrying them still reports, and its verdict is theirs."""
+        self._undoing_presets: list[_UndonePreset] = []
+        """Preset steps whose Options an undo has queued and not yet reported, oldest first."""
+
+        self.on_preset_note: Callable[[str], None] | None = None
+        """Called with a sentence saying what applying or undoing a Preset could not do: a
+        wallpaper with no daemon to show it, or a Color source or wallpaper changed since
+        and so left as it is (S7). The window shows it as a toast."""
 
         self._undo = UndoStack()
         self._open_gestures: dict[str, OptionValue] = {}
@@ -369,6 +661,25 @@ class Session:
         Opened by any edit that finds no entry, closed by the transaction that carries the
         key. Between those two moments the Option is mid-gesture, however many model writes
         the widget makes -- which is what turns fifty slider ticks into one undo step."""
+
+        self._pending_entities: list[_PendingEntityStep] = []
+        """Entity steps whose commit has not reported yet, oldest first (#189).
+
+        Built where the edit is made -- before and after are both known there -- and held
+        until the transaction carrying the commit says whether it stood (`_applied`): a
+        rejected entity write never reaches the stack, as ADR-0016 has it for Options."""
+
+        self._undo_group: UndoGroup | None = None
+        """The open undo group, if any -- one at a time (`begin_undo_group`)."""
+
+        self._undo_waits_for: EntityStep | None = None
+        """The in-flight step a Ctrl+Z is waiting to undo once it lands (`undo`)."""
+
+        self.on_undo_due: Callable[[], object] | None = None
+        """Called when the edit a waiting Ctrl+Z was pressed over has landed, to undo it.
+
+        The window's own undo, so an undo the window puts behind a countdown still goes
+        there; without one the session undoes it itself."""
 
         self._reverting = False
         self._recovery_halted = False
@@ -384,7 +695,7 @@ class Session:
         """Whether a Restore last good is in flight, so a second cannot start on top of it."""
 
         self._unapplied: tuple[str, ...] = ()
-        """Keys the last transaction wrote that the live config does not set.
+        """Keys the app's own Modules set that the live config does not.
 
         ADR-0016's "unexplained read-back mismatch (value didn't take, no error, no
         override)", which "joins the Banner". A quiet value disagreement is not this: that is
@@ -393,14 +704,33 @@ class Session:
         live config sets nothing, which means the Module never ran."""
 
         self._overridden: tuple[str, ...] = ()
-        """Keys whose live value disagrees with the model because something later won.
+        """Keys whose live value disagrees with what the app wrote because something later won.
 
         The quiet counterpart of `_unapplied`: the value did not take, but for a reason the
         app can name. ADR-0005 fixes the mechanism -- "after each reload the app compares
         `get_config`/`getoption` against its model and badges diverging options" -- so this
-        comes from the Read-back the transaction already does, never from reading
-        `user.lua` itself. ADR-0018 rejects that: running the user's own code to answer a
-        question about a badge is consent-and-safety weight no badge earns."""
+        comes from `getoption` alone (a transaction's Read-back, and the drift scan at launch
+        and after a foreign reload), never from reading `user.lua` itself. ADR-0018 rejects
+        that: running the user's own code to answer a question about a badge is
+        consent-and-safety weight no badge earns. Both marks change through `_mark` only."""
+
+        self._unconfirmed: tuple[str, ...] = ()
+        """Keys a timed-out transaction wrote: saved to the config, never confirmed live.
+
+        Neither drift mark is true of them -- nothing overrides the value, and it may well
+        have applied -- so their Row says "Not confirmed" instead (owner call 3 of the #153
+        review). The timeout's own re-read leaves them marked; the next Read-back or drift
+        scan that covers a key replaces its mark, as for the others (`_mark`)."""
+
+        self._drift_watches: list[set[str]] = []
+        """One set per drift scan in flight, of the keys a transaction read back meanwhile.
+
+        A scan reads the Modules first and `getoption` after, so a transaction that lands in
+        between holds newer evidence for its keys than the scan does: the scan leaves those
+        marks alone (`_scan_drift`)."""
+
+        self._lua_missing_logged = False
+        """Whether "no Lua, so no drift scan" was logged: once per session is news enough."""
 
         self._rescued: tuple[str, ...] = ()
         """Modules the emergency restore overwrote without asking, so the Banner can say so."""
@@ -408,6 +738,9 @@ class Session:
         self._pending_rescue: tuple[str, ...] = ()
         """A rescue announced only once its own restore has been observed -- see
         `_emergency_restore`, which explains why it cannot be announced any earlier."""
+
+        self._bridge_owners: dict[str, str] | None = None
+        """`bridge_owners`, read off the Manifest once per state change rather than per Row."""
 
         self._repolled = False
         """Whether the current timeout has already been re-polled once (ADR-0016 §Timeout).
@@ -442,35 +775,293 @@ class Session:
         return self._offline_reason is None
 
     @property
+    def live_hyprland(self) -> LiveHyprland | None:
+        """The running compositor's version and option descriptions, read at startup, or on
+        connect when that missed.
+
+        `None` when there was no compositor, it did not answer either time, or its version
+        is not a release number. A read on connect does not rebuild the Schema (#217): an
+        Option only its supplement would add has no Row until the next start.
+
+        Not the same fact as `live`: a compositor can be described here and still refuse
+        every edit (one too old for a Lua config, or a socket that died later).
+        The Schema it selected is `schema.hyprland_version`, which can be older (ADR-0012
+        degradation).
+        """
+        return self._live_hyprland
+
+    @property
+    def hyprland_too_old(self) -> bool:
+        """Whether the running Hyprland predates the Lua config, so nothing here can apply.
+
+        Read-only for the whole run, whatever the config on disk: there is nothing to
+        convert a hyprlang config *to* on a compositor that only reads hyprlang.
+        """
+        return self._unsupported_reason is not None
+
+    @property
+    def unsupported_reason(self) -> str | None:
+        """Why the running Hyprland is too old for this app, as one sentence without a full
+        stop, or `None` when it is not."""
+        return self._unsupported_reason
+
+    @property
     def offline_reason(self) -> str | None:
         """Why this session is read-only, in one line fit for the Banner."""
         return self._offline_reason
 
     @property
+    def offline_sentence(self) -> str | None:
+        """Why applying is off, as one true sentence for a dialog, a toast or a tooltip, or
+        `None` when it is on. No socket path or exception text: the Banner has the detail.
+        Hyprland may be running and still not reachable, so it never says "not running"."""
+        if self._offline_reason is None:
+            return None
+        if self._unsupported_reason is not None:
+            return f"{self._unsupported_reason}."
+        if self._lua_missing is not None and self._offline_reason == self._lua_missing:
+            return f"{self._lua_missing}."
+        if self._offline_sentence is not None:
+            # A reason the caller can say better: an import still on offer (F20).
+            return self._offline_sentence
+        return "This app is not connected to Hyprland."
+
+    @property
+    def entrypoint_edited(self) -> bool:
+        """Whether `hyprland.lua` was edited outside this app (its bytes are not the
+        Manifest's), which blocks every change to where colors come from."""
+        return ENTRYPOINT_NAME in self._manifest().hand_edited(self._paths)
+
+    @property
     def unapplied(self) -> frozenset[str]:
-        """Keys the last transaction wrote that the live config does not set.
+        """Keys the app's own Modules set that the live config does not.
 
         The Row badge ADR-0016 carves out of "errors never appear on Rows": an unexplained
         read-back mismatch is *key*-scoped, unlike a config error, so it is the one thing
         error surfacing has to say on the Row itself as well as on the Banner.
 
-        Replaced per transaction rather than accumulated, for the same reason `configerrors`
-        is: it describes the last write, and a badge that outlived the write that earned it
-        would be telling the user about a value that has since applied perfectly well.
+        Per key, from the newest reading of it, as `overridden` is: see there.
         """
         return frozenset(self._unapplied)
 
     @property
+    def unconfirmed(self) -> frozenset[str]:
+        """Keys a timed-out transaction wrote that Hyprland never confirmed (`_unconfirmed`)."""
+        return frozenset(self._unconfirmed)
+
+    @property
     def overridden(self) -> frozenset[str]:
-        """Keys the live config sets to something other than what the model asked for.
+        """Keys the live config sets to something other than what the app's Modules set.
 
         `user.lua` is required last (ADR-0005), so a key it sets beats the Module the app
-        wrote -- the Row wears the "Overridden" pill rather than pretending the edit took.
-        Replaced per transaction for the same reason `unapplied` is: it describes the last
-        write, and a badge outliving the write that earned it would be a lie about a value
-        that has since applied perfectly well.
+        wrote -- the Row wears the "Overridden" pill rather than pretending the edit took,
+        from launch on, before anything is edited (#191).
+
+        Per key, from the newest reading of it. The drift scan at launch and after each
+        foreign reload reads every key the app's Modules set and replaces the whole set; a
+        transaction's Read-back replaces only the keys it read back. A badge outliving the
+        reading that earned it would be a lie about a value that has since applied, and an
+        edit to one Option erasing another Option's badge would hide an override nothing
+        has changed.
         """
         return frozenset(self._overridden)
+
+    @property
+    def bridge_owners(self) -> Mapping[str, str]:
+        """Option name to the theming tool whose Bridge module sets it ("Set by <tool>").
+
+        Shaped like `overridden`, for `RowContext`. From the registry's static key lists of
+        the entries that load and are not quarantined (ADR-0006, ADR-0018: the app never
+        evaluates tool Lua). Read once per state change, so a Row asking costs no I/O.
+        """
+        if self._bridge_owners is None:
+            manifest = self._manifest()
+            self._bridge_owners = owners(manifest.bridges, quarantined=manifest.quarantined)
+        return self._bridge_owners
+
+    def color_source(self) -> ColorSource:
+        """The Color source in force: read off the Entrypoint on disk, never stored (ADR-0014).
+
+        The file rather than the Manifest because the file is what Hyprland loads, so a hand
+        edit that enables both backends reads as `Several` rather than as the app's last
+        choice. No Entrypoint is Manual: nothing overrides the colours.
+        """
+        try:
+            text = self._paths.entrypoint.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return ManualColors()
+        return color_source_of(text)
+
+    @property
+    def color_source_blocked(self) -> str | None:
+        """Why the Color source cannot change right now, as a sentence, or `None` if it can."""
+        if self._offline_reason is not None:
+            return self.offline_sentence
+        if self.entrypoint_edited:
+            return ENTRYPOINT_EDITED
+        return None
+
+    def set_color_source(self, source: ChosenSource) -> bool:
+        """Make `source` the Color source: one Entrypoint rewrite, one reload (ADR-0014).
+
+        Rides the Apply queue as an `EntrypointTransaction`, like Quarantine (S6): one
+        Journal draft, one Entrypoint write, one reload, then a re-read. `False` when the
+        session is read-only, the Entrypoint was hand-edited (`color_source_blocked` says
+        so; its bytes are never written over), a Wallpaper backend is not set up, or the
+        syntax gate refuses. The caller re-reads `color_source()` rather than keeping a copy.
+
+        The re-read leaves out the Options a loading bridge sets: adopting a tool's colours
+        into the model would write them into the app's own Module, and a switch back to
+        Manual would then bring back the tool's colours instead of the user's.
+        """
+        if self.color_source_blocked is not None:
+            return False
+        manifest = self._manifest()
+        try:
+            entries = bridge_states_for(
+                source, manifest.bridges, present=self._bridge_files_present(manifest.bridges)
+            )
+        except ValueError as error:
+            _log.error("could not change the Color source: %s", error)
+            return False
+        return self._set_bridges(
+            lambda current: bridge_states_for(
+                source, current, present=self._bridge_files_present(current)
+            ),
+            manifest.with_bridges(entries),
+            "change the Color source",
+        )
+
+    def load_waiting_bridges(self) -> bool:
+        """Load every Bridge module whose tool has now written its file (S4's "Load now").
+
+        A file a tool creates is not watched until something requires it, so nothing else
+        would notice. Called at launch and after every foreign reload, and by the Theming
+        page after a run or on "Load now". A module whose file is gone goes back to waiting,
+        so a reload never requires a missing file. Gated entries stay gated. `False` when
+        nothing changed or the change cannot be written now.
+        """
+        manifest = self._manifest()
+        entries = with_presence(
+            manifest.bridges, present=self._bridge_files_present(manifest.bridges)
+        )
+        if entries == manifest.bridges or self.color_source_blocked is not None:
+            return False
+        return self._set_bridges(
+            lambda current: with_presence(current, present=self._bridge_files_present(current)),
+            manifest.with_bridges(entries),
+            "load a theming tool's colors",
+        )
+
+    def add_bridge(self, tool: str, *, source: ChosenSource | None = None) -> bool:
+        """Give `tool` its Bridge entries and the Entrypoint its lines: one transaction.
+
+        What #166's `wire` calls before it touches the tool's own files. Never gates (#163)
+        unless `source` is given: then every entry, the new ones included, takes its state
+        for that Color source in the same transaction. The Theming page's "Switch to <tool>"
+        on a backend not yet set up passes `Wallpaper(tool)`, so no reload ever loads both
+        backends. `False` when the session is read-only or the Entrypoint was hand-edited
+        (`color_source_blocked` says why).
+        """
+        if self.color_source_blocked is not None:
+            return False
+        spec = REGISTRY[tool]
+
+        def added(current: Sequence[BridgeEntry]) -> Sequence[BridgeEntry]:
+            kept = [entry for entry in current if entry.tool != tool]
+            entries = [*kept, *entries_for(spec, present=self._module_files_present(spec))]
+            if source is None:
+                return entries
+            return bridge_states_for(
+                source, entries, present=self._bridge_files_present(entries)
+            )
+
+        manifest = self._manifest()
+        prospective = manifest.with_bridges(added(manifest.bridges))
+        return self._set_bridges(added, prospective, f"set up {spec.title}")
+
+    def current_wallpaper(self) -> Path | None:
+        """The image the wallpaper daemon shows on the first output, or `None` with no
+        daemon, no image, or a daemon that did not answer. Runs the daemon's client: call it
+        off the main loop. What the Theming page's Regenerate runs a tool on (#164)."""
+        daemon = self._wallpapers.detect()
+        if daemon is None:
+            return None
+        try:
+            shown = daemon.current()
+        except WallpaperError:
+            return None
+        return shown[0].image if shown else None
+
+    def wallpaper_absent_reason(self) -> str | None:
+        """Why a Preset's wallpaper cannot be saved or changed from here, or `None` when a
+        daemon this app can drive is running. A sentence for the Presets group (#171). Reads
+        the tool path and runtime directory only, so it is safe on the main loop."""
+        if self._wallpapers.detect() is not None:
+            return None
+        return self._wallpapers.absent_reason()
+
+    def manifest(self) -> Manifest:
+        """The Manifest as it is on disk now: what #166's `detect` and `unwire` take."""
+        return self._manifest()
+
+    def remove_bridge(self, tool: str) -> bool:
+        """Take `tool`'s Bridge entries and lines out: what #166's `unwire` calls first.
+
+        `True` with nothing done when the tool has no entry, so an `unwire` that converges
+        after a crash never costs a reload.
+        """
+        manifest = self._manifest()
+        output = bridge_output(tool, self._paths)
+        if not output and not any(entry.tool == tool for entry in manifest.bridges):
+            return True
+        if self.color_source_blocked is not None:
+            return False
+
+        def delete_output() -> None:
+            # Before the Entrypoint is rendered: a file left in the bridge folder loads with
+            # no entry at all, which kept a removed tool loading (#148 hand-test 1).
+            for path in bridge_output(tool, self._paths):
+                path.unlink(missing_ok=True)
+
+        return self._set_bridges(
+            lambda current: [entry for entry in current if entry.tool != tool],
+            manifest.remove_bridge(tool),
+            f"remove {REGISTRY[tool].title if tool in REGISTRY else tool}",
+            first=delete_output,
+        )
+
+    def _module_files_present(self, spec: ToolSpec) -> frozenset[str]:
+        return files_present(self._paths.hypr_dir, (each.file for each in spec.modules))
+
+    def _set_bridges(
+        self,
+        change: Callable[[Sequence[BridgeEntry]], Sequence[BridgeEntry]],
+        prospective: Manifest,
+        what: str,
+        *,
+        first: Callable[[], None] | None = None,
+    ) -> bool:
+        """Rewrite the Entrypoint with `change` applied to the Manifest's entries as they are
+        when the queued write runs, so a change landing in between is built on, not lost.
+        `first` runs in the queued write, just before it."""
+
+        def write(before: BeforeReplace | None) -> bool:
+            if first is not None:
+                first()
+            return self._writer.set_bridges(
+                self._model, change(self._manifest().bridges), before_replace=before
+            )
+
+        return self._recovery_write(
+            write,
+            prospective,
+            what,
+            exclude=tuple(owners(prospective.bridges, quarantined=prospective.quarantined)),
+        )
+
+    def _bridge_files_present(self, entries: Sequence[BridgeEntry]) -> frozenset[str]:
+        return files_present(self._paths.hypr_dir, (entry.file for entry in entries))
 
     @property
     def paths(self) -> ConfigPaths:
@@ -486,6 +1077,15 @@ class Session:
         this Session made.
         """
         return self._app_version
+
+    def instance(self) -> Instance:
+        """The compositor this Session talks to: its `connect`. Raises `NoInstance`.
+
+        Exposed for the Migration wizard, which builds its own client for the same reason
+        it builds its own Writer. Asking here rather than the environment keeps a sandboxed
+        or Harness Session's wizard on the compositor it was given (#201).
+        """
+        return self._connect()
 
     @property
     def recovery(self) -> Recovery:
@@ -506,6 +1106,7 @@ class Session:
             halted=self._recovery_halted,
             unapplied=self._unapplied,
             rescued=self._rescued,
+            edited_files=tuple(self._edited_files),
         )
 
     @property
@@ -558,11 +1159,63 @@ class Session:
         """Whether the model emits this Option at all -- ADR-0005's tri-state, not `!=`."""
         return self._model.is_set(option.name)
 
+    def unknown_to_version(self, option: ResolvedOption) -> bool:
+        """Whether the running Hyprland was described and does not have this Option.
+
+        The `unknown-to-this-version` Row state (#77): the app degraded onto a Schema the
+        compositor does not match (ADR-0012). False with no snapshot -- no compositor is
+        no evidence -- so an offline session badges nothing as missing.
+        """
+        live = self._live_hyprland
+        return live is not None and option.name not in live.names
+
+    def retired_in(self, option: ResolvedOption) -> str | None:
+        """The release that retired this Option while the user set it, if it is Retired.
+
+        ADR-0012's "the Row is badged": the app keeps the value and has stopped writing it.
+        Only a Retired Option the loaded Schema still describes has a Row to badge, and only
+        one a release removed: a value kept for a quiet reason belongs to an Option the
+        user's Hyprland still has.
+        """
+        entry = self._retired.get(option.name)
+        return entry.retired_in if entry is not None and entry.reason.announced else None
+
+    def kept_value(self, name: str) -> OptionValue:
+        """The value the app kept for this Option when it stopped writing it, or `UNSET`.
+
+        Every retirement reason, announced or quiet: a kept value is what makes a Row
+        read-only (#215), whether or not it wears a pill. Typed against the loaded Schema's
+        Option the way a restore would type it (`parse_lua`), so the Row renders it as its
+        own control would; a value that Option will not take is shown as it was kept.
+        """
+        entry = self._retired.get(name)
+        if entry is None:
+            return UNSET
+        option = self._schema.get(name)
+        if option is None:
+            return entry.value
+        try:
+            return parse_lua(option, entry.value)
+        except (ValueError, TypeError):
+            return entry.value
+
+    def notice_seen(self, notice: Notice) -> None:
+        """The user has dismissed `notice`: a Retired one is not shown again (ADR-0012).
+
+        Called on dismissal, not on display, so a notice the app closed before the user saw
+        it comes back on the next start. A rename notice records nothing: the move it
+        reports is done, and the next start has nothing to say about it.
+        """
+        if isinstance(notice, RetiredNotice):
+            self._writer.record_retired_notice(self._model, notice.release)
+
     # --- what the UI writes -----------------------------------------------------------------
 
     def set_option(self, name: str, value: Any) -> None:
         """A decided edit: into the model, then applied as soon as the queue is free."""
         if self._refuse(name):
+            return
+        if self._refused_by_edit(name):
             return
         self._begin_edit(name)
         self._model.set(name, value)
@@ -571,6 +1224,8 @@ class Session:
     def unset_option(self, name: str) -> None:
         """Reset to Hyprland's default: stop emitting the Option (ADR-0013 §6)."""
         if self._refuse(name):
+            return
+        if self._refused_by_edit(name):
             return
         self._begin_edit(name)
         self._model.unset(name)
@@ -586,6 +1241,8 @@ class Session:
         coalesce.
         """
         if self._refuse(name):
+            return
+        if self._refused_by_edit(name):
             return
         self._begin_edit(name)
         self._model.set(name, value)
@@ -606,6 +1263,8 @@ class Session:
         """
         if self._refuse(name):
             return
+        if self._refused_by_edit(name):
+            return
         self._begin_edit(name)
         self._model.set(name, value)
         self._applier.preview(name)  # type: ignore[union-attr]  # _refuse proved it is here
@@ -622,10 +1281,12 @@ class Session:
         if name not in self._open_gestures:
             self._open_gestures[name] = self._model.get(name)
 
-    def edit_binds(self, mutate: Callable[[list[Bind]], None]) -> bool:
+    def edit_binds(
+        self, mutate: Callable[[list[Bind]], None], *, title: str | None = None
+    ) -> bool:
         """Change the Bind list and write it, returning whether the edit was accepted.
 
-        `mutate` is handed the live list because for Binds position *is* identity
+        `mutate` is handed the whole list because for Binds position *is* identity
         (ADR-0007): adding is an append at a chosen index, reordering is a move, and there
         is no key to address a bind by. Duplicates are legal, so nothing here de-duplicates.
 
@@ -633,19 +1294,33 @@ class Session:
         model holding binds that were never written would show them in the list, survive a
         re-read, and get written later without the user asking again.
 
-        Not on the undo stack: undo is keyed by Option name end to end (`_open_gestures`,
-        `UndoStep`), and giving Entities a place on it is its own piece of work rather than
-        a line here. Tracked as a leftover on the inbox issue.
+        Also `False`, with nothing written, when the edit leaves an enabled Bind whose
+        Trigger cannot load (`trigger_load_problem`) that the list before did not hold:
+        Lua would fail the whole Module (ADR-0007). `mutate` runs on a copy so a refused
+        edit never touches the model. Disabling is never refused, and one already there is
+        carried along.
+
+        On the undo stack as one Entity step titled `title` (`_commit_entity_edit`).
         """
-        if self._refuse("binds"):
+        binds = self._model.entities.binds
+        edited = list(binds)
+        mutate(edited)
+        if any(
+            bind.enabled and bind not in binds and trigger_load_problem(bind.keys) is not None
+            for bind in edited
+        ):
             return False
-        mutate(self._model.entities.binds)
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        return True
+
+        def store() -> None:
+            binds[:] = edited
+
+        return self._commit_entity_edit("binds", store, title=title)
 
     def add_bind(self, bind: Bind) -> bool:
         """Append a Bind. `hl.bind` appends, so the end of the list is where a new one goes."""
-        return self.edit_binds(lambda binds: binds.append(bind))
+        return self.edit_binds(
+            lambda binds: binds.append(bind), title=entity_title("binds", "added")
+        )
 
     def replace_bind(self, index: int, bind: Bind) -> bool:
         """Replace the Bind at `index`, keeping its position.
@@ -658,7 +1333,7 @@ class Session:
             if 0 <= index < len(binds):
                 binds[index] = bind
 
-        return self.edit_binds(swap)
+        return self.edit_binds(swap, title=entity_title("binds", "changed"))
 
     def remove_bind(self, index: int) -> bool:
         """Delete the Bind at `index`."""
@@ -667,21 +1342,25 @@ class Session:
             if 0 <= index < len(binds):
                 del binds[index]
 
-        return self.edit_binds(drop)
+        return self.edit_binds(drop, title=entity_title("binds", "removed"))
 
     def set_bind_enabled(self, index: int, enabled: bool) -> bool:
         """Enable or disable the Bind at `index`, in place.
 
         The conflict surface's "disable it" (ADR-0007, #66). In place because the point of
         `enabled` over deletion is exactly that nothing moves: every other bind keeps its
-        position, and re-enabling restores the world as it was.
+        position, and re-enabling restores the world as it was. Enabling a Bind whose Trigger
+        cannot load is refused (`edit_binds`); disabling never is, so the conflict surface's
+        "disable it" always works.
         """
 
         def flip(binds: list[Bind]) -> None:
             if 0 <= index < len(binds):
                 binds[index] = replace(binds[index], enabled=enabled)
 
-        return self.edit_binds(flip)
+        return self.edit_binds(
+            flip, title=entity_title("binds", "enabled" if enabled else "disabled")
+        )
 
     def swap_binds(self, first: int, second: int) -> bool:
         """Exchange the positions of two Binds -- which of two duplicates fires first.
@@ -695,22 +1374,45 @@ class Session:
             if 0 <= first < len(binds) and 0 <= second < len(binds) and first != second:
                 binds[first], binds[second] = binds[second], binds[first]
 
-        return self.edit_binds(exchange)
+        return self.edit_binds(exchange, title=entity_title("binds", "reordered", plural=True))
+
+    def move_bind(self, index: int, to: int) -> bool:
+        """Move the Bind at `index` to position `to` -- the Binds page's drag reorder.
+
+        A move rather than a swap, as for Rules: everything between shifts by one, and the
+        moved bind takes the target's place within its group. Both are flat-list indices.
+
+        Refused (`False`, nothing written, no undo step) for an index out of range, a move
+        onto itself, and a target in another group: `binds.lua` keeps root binds first and
+        one block per Submap, so order *between* groups is not something the file can hold.
+        Not refused for an unloadable stored bind (#199): a move changes order, not whether
+        Hyprland can load it.
+        """
+        binds = self._model.entities.binds
+        if not (0 <= index < len(binds) and 0 <= to < len(binds)) or index == to:
+            return False
+        if binds[index].submap != binds[to].submap:
+            return False
+
+        def shift(binds: list[Bind]) -> None:
+            binds.insert(to, binds.pop(index))
+
+        return self.edit_binds(shift, title=entity_title("binds", "reordered", plural=True))
 
     def save_submap(self, *, original: str | None, name: str, reset_target: str) -> bool:
         """Create a Submap, or rename one and retune its reset target (#66).
 
         The cascade semantics live in `engine.binds_analysis.save_submap`, where they are
         tested headless; this is only the write gate around them, shaped like `edit_binds`.
+        A rename that rewrites binds is one undo step over both lists.
         """
-        if self._refuse("submaps"):
-            return False
-
-        binds_analysis.save_submap(
-            self._model.entities, original=original, name=name, reset_target=reset_target
+        return self._commit_entity_edit(
+            "submaps",
+            lambda: binds_analysis.save_submap(
+                self._model.entities, original=original, name=name, reset_target=reset_target
+            ),
+            title=entity_title("submaps", "added" if original is None else "changed"),
         )
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        return True
 
     def rules(self, kind: str) -> list[WindowRule] | list[LayerRule]:
         """The live rule list for a kind -- `"window"` or `"layer"`.
@@ -725,23 +1427,27 @@ class Session:
             return self._model.entities.layer_rules
         raise ValueError(f"unknown rule kind {kind!r}")
 
-    def edit_rules(self, kind: str, mutate: Callable[[list[Any]], None]) -> bool:
+    def edit_rules(
+        self, kind: str, mutate: Callable[[list[Any]], None], *, title: str | None = None
+    ) -> bool:
         """Change a rule list and write it, returning whether the edit was accepted.
 
         `mutate` is handed the live list because for Rules position *is* identity
         (ADR-0008): later rules win per Effect, and there is no key to address an
-        anonymous rule by. Shaped exactly like `edit_binds`, refusal and all, and like it
-        deliberately not on the undo stack (the same leftover).
+        anonymous rule by. Shaped exactly like `edit_binds`, refusal and undo step and all.
         """
-        if self._refuse(f"{kind} rules"):
-            return False
-        mutate(self.rules(kind))
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
-        return True
+        rules = self.rules(kind)
+        return self._commit_entity_edit(f"{kind} rules", lambda: mutate(rules), title=title)
+
+    @staticmethod
+    def _rule_title(kind: str, verb: str, *, plural: bool = False) -> str:
+        return entity_title(f"{kind}_rules", verb, plural=plural)
 
     def add_rule(self, kind: str, rule: WindowRule | LayerRule) -> bool:
         """Append a Rule -- last, where it wins over everything it conflicts with."""
-        return self.edit_rules(kind, lambda rules: rules.append(rule))
+        return self.edit_rules(
+            kind, lambda rules: rules.append(rule), title=self._rule_title(kind, "added")
+        )
 
     def replace_rule(self, kind: str, index: int, rule: WindowRule | LayerRule) -> bool:
         """Replace the Rule at `index`, keeping its position."""
@@ -750,7 +1456,7 @@ class Session:
             if 0 <= index < len(rules):
                 rules[index] = rule
 
-        return self.edit_rules(kind, swap)
+        return self.edit_rules(kind, swap, title=self._rule_title(kind, "changed"))
 
     def remove_rule(self, kind: str, index: int) -> bool:
         """Delete the Rule at `index`."""
@@ -759,7 +1465,7 @@ class Session:
             if 0 <= index < len(rules):
                 del rules[index]
 
-        return self.edit_rules(kind, drop)
+        return self.edit_rules(kind, drop, title=self._rule_title(kind, "removed"))
 
     def set_rule_enabled(self, kind: str, index: int, enabled: bool) -> bool:
         """Enable or disable the Rule at `index`, in place.
@@ -772,7 +1478,8 @@ class Session:
             if 0 <= index < len(rules):
                 rules[index] = replace(rules[index], enabled=enabled)
 
-        return self.edit_rules(kind, flip)
+        verb = "enabled" if enabled else "disabled"
+        return self.edit_rules(kind, flip, title=self._rule_title(kind, verb))
 
     def move_rule(self, kind: str, index: int, to: int) -> bool:
         """Move the Rule at `index` to position `to` -- the drag reorder (ADR-0008).
@@ -785,35 +1492,69 @@ class Session:
             if 0 <= index < len(rules) and 0 <= to < len(rules) and index != to:
                 rules.insert(to, rules.pop(index))
 
-        return self.edit_rules(kind, shift)
+        return self.edit_rules(
+            kind, shift, title=self._rule_title(kind, "reordered", plural=True)
+        )
 
     # --- monitor rules ----------------------------------------------------------------------
 
-    def _commit_entity_edit(self, what: str, mutate: Callable[[], None]) -> bool:
-        """The write gate every monitor and workspace rule edit shares.
+    def _commit_entity_edit(
+        self, what: str, mutate: Callable[[], None], *, title: str | None = None
+    ) -> bool:
+        """The write gate every Entity edit shares, and where its undo step is made (#189).
 
         Refuse on a read-only session (leaving the model alone, `_refuse`), run the
-        mutation, commit one entity transaction. Extracted so the keyed edits below --
-        which address rules by identity string rather than through a list -- do not each
-        hand-copy the refuse/commit envelope. Like the bind and rule edits, deliberately
-        not on the undo stack (the same Entity-undo leftover); undo matters least here,
-        because display-breaking edits ride Confirm-or-revert, its own take-back.
+        mutation, commit one entity transaction. Every Entity list is snapshotted around
+        `mutate` and the ones that moved become one `EntityStep` -- all of them, so a
+        cascade such as a submap rename rewriting binds is one step over both lists. The
+        step waits for its transaction's verdict (`_pending_entities`); an edit that moved
+        nothing records nothing. `title` is the undo toast's ("Keybind removed"); without one
+        the step is "<Kinds> changed" after the first list it moved.
+
+        Entities are frozen and the snapshots share them, so a step is pointer arrays. A
+        `mutate` that changed an entity, or its `fields` dict, in place would change every
+        snapshot holding it: history would silently agree with the present.
         """
         if self._refuse(what):
             return False
+        before = self._entity_lists()
         mutate()
-        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
+        after = self._entity_lists()
+        moved = [kind for kind in before if before[kind] != after[kind]]
+        edited = self._edited_module(ENTITY_KIND_MODULES[k] for k in moved)
+        if edited is not None:
+            # Put back before anything sees it: the list shows what the file has (R4-R5).
+            for kind in moved:
+                getattr(self._model.entities, kind)[:] = before[kind]
+            self._say_refused(title or entity_title(moved[0], "changed", plural=True), edited)
+            return False
+        serial = self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it
+        step = EntityStep.of(
+            (EntityEdit(kind, before[kind], after[kind]) for kind in before), title or ""
+        )
+        if step is None:
+            return True
+        if not title:
+            step = replace(step, title=entity_title(step.edits[0].kind, "changed", plural=True))
+        group = self._undo_group
+        held = group if group is not None and step.kinds & group.kinds else None
+        self._pending_entities.append(_PendingEntityStep(serial, step, held))
         return True
+
+    def _entity_lists(self) -> dict[str, tuple[Any, ...]]:
+        return {kind: tuple(items) for kind, items in self._model.entities.kinds()}
 
     @property
     def monitor_rules(self) -> list[MonitorRule]:
         """The live monitor rule list. Identity is the `output` string (ADR-0008)."""
         return self._model.entities.monitors
 
-    def edit_monitor_rules(self, mutate: Callable[[list[MonitorRule]], None]) -> bool:
+    def edit_monitor_rules(
+        self, mutate: Callable[[list[MonitorRule]], None], *, title: str | None = None
+    ) -> bool:
         """Change the monitor rule list and write it, returning whether it was accepted."""
         return self._commit_entity_edit(
-            "monitor rules", lambda: mutate(self._model.entities.monitors)
+            "monitor rules", lambda: mutate(self._model.entities.monitors), title=title
         )
 
     def patch_monitor_rule(self, output: str, fields: Mapping[str, Any]) -> bool:
@@ -822,12 +1563,24 @@ class Session:
         A merge because that is what `hl.monitor` itself does (`lua-api-surface.md` §3):
         the per-monitor rows each own one field, and a row that replaced the whole rule
         would erase every sibling's value on each toggle.
+
+        A field whose value is `UNSET` is removed after the merge: a row's "Not set" means
+        "not in my config", so the file must not gain an explicit default instead.
         """
+
+        def patch() -> None:
+            rules = self._model.entities.monitors
+            existing = next((rule for rule in rules if rule.output == output), None)
+            merged = {**(existing.fields if existing is not None else {}), **fields}
+            kept = {key: value for key, value in merged.items() if value is not UNSET}
+            if existing is None and not kept:
+                return  # "not set" on a display with no rule: nothing to write
+            self._model.entities.add_monitor_rule(
+                MonitorRule(output=output, fields=kept), merge=False
+            )
+
         return self._commit_entity_edit(
-            "monitor rules",
-            lambda: self._model.entities.add_monitor_rule(
-                MonitorRule(output=output, fields=dict(fields)), merge=True
-            ),
+            "monitor rules", patch, title=entity_title("monitors", "changed")
         )
 
     def rename_monitor_rule(self, output: str, to: str) -> bool:
@@ -850,7 +1603,9 @@ class Session:
         def rename() -> None:
             rules[index] = replace(rules[index], output=to)
 
-        return self._commit_entity_edit("monitor rules", rename)
+        return self._commit_entity_edit(
+            "monitor rules", rename, title=entity_title("monitors", "changed")
+        )
 
     def remove_monitor_rule(self, output: str) -> bool:
         """Delete the rule whose identity is `output`."""
@@ -859,20 +1614,15 @@ class Session:
             rules = self._model.entities.monitors
             rules[:] = [rule for rule in rules if rule.output != output]
 
-        return self._commit_entity_edit("monitor rules", drop)
-
-    def monitor_snapshot(self) -> tuple[MonitorRule, ...]:
-        """The monitor rule list as it stands -- what Confirm-or-revert restores to.
-
-        A tuple of frozen dataclasses, so the snapshot cannot drift while the countdown
-        runs however many edits land in between.
-        """
-        return tuple(self._model.entities.monitors)
+        return self._commit_entity_edit(
+            "monitor rules", drop, title=entity_title("monitors", "removed")
+        )
 
     def restore_monitor_rules(self, snapshot: Sequence[MonitorRule]) -> bool:
         """Put the monitor rule list back to `snapshot`, through a normal transaction.
 
-        The revert half of Confirm-or-revert (ADR-0008): a normal Apply rather than a file
+        The revert half of Confirm-or-revert (ADR-0008), given `revert_breaking`'s list so a
+        benign edit made during the countdown survives (#192): a normal Apply rather than a file
         restore, because rendering the previous model produces the previous `monitors.lua`
         byte for byte -- same renderer, same input -- and a second way for bytes to reach
         the App dir would be a second place for bugs to live (ADR-0010 made the same call
@@ -882,7 +1632,7 @@ class Session:
         def put_back(rules: list[MonitorRule]) -> None:
             rules[:] = list(snapshot)
 
-        return self.edit_monitor_rules(put_back)
+        return self.edit_monitor_rules(put_back, title=entity_title("monitors", "changed"))
 
     def watch_monitors(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Call `callback` on every display hotplug; returns the way to stop.
@@ -913,12 +1663,6 @@ class Session:
         """The live workspace rule list. Identity is the selector string (ADR-0008)."""
         return self._model.entities.workspace_rules
 
-    def edit_workspace_rules(self, mutate: Callable[[list[WorkspaceRule]], None]) -> bool:
-        """Change the workspace rule list and write it. Shaped like `edit_monitor_rules`."""
-        return self._commit_entity_edit(
-            "workspace rules", lambda: mutate(self._model.entities.workspace_rules)
-        )
-
     def save_workspace_rule(self, rule: WorkspaceRule, *, original: str | None = None) -> bool:
         """Add a workspace rule, or replace the one whose selector was `original`.
 
@@ -935,6 +1679,10 @@ class Session:
         ):
             return False
 
+        replacing = original is not None and any(
+            existing.workspace == original for existing in rules
+        )
+
         def save() -> None:
             for index, existing in enumerate(rules):
                 if existing.workspace == original:
@@ -942,7 +1690,8 @@ class Session:
                     return
             rules.append(rule)
 
-        return self._commit_entity_edit("workspace rules", save)
+        title = entity_title("workspace_rules", "changed" if replacing else "added")
+        return self._commit_entity_edit("workspace rules", save, title=title)
 
     def remove_workspace_rule(self, selector: str) -> bool:
         """Delete the rule whose identity is `selector`."""
@@ -951,7 +1700,9 @@ class Session:
             rules = self._model.entities.workspace_rules
             rules[:] = [rule for rule in rules if rule.workspace != selector]
 
-        return self._commit_entity_edit("workspace rules", drop)
+        return self._commit_entity_edit(
+            "workspace rules", drop, title=entity_title("workspace_rules", "removed")
+        )
 
     # --- declarative entities (#70) -----------------------------------------------------
 
@@ -963,6 +1714,7 @@ class Session:
         "env",
         "permissions",
         "startup",
+        "plugins",
     )
     """The Entity kinds the one generic list API below serves, named as `EntitySet` names.
 
@@ -970,7 +1722,8 @@ class Session:
     `rules(kind)` gives: every caller is already parameterised by kind, because the seven
     Pages are one Page class seven times over a field catalogue. The names are `EntitySet`'s
     own attribute names so this list and that dataclass cannot drift into disagreeing about
-    what a kind is called.
+    what a kind is called. `plugins` is the eighth (#174): its editor is a group on the
+    Scripting Page rather than a Page of its own, but its list is edited the same way.
     """
 
     def declarations(self, kind: str) -> list[Any]:
@@ -980,13 +1733,15 @@ class Session:
         entities: list[Any] = getattr(self._model.entities, kind)
         return entities
 
-    def edit_declarations(self, kind: str, mutate: Callable[[list[Any]], None]) -> bool:
+    def edit_declarations(
+        self, kind: str, mutate: Callable[[list[Any]], None], *, title: str | None = None
+    ) -> bool:
         """Change one declarative list and write it, returning whether it was accepted.
 
-        Shaped exactly like `edit_rules`, refusal and all, and like it deliberately not on
-        the undo stack -- the same Entity-undo leftover.
+        Shaped exactly like `edit_rules`, refusal and undo step and all.
         """
-        return self._commit_entity_edit(kind, lambda: mutate(self.declarations(kind)))
+        items = self.declarations(kind)
+        return self._commit_entity_edit(kind, lambda: mutate(items), title=title)
 
     def identity_of(self, kind: str, entity: Any) -> str | None:
         """The identity string of one entity, or `None` for a kind that has no identity."""
@@ -1013,7 +1768,9 @@ class Session:
         """
         if self._identity_taken(kind, entity, index=None):
             return False
-        return self.edit_declarations(kind, lambda items: items.append(entity))
+        return self.edit_declarations(
+            kind, lambda items: items.append(entity), title=entity_title(kind, "added")
+        )
 
     def replace_declaration(self, kind: str, index: int, entity: Any) -> bool:
         """Replace the entity at `index`, keeping its position."""
@@ -1024,7 +1781,7 @@ class Session:
             if 0 <= index < len(items):
                 items[index] = entity
 
-        return self.edit_declarations(kind, swap)
+        return self.edit_declarations(kind, swap, title=entity_title(kind, "changed"))
 
     def remove_declaration(self, kind: str, index: int) -> bool:
         """Delete the entity at `index`."""
@@ -1033,7 +1790,22 @@ class Session:
             if 0 <= index < len(items):
                 del items[index]
 
-        return self.edit_declarations(kind, drop)
+        return self.edit_declarations(kind, drop, title=entity_title(kind, "removed"))
+
+    def move_declaration(self, kind: str, index: int, to: int) -> bool:
+        """Move the entity at `index` to position `to`: the plugin list's reorder (#174).
+
+        A move, as `move_rule` is, because that is what a drag is; a move off either end
+        or onto itself changes nothing and so records nothing.
+        """
+
+        def shift(items: list[Any]) -> None:
+            if 0 <= index < len(items) and 0 <= to < len(items) and index != to:
+                items.insert(to, items.pop(index))
+
+        return self.edit_declarations(
+            kind, shift, title=entity_title(kind, "reordered", plural=True)
+        )
 
     @property
     def curves(self) -> list[Curve]:
@@ -1096,6 +1868,11 @@ class Session:
         """Every saved profile as `(slug, profile)`, sorted by name (ADR-0015)."""
         return self._profile_store.list()
 
+    @property
+    def monitor_profiles_revision(self) -> int:
+        """Moves whenever a profile is saved, updated or deleted: the finder re-lists on it."""
+        return self._profile_store.revision
+
     def save_monitor_profile(
         self, name: str, connected: Sequence[Mapping[str, Any]] = ()
     ) -> str:
@@ -1143,14 +1920,30 @@ class Session:
 
         The pointer moves only after the commit is accepted, so a refused write never
         claims a profile the files do not show.
+
+        The one Entity commit that records no undo step, and it forgets every step over
+        the two lists, held ones included (#189). The pointer lives outside the model, so a
+        model-level undo (ADR-0010) could not take an activation back whole, and replaying
+        an older display step over the profile's lists would quietly undo half of it. The
+        activation's own take-back is its Confirm-or-revert countdown (ADR-0015).
         """
-
-        def put() -> None:
-            self._model.entities.monitors[:] = list(monitors)
-            self._model.entities.workspace_rules[:] = list(workspaces)
-
-        if not self._commit_entity_edit("monitor profile", put):
+        if self._refuse("monitor profile"):
             return False
+        entities = self._model.entities
+        moved = [
+            kind
+            for kind, wanted in (("monitors", monitors), ("workspace_rules", workspaces))
+            if list(getattr(entities, kind)) != list(wanted)
+        ]
+        edited = self._edited_module(ENTITY_KIND_MODULES[kind] for kind in moved)
+        if edited is not None:
+            # Before the lists, the pointer or any countdown move (#148 review R6).
+            self._say_refused("Display profile", edited)
+            return False
+        self._model.entities.monitors[:] = list(monitors)
+        self._model.entities.workspace_rules[:] = list(workspaces)
+        self._forget_entities(DISPLAY_KINDS)
+        self._applier.commit_entities()  # type: ignore[union-attr]  # _refuse proved it is here
         self._profile_store.set_active(active)
         return True
 
@@ -1227,9 +2020,10 @@ class Session:
     def monitor_state_snapshot(self) -> MonitorStateSnapshot:
         """Both rule lists plus the active pointer -- what a profile revert restores.
 
-        Wider than `monitor_snapshot` because activation touches workspace pins and the
+        Both lists and the pointer because activation touches workspace pins and the
         pointer too: reverting an activation that only put the monitor list back would
-        leave the pins of the profile the user just refused.
+        leave the pins of the profile the user just refused. A tuple of frozen rules, so
+        the snapshot cannot drift while a countdown runs however many edits land in it.
         """
         return MonitorStateSnapshot(
             monitors=tuple(self._model.entities.monitors),
@@ -1247,6 +2041,449 @@ class Session:
         return self._put_monitor_state(
             snapshot.monitors, snapshot.workspace_rules, snapshot.active
         )
+
+    # --- presets ----------------------------------------------------------------------------
+
+    @property
+    def _preset_store(self) -> PresetStore:
+        store = self._presets
+        if store is None:
+            store = self._presets = PresetStore(self._paths.presets_dir)
+        return store
+
+    def presets(self) -> tuple[tuple[str, Preset], ...]:
+        """Every saved Preset as `(slug, preset)`, sorted by name (ADR-0014)."""
+        return self._preset_store.list()
+
+    @property
+    def presets_revision(self) -> int:
+        """Moves whenever a Preset is saved, replaced or deleted. Presets are files, not
+        model state, so nothing else announces it: a reader pulls this when it lists."""
+        return self._preset_store.revision
+
+    def scope_size(self, scope: CaptureScope) -> int:
+        """How many Options `scope` captures in the loaded Schema: the checklist's count."""
+        return len(scoped_options(self._schema, scope))
+
+    def delete_preset(self, slug: str) -> str | None:
+        """Remove a Preset's file. Allowed on a read-only session, as saving is.
+
+        `None` once it is gone; otherwise why it is still there, as a sentence (finding 23
+        of the #153 review: the user saw nothing and the row stayed)."""
+        try:
+            self._preset_store.delete(slug)
+        except OSError as error:
+            why = (error.strerror or str(error)).lower()
+            return f"Its file could not be removed ({why}), so it is still in your presets."
+        return None
+
+    def save_preset(
+        self,
+        name: str,
+        scopes: Collection[CaptureScope],
+        *,
+        replace: bool = False,
+        done: Callable[[PresetSaveResult], None],
+    ) -> None:
+        """Capture the chosen scopes as a Preset named `name`, and report through `done`.
+
+        Live, each scoped Option is read off the compositor (ADR-0014: colours are frozen to
+        the values live at capture, whatever generated them -- a Bridge module sets colours
+        the model never holds), so `done` runs once the reads are back. Not live, the model's
+        set values are saved and `done` runs before this returns. Either way an Option that
+        nothing sets is never saved: a Preset holds values, and applying one never unsets.
+
+        Allowed on a read-only session: a Preset is a file in the App dir, not a config
+        write. An existing name's slug answers `PresetNameTaken` unless `replace`.
+        """
+        name = name.strip()
+        if not name:
+            done(PresetNotSaved("Give the preset a name."))
+            return
+        if len(name) > MAX_PRESET_NAME:
+            done(
+                PresetNotSaved(f"A preset's name can be at most {MAX_PRESET_NAME} characters.")
+            )
+            return
+        chosen = frozenset(scopes)
+        if not chosen:
+            done(PresetNotSaved("Choose at least one thing to save."))
+            return
+        options = tuple(
+            option
+            for scope in CaptureScope
+            if scope in chosen
+            for option in scoped_options(self._schema, scope)
+            if option.name not in self._retired
+        )
+        client = self._client
+        if not self.live or client is None:
+            if CaptureScope.COLORS in chosen and isinstance(
+                self.color_source(), Wallpaper | Several
+            ):
+                # The model holds the user's colours, not the ones the wallpaper made (S7).
+                done(
+                    PresetNotSaved(
+                        f"Wallpaper colors can only be captured while applying is on. "
+                        f"{self.offline_sentence}"
+                    )
+                )
+                return
+            if CaptureScope.WALLPAPER in chosen:
+                done(
+                    PresetNotSaved(
+                        "The wallpaper can only be saved while applying is on. "
+                        f"{self.offline_sentence}"
+                    )
+                )
+                return
+            values = {
+                option.name: stored_value(value)
+                for option in options
+                if (value := self._model.get(option.name)) is not UNSET
+            }
+            if not values and not self._model_read:
+                # Empty because nothing was read, not because it is all default (#148
+                # hand-test 12): saying "at Hyprland's default" would be false.
+                done(
+                    PresetNotSaved(
+                        f"Your settings have not been read, so there is nothing to save. "
+                        f"{self.offline_sentence or ''}".rstrip()
+                    )
+                )
+                return
+            done(self._write_preset(name, chosen, values, replace=replace))
+            return
+        daemon = self._wallpapers.detect() if CaptureScope.WALLPAPER in chosen else None
+        if CaptureScope.WALLPAPER in chosen and daemon is None:
+            done(
+                PresetNotSaved(
+                    f"The wallpaper could not be saved. {self._wallpapers.absent_reason()}"
+                )
+            )
+            return
+
+        async def capture() -> None:
+            try:
+                values = await self._live_values(client, options)
+            except IpcError as error:
+                _log.warning("preset capture failed: %s", error)
+                done(PresetNotSaved("Hyprland stopped answering, so nothing was saved."))
+                return
+            image: str | None = None
+            if daemon is not None:
+                try:
+                    shown = await asyncio.to_thread(daemon.current)
+                except WallpaperError as error:
+                    done(PresetNotSaved(f"The wallpaper could not be saved. {error}"))
+                    return
+                if not shown:
+                    done(PresetNotSaved(f"{daemon.name} is not showing an image to save."))
+                    return
+                image = str(shown[0].image)
+            done(self._write_preset(name, chosen, values, replace=replace, wallpaper=image))
+
+        self._spawn(capture())
+
+    async def _live_values(
+        self, client: CommandClient, options: Sequence[ResolvedOption]
+    ) -> dict[str, Any]:
+        """What the compositor shows for each of `options`, as the Preset file holds it.
+
+        An Option the running config does not set is skipped unless the model sets it: that
+        is "at Hyprland's default", and saving it would freeze a default as a choice. The
+        model's explicit null is its own statement, as in `read_state`.
+        """
+        values: dict[str, Any] = {}
+        for option in options:
+            model = self._model.get(option.name)
+            try:
+                reply = await client.getoption(option.name)
+            except NoSuchOption:
+                continue
+            if model is None:
+                values[option.name] = None
+                continue
+            # The re-read's own reading of a reply (F17 of the #148 review).
+            answer = classify_reply(option, reply)
+            if answer.kind is Answer.VALUE:
+                values[option.name] = stored_value(answer.value)
+                continue
+            if answer.kind is Answer.NO_VALUE:
+                values[option.name] = None
+                continue
+            if model is not UNSET:
+                values[option.name] = stored_value(model)
+        return values
+
+    def _write_preset(
+        self,
+        name: str,
+        scopes: frozenset[CaptureScope],
+        values: Mapping[str, Any],
+        *,
+        replace: bool,
+        wallpaper: str | None = None,
+    ) -> PresetSaveResult:
+        if not values and wallpaper is None:
+            return PresetNotSaved(
+                "Nothing to save: everything you chose is at Hyprland's default."
+            )
+        store = self._preset_store
+        slug = store.slug_for(name)
+        if not replace and store.exists(slug):
+            existing = store.load(slug)
+            return PresetNameTaken(slug, existing.name if existing is not None else slug)
+        live = self._live_hyprland
+        preset = Preset(
+            name=name,
+            created=datetime.now(UTC),
+            scopes=scopes,
+            options=values,
+            app_version=self._app_version,
+            hyprland_version=live.version
+            if live is not None
+            else self._schema.hyprland_version,
+            wallpaper=wallpaper,
+        )
+        try:
+            store.write(slug, preset)
+        except OSError as error:
+            _log.warning("could not write preset %s: %s", slug, error)
+            return PresetNotSaved(f"The preset could not be saved: {error.strerror or error}.")
+        return PresetSaved(slug, preset)
+
+    def preset_color_conflict(self, preset: Preset) -> Wallpaper | Several | None:
+        """The wallpaper source a Preset's Colors would fight, or `None` (ADR-0014).
+
+        Not `None` exactly when the Preset holds a colour and a wallpaper sets the colours
+        now: then `apply_preset` needs a `ColorChoice`. For the import preview to ask before
+        anything is saved, as the Presets group asks before applying.
+        """
+        colours = {option.name for option in scoped_options(self._schema, CaptureScope.COLORS)}
+        if colours.isdisjoint(preset.options):
+            return None
+        source = self.color_source()
+        return source if isinstance(source, Wallpaper | Several) else None
+
+    def apply_preset(
+        self, slug: str, *, colors: ColorChoice | None = None, wallpaper: bool = False
+    ) -> PresetApplyResult:
+        """Set every Option the Preset holds, as one gesture: one Apply transaction, one step.
+
+        One gesture because the edits are made in one synchronous burst: the queue's worker
+        runs on this loop, so it takes every key in one batch, and the step it records is a
+        `PresetStep` that one Ctrl+Z takes back whole. A Preset holds set values only, so
+        applying never unsets an Option the Preset does not name.
+
+        Colors while a wallpaper sets them (`preset_color_conflict`): without `colors`,
+        nothing is applied and the answer is `PresetColorConflict`. `USE_PRESET` gates the
+        wallpaper's Bridge in the same transaction (S6), so the source becomes Preset;
+        `KEEP_WALLPAPER` applies everything but the colours.
+
+        `wallpaper` is "change" rather than "keep mine": the Preset's image is shown through
+        the running daemon once the transaction stands, never before. When it cannot be,
+        `on_preset_note` says why and the rest still applies.
+
+        What this session cannot set is skipped and named in the result, never fatal (ADR-0014
+        §Sharing). Refused, with the Banner's reason, on a read-only session.
+        """
+        if not self.live or self._applier is None:
+            return PresetNotApplied(
+                f"Applying is off. {self.offline_sentence or 'This app is not connected.'}"
+            )
+        preset = self._preset_store.load(slug)
+        if preset is None:
+            return PresetNotApplied("This preset could not be read. It may have been deleted.")
+        conflict = self.preset_color_conflict(preset)
+        if conflict is not None and colors is None:
+            return PresetColorConflict(conflict)
+        source: SourceChange | None = None
+        kept: frozenset[str] = frozenset()
+        if conflict is not None and colors is ColorChoice.USE_PRESET:
+            if (blocked := self.color_source_blocked) is not None:
+                return PresetNotApplied(blocked)
+            bridges = self._manifest().bridges
+            source = SourceChange(
+                bridges,
+                tuple(
+                    bridge_states_for(
+                        PresetColors(), bridges, present=self._bridge_files_present(bridges)
+                    )
+                ),
+            )
+        elif conflict is not None:
+            kept = frozenset(o.name for o in scoped_options(self._schema, CaptureScope.COLORS))
+        values, _unknown, _invalid = self._preset_values(preset)
+        skipped = [name for name in preset.options if name not in values and name not in kept]
+        values = {name: value for name, value in values.items() if name not in kept}
+        edited = self._edited_module(module_relpath(self._schema[name]) for name in values)
+        if edited is not None:
+            # Whole or not at all: per Option, the set_option gate would apply half of it.
+            self._say_refused(preset.name, edited, toast=False)
+            return PresetNotApplied(
+                f"{edited.rsplit('/', 1)[-1]} was edited outside this app, so this preset was "
+                f"not applied. Keep, open or replace that file from the bar at the top."
+            )
+        if skipped:
+            _log.warning("preset %s: skipped %s", slug, ", ".join(skipped))
+        order = self._wallpaper_order(preset) if wallpaper else None
+        if values:
+            self._applying_presets.append(
+                _AppliedPreset(
+                    preset.name,
+                    {name: self._model.get(name) for name in values},
+                    dict(values),
+                    source,
+                    order,
+                )
+            )
+            if source is not None:
+                # Manifest only: this transaction's write renders the gated Entrypoint, so
+                # one reload lands the colours and the source together (S6).
+                self._writer.record_bridges(self._model, source.after)
+            for name, value in values.items():
+                self.set_option(name, value)
+        elif order is not None:
+            # Nothing to write, so no transaction to wait for.
+            self._spawn(self._show_preset_wallpaper(preset.name, order, None))
+        return PresetApplied(tuple(values), tuple(skipped))
+
+    def _wallpaper_order(self, preset: Preset) -> _WallpaperOrder | None:
+        """The Preset's image and the daemon to show it, or `None` after saying why not."""
+        if preset.wallpaper is None:
+            return None
+        image = Path(preset.wallpaper)
+        if not image.is_absolute():
+            image = self._paths.app_dir / image
+        if not image.is_file():
+            self._say_preset(
+                f"The wallpaper was not changed. {tilde_path(image, self._paths)} is missing."
+            )
+            return None
+        daemon = self._wallpapers.detect()
+        if daemon is None:
+            reason = self._wallpapers.absent_reason()
+            self._say_preset(f"The wallpaper was not changed. {reason}")
+            return None
+        return _WallpaperOrder(daemon, image)
+
+    def _say_preset(self, text: str) -> None:
+        if self.on_preset_note is not None:
+            self.on_preset_note(text)
+
+    async def _show_preset_wallpaper(
+        self, name: str, order: _WallpaperOrder, step: PresetStep | None
+    ) -> None:
+        """Show the Preset's image, after reading what it replaces, and add that to `step`.
+
+        Off the main loop: `query` and `img` are processes, and `img` decodes the image.
+        The step is already on the stack (the transaction stood), so it is replaced by one
+        that also puts the wallpaper back; with no step, the wallpaper is the whole gesture.
+        """
+        try:
+            before = await asyncio.to_thread(order.daemon.current)
+        except WallpaperError as error:
+            _log.warning("could not read the wallpaper before setting it: %s", error)
+            before = ()
+        try:
+            await asyncio.to_thread(order.daemon.set, order.image)
+        except WallpaperError as error:
+            self._say_preset(f"The wallpaper was not changed. {error}")
+            return
+        change = WallpaperChange(before, order.image)
+        if step is not None:
+            if not self._undo.replace(step, replace(step, wallpaper=change)):
+                # Ctrl+Z came while the daemon was still showing the image: the user has
+                # already asked for the look before, so that is shown now (finding 12).
+                said = await self._put_wallpaper_back(change)
+                if said:
+                    self._say_preset(" ".join(["Settings restored.", *said]))
+            return
+        recorded = PresetStep.of(name, None, wallpaper=change)
+        self._undo.record(recorded)
+        if recorded is not None and self.on_recorded is not None:
+            self.on_recorded(recorded)
+
+    def _preset_values(
+        self, preset: Preset
+    ) -> tuple[dict[str, Any], tuple[str, ...], tuple[str, ...]]:
+        """The Preset's values this session can set, parsed; then the names it cannot set
+        (`unknown`) and the values that do not parse (`invalid`), each in file order.
+
+        The one place a stored value is read, so the preview and the apply cannot disagree
+        about what a Preset does. Every value enters through `parse_value`: a Preset may
+        come from another machine (#169), and its strings reach the Writer's Lua.
+        """
+        values: dict[str, Any] = {}
+        unknown: list[str] = []
+        invalid: list[str] = []
+        for name, raw in preset.options.items():
+            option = self._schema.get(name)
+            if option is None or name in self._retired or self.unknown_to_version(option):
+                unknown.append(name)
+            elif raw is None and not option.nullable:
+                invalid.append(name)
+            else:
+                try:
+                    values[name] = None if raw is None else parse_value(option.type, raw)
+                except (ValueError, TypeError):
+                    invalid.append(name)
+        return values, tuple(unknown), tuple(invalid)
+
+    def preview_preset(self, preset: Preset) -> PresetPreview:
+        """What applying `preset` would change, Option by Option, grouped by Section.
+
+        Reads only: nothing is written and nothing is queued, so a Theme archive can be
+        shown before the user has agreed to anything (#169). `before` is what the Row
+        shows today, the model's value or Hyprland's default, and it is compared typed,
+        so a colour spelled two ways is not a change.
+        """
+        values, unknown, invalid = self._preset_values(preset)
+        changed: dict[str, list[PresetChange]] = {}
+        unchanged: list[str] = []
+        for name, after in values.items():
+            option = self._schema[name]
+            before = _typed(option, self.effective_value(option))
+            if before == after:
+                unchanged.append(name)
+            else:
+                changed.setdefault(option.section, []).append(
+                    PresetChange(option, before, after)
+                )
+        sections = tuple(
+            PresetSection(
+                section,
+                self._schema.section_title(section),
+                tuple(sorted(changed[section], key=lambda change: change.option.order)),
+            )
+            for section in self._schema.section_names
+            if section in changed
+        )
+        return PresetPreview(sections, tuple(unchanged), unknown, invalid)
+
+    def import_name(self, preset: Preset) -> str:
+        """The name an import of `preset` lands under: its own, or "<name> 2" when taken."""
+        return self._preset_store.free_name(preset.name)[0]
+
+    def import_preset(self, archive: ThemeArchive) -> PresetImportResult:
+        """Add a Theme archive's Preset to the store, its wallpaper beside it. Applies nothing.
+
+        Never an overwrite: a taken name is kept, and the import becomes "<name> 2"
+        (`PresetStore.add`). Allowed on a read-only session, as saving is. The caller asks
+        first (`ui/dialogs/theme_import.py`), then applies with `apply_preset(slug)`.
+        """
+        image = archive.wallpaper
+        try:
+            slug, preset = self._preset_store.add(
+                archive.preset, None if image is None else (image.extension, image.data)
+            )
+        except OSError as error:
+            _log.warning("could not import preset %s: %s", archive.preset.name, error)
+            return PresetNotImported(
+                f"The theme could not be added to your presets: {error.strerror or error}."
+            )
+        return PresetImported(slug, preset)
 
     # --- helper data ------------------------------------------------------------------------
 
@@ -1278,11 +2515,34 @@ class Session:
         """Live layer surfaces for the Pick-a-layer helper, or `None` when unanswerable."""
         self._fetch_helper_data("layers", lambda client: client.layers(), done)
 
+    def fetch_switches(
+        self, done: Callable[[tuple[Mapping[str, Any], ...] | None], None]
+    ) -> None:
+        """Live switch devices for the switch picker, or `None` when unanswerable.
+
+        Helper data only, never rule state (ADR-0008). `None` is "nobody is there to ask";
+        `()` is "the compositor answered and has no switch", and the picker words the two
+        differently: the first points at manual entry, the second explains the empty list.
+        """
+        self._fetch_helper_data("switches", lambda client: client.switches(), done)
+
+    def fetch_loaded_plugins(self, done: Callable[[tuple[str, ...] | None], None]) -> None:
+        """The names of the plugins Hyprland has loaded right now, or `None` if unanswerable.
+
+        Asked every time and never cached: a reload loads and unloads plugins, so the only
+        current answer is a fresh one. `hyprctl plugin list` rather than the `eval` of
+        `hl.get_loaded_plugins()` ADR-0018 first named: on 0.56.2 `eval` answers `ok`
+        whatever the Lua prints or returns, and `eval` clears `configerrors` on entry, while
+        `plugin list` is a plain read that is safe between a reload and its read-back
+        (probed on a nested instance, #174).
+        """
+        self._fetch_helper_data("plugins", lambda client: client.loaded_plugins(), done)
+
     def _fetch_helper_data(
         self,
         what: str,
-        query: Callable[[CommandClient], Coroutine[Any, Any, tuple[Mapping[str, Any], ...]]],
-        done: Callable[[tuple[Mapping[str, Any], ...] | None], None],
+        query: Callable[[CommandClient], Coroutine[Any, Any, _Answer]],
+        done: Callable[[_Answer | None], None],
     ) -> None:
         """The shared shape of a fire-and-callback helper query, failure spelled `None`."""
         client = self._client
@@ -1313,11 +2573,74 @@ class Session:
         Unreachable from the UI, which makes every control insensitive while read-only. It
         is an invariant rather than a guard for that reason -- worth stating so no later
         caller has to rediscover it.
+
+        A Retired Option is declined on a live session too, for every retirement reason
+        (#215): Hyprland does not take it, so a write is a config error and an auto-revert,
+        and a value in the model would also shadow the one the Manifest keeps for it. Its
+        Row is read-only; this holds the line for every other caller (Search, scripts).
+        An Option merely Not in this Hyprland is not retired and is not refused here: its
+        Reset is the user's way out of the config error the key raises.
         """
-        if self.live and self._applier is not None:
+        why = self._refusal(name)
+        if why is None:
             return False
-        _log.debug("read-only session: refusing the edit to %s", name)
+        _log.debug("refusing the edit to %s: %s", name, why)
         return True
+
+    def _refusal(self, name: str) -> str | None:
+        """Why an edit to `name` is declined, or `None` when it may go ahead."""
+        if not self.live or self._applier is None:
+            return "the session is read-only"
+        if name in self._retired:
+            return "it is Retired; the Manifest keeps its value"
+        return None
+
+    def _refused_by_edit(self, name: str) -> bool:
+        """`_edited_module` for an Option edit: refused, and said, before the model moves."""
+        option = self._schema.get(name)
+        if option is None:
+            return False
+        module = self._edited_module((module_relpath(option),))
+        if module is None:
+            return False
+        self._say_refused(option.title, module)
+        return True
+
+    def _edited_module(self, modules: Iterable[str]) -> str | None:
+        """The first of `modules` edited outside the app, or `None` when all may be written.
+
+        The write gate's other half, beside `_refuse` (#148 review R3-R6). Every change the
+        user makes passes it before the model moves: an Option edit, a list edit, a profile
+        activation, an undo, a Preset. A Module edited outside the app is never written over
+        (ADR-0005), so a change that belongs in one is refused here, whole and at once,
+        rather than made in the model and taken back when the Writer leaves the file alone:
+        the model stays as the file has it, and nothing is held to be lost or misnamed later.
+        The Writer still skips such a Module, for a file edited between this and the write
+        (`_take_back_refused`).
+        """
+        manifest = self._manifest()
+        for module in sorted(set(modules)):
+            path = self._paths.app_dir / module
+            record = manifest.modules.get(module)
+            if record is not None and not record.matches(path):
+                return module
+            if record is None and module in manifest.unverified and path.is_file():
+                return module
+        return None
+
+    def _say_refused(self, what: str, module: str, *, toast: bool = True) -> None:
+        """Name the refused change and the file that stopped it; keep the file on the Banner."""
+        _log.info("refused %s: %s was edited outside the app", what, module)
+        if module not in self._edited_files:
+            self._edited_files.append(module)
+        self._changed()
+        if toast and self.on_refused is not None:
+            self.on_refused(what, module)
+
+    def _forget_unedited(self) -> None:
+        """Drop from the Banner each file that is back as the app wrote it, or replaced."""
+        if self._edited_files:
+            self._edited_files = [m for m in self._edited_files if self._edited_module((m,))]
 
     # --- undo -------------------------------------------------------------------------------
 
@@ -1327,7 +2650,7 @@ class Session:
         return self.live and self._undo.can_undo
 
     @property
-    def last_gesture(self) -> UndoStep | None:
+    def last_gesture(self) -> Step | None:
         """The gesture `undo` would reverse, without reversing it.
 
         What the undo toast names its button after, so the toast and Ctrl+Z cannot come to
@@ -1347,17 +2670,233 @@ class Session:
         Undoing does not push a step of its own. There is no redo tier in v1, and a stack
         that recorded its own reversals would turn Ctrl+Z pressed twice into a value
         oscillating between two states rather than walking back through history.
+
+        `False` without touching the stack while an Entity edit is in flight -- the undo
+        then waits for it (`undo_queued`) and takes it back once it lands -- or while an
+        undo group holds edits over the top step's lists.
         """
         if not self.live or self._applier is None:
             return False
+        in_flight = [p.step for p in self._pending_entities if p.group is None]
+        if in_flight:
+            # The newest gesture is still being written, so the stack top is not "the last
+            # one" yet -- and an Entity step beneath it would read as stale and be dropped
+            # (review of #151, finding 12). Undo that gesture once it lands instead.
+            self._undo_waits_for = in_flight[-1]
+            return False
+        if self._held_over(self._undo.top):
+            # A group (a display countdown) holds edits over the top step's lists: undoing
+            # under it would find the step stale and drop it. The window reverts instead.
+            return False
+        if self._undo.top is not None:
+            edited = self._edited_module(self._step_modules(self._undo.top))
+            if edited is not None:
+                # The step stays on the stack, to undo once the file is settled.
+                self._say_refused("Undo", edited)
+                return False
         step = self._undo.pop()
         if step is None:
             return False
+        if isinstance(step, EntityStep):
+            return self._undo_entities(step)
+        if isinstance(step, PresetStep):
+            return self._undo_preset(step)
 
         self._restore({edit.name: edit.before for edit in step.edits})
         self._applier.commit(*step.names)
         self._changed()
         return True
+
+    def _step_modules(self, step: Step) -> set[str]:
+        """The Modules undoing `step` would write."""
+        if isinstance(step, EntityStep):
+            return {ENTITY_KIND_MODULES[kind] for kind in step.kinds}
+        names = (
+            (step.options.names if step.options is not None else ())
+            if isinstance(step, PresetStep)
+            else step.names
+        )
+        return {module_relpath(o) for n in names if (o := self._schema.get(n)) is not None}
+
+    def _undo_preset(self, step: PresetStep) -> bool:
+        """Put back everything a Preset changed: Options and Color source in one Apply
+        transaction, then the wallpaper once that stands (S7).
+
+        A Color source changed since the apply is the user's newer choice and stays; so does
+        a wallpaper changed since. `on_preset_note` says which, after "Settings restored."
+        """
+        notes: list[str] = []
+        source = step.color_source
+        current = self._manifest().bridges
+        if source is not None and (
+            _gates(current) != _gates(source.after) or self.color_source_blocked is not None
+        ):
+            notes.append("Wallpaper colors were changed since, so they stay as they are.")
+            source = None
+        elif source is not None:
+            # Only the gates go back: an entry whose tool has written its first file since
+            # stays loaded rather than waiting again (addendum 36 of the #153 review).
+            present = self._bridge_files_present(source.before)
+            source = SourceChange(tuple(with_presence(source.before, present=present)), current)
+        if step.options is None:
+            # The values matched already, so there are no Options to carry the gate back:
+            # the Entrypoint goes back on its own transaction (`set_color_source`'s).
+            if source is not None:
+                before = source.before
+                self._set_bridges(
+                    lambda _current: before,
+                    self._manifest().with_bridges(before),
+                    "put the Color source back",
+                )
+            self._spawn(self._finish_preset_undo(step.wallpaper, tuple(notes)))
+            return True
+        if source is not None:
+            self._writer.record_bridges(self._model, source.before)
+        self._undoing_presets.append(
+            _UndonePreset(frozenset(step.options.names), source, step.wallpaper, tuple(notes))
+        )
+        self._restore({edit.name: edit.before for edit in step.options.edits})
+        self._applier.commit(*step.options.names)  # type: ignore[union-attr]  # undo checked
+        self._changed()
+        return True
+
+    async def _finish_preset_undo(
+        self, wallpaper: WallpaperChange | None, notes: tuple[str, ...]
+    ) -> None:
+        """Put the wallpaper back if it still shows the Preset's, then say what stayed."""
+        said = list(notes)
+        if wallpaper is not None:
+            said.extend(await self._put_wallpaper_back(wallpaper))
+        if said:
+            self._say_preset(" ".join(["Settings restored.", *said]))
+
+    async def _put_wallpaper_back(self, change: WallpaperChange) -> list[str]:
+        """Show `change.before` again; what could not be done, as sentences."""
+        daemon = self._wallpapers.detect()
+        if daemon is None:
+            return [f"The wallpaper was not put back. {self._wallpapers.absent_reason()}"]
+        try:
+            now = await asyncio.to_thread(daemon.current)
+            if not now or any(shown.image != change.after for shown in now):
+                return ["The wallpaper was changed since, so it stays as it is."]
+            if not change.before:
+                return ["The wallpaper was not put back: what it was could not be read."]
+            await asyncio.to_thread(daemon.show, change.before)
+        except WallpaperError as error:
+            return [f"The wallpaper was not put back. {error}"]
+        return []
+
+    @property
+    def undo_queued(self) -> bool:
+        """Whether a Ctrl+Z is waiting for an edit in flight, to undo it once it lands."""
+        return self._undo_waits_for is not None
+
+    def _held_over(self, step: Step | None) -> bool:
+        """Whether an undo group holds edits, landed or in flight, over `step`'s lists."""
+        if not isinstance(step, EntityStep):
+            return False
+        held = [p.step for p in self._pending_entities if p.group is not None]
+        if self._undo_group is not None:
+            held += self._undo_group.held
+        return any(each.kinds & step.kinds for each in held)
+
+    def _undo_when_landed(self) -> bool:
+        """Run the undo a Ctrl+Z left waiting, if this result landed its edit. `True` if so.
+
+        Only while that edit is the stack top and nothing newer is in flight: a newer edit,
+        or a failed one, means the gesture the user pressed Ctrl+Z over is gone or no longer
+        the last, and the wait is dropped rather than undoing something else.
+        """
+        waited = self._undo_waits_for
+        if waited is None or any(p.step is waited for p in self._pending_entities):
+            return False
+        self._undo_waits_for = None
+        if self._undo.top is not waited or any(p.group is None for p in self._pending_entities):
+            return False
+        (self.on_undo_due or self.undo)()
+        return True
+
+    def _undo_entities(self, step: EntityStep) -> bool:
+        """Put each list back to `before` and write it -- or refuse a step gone stale.
+
+        Stale means a list no longer reads as the step left it: something the stack never
+        saw changed it, and writing `before` over it would undo that change too. The step is
+        dropped rather than kept, because it can never become replayable again. The write
+        is a bare `commit_entities`, outside `_commit_entity_edit`, so it records nothing.
+        """
+        entities = self._model.entities
+        if any(tuple(getattr(entities, edit.kind)) != edit.after for edit in step.edits):
+            _log.info("undo: %r is stale, its list changed since; dropped", step.title)
+            return False
+        for edit in step.edits:
+            getattr(entities, edit.kind)[:] = edit.before
+        self._applier.commit_entities()  # type: ignore[union-attr]  # undo checked it is here
+        self._changed()
+        return True
+
+    def begin_undo_group(self, kinds: frozenset[str]) -> UndoGroup:
+        """Hold every Entity step over `kinds` until `end_undo_group` makes it one, or none.
+
+        For a caller whose several commits are one gesture to the user -- a Confirm-or-revert
+        countdown: kept, its edits are one step; reverted (the revert committed inside the
+        group), they cancel out and nothing is recorded. Held steps raise no toast. Steps
+        over other lists go to the stack as usual. One group at a time.
+        """
+        if self._undo_group is not None:
+            raise RuntimeError("an undo group is already open")
+        group = self._undo_group = UndoGroup(frozenset(kinds))
+        return group
+
+    def end_undo_group(self, group: UndoGroup, *, title: str) -> None:
+        """Close `group`: push what it held as one step titled `title`, if anything moved.
+
+        Commits still in flight are waited for -- the merge happens when the last one
+        reports. If any of the group's transactions failed, nothing is pushed. Ending a group
+        twice is a no-op.
+        """
+        if group.title is not None:
+            return
+        group.title = title
+        if self._undo_group is group:
+            self._undo_group = None
+        self._announce(self._close_group(group))
+
+    def _close_group(self, group: UndoGroup) -> EntityStep | None:
+        """The merged step, once `group` is ended and nothing it holds is in flight."""
+        if group.finished or group.title is None:
+            return None
+        if any(pending.group is group for pending in self._pending_entities):
+            return None
+        group.finished = True
+        if group.failed:
+            return None
+        return EntityStep.merge(group.held, group.title)
+
+    def _announce(self, step: EntityStep | None) -> None:
+        if step is None:
+            return
+        self._undo.record(step)
+        if self.on_recorded is not None:
+            self.on_recorded(step)
+
+    def _forget_entities(self, kinds: Collection[str]) -> None:
+        """Drop every Entity step over `kinds`: stacked, in flight and held in a group.
+
+        For lists changed off the stack (S1.5 of #151): a foreign reload adopted a hand edit,
+        or a profile was activated. Replaying any of those steps would overwrite the change.
+        """
+        gone = frozenset(kinds)
+        self._undo.forget(gone)
+        groups = {id(p.group): p.group for p in self._pending_entities if p.group is not None}
+        self._pending_entities = [
+            pending for pending in self._pending_entities if not pending.step.kinds & gone
+        ]
+        if self._undo_group is not None:
+            groups[id(self._undo_group)] = self._undo_group
+        for group in groups.values():
+            group.held = [step for step in group.held if not step.kinds & gone]
+            # A dropped in-flight step may have been all an ended group was waiting for.
+            self._announce(self._close_group(group))
 
     def _restore(self, values: Mapping[str, OptionValue]) -> None:
         """Put the model back to `values`, and forget any gesture open on those Options.
@@ -1376,16 +2915,36 @@ class Session:
     # --- lifecycle --------------------------------------------------------------------------
 
     def start(self) -> None:
-        """Connect, recover the model, and begin applying. Returns immediately."""
+        """Connect, recover the model, and begin applying. Returns immediately.
+
+        A Hyprland too old for a Lua config is not connected to at all: `_go_live` ends by
+        clearing the read-only reason, and this one has to outlive it.
+        """
+        if self._unsupported_reason is not None:
+            self.set_read_only(self._unsupported_reason)
+            return
+        if (missing := lua_missing_reason()) is not None:
+            # Ruling A1 of the #148 review (F9): without Lua the app cannot read its own
+            # Modules back, and a write from a model it could not read drops the keys it
+            # missed. Read-only, saying what to install.
+            self._lua_missing = missing
+            self.set_read_only(missing)
+            return
+        if self._applier is None and self._offline_reason != _NOT_CONNECTED_YET:
+            # A reason set before the start (a first-run offer that has since been kept) is
+            # no longer why; until `_go_live` answers, connecting is.
+            self._offline_reason = _NOT_CONNECTED_YET
+            self._changed()
         self._spawn(self._go_live())
 
-    def set_read_only(self, reason: str) -> None:
+    def set_read_only(self, reason: str, *, sentence: str | None = None) -> None:
         """Declare the session read-only for a reason it could not discover itself.
 
         The app knows one such reason: without PyGObject's asyncio integration there is no
         loop to run a transaction on, so no amount of connecting would help. Saying so up
         front beats leaving the Banner on "Connecting to Hyprland…" forever.
         """
+        self._offline_sentence = sentence
         self._go_offline(reason)
         self._changed()
 
@@ -1393,7 +2952,10 @@ class Session:
         try:
             instance = self._connect()
         except NoInstance as error:
-            self.set_read_only(str(error))
+            await self._read_files()
+            # The reason in the user's words; the variable name is for the log (hand-test 2).
+            _log.info("no compositor: %s", error)
+            self.set_read_only("Hyprland is not running in this session")
             return
 
         events = EventStream(instance, on_lost=self._on_stream_lost)
@@ -1403,8 +2965,18 @@ class Session:
             await self._recover(client)
         except IpcError as error:
             await events.aclose()
-            self.set_read_only(f"{instance.command_socket} is not answering: {error}")
+            await self._read_files()
+            _log.warning("%s is not answering: %s", instance.command_socket, error)
+            self.set_read_only("Hyprland is not answering")
             return
+
+        if self._live_hyprland is None:
+            # The startup read missed (#214), so the Schema lacks what a supplement would
+            # have added. Asked before the Applier exists, so nothing writes in between, and
+            # before retirement, which tells "removed" from "not in this schema" by it.
+            self._live_hyprland = await fetch_live_hyprland(client)
+        # Before the Applier exists: the first write rewrites the Modules the scan reads.
+        await self._scan_drift(client)
 
         self._events = events
         events.subscribe(self._on_monitor_hotplug, MONITOR_ADDED, MONITOR_REMOVED)
@@ -1419,12 +2991,96 @@ class Session:
             on_result=self._applied,
         )
         self._applier.start()
-        self._offline_reason = None
+        self._retire_and_restore(self._applier)
+        if self._offline_reason == _NOT_CONNECTED_YET:
+            # Only its own reason: one set while this awaited -- a Roll back, a lost stream
+            # -- outlives it, or the next edit wrote over a restored file (#148 review R2).
+            self._offline_reason = None
+            self._offline_sentence = None
+        # A tool that ran while the app was closed may have written its file (S4).
+        self.load_waiting_bridges()
+        self.load_new_user_lua()
         self._changed()
 
+    def load_new_user_lua(self) -> bool:
+        """Load a `user.lua` made after the Entrypoint was written, by regenerating it.
+
+        The Entrypoint is regenerated only when the Module set changes, so a `user.lua`
+        made later stayed unloaded until some unrelated edit, while the app's own copy
+        sends users there (F24 of the #148 review). Called when the session goes live,
+        after a foreign reload and when the Scripting page refreshes. Never over an
+        Entrypoint edited by hand: that is the user's to change, and its Banner says so.
+        Returns whether a regeneration was queued.
+        """
+        if not self.live or self._applier is None or self.entrypoint_edited:
+            return False
+        user = self._paths.user_lua
+        if not user.is_file():
+            return False
+        try:
+            text = self._paths.entrypoint.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        if f'require("{self._paths.require_path(user)}")' in text:
+            return False
+        return self._recovery_write(
+            lambda before: self._writer.regenerate_entrypoint(
+                self._model, before_replace=before
+            ),
+            self._manifest(),
+            "load user.lua",
+        )
+
+    def _retire_and_restore(self, applier: Applier) -> None:
+        """ADR-0012 §Retirement, once per start, before the session's first write.
+
+        The first write rewrites each Module from the model, which cannot hold a retired
+        Option, so the value is read out of the Module and kept in the Manifest first. Then
+        a write without the key clears the config error a removed key raises, and puts back
+        any kept value whose Option has returned or been renamed. A restored value leaves
+        the Manifest only once that write has put it in a Module (`landed`), so stopping in
+        between loses nothing: the next start finds it kept and restores it again.
+        """
+        live = self._live_hyprland
+        before = self._manifest()
+        found = retirement.detect(before, self._schema, live)
+        values = retirement.capture(self._paths.app_dir, found)
+        kept = retirement.retire(before, found, values)
+        remaining, restored = retirement.restore(kept, self._schema, live)
+        if kept.retired != before.retired:
+            self._writer.set_retired(self._model, kept.retired)
+        self._retired = remaining.retired
+        for each in restored:
+            self._model.set(each.option.name, each.value)
+        if found or restored:
+            self._spawn(self._write_retirement(applier, restored))
+
+        notices: list[Notice] = [
+            *retirement.unannounced(remaining),
+            *UnkeptNotice.of(found, values),
+        ]
+        if (renamed := RenamedNotice.of(restored)) is not None:
+            notices.append(renamed)
+        for notice in notices:
+            if self.on_notice is not None:
+                self.on_notice(notice)
+
+    async def _write_retirement(
+        self, applier: Applier, restored: Sequence[Restoration]
+    ) -> None:
+        """Write the model without the retired keys and with the restored values, then
+        stop keeping each restored value the write recorded."""
+        # Dropping a retired key changes the Module, not any Option the model holds.
+        applier.force_write()
+        await applier.apply(*(each.option.name for each in restored))
+        if restored:
+            self._writer.set_retired(
+                self._model, retirement.landed(self._manifest(), restored).retired
+            )
+
     def _manifest(self) -> Manifest:
-        return Manifest.load(
-            self._paths.manifest,
+        return load_manifest(
+            self._paths,
             app_version=self._app_version,
             schema_version=self._schema.hyprland_version,
         )
@@ -1446,7 +3102,7 @@ class Session:
         """
         self._load_entities()
         owned = self._owned()
-        result = await read_state(self._model, client, owned)
+        result = await self._read_model(client, owned, launch=True)
         _log.info(
             "recovered %d option(s) from %d owned; %d unreadable, %d unknown",
             len(result.adopted),
@@ -1454,11 +3110,167 @@ class Session:
             len(result.unreadable),
             len(result.unknown),
         )
+        self._model_read = True
         # "On launch ... the full re-read + drift scan attributes any errors and raises the
         # same Banner" (ADR-0016 §Surfacing). Breakage that happened while the app was closed
         # is not a lesser kind of breakage, and the app has to open saying so.
         await self._scan(client)
         return result
+
+    async def _read_files(self) -> None:
+        """With no compositor to ask, read the App dir's own Modules, read-only.
+
+        So the window shows the user's settings rather than Hyprland's defaults, and lists
+        their binds and rules rather than "none yet" (#148 hand-test 12). Every options
+        Module the Manifest records is read, hand-edited or not: nothing is written from
+        this, and a hand edit is what the file says. Without Lua there is nothing to read
+        the Options with, and `model_read` stays false so nothing claims otherwise.
+        """
+        if not self._paths.manifest.is_file():
+            return
+        self._load_entities()
+        try:
+            values = await asyncio.to_thread(
+                overrides.written_values,
+                self._paths.app_dir,
+                self._schema,
+                self._manifest(),
+                verified=False,
+            )
+        except LuaUnavailable as error:
+            _log.warning("no Lua and no Hyprland, so the settings cannot be read: %s", error)
+            return
+        for name, value in values.items():
+            if value is None:
+                self._model.set_null(name)
+            else:
+                self._model.set(name, value)
+        self._model_read = True
+
+    @property
+    def model_read(self) -> bool:
+        """Whether the model holds the user's config: read at launch, live or off the files.
+
+        False before that, for a config not converted yet, and offline without Lua. What
+        Export and an offline Save-as-preset ask before acting on the model (F6 of the
+        #148 review): an empty model is not "everything at Hyprland's default".
+        """
+        return self._model_read
+
+    async def _read_model(
+        self, client: CommandClient, options: Sequence[ResolvedOption], *, launch: bool
+    ) -> ReRead:
+        """Bring the model into step with the config, never taking an override as the user's.
+
+        The one re-read behind launch, a foreign reload and a timed-out transaction
+        (finding 11 of the #153 review). The live value of a key is the user's own only when
+        nothing loaded after the app's Module set it, and the app cannot see that from
+        `getoption`: `user.lua` and a theming tool's Bridge module both load later. So:
+
+        - A key an app Module sets whose bytes still hash to the Manifest (`verified`) takes
+          the Module's value: the user set it here, and an override of it is the drift
+          scan's to badge, not the model's to adopt. At launch the value is read off the
+          Module; after a reload the model already holds it, since it rendered the Module.
+        - A key a loading Bridge module sets (`bridge_owners`) is never read live: the
+          answer is the tool's colour.
+        - A key of a Module edited outside the app is read off that Module's own text, or
+          left unset where the text does not set it -- never live, where `user.lua` or a
+          tool may be what answers (#148 review R3). So is a key of a Module that was
+          edited at the last read and is back as the app wrote it: the model resyncs.
+        - Every other key -- one only `user.lua` names -- is read live.
+
+        At launch without a Lua interpreter the Modules cannot be read, so verified keys are
+        read live too, still leaving out the Bridge-owned ones.
+        """
+        manifest = self._manifest()
+        tools = owners(manifest.bridges, quarantined=manifest.quarantined)
+        edited = self._edited_option_modules(manifest)
+        off_text = edited | self._read_off_text
+        self._read_off_text = edited
+        texts = [o for o in options if module_relpath(o) in off_text]
+        if not launch:
+            pinned = overrides.verified_options(self._paths.app_dir, manifest)
+            kept = {*pinned, *tools, *(o.name for o in texts)}
+            result = await read_state(
+                self._model, client, [o for o in options if o.name not in kept]
+            )
+            await self._read_off_text_of(off_text, texts)
+            return result
+        try:
+            written = await asyncio.to_thread(
+                overrides.written_values, self._paths.app_dir, self._schema, manifest
+            )
+        except LuaUnavailable as error:
+            _log.warning("no Lua, so the app's Modules are read off the compositor: %s", error)
+            written = {}
+        # Every key is still asked about, so one this Hyprland no longer has stays out of
+        # the model (retirement reads it out of the Module next); then the Module's value
+        # replaces whatever the compositor answered.
+        result = await read_state(
+            self._model, client, [o for o in options if o.name not in tools]
+        )
+        wanted = {option.name for option in options}.difference(result.unknown)
+        for name, value in written.items():
+            if name not in wanted:
+                continue
+            if value is None:
+                self._model.set_null(name)
+            else:
+                self._model.set(name, value)
+        await self._read_off_text_of(
+            off_text, [o for o in texts if o.name not in result.unknown], launch=True
+        )
+        return result
+
+    def _edited_option_modules(self, manifest: Manifest) -> frozenset[str]:
+        """The options Modules edited outside the app, as the Manifest's hashes tell."""
+        return frozenset(m for m in manifest.hand_edited(self._paths) if is_option_module(m))
+
+    async def _read_off_text_of(
+        self,
+        modules: Collection[str],
+        options: Sequence[ResolvedOption],
+        *,
+        launch: bool = False,
+    ) -> None:
+        """Set each of `options` from its Module's own text, or unset it there (R3).
+
+        A Module that cannot be read is read off the app's last version of it; with none,
+        the Module is not known (R9), which `replace_edited_file` refuses to write rather
+        than writing it empty. Its Options keep what the model holds -- the app's values --
+        except at `launch`, when what the model holds is the compositor's answer, which may
+        be `user.lua`'s: they are unset there.
+        """
+        if not modules or not options:
+            return
+        try:
+            values, unknown = await asyncio.to_thread(
+                overrides.module_values,
+                self._paths.app_dir,
+                self._schema,
+                modules,
+                last_written=self._last_written,
+            )
+        except LuaUnavailable as error:
+            _log.warning("no Lua, so an edited Module's settings are not known: %s", error)
+            values, unknown = {}, frozenset(modules)
+        self._not_known = (self._not_known - set(modules)) | unknown
+        for option in options:
+            if module_relpath(option) in unknown:
+                if launch:
+                    self._model.unset(option.name)
+                continue
+            if option.name not in values:
+                self._model.unset(option.name)
+            elif values[option.name] is None:
+                self._model.set_null(option.name)
+            else:
+                self._model.set(option.name, values[option.name])
+
+    def _last_written(self, module: str) -> bytes | None:
+        """The app's last version of `module`: the Snapshot of the bytes the Manifest names."""
+        record = self._manifest().modules.get(module)
+        return self._journal.snapshot(record.sha256) if record is not None else None
 
     async def _scan(self, client: CommandClient) -> None:
         """Read what the live config is complaining about, and raise the Banner for it.
@@ -1475,6 +3287,43 @@ class Session:
             _log.warning("could not read the config's health: %s", error)
             return
         self._observe_foreign(errors, binds)
+
+    async def _rescan_drift(self, client: CommandClient) -> None:
+        """A drift scan on its own, then the Rows told: the callers of `_scan_drift` that
+        already end in `_changed` need no second refresh."""
+        await self._scan_drift(client)
+        self._changed()
+
+    async def _scan_drift(self, client: CommandClient, *, keep: Collection[str] = ()) -> None:
+        """ADR-0005's drift badge for every key the app's Modules set (`overrides.py`, #191).
+
+        At launch and after every foreign reload, after `_scan`, so the Row wears its pill
+        before the user edits anything. Replaces both marks, except on keys a transaction
+        read back while this ran (`_drift_watches`). A scan that cannot run -- no Lua, or a
+        compositor that stopped answering -- clears them: marks from before a reload
+        describe a config that has just been replaced, and no scan is no evidence.
+
+        The Modules are evaluated in a worker thread: one Lua process per Module, and the
+        main loop is the window's (#214).
+        """
+        watch: set[str] = set()
+        self._drift_watches.append(watch)
+        try:
+            expected = await asyncio.to_thread(
+                overrides.reference, self._paths.app_dir, self._schema, self._manifest()
+            )
+            mismatches = await overrides.scan(client, expected)
+        except LuaUnavailable as error:
+            if not self._lua_missing_logged:
+                self._lua_missing_logged = True
+                _log.warning("no drift scan, so no Overridden pills until an edit: %s", error)
+            mismatches = ()
+        except IpcError as error:
+            _log.warning("could not scan for overridden settings: %s", error)
+            mismatches = ()
+        finally:
+            self._drift_watches.remove(watch)
+        self._mark(mismatches, covers=lambda name: name not in watch and name not in keep)
 
     async def drain(self) -> None:
         """Wait until every pending edit has been applied and confirmed.
@@ -1555,14 +3404,54 @@ class Session:
             self._applier.forget_previews()
         # Every open gesture is void: the values it started from describe a config that has
         # just been replaced, and the re-read below is about to overwrite the model they
-        # would have been measured against. The *stack* survives -- a recorded step is a
-        # model delta and replays through a normal transaction whatever else has happened
-        # since (ADR-0010 §Undo) -- but a half-open one would produce a delta spanning
-        # somebody else's reload.
+        # would have been measured against. The *stack* survives -- a recorded Option step
+        # is a model delta and replays through a normal transaction whatever else has
+        # happened since (ADR-0010 §Undo) -- but a half-open one would produce a delta
+        # spanning somebody else's reload. Entity steps over a list the re-read changes are
+        # dropped there (`_reread_after_foreign_reload`).
         self._open_gestures.clear()
         self._spawn(self._reread_after_foreign_reload())
 
-    async def _reread_after_foreign_reload(self) -> None:
+    def adopt_import(self) -> None:
+        """A kept Import into a running session: the App dir is the wizard's now (ADR-0009).
+
+        The wizard writes every Module with its own Writer and records them in the Manifest,
+        so the hash-gated re-read of a foreign reload finds nothing to adopt and the model
+        keeps the config from before the import -- which the next edit would write back
+        over it (F5 of the #148 review). So the model is read again as at launch, every
+        Module whole, and the undo stack goes: its steps are over a config that is gone.
+        A session that never went live has nothing to re-read; its start reads the files.
+        """
+        if self._client is None or self._applier is None:
+            return
+        self._spawn(self._adopt_import(self._client))
+
+    async def _adopt_import(self, client: CommandClient) -> None:
+        self._model.clear()
+        self._undo = UndoStack()
+        self._open_gestures.clear()
+        self._pending_entities = []
+        self._undo_group = None
+        self._undo_waits_for = None
+        self._edited_files.clear()
+        try:
+            await self._recover(client)
+        except IpcError as error:
+            _log.warning("lost contact with Hyprland: %s", error)
+            self.set_read_only("Lost contact with Hyprland")
+            return
+        await self._scan_drift(client)
+        self.load_waiting_bridges()
+        if self._lua_missing is None and self._unsupported_reason is None:
+            # Held read-only behind an import offer (a rolled-back switch, #148 hand-test
+            # 20): the import is kept now, so the session applies again.
+            self._offline_reason = None
+            self._offline_sentence = None
+        self._changed()
+
+    async def _reread_after_foreign_reload(self, keep: Collection[str] = ()) -> None:
+        """`keep`: keys whose drift marks this re-read's scan leaves alone -- a timed-out
+        transaction's, which read "Not confirmed" until a later reading covers them."""
         client = self._client
         if client is None:
             return
@@ -1574,22 +3463,33 @@ class Session:
         wanted.update(option.name for option in self._owned())
         stale = tuple(option for option in self._schema.options if option.name in wanted)
         try:
-            result = await read_state(self._model, client, stale)
+            result = await self._read_model(client, stale, launch=False)
         except IpcError as error:
-            self.set_read_only(f"lost contact with Hyprland: {error}")
+            _log.warning("lost contact with Hyprland: %s", error)
+            self.set_read_only("Lost contact with Hyprland")
             return
         _log.info(
             "foreign reload: %d option(s) re-read, %d no longer set",
             len(result.adopted),
             len(result.cleared),
         )
+        before = self._entity_lists()
         self._reread_binds()
         self._reread_rules()
         self._reread_monitors()
         self._reread_declarations()
+        # An adopted hand edit changed lists the stack's steps were taken over; replaying
+        # one would write its old list over the edit (ADR-0010 §Undo, amended in #189).
+        after = self._entity_lists()
+        self._forget_entities([kind for kind in before if before[kind] != after[kind]])
         # The other half ADR-0016 asks for: somebody else's reload can break the config just
         # as thoroughly as the app's own, and it surfaces identically.
         await self._scan(client)
+        await self._scan_drift(client, keep=keep)
+        self._forget_unedited()
+        # A tool run from the user's own script may have written its first file (S4).
+        self.load_waiting_bridges()
+        self.load_new_user_lua()
         self._changed()
 
     def _reread_binds(self) -> None:
@@ -1672,12 +3572,12 @@ class Session:
             self._load_monitors()
 
     def _reread_declarations(self) -> None:
-        """Adopt hand edits to the six declarative Modules, gated like the others.
+        """Adopt hand edits to the seven declarative Modules, gated like the others.
 
-        One gate over all six and one load for all six, for `_reread_rules`'s reason:
+        One gate over all seven and one load for all seven, for `_reread_rules`'s reason:
         `_load_declarations` splices misfiled entities to the kind they are, so re-reading
         one file without the others would drop whatever it found belonging to a list the
-        other five own.
+        other six own.
         """
         changed = False
         for module in self.DECLARATION_MODULES:
@@ -1816,18 +3716,19 @@ class Session:
         ENV_MODULE,
         PERMISSIONS_MODULE,
         AUTOSTART_MODULE,
+        PLUGINS_MODULE,
     )
-    """The six Modules `_load_declarations` reads, in Entrypoint order (#70)."""
+    """The seven Modules `_load_declarations` reads: the six of #70 and `plugins.lua` (#174)."""
 
     def _load_declarations(self) -> bool:
-        """Read the six declarative Entity Modules into the model.
+        """Read the seven declarative Entity Modules into the model.
 
         The same shape as `_load_rules` and `_load_monitors`, one tier wider: every file
         feeds every list, so an entity someone hand-moved into the wrong Module comes back
         as what it is rather than vanishing -- and vanishing is not cosmetic here, because a
         list the model believes is empty is a Module the Writer prunes.
 
-        All six are adopted together or none is. Six files is where that rule starts to
+        All seven are adopted together or none is. Seven files is where that rule starts to
         look expensive, and it is exactly where it starts to matter: a single unparseable
         `gestures.lua` must not license the Writer to delete a user's `env.lua`, which is
         the one Module whose contents Hyprland will not restore on the next reload.
@@ -1839,6 +3740,7 @@ class Session:
         env: list[EnvVar] = []
         permissions: list[Permission] = []
         startup: list[StartupCommand] = []
+        plugins: list[PluginLoad] = []
 
         for module in self.DECLARATION_MODULES:
             path = self._paths.app_dir / module
@@ -1857,10 +3759,11 @@ class Session:
             env.extend(parsed.env)
             permissions.extend(parsed.permissions)
             startup.extend(parsed.startup)
+            plugins.extend(parsed.plugins)
 
         _log.info(
             "read %d curve(s), %d animation(s), %d gesture(s), %d device(s), "
-            "%d env var(s), %d permission(s), %d startup command(s)",
+            "%d env var(s), %d permission(s), %d startup command(s), %d plugin(s)",
             len(curves),
             len(animations),
             len(gestures),
@@ -1868,6 +3771,7 @@ class Session:
             len(env),
             len(permissions),
             len(startup),
+            len(plugins),
         )
         self._model.entities.curves[:] = curves
         self._model.entities.animations[:] = animations
@@ -1876,6 +3780,7 @@ class Session:
         self._model.entities.env[:] = env
         self._model.entities.permissions[:] = permissions
         self._model.entities.startup[:] = startup
+        self._model.entities.plugins[:] = plugins
         return True
 
     def _on_stream_lost(self) -> None:
@@ -1886,10 +3791,10 @@ class Session:
         """One transaction finished: close its gestures, then recover or record.
 
         The order is the whole design. Closing first turns "which Options were mid-gesture?"
-        into a concrete delta; that delta is then either the thing to *undo automatically*
-        (Hyprland rejected our own write) or the thing to *remember* (it stands, so Ctrl+Z
-        should be able to take it back). A gesture can never be both, which is why the failed
-        one is never pushed rather than pushed and popped.
+        into a concrete delta; that delta is then either the thing to *take out again* (the
+        transaction does not stand, `_stands`) or the thing to *remember* (it stands, so
+        Ctrl+Z should be able to take it back). A gesture can never be both, which is why the
+        failed one is never pushed rather than pushed and popped.
         """
         if self._reverting:
             # The restore transaction's own result. It carries no gesture of the user's, and
@@ -1905,41 +3810,384 @@ class Session:
             return
 
         delta = self._close(result.keys)
-        blamed = self._own_write_errors(result)
-        if blamed and self._may_auto_revert(delta):
+        refused = self._take_back_options(result, delta)
+        presets = self._carried_presets(result.keys)
+        for preset in reversed(presets):
+            # From each Preset's own snapshot, the oldest last so its value wins: an Option
+            # it set while an earlier edit of it was in flight had its gesture closed by that
+            # edit's transaction, and a Preset applied over another goes back past both.
+            delta = {**delta, **preset.before}
+        undone = self._carried_undos(result.keys)
+        stands = self._stands(result)
+        entity_steps, failed = self._settle_entities(result, stands=stands)
+        if not stands:
+            # The gate goes back first, so the auto-revert's write renders the Entrypoint
+            # with the wallpaper's Bridge loading again (S6). Newest first: each one's
+            # `before` is the one under it's `after`.
+            for preset in reversed(presets):
+                if preset.source is not None:
+                    self._put_bridges(preset.source.after, preset.source.before)
+            for each in reversed(undone):
+                if each.source is not None:
+                    self._put_bridges(each.source.before, each.source.after)
+            self._fell(result, delta, self._lists_before(failed))
+            return
+
+        entity_steps = self._take_back_entities(result, entity_steps, refused)
+        self._forget_unedited()
+        for module, titles in refused.items():
+            # The Rows show the model, which just went back to what the file holds.
+            self._say_refused(
+                titles[0] if len(titles) == 1 else f"{len(titles)} changes", module
+            )
+
+        rewired = result.write is not None and result.write.entrypoint_written
+        if self._client is not None and (rewired or any(p.source is not None for p in presets)):
+            # Which files load changed -- a Preset gated a Bridge off (F4), or the write's
+            # new Entrypoint loads a file it did not, such as a new user.lua -- so what
+            # overrides what may have changed too.
+            self._spawn(self._rescan_drift(self._client))
+        steps = self._preset_steps(presets, delta)
+        for recorded in steps:
+            self._undo.record(recorded)
+        for entity_step in entity_steps:
+            self._undo.record(entity_step)
+        self._observe(result)
+        self._repoll_if_timed_out(result)
+        self._report(result)
+        for preset, recorded in zip(presets, steps, strict=False):
+            if preset.wallpaper is not None:
+                carried = recorded if isinstance(recorded, PresetStep) else None
+                self._spawn(self._show_preset_wallpaper(preset.name, preset.wallpaper, carried))
+        for each in undone:
+            self._spawn(self._finish_preset_undo(each.wallpaper, each.notes))
+        step = steps[-1] if steps else None
+        if self._undo_when_landed():
+            # The user already asked for this gesture back: no offer to undo it.
+            return
+        newest: Step | None = entity_steps[-1] if entity_steps else step
+        # A Preset that stands is offered back even when a key did not take: its step is on
+        # the stack, and the toast names what did not take (finding 13 of the #153 review).
+        offered = result.ok or (isinstance(newest, PresetStep) and not entity_steps)
+        if newest is not None and offered and self.on_recorded is not None:
+            # After `on_applied`, and only for a clean one: the window shows one toast, and a
+            # transaction that stands with a failure (a timeout, a `user.lua` error) has its
+            # failure to say. One toast per transaction, naming the newest gesture it carried.
+            self.on_recorded(newest)
+
+    def _take_back_options(
+        self, result: ApplyResult, delta: dict[str, OptionValue]
+    ) -> dict[str, list[str]]:
+        """Take out of the model, and out of `delta`, every edit a hand-edited Module kept
+        off disk. Returns the titles of those edits by the Module that refused each.
+
+        The backstop behind `_edited_module`, for a file edited between the gate and the
+        write: the Writer skips it (ADR-0005), so the edit never reached disk and must not
+        stand -- the Row goes back to what the file says and no undo step claims it
+        (hand-test defect 13, #148). Nothing is kept to replay: after a Replace the user
+        makes the change again.
+        """
+        refused: dict[str, list[str]] = {}
+        skipped = set(result.skipped)
+        if not skipped:
+            return refused
+        for name in list(delta):
+            option = self._schema.get(name)
+            if option is None or module_relpath(option) not in skipped:
+                continue
+            before = delta.pop(name)
+            if self._model.get(name) == before:
+                continue
+            refused.setdefault(module_relpath(option), []).append(option.title)
+            self._restore({name: before})
+        return refused
+
+    def _take_back_entities(
+        self, result: ApplyResult, steps: list[EntityStep], refused: dict[str, list[str]]
+    ) -> list[EntityStep]:
+        """`steps` less what a hand-edited Module kept off disk, which goes back out of the
+        model and joins `refused` under its own Module, as `_take_back_options` does. A step
+        over several lists keeps the lists that were written."""
+        skipped = set(result.skipped)
+        if not skipped:
+            return steps
+        kept: list[EntityStep] = []
+        for step in steps:
+            blocked = [e for e in step.edits if ENTITY_KIND_MODULES.get(e.kind) in skipped]
+            if not blocked:
+                kept.append(step)
+                continue
+            for module in dict.fromkeys(ENTITY_KIND_MODULES[e.kind] for e in blocked):
+                refused.setdefault(module, []).append(step.title)
+            self._put_back(self._lists_before([EntityStep(tuple(blocked), step.title)]))
+            rest = EntityStep.of((e for e in step.edits if e not in blocked), step.title)
+            if rest is not None:
+                kept.append(rest)
+        return kept
+
+    @property
+    def edited_copies_shown(self) -> str:
+        """Where "Replace file" keeps the edited copy, as the user knows the path."""
+        return tilde_path(self._paths.edited_copies_dir, self._paths)
+
+    def edited_file_path(self, module: str) -> Path:
+        """Where an edited Module lives, for "Open file"."""
+        return self._paths.app_dir / module
+
+    def keep_edited_file(self, module: str) -> None:
+        """The user keeps their edits: the Banner lets the file go until it refuses again."""
+        if module in self._edited_files:
+            self._edited_files.remove(module)
+            self._changed()
+
+    def replace_edited_file(self, module: str) -> Replaced:
+        """Overwrite `module` with the app's version, after keeping a copy of it.
+
+        The app's version renders what the model holds for the Module: what the file itself
+        said (`_read_model`, R3), or, for a file that cannot be read, the app's last version
+        of it (R9), in the app's own form. Nothing refused earlier is replayed: the user
+        makes that change again. Anything but `Replaced.DONE` (which alone is truthy) wrote
+        nothing, and says why.
+        """
+        if self._refuse(module):
+            return Replaced.READ_ONLY
+        if self._edited_module((module,)) is None:
+            return Replaced.NOT_EDITED
+        if module in self._not_known:
+            return Replaced.NOT_KNOWN
+        if not self._keep_edited_copy(module):
+            return Replaced.NO_COPY
+        self._applier.allow_overwrite(module)  # type: ignore[union-attr]  # _refuse proved it
+        self._applier.force_write()  # type: ignore[union-attr]  # _refuse proved it
+        self.keep_edited_file(module)
+        return Replaced.DONE
+
+    def _keep_edited_copy(self, module: str) -> bool:
+        """Copy the hand-edited `module` where the user can find it, before it is replaced.
+
+        Through a temporary name and a rename, and into a directory of its own per copy, so
+        a copy is whole or absent and a second one never lands on the first.
+        """
+        source = self._paths.app_dir / module
+        if not source.exists():
+            return True  # deleted by hand: there is nothing of the user's to copy
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        base = self._paths.edited_copies_dir / stamp
+        suffix = 1
+        while (base / module).exists():
+            suffix += 1
+            base = self._paths.edited_copies_dir / f"{stamp}-{suffix}"
+        try:
+            write_atomic(base / module, source.read_bytes())
+        except OSError as error:
+            _log.warning("could not keep a copy of %s: %s", source, error)
+            return False
+        return True
+
+    def _preset_steps(
+        self, presets: Sequence[_AppliedPreset], delta: Mapping[str, OptionValue]
+    ) -> list[Step]:
+        """The steps one standing transaction records: one per Preset it carried, oldest
+        first, so each Ctrl+Z takes back one; without a Preset, the plain Option step.
+
+        Each Preset's step goes from its own `before` to its own values; the newest goes to
+        the model's, and also carries any other Option edit that landed in the same batch.
+        """
+        if not presets:
+            step = self._step(delta)
+            return [step] if step is not None else []
+        steps: list[Step] = []
+        for index, preset in enumerate(presets):
+            newest = index == len(presets) - 1
+            names = dict(preset.before)
+            if newest:
+                claimed = {name for each in presets for name in each.before}
+                names.update({k: v for k, v in delta.items() if k not in claimed})
+            edits = [
+                Edit(
+                    name,
+                    before,
+                    self._model.get(name) if newest else preset.after.get(name, before),
+                )
+                for name, before in names.items()
+            ]
+            made = PresetStep.of(preset.name, UndoStep.of(edits), color_source=preset.source)
+            if made is not None:
+                steps.append(made)
+        return steps
+
+    def _carried_presets(self, keys: Sequence[str]) -> list[_AppliedPreset]:
+        """The applied Presets this transaction carries, taken, oldest first: each one every
+        key of which is in `keys`.
+
+        All or none per Preset, because `apply_preset` commits its keys in one synchronous
+        burst and the queue takes a batch whole; two applied before either landed coalesce
+        into one batch and come back together.
+        """
+        carried = [p for p in self._applying_presets if p.before.keys() <= set(keys)]
+        self._applying_presets = [p for p in self._applying_presets if p not in carried]
+        return carried
+
+    def _carried_undos(self, keys: Sequence[str]) -> list[_UndonePreset]:
+        """The Preset undos this transaction carries, taken, as `_carried_presets` does."""
+        carried = [u for u in self._undoing_presets if u.names <= set(keys)]
+        self._undoing_presets = [u for u in self._undoing_presets if u not in carried]
+        return carried
+
+    def _put_bridges(
+        self, expected: Sequence[BridgeEntry], entries: Sequence[BridgeEntry]
+    ) -> None:
+        """Record `entries` as the Bridge entries, if the Manifest still holds `expected`."""
+        if tuple(self._manifest().bridges) == tuple(expected):
+            self._writer.record_bridges(self._model, entries)
+
+    def _stands(self, result: ApplyResult) -> bool:
+        """Whether this transaction's edits are kept: in the model, and on the undo stack.
+
+        The one verdict every step is recorded through -- Option, Entity, and any later kind
+        (#227). A transaction does **not** stand when Hyprland rejected a Module it wrote
+        (ADR-0016 §Auto-revert), when it aborted before writing, or when its write failed
+        part-way: its edits leave the model, and no step reaches the stack.
+
+        Everything else stands, because its edit is on disk: an error in a file this
+        transaction did not write (`user.lua`, ADR-0016's table), a read-back mismatch and a
+        compositor that went away ("saved but not applied"). So does a `TIMEOUT`: its fate is
+        unknown, not failed, and the re-read it triggers (`_repoll_if_timed_out`) is the check
+        -- a list that re-read changes takes its steps off the stack (`_forget_entities`).
+        """
+        if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+            return False
+        return not self._own_write_errors(result)
+
+    def _settle_entities(
+        self, result: ApplyResult, *, stands: bool
+    ) -> tuple[list[EntityStep], list[EntityStep]]:
+        """The Entity steps this result lets stand, and the ungrouped ones it failed.
+
+        Every pending step with a serial up to `result.entities` was rendered by this
+        transaction. Standing: it is recorded, or handed to its undo group. Not standing: it
+        is returned as failed for `_fell` to take out of the model, and a grouped one marks
+        its group failed -- ADR-0016's failed gesture, never on the stack; the group's owner
+        (a display countdown) puts its own lists back. A group this result completes is
+        merged here, and lands after the steps it was held beside. Both lists are in commit
+        order.
+        """
+        if result.entities is None:
+            return [], []
+        reported = [p for p in self._pending_entities if p.serial <= result.entities]
+        self._pending_entities = [
+            p for p in self._pending_entities if p.serial > result.entities
+        ]
+        steps: list[EntityStep] = []
+        failed: list[EntityStep] = []
+        groups: dict[int, UndoGroup] = {}
+        for pending in reported:
+            if pending.group is None:
+                (steps if stands else failed).append(pending.step)
+                continue
+            groups[id(pending.group)] = pending.group
+            if stands:
+                pending.group.held.append(pending.step)
+            else:
+                pending.group.failed = True
+        for group in groups.values():
+            merged = self._close_group(group)
+            if merged is not None:
+                steps.append(merged)
+        return steps, failed
+
+    def _lists_before(self, failed: Sequence[EntityStep]) -> dict[str, tuple[Any, ...]]:
+        """Each list the `failed` steps moved, as it was before the first of them.
+
+        Only lists that still read as the failed steps left them: an edit committed since is
+        built on top, and writing `before` over it would take that edit out too. Such a list
+        is left for its own transaction to settle.
+        """
+        merged = EntityStep.merge(failed, "")
+        if merged is None:
+            return {}
+        entities = self._model.entities
+        return {
+            edit.kind: edit.before
+            for edit in merged.edits
+            if tuple(getattr(entities, edit.kind)) == edit.after
+        }
+
+    def _fell(
+        self,
+        result: ApplyResult,
+        delta: Mapping[str, OptionValue],
+        lists: Mapping[str, tuple[Any, ...]],
+    ) -> None:
+        """A transaction that does not stand (`_stands`): take its edits out, record nothing.
+
+        `delta` and `lists` are the model as it was before the transaction's edits. Aborted,
+        nothing reached disk, so the model goes back and nothing is written. Rejected or
+        failed mid-write, the file may hold the edit, so the model goes back through a write
+        (`_auto_revert`) -- unless recovery is halted, when the edit is left where it is and
+        reported. Either way no step: Ctrl+Z still means the gesture before this one.
+        """
+        self._repoll_if_timed_out(result)
+        if result.outcome is ApplyOutcome.ABORTED:
+            self._restore(delta)
+            self._put_back(lists)
+            self._finish_failed(result)
+            self._changed()
+            return
+        modules = self._failed_modules(result)
+        if self._may_auto_revert(delta, lists):
             # No Banner for this one. The auto-revert is about to reload, and the errors it
             # is answering will be gone by the time the user could read about them -- the
             # toast is what tells that story (ADR-0016 reserves one for exactly this).
-            self._auto_revert(result, delta, blamed)
+            self._undo_when_landed()
+            self._auto_revert(result, delta, lists, modules)
             return
-        if blamed and not self._recovery_halted:
+        if modules and not (delta or lists) and not self._recovery_halted:
             # Our own write, rejected, with nothing recorded to put back -- which the app
             # cannot reach by editing, only by writing without an edit. Reverting blind would
             # mean re-rendering the same model into the same bad bytes, so this reports and
             # stops, and the Banner says so.
             _log.error("own write rejected with no model delta to revert: %s", result.errors)
             self._recovery_halted = True
+        self._finish_failed(result)
 
-        step = self._step(delta)
-        self._undo.record(step)
+    def _finish_failed(self, result: ApplyResult) -> None:
+        """Report a transaction that did not stand and is not being reverted."""
         self._observe(result)
-        self._repoll_if_timed_out(result)
         self._report(result)
-        if step is not None and result.ok and self.on_recorded is not None:
-            # After `on_applied`, and only for a transaction that stands: the window shows one
-            # toast, and an offer to undo a change that did not land would be an offer to undo
-            # nothing.
-            self.on_recorded(step)
+        # A Ctrl+Z waiting on a gesture this result failed is dropped, not run.
+        self._undo_when_landed()
 
-    def _may_auto_revert(self, delta: Mapping[str, OptionValue]) -> bool:
+    def _put_back(self, lists: Mapping[str, tuple[Any, ...]]) -> None:
+        for kind, before in lists.items():
+            getattr(self._model.entities, kind)[:] = before
+
+    def _failed_modules(self, result: ApplyResult) -> tuple[str, ...]:
+        """The App-dir Modules a failed transaction may have left holding its edit.
+
+        For a rejection, the ones Hyprland blamed (`_own_write_errors`). For a write that
+        failed part-way, the ones the Journal saw change -- it records what the disk says,
+        not what was meant (`ApplyTransaction.run`).
+        """
+        if result.outcome is not ApplyOutcome.WRITE_FAILED:
+            return self._own_write_errors(result)
+        entries = self._journal.entries()
+        if entries and entries[-1].outcome == str(ApplyOutcome.WRITE_FAILED):
+            return entries[-1].modules
+        return ()
+
+    def _may_auto_revert(
+        self, delta: Mapping[str, OptionValue], lists: Mapping[str, tuple[Any, ...]]
+    ) -> bool:
         """Whether the app is still allowed to answer a rejected write by writing again.
 
-        Two gates, and ADR-0016 names both. There has to be a delta to put back -- reverting
-        blind would re-render the same model into the same bad bytes. And recovery must not
-        already have failed: "if the restore transaction itself errors ... stop auto-writing
-        until the user acts", which is a gate on the *next* rejection as much as on this one.
+        Two gates, and ADR-0016 names both. There has to be a delta to put back, Options or
+        Entity lists -- reverting blind would re-render the same model into the same bad
+        bytes. And recovery must not already have failed: "if the restore transaction itself
+        errors ... stop auto-writing until the user acts", which is a gate on the *next*
+        rejection as much as on this one.
         """
-        return bool(delta) and not self._recovery_halted
+        return bool(delta or lists) and not self._recovery_halted
 
     def _repoll_if_timed_out(self, result: ApplyResult) -> None:
         """ADR-0016 §Timeout: "re-poll once; if still unconfirmed, treat as a foreign-unknown
@@ -1950,14 +4198,26 @@ class Session:
         Guessing either way is worse than asking again, and the "foreign-unknown" treatment is
         exactly the re-read the app already performs for somebody else's reload -- so this
         routes to it rather than inventing a third recovery.
+
+        It is also the timed-out transaction's check (`_stands`): its steps are already on the
+        stack, in order, and the re-read drops those over any list it changes. The result
+        itself is never observed (`ApplyResult.reloaded`); the re-read's scan raises the
+        Banner from what the compositor now says. Every other outcome resets the once-only
+        guard, whether it stood or not.
         """
         if result.outcome is not ApplyOutcome.TIMEOUT or self._closing:
             self._repolled = False
             return
+        # Its keys read "Not confirmed", and a scan already running leaves them so.
+        keys = set(result.keys)
+        for watch in self._drift_watches:
+            watch.update(keys)
+        self._mark((), covers=keys.__contains__)
+        self._unconfirmed = (*self._unconfirmed, *result.keys)
         if self._repolled:
             return
         self._repolled = True
-        self._spawn(self._reread_after_foreign_reload())
+        self._spawn(self._reread_after_foreign_reload(keep=frozenset(keys)))
 
     def _report(self, result: ApplyResult) -> None:
         self._pending_restart.update(result.pending_restart)
@@ -1999,24 +4259,29 @@ class Session:
 
         Every finished reload lands here, clean ones included -- a clean reload is how a
         Banner *clears*, and a recovery that only ever raised one would leave the user
-        looking at a problem they had already fixed.
+        looking at a problem they had already fixed. A result that ran no reload, or whose
+        reload went unanswered, is dropped here, whichever transaction produced it: it learnt
+        nothing about the config, so the Banner stays as the last reload left it (#227).
         """
-        self._note(
-            result.errors,
-            written=result.written,
-            binds=result.binds,
-            mismatches=result.mismatches,
-        )
+        if not result.reloaded:
+            return
+        self._note(result.errors, written=result.written, binds=result.binds)
+        if result.outcome in (ApplyOutcome.OK, ApplyOutcome.READ_BACK_MISMATCH):
+            # Its Read-back ran, over exactly the keys it carried. A reload that reported
+            # errors read nothing back, so it changes no key's marks.
+            for watch in self._drift_watches:
+                watch.update(result.keys)
+            self._mark(result.mismatches, covers=set(result.keys).__contains__)
 
     def _observe_foreign(self, errors: Sequence[str], binds: int | None) -> None:
         """The same, for a reload this app did not perform.
 
         `written` is empty on purpose: nothing the app wrote is in flight, so no error here
         can be an `OWN_WRITE` -- and claiming one would authorise an automatic rewrite of a
-        file somebody else has just changed (ADR-0016 §Attribution). There are no Read-back
-        mismatches either: nothing was written, so nothing was checked.
+        file somebody else has just changed (ADR-0016 §Attribution). The drift marks are the
+        drift scan's, which follows (`_scan_drift`).
         """
-        self._note(errors, written=(), binds=binds, mismatches=())
+        self._note(errors, written=(), binds=binds)
 
     def _note(
         self,
@@ -2024,7 +4289,6 @@ class Session:
         *,
         written: Sequence[str],
         binds: int | None,
-        mismatches: Sequence[Mismatch],
     ) -> None:
         """Replace the unhealthy state, then act on it if the user is stranded.
 
@@ -2036,12 +4300,11 @@ class Session:
         parse and nothing older, so a Banner assembled from anything but the newest reload
         would name a file the user has since fixed.
         """
-        self._recovery = plan(errors, written=written, binds=binds)
-        self._unapplied = tuple(mismatch.name for mismatch in mismatches if mismatch.unapplied)
-        # The other half of the same Read-back, and ADR-0005's drift badge: a key the live
-        # config sets to something else is one `user.lua` or a Bridge won on purpose.
-        self._overridden = tuple(
-            mismatch.name for mismatch in mismatches if mismatch.overridden
+        self._recovery = plan(
+            errors,
+            written=written,
+            binds=binds,
+            bridges=[entry.file for entry in self._manifest().bridges],
         )
         # Cleared with the rest: the rescue notice belongs to the reload that prompted it.
         # `_restore_transaction` re-raises it *after* observing its own result, which is what
@@ -2056,6 +4319,23 @@ class Session:
             self._recovery_halted = False
         if self._recovery.auto_restorable and self._may_recover():
             self._emergency_restore(self._recovery.auto_restorable)
+
+    def _mark(self, mismatches: Sequence[Mismatch], *, covers: Callable[[str], bool]) -> None:
+        """Replace the drift marks on every key `covers` from `mismatches`; others keep theirs.
+
+        `_unapplied` is the loud shape (the Module never ran), `_overridden` the quiet one
+        (something later won): `Mismatch` decides which, and never both.
+        """
+        fresh = [mismatch for mismatch in mismatches if covers(mismatch.name)]
+        self._unconfirmed = tuple(name for name in self._unconfirmed if not covers(name))
+        self._unapplied = (
+            *(name for name in self._unapplied if not covers(name)),
+            *(mismatch.name for mismatch in fresh if mismatch.unapplied),
+        )
+        self._overridden = (
+            *(name for name in self._overridden if not covers(name)),
+            *(mismatch.name for mismatch in fresh if mismatch.overridden),
+        )
 
     def _may_recover(self) -> bool:
         """Whether the app may still answer a broken config by writing to it unprompted.
@@ -2088,7 +4368,10 @@ class Session:
         # own reload observes the config afresh, and announcing before that would have the
         # notice wiped by the very transaction it describes.
         self._pending_rescue = tuple(modules)
-        self.restore_last_good(*modules)
+        if not self.restore_last_good(*modules):
+            # Declined before anything ran -- no confirmed write to go back to. A notice
+            # left pending would surface on the next restore the user chooses themselves.
+            self._pending_rescue = ()
 
     # --- the recovery actions -----------------------------------------------------------------
 
@@ -2101,7 +4384,13 @@ class Session:
         """
         return self._journal.last_known_good(module)
 
-    def restore_last_good(self, *modules: str) -> bool:
+    def restorable(self, module: str) -> bool:
+        """Whether `module` has a restore point: a version a confirmed write left."""
+        return self._journal.last_known_good(module) is not None
+
+    def restore_last_good(
+        self, *modules: str, done: Callable[[bool], None] | None = None
+    ) -> bool:
         """Put `modules` back to their newest confirmed bytes. `False` if nothing can be.
 
         ADR-0016's Restore last good, for both the classes that offer it: the hand-edited app
@@ -2121,12 +4410,19 @@ class Session:
             _log.warning("nothing to restore: no confirmed write to %s", ", ".join(modules))
             return False
 
-        self._spawn(self._restore_transaction(restores))
+        for good in restores:
+            # The bytes being replaced, where the user can find them (#148 hand-test 17).
+            self._keep_edited_copy(good.module)
+        self._spawn(self._restore_transaction(restores, done))
         return True
 
-    async def _restore_transaction(self, restores: Sequence[LastKnownGood]) -> None:
+    async def _restore_transaction(
+        self, restores: Sequence[LastKnownGood], done: Callable[[bool], None] | None = None
+    ) -> None:
         applier = self._applier
         if applier is None:
+            if done is not None:
+                done(False)
             return
 
         self._restoring = True
@@ -2135,7 +4431,12 @@ class Session:
         except (IpcError, RuntimeError) as error:
             _log.error("the restore transaction failed: %s", error)
             self._recovery_halted = True
+            # Nothing was restored, so there is nothing to announce -- now or on the next
+            # restore, which would otherwise inherit this one's notice.
+            self._pending_rescue = ()
             self._changed()
+            if done is not None:
+                done(False)
             return
         finally:
             self._restoring = False
@@ -2149,11 +4450,22 @@ class Session:
         # The restore re-read the model itself, so the Rows have moved; and its own reload's
         # errors are the current truth about the config, replacing the ones it was answering.
         self._observe(result)
+        if any(is_entity_module(good.module) for good in restores):
+            # Entity lists are the restored files' too, or the next write renders the old
+            # lists over the bytes just put back.
+            self._load_entities()
+        if self._client is not None and result.reloaded:
+            # `_observe` took the OK as a read-back and cleared the marks; an override of a
+            # restored key is still an override (F3, F4 of the #148 review).
+            await self._scan_drift(self._client)
+        self._repoll_if_timed_out(result)
         # After the observation, which clears the field: this notice is about what the
         # restore just did, so it has to survive the restore's own reload and nothing later.
         self._rescued, self._pending_rescue = self._pending_rescue, ()
         self._report(result)
         self._changed()
+        if done is not None:
+            done(result.ok)
 
     def quarantine(self, require: str) -> bool:
         """Regenerate the Entrypoint without `require`, and reload (ADR-0016 §Quarantine).
@@ -2202,7 +4514,10 @@ class Session:
         """
         if not problem.offers(Action.QUARANTINE) or not problem.path:
             return None
-        return ModuleSet.discover(self._paths, []).require_for(problem.path)
+        manifest = self._manifest()
+        return ModuleSet.discover(self._paths, [], bridges=manifest.bridges).require_for(
+            problem.path
+        )
 
     def regenerate_entrypoint(self) -> bool:
         """Rewrite `hyprland.lua` and reload -- ADR-0016's Entrypoint Fix.
@@ -2212,17 +4527,30 @@ class Session:
         which requires are quarantined, so there is nothing in it a regeneration could lose.
         """
         return self._recovery_write(
-            lambda: self._writer.regenerate_entrypoint(self._model),
+            lambda before: self._writer.regenerate_entrypoint(
+                self._model, before_replace=before
+            ),
+            self._manifest(),
             "regenerate the Entrypoint",
         )
 
     def _set_quarantine(self, requires: set[str]) -> bool:
+        ordered = sorted(requires)
         return self._recovery_write(
-            lambda: self._writer.set_quarantine(self._model, sorted(requires)),
+            lambda before: self._writer.set_quarantine(
+                self._model, ordered, before_replace=before
+            ),
+            self._manifest().with_quarantine(ordered),
             "change the Quarantine",
         )
 
-    def _recovery_write(self, write: Callable[[], object], what: str) -> bool:
+    def _recovery_write(
+        self,
+        write: Callable[[BeforeReplace | None], bool],
+        prospective: Manifest,
+        what: str,
+        exclude: Sequence[str] = (),
+    ) -> bool:
         """Rewrite the Entrypoint out of band, then reload. `False` if it could not be done.
 
         One body for the two recoveries that work by changing which files are required, since
@@ -2230,23 +4558,34 @@ class Session:
         live session to reload into, a write that may fail without taking the app down, and a
         reload that is *not* an apply -- an apply would render the model over the App dir and
         reload with the require list it would have generated rather than the one just written.
+
+        The Entrypoint the `prospective` Manifest would produce is rendered and syntax-gated
+        here, so a recovery the gate refuses answers `False` and leaves the Banner as it is.
+        `exclude` names owned Options the re-read leaves alone. The write
+        itself runs queued (`EntrypointTransaction`): its Journal draft stays open until the
+        reload answers, and nothing else may open one meanwhile.
         """
         if not self.live or self._applier is None:
             return False
         try:
-            write()
-        except (LuaSyntaxError, ProtectedFile, OSError, ValueError) as error:
+            self._writer.entrypoint_text(self._model, prospective)
+        except (LuaSyntaxError, ValueError) as error:
             _log.error("could not %s: %s", what, error)
             return False
-        self._spawn(self._reload_after_recovery())
+        self._spawn(self._recover_entrypoint(write, what, exclude))
         return True
 
-    async def _reload_after_recovery(self) -> None:
-        """Make an Entrypoint rewrite take effect, and re-read what the config now says.
+    async def _recover_entrypoint(
+        self,
+        write: Callable[[BeforeReplace | None], bool],
+        what: str,
+        exclude: Sequence[str] = (),
+    ) -> None:
+        """Rewrite the Entrypoint, reload, and re-read what the config now says.
 
         A plain apply would do the wrong thing here: it renders the model over the App dir,
-        and the file that just changed is the one file the model does not describe. So this
-        restores nothing and writes nothing -- it reloads, and finds out what happened.
+        and the file that changes is the one file the model does not describe. So this
+        renders nothing -- it rewrites one file, reloads, and finds out what happened.
         """
         applier = self._applier
         if applier is None:
@@ -2254,14 +4593,35 @@ class Session:
         # Every owned Option, not a narrow set: quarantining `user.lua` changes the value of
         # everything that file was overriding, and the app cannot know which those were
         # without asking about all of them.
-        wanted = tuple(option.name for option in self._owned())
+        # Not the keys a verified Module sets: the model rendered them and holds them, and
+        # what the compositor answers for one may be `user.lua`'s or a tool's (finding 11).
+        # Nor a tool's key, whose answer is the tool's colour, nor a key of a Module edited
+        # outside the app, which is read off that Module's own text (#148 review R3).
+        manifest = self._manifest()
+        edited = self._edited_option_modules(manifest)
+        texts = [option for option in self._owned() if module_relpath(option) in edited]
+        kept = {
+            *exclude,
+            *overrides.verified_options(self._paths.app_dir, manifest),
+            *owners(manifest.bridges, quarantined=manifest.quarantined),
+            *(option.name for option in texts),
+        }
+        wanted = tuple(option.name for option in self._owned() if option.name not in kept)
         try:
-            result = await applier.restore_now(applier.reload_only(wanted))
+            result = await applier.restore_now(applier.recover_entrypoint(write, wanted))
         except (IpcError, RuntimeError) as error:
             _log.error("could not reload after a recovery: %s", error)
             self._changed()
             return
+        await self._read_off_text_of(edited, texts)
+        if result.outcome in (ApplyOutcome.ABORTED, ApplyOutcome.WRITE_FAILED):
+            _log.error("could not %s: %s", what, result.detail)
         self._observe(result)
+        if self._client is not None and result.reloaded:
+            # Which files load changed, so which keys something overrides changed with it:
+            # a quarantined user.lua, or a Bridge gated off (F4 of the #148 review).
+            await self._scan_drift(self._client)
+        self._repoll_if_timed_out(result)
         self._report(result)
         self._changed()
 
@@ -2271,9 +4631,13 @@ class Session:
         self,
         result: ApplyResult,
         delta: Mapping[str, OptionValue],
+        lists: Mapping[str, tuple[Any, ...]],
         modules: Sequence[str],
     ) -> None:
         """Put the model back and re-apply it, so the file goes back with it.
+
+        `delta` is the Options and `lists` the Entity lists, each as before the transaction.
+        An Entity-only revert carries no keys: the re-apply renders the whole model anyway.
 
         The model *is* the restore. Modules are rendered whole and deterministically
         (ADR-0010), so a model returned to its pre-transaction values renders byte-for-byte
@@ -2284,12 +4648,13 @@ class Session:
         No confirmation, per the ADR: instant apply has no cancel, and the bytes being
         restored were live and confirmed moments ago.
         """
-        _log.warning("Hyprland rejected our own write to %s; reverting", ", ".join(modules))
+        _log.warning("own write to %s did not stand (%s); reverting", modules, result.outcome)
         # Read before re-applying: right now the newest Journal entry for each Module is the
         # failed write, so its `before` digest is the Snapshot the revert has to reproduce.
         # A moment later the revert's own entry is newest, and its `before` is the bad bytes.
         expected = self._snapshot_digests(modules)
         self._restore(delta)
+        self._put_back(lists)
         self._changed()
         self._spawn(self._revert_transaction(result, tuple(delta), expected))
 
@@ -2321,6 +4686,7 @@ class Session:
                     modules=tuple(expected),
                     errors=result.errors,
                     restored=restored and not self._recovery_halted,
+                    outcome=result.outcome,
                 )
             )
         self._changed()
@@ -2382,5 +4748,6 @@ class Session:
         self._offline_reason = reason
 
     def _changed(self) -> None:
+        self._bridge_owners = None
         if self.on_state_changed is not None:
             self.on_state_changed()

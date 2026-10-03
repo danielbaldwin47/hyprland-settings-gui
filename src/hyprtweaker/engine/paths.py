@@ -76,6 +76,12 @@ down with it. `env.lua` and `permissions.lua` in particular are the two kinds Hy
 does *not* reset on reload (`lua-api-surface.md` §13, §15), so a user reading the App dir
 to find out what is still set from last boot has one file per question.
 """
+PLUGINS_MODULE = "plugins.lua"
+"""The ordered plugin load list (ADR-0018 §Plugins, #174): one `hl.plugin.load` per entry.
+
+Its own file for the blast-radius reason the others split for: a hand edit that breaks the
+list must not take the binds or the display layout down with it.
+"""
 BRIDGE_DIR = "bridge"
 MONITOR_PROFILES_DIR = "monitor-profiles"
 """Monitor profiles, one `<slug>.json` each, in the App dir (ADR-0015).
@@ -85,11 +91,17 @@ confusion with ADR-0014 Presets, which are look-and-feel bundles and never monit
 App-side data rather than a Module -- nothing requires it, and the writer's prune never
 touches files the Manifest does not claim.
 """
+PRESETS_DIR = "presets"
+"""Presets, one `<slug>.json` each, in the App dir (ADR-0014). App data, like
+`monitor-profiles/`: never required, never claimed by the Manifest, never pruned."""
 MANIFEST_NAME = "manifest.json"
 SNAPSHOT_DIR = "snapshots"
 REPORTS_DIR = "reports"
 BACKUPS_DIR = "backups"
+BRIDGE_BACKUPS_DIR = "bridge-backups"
+EDITED_COPIES_DIR = "edited-copies"
 JOURNAL_NAME = "journal.jsonl"
+JOURNAL_PENDING_NAME = "journal-pending.json"
 SENTINEL_NAME = "migration-pending.json"
 
 
@@ -119,6 +131,26 @@ class ConfigPaths:
         return cls(hypr_dir=root / "hypr", state_dir=root / "state")
 
     @property
+    def config_home(self) -> Path:
+        """The config home the hypr dir sits in (`$XDG_CONFIG_HOME`, `~/.config`).
+
+        Every path the app touches outside the App dir and the state dir derives from this
+        or `state_home`, never from `Path.home()` or `~`: another tool's config is
+        `config_home / "<tool>"`. So a test, the widget probe and the sandbox, which point
+        these at a directory of their own, can never reach the owner's real files
+        (`tests/unit/test_no_home_lookup.py`, #233). Under `rooted_at(root)` it is `root`.
+        """
+        return self.hypr_dir.parent
+
+    @property
+    def state_home(self) -> Path:
+        """The state home the app's state dir sits in (`$XDG_STATE_HOME`, `~/.local/state`).
+
+        The same rule as `config_home`. Under `rooted_at(root)` it is `root`.
+        """
+        return self.state_dir.parent
+
+    @property
     def app_dir(self) -> Path:
         return self.hypr_dir / APP_DIR_NAME
 
@@ -133,6 +165,10 @@ class ConfigPaths:
     @property
     def monitor_profiles_dir(self) -> Path:
         return self.app_dir / MONITOR_PROFILES_DIR
+
+    @property
+    def presets_dir(self) -> Path:
+        return self.app_dir / PRESETS_DIR
 
     @property
     def entrypoint(self) -> Path:
@@ -186,6 +222,26 @@ class ConfigPaths:
         return self.state_dir / BACKUPS_DIR
 
     @property
+    def bridge_backups_dir(self) -> Path:
+        """Copies of a theming tool's files, one `<tool>-<timestamp>/` per wiring (#166).
+
+        Beside the Snapshots in the state dir (ADR-0005): what `wire` changed in another
+        tool's config is history the app owes the user a way back to, not config. Each holds
+        the originals by path and a `wire.json` saying what was written, so the way back
+        restores only a file that still holds exactly what the app wrote.
+        """
+        return self.state_dir / BRIDGE_BACKUPS_DIR
+
+    @property
+    def edited_copies_dir(self) -> Path:
+        """Copies of hand-edited Modules the user chose to replace, one `<timestamp>/` each.
+
+        Where "Replace file" puts the edit it overwrites, under a name the user can find:
+        the Journal keeps those bytes too, but by hash, which nobody can browse (#148).
+        """
+        return self.state_dir / EDITED_COPIES_DIR
+
+    @property
     def sentinel(self) -> Path:
         """The `migration-pending` marker written before the Entrypoint goes live.
 
@@ -200,6 +256,15 @@ class ConfigPaths:
     def journal(self) -> Path:
         """The change log: one JSON object per Apply transaction, newest last."""
         return self.state_dir / JOURNAL_NAME
+
+    @property
+    def journal_pending(self) -> Path:
+        """The transaction in flight: which Snapshots its write is about to need.
+
+        Written before the first file is replaced and removed when the entry lands, so its
+        presence at the next `Journal.begin` means the app died in between.
+        """
+        return self.state_dir / JOURNAL_PENDING_NAME
 
     @property
     def hyprland_conf(self) -> Path:

@@ -19,11 +19,18 @@ preview and a report to show, and the user decides whether the report is accepta
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..entities_catalog import FieldSpec
+
+    # Type-only: `lua/__init__` imports `lua.mapping`, which imports this module.
+    from .lua.sandbox import ShellUse
 
 from ..model.entities import (
     Animation,
@@ -38,7 +45,7 @@ from ..model.entities import (
     entity_summary,
 )
 from ..model.options import ConfigModel, UnknownOption
-from ..model.values import display_text
+from ..model.values import display_text, is_null_spelling
 from ..schema.resolve import Schema
 from ..schema.types import OptionType
 from .binds import map_bind, map_submap, map_unbind
@@ -143,6 +150,10 @@ class ImportResult:
     """`legacy.lua`'s contents: constructs kept verbatim because the model cannot hold
     them. Only the Lua importer fills this in -- hyprlang has no script constructs to
     keep -- but it lives here so both importers answer the wizard with one shape."""
+    shell: tuple[ShellUse, ...] = ()
+    """Every command and file operation the Lua evaluation ran or faked, in order, also
+    when it ended in an error. The wizard's second offer lists the commands from here
+    verbatim (#190); the Loss report's L34 lines are prose about them, not the commands."""
 
     @property
     def root(self) -> Path:
@@ -312,7 +323,8 @@ class _Mapper:
             )
             return
         try:
-            self.model.set(key, keyword.value)
+            null = is_null_spelling(self.model.option(key), keyword.value)
+            self.model.set(key, None if null else keyword.value)
         except UnknownOption:
             self.report.add(
                 LossCode.REMOVED_OPTION,
@@ -465,6 +477,10 @@ class _Mapper:
             case "permission":
                 self._permission(value, origin)
             case "plugin":
+                # Verbatim, `~` included: hyprlang stores the value as written and Hyprland
+                # dlopen()s it unexpanded (read in Hyprland v0.56.2 legacy ConfigManager
+                # `handlePlugin` and PluginSystem `loadPluginInternal`, hyprlang v0.6.8),
+                # so a `~/` path never loaded there either and importing it changes nothing.
                 self.entities.plugins.append(PluginLoad(path=value.strip(), origin=origin))
             case "exec" | "execr" | "exec-once" | "execr-once" | "exec-shutdown":
                 self._exec(name, value, origin)
@@ -511,18 +527,25 @@ class _Mapper:
                 return
             coords.append(number)
         outside = [c for c in coords if not -1.0 <= c <= 2.0]
+        # Lua rejects the whole curve, and every animation using it then fails (settled on
+        # a nested 0.56.2, F29 of the #148 review): the nearest legal points are written,
+        # as #205 does for an animation's speed, and the report says so.
+        coords = [min(2.0, max(-1.0, c)) for c in coords]
+        points = [[coords[0], coords[1]], [coords[2], coords[3]]]
         if outside:
             self.report.add(
                 LossCode.ANIMATION_RANGE,
-                f"bezier {name!r} has coordinates outside the -1..2 range Lua accepts "
-                f"({', '.join(str(c) for c in outside)}); Hyprland will reject the curve",
+                f"bezier {name!r} has points outside the -1 to 2 range Hyprland accepts "
+                f"({', '.join(str(c) for c in outside)}); they were moved to the nearest "
+                "edge, so its motion is gentler.",
                 origin=origin,
                 source=f"bezier = {value}",
+                replacement=(
+                    f"points = {{ {{ {points[0][0]}, {points[0][1]} }}, "
+                    f"{{ {points[1][0]}, {points[1][1]} }} }}"
+                ),
             )
-        spec = {
-            "type": "bezier",
-            "points": [[coords[0], coords[1]], [coords[2], coords[3]]],
-        }
+        spec = {"type": "bezier", "points": points}
         self.entities.curves.append(Curve(name=name, spec=spec, origin=origin))
 
     def _animation(self, value: str, origin: str) -> None:
@@ -543,31 +566,63 @@ class _Mapper:
                 Animation(leaf=leaf, fields={"enabled": False}, origin=origin)
             )
             return
-        fields: dict[str, Any] = {"enabled": True}
-        if len(parts) > 2 and parts[2]:
-            speed = _as_float(parts[2])
-            if speed is None:
-                self.report.add(
-                    LossCode.ANIMATION_RANGE,
-                    f"animation {leaf!r} has a non-numeric speed {parts[2]!r}",
-                    origin=origin,
-                    source=f"animation = {value}",
-                )
-            else:
-                if not 0 < speed <= 100:
-                    self.report.add(
-                        LossCode.ANIMATION_RANGE,
-                        f"animation {leaf!r} speed {speed} is outside the 0..100 range Lua "
-                        "accepts; Hyprland will reject it",
-                        origin=origin,
-                        source=f"animation = {value}",
-                    )
-                fields["speed"] = speed
+        if len(parts) < 3 or not parts[2]:
+            # Lua requires a speed on an enabled animation and fails the whole Module
+            # without one; left out, the leaf keeps its default, as with a speed <= 0.
+            self.report.add(
+                LossCode.ANIMATION_RANGE,
+                f"{leaf} animation has no speed, so Hyprland's default animation is kept",
+                origin=origin,
+                source=f"animation = {value}",
+            )
+            return
+        speed = self._animation_speed(leaf, parts[2], origin, f"animation = {value}")
+        if speed is None:
+            return
+        fields: dict[str, Any] = {"enabled": True, "speed": speed}
         if len(parts) > 3 and parts[3]:
             fields["bezier"] = parts[3]
         if len(parts) > 4 and parts[4]:
             fields["style"] = ",".join(parts[4:])
         self.entities.add_animation(Animation(leaf=leaf, fields=fields, origin=origin))
+
+    def _animation_speed(self, leaf: str, raw: str, origin: str, source: str) -> float | None:
+        """A speed Lua accepts, or None when the animation is better left out (#205).
+
+        Above the limit is clamped to it, so the animation still runs, only faster. At or
+        below 0, or not a number, there is nothing near to clamp to: hyprlang refused such a
+        line too, so the leaf ran its default, and leaving the animation out keeps exactly
+        that. Written as it was, Lua fails the whole Module.
+        """
+        from ..entities_catalog import (  # cycle: `_device_field_specs`
+            ANIMATION_SPEED_MAX,
+            ANIMATION_SPEED_MIN,
+        )
+
+        speed = _as_float(raw)
+        if speed is not None and speed > ANIMATION_SPEED_MAX:
+            self.report.add(
+                LossCode.ANIMATION_RANGE,
+                f"{leaf} animation speed {speed:g} is above Hyprland's limit of "
+                f"{ANIMATION_SPEED_MAX:g}; it was set to {ANIMATION_SPEED_MAX:g}, so it runs "
+                "faster.",
+                origin=origin,
+                source=source,
+                replacement=f"speed = {ANIMATION_SPEED_MAX:g}",
+                loss_class=LossClass.NEEDS_REVIEW,
+            )
+            return ANIMATION_SPEED_MAX
+        if speed is not None and speed > ANIMATION_SPEED_MIN:
+            return speed
+        reason = "is not a number" if speed is None else f"is not above {ANIMATION_SPEED_MIN:g}"
+        self.report.add(
+            LossCode.ANIMATION_RANGE,
+            f"{leaf} animation speed {raw.strip()} {reason}, so Hyprland's default animation "
+            "is kept",
+            origin=origin,
+            source=source,
+        )
+        return None
 
     def _gesture(self, flags: str, value: str, origin: str) -> None:
         source = f"gesture{flags} = {value}"
@@ -774,12 +829,77 @@ class _Mapper:
                     source=f"{key} = {raw}",
                     replacement=f"{renamed} = {raw.strip()}",
                 )
-            mapped[renamed or key] = raw.strip()
+            field_name = renamed or key
+            spec = _device_field_specs().get(field_name)
+            if spec is None:
+                mapped[field_name] = raw.strip()
+                continue
+            typed = _device_value(spec, raw)
+            if typed is None:
+                self.report.add(
+                    LossCode.DEVICE_FIELD,
+                    f"device {name.strip()}: {field_name} = {raw.strip()} is not "
+                    f"{_DEVICE_TYPE_WORDS[spec.type.value]}, so it was left out",
+                    origin=origin,
+                    source=f"{key} = {raw}",
+                    loss_class=LossClass.BREAKAGE,
+                )
+                continue
+            mapped[field_name] = typed
         # Hyprland dashes the spaces out of device names itself; matching that here means
         # the entity's name is the one the compositor will look for.
         self.entities.add_device(
             Device(name=name.strip().replace(" ", "-"), fields=mapped, origin=origin)
         )
+
+
+_DEVICE_TYPE_WORDS: dict[str, str] = {
+    "bool": "true or false",
+    "int": "a whole number",
+    "float": "a number",
+    "vec2": "two numbers",
+}
+"""How a device field's type reads in a loss note, keyed by `FieldType` value."""
+
+
+def _device_field_specs() -> Mapping[str, FieldSpec]:
+    """`DEVICE_FIELD_SPECS`, imported late: the catalogue imports `triggers`, which imports
+    this package, so a module-level import is a cycle whenever `triggers` loads first."""
+    from ..entities_catalog import DEVICE_FIELD_SPECS
+
+    return DEVICE_FIELD_SPECS
+
+
+def _device_value(spec: FieldSpec, raw: str) -> Any:
+    """A per-device value as the type `hl.device` checks it against, or None (#205).
+
+    hyprlang read these as config values, so a truth word is a bool and a bool field takes
+    a number's truth too. Lua refuses a string where it wants a bool or an integer and
+    fails the Module, so what does not convert is None, for the caller to name.
+    """
+    from ..entities_catalog import FieldType  # cycle: see `_device_field_specs`
+
+    text = raw.strip()
+    number = _number(text)
+    match spec.type:
+        case FieldType.BOOL:
+            truth = _bool_prefix(text)
+            if truth is None and number is not None:
+                truth = number != 0
+            return truth
+        case FieldType.INT:
+            if isinstance(number, int):
+                return number
+            truth = _bool_prefix(text)
+            return None if truth is None else int(truth)
+        case FieldType.FLOAT:
+            return None if number is None else float(number)
+        case FieldType.VEC2:
+            parts = [_number(part) for part in re.split(r"[,\s]+", text) if part]
+            if len(parts) != 2 or None in parts:
+                return None
+            return [float(part) for part in parts if part is not None]
+    return text
 
 
 _GESTURE_ACTION_NAMES: dict[str, str] = {

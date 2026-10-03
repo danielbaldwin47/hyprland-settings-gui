@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from .model.entities import MonitorRule
@@ -23,7 +24,6 @@ from .model.entities import MonitorRule
 DISPLAY_BREAKING_FIELDS: frozenset[str] = frozenset(
     {
         "mode",
-        "modeline",
         "position",
         "scale",
         "transform",
@@ -36,8 +36,10 @@ DISPLAY_BREAKING_FIELDS: frozenset[str] = frozenset(
 """Monitor rule fields whose misapplication can black-screen the session (ADR-0008).
 
 Edits to these batch and apply behind the Confirm-or-revert countdown; everything else
-(vrr, reserved, sdr brightness/saturation) stays instant per ADR-0003. `modeline` rides
-along with `mode`: a wrong custom modeline is the most breaking value of all.
+(vrr, reserved, sdr brightness/saturation) stays instant per ADR-0003. A custom modeline
+is not a field of its own: it is a `mode` value (`mode = "modeline ..."`, Hyprland has no
+`modeline` key), so it rides the breaking lane as `mode` -- a wrong custom modeline is the
+most breaking value of all.
 """
 
 CATCH_ALL_OUTPUT = ""
@@ -57,6 +59,37 @@ TRANSFORM_NAMES: tuple[str, ...] = (
 
 SPECIAL_MODES: tuple[str, ...] = ("preferred", "highres", "highrr", "maxwidth")
 """The mode words Hyprland accepts besides a literal `WxH@Hz` (ADR-0008)."""
+
+MODELINE_PREFIX = "modeline "
+"""How a `mode` value spells a custom modeline: `"modeline <clock> <h...> <v...> [flags]"`."""
+
+CM_PRESETS: tuple[tuple[str, str], ...] = (
+    ("auto", "Automatic"),
+    ("srgb", "sRGB"),
+    ("dcip3", "DCI-P3"),
+    ("dp3", "Display P3"),
+    ("adobe", "Adobe RGB"),
+    ("wide", "Wide gamut (BT.2020)"),
+    ("edid", "From the display (EDID)"),
+    ("hdr", "HDR"),
+    ("hdredid", "HDR with the display's primaries"),
+)
+"""The `cm` presets as (value, label). The values are the nine `Hyprland --verify-config`
+0.56.2 accepts; any other spelling is "error applying field 'cm'" (checked during #193)."""
+
+SDR_EOTF_NAMES: tuple[tuple[str, str], ...] = (
+    ("default", "Follow the global setting"),
+    ("auto", "Automatic"),
+    ("srgb", "sRGB"),
+    ("gamma22", "Gamma 2.2"),
+    ("gamma22force", "Gamma 2.2, forced"),
+)
+"""The `sdr_eotf` transfer functions as (name, label): `NTransferFunction`'s five, by name.
+Lua takes names only; the numeric codes were the legacy `monitorv2` spelling."""
+
+LEGACY_SDR_EOTF_CODES: dict[str, str] = {"0": "default", "1": "srgb", "2": "gamma22"}
+"""The numeric `sdr_eotf` codes the legacy block accepted, and the transfer-function names
+they most likely meant. The Importer converts them and reports the guess."""
 
 _MODE = re.compile(r"^\s*(\d+)x(\d+)(?:@([\d.]+))?(?:Hz)?\s*$", re.IGNORECASE)
 _POSITION = re.compile(r"^\s*(-?\d+)x(-?\d+)\s*$")
@@ -119,6 +152,32 @@ def format_mode(width: int, height: int, refresh: float | None = None) -> str:
         return f"{width}x{height}"
     trimmed = f"{refresh:.2f}".rstrip("0").rstrip(".")
     return f"{width}x{height}@{trimmed}"
+
+
+def mode_sizes(available: Iterable[str]) -> list[tuple[int, int]]:
+    """The distinct sizes in an `availableModes` list, in the order the display gives them."""
+    sizes: list[tuple[int, int]] = []
+    for mode in available:
+        parsed = parse_mode(mode)
+        if parsed is not None and parsed[:2] not in sizes:
+            sizes.append(parsed[:2])
+    return sizes
+
+
+def mode_rates(available: Iterable[str], size: tuple[int, int]) -> list[float]:
+    """The refresh rates `availableModes` offers at `size`, highest first."""
+    rates = {
+        parsed[2]
+        for parsed in (parse_mode(mode) for mode in available)
+        if parsed is not None and parsed[:2] == size and parsed[2] is not None
+    }
+    return sorted(rates, reverse=True)
+
+
+def sdr_eotf_name(value: Any) -> str:
+    """An `sdr_eotf` value by name: a legacy numeric code becomes the name it meant."""
+    text = str(value).strip()
+    return LEGACY_SDR_EOTF_CODES.get(text, text)
 
 
 def parse_position(text: str) -> tuple[int, int] | None:
@@ -270,11 +329,175 @@ def disconnected_rules(
     )
 
 
+# --- Confirm-or-revert -----------------------------------------------------------------
+
+
+def breaks_display(before: Sequence[MonitorRule], after: Sequence[MonitorRule]) -> bool:
+    """Whether going from `before` to `after` changes a display-breaking field anywhere.
+
+    What decides that an undo of a monitor step goes behind the countdown (#192): putting
+    back a mode is as able to black-screen the session as choosing one.
+    """
+    return _breaking_by_output(before) != _breaking_by_output(after)
+
+
+def revert_breaking(
+    snapshot: Sequence[MonitorRule], current: Sequence[MonitorRule]
+) -> list[MonitorRule]:
+    """The rule list a Confirm-or-revert revert writes: the display as it was, nothing more.
+
+    The snapshot's rules, in its order, with its display-breaking values (a breaking field
+    the snapshot did not have is removed) and the current benign values, so a vrr or
+    reserved-area edit made while the countdown ran survives the revert (#192). A rule
+    created since keeps only its benign fields, and goes when it has none. A rule removed
+    since comes back whole: removing it changed every breaking field it held.
+    """
+    now = {rule.output: rule for rule in current}
+    before = {rule.output for rule in snapshot}
+    reverted: list[MonitorRule] = []
+    for rule in snapshot:
+        live = now.get(rule.output)
+        if live is None:
+            reverted.append(rule)
+            continue
+        fields = {
+            key: value if key in DISPLAY_BREAKING_FIELDS else live.fields[key]
+            for key, value in rule.fields.items()
+            if key in DISPLAY_BREAKING_FIELDS or key in live.fields
+        }
+        fields.update(
+            (key, value)
+            for key, value in live.fields.items()
+            if key not in DISPLAY_BREAKING_FIELDS and key not in rule.fields
+        )
+        reverted.append(rule if fields == rule.fields else replace(live, fields=fields))
+    for rule in current:
+        if rule.output in before:
+            continue
+        benign = {k: v for k, v in rule.fields.items() if k not in DISPLAY_BREAKING_FIELDS}
+        if benign:
+            reverted.append(replace(rule, fields=benign))
+    return reverted
+
+
+def _breaking_by_output(rules: Iterable[MonitorRule]) -> dict[str, dict[str, Any]]:
+    by_output: dict[str, dict[str, Any]] = {}
+    for rule in rules:
+        breaking = {k: v for k, v in rule.fields.items() if k in DISPLAY_BREAKING_FIELDS}
+        if breaking:
+            by_output[rule.output] = breaking
+    return by_output
+
+
+def arrangement_mismatches(
+    rules: Sequence[MonitorRule], monitors: Sequence[Mapping[str, Any]]
+) -> tuple[str, ...]:
+    """Where a live display differs from what its rule asks for, one sentence each (#101).
+
+    The Migration switch's monitor check (ADR-0009). Each connected display answers to its
+    own rule, else to the catch-all. Only the fields a rule states as numbers are compared:
+    `preferred`, `auto` and the other words leave Hyprland to choose, so there is nothing
+    to hold it to. The refresh rate is not compared, because a rule is a request and
+    Hyprland picks the closest advertised mode (`format_mode`). Rules for displays that are
+    not connected are not a mismatch; nothing is live to differ.
+
+    Reads helper data against rules and keeps neither: nothing here is written back or
+    reconciled with the model (ADR-0008).
+    """
+    catch_all = next((rule for rule in rules if rule.output == CATCH_ALL_OUTPUT), None)
+    found: list[str] = []
+    for monitor in monitors:
+        name = str(monitor.get("name", ""))
+        rule = (
+            rule_for(rules, connector=name, description=str(monitor.get("description", "")))
+            or catch_all
+        )
+        if rule is not None:
+            found.extend(_mismatches_with(rule, name, monitor))
+    return tuple(found)
+
+
+def _mismatches_with(rule: MonitorRule, name: str, monitor: Mapping[str, Any]) -> list[str]:
+    fields = rule.fields
+    if fields.get("disabled"):
+        return [f"{name} is still active, the configuration disables it"]
+
+    found: list[str] = []
+    wanted_scale = _number(fields.get("scale"))
+    live_scale = _number(monitor.get("scale"))
+    if (
+        wanted_scale is not None
+        and live_scale is not None
+        and abs(wanted_scale - live_scale) > _SCALE_TOLERANCE
+    ):
+        found.append(
+            f"{name} is at scale {_trim(live_scale)}, "
+            f"the configuration asks for {_trim(wanted_scale)}"
+        )
+
+    mode = parse_mode(str(fields.get("mode", "")))
+    if mode is not None:
+        live_size = (monitor.get("width"), monitor.get("height"))
+        if live_size != (mode[0], mode[1]):
+            found.append(
+                f"{name} runs {live_size[0]}x{live_size[1]}, "
+                f"the configuration asks for {mode[0]}x{mode[1]}"
+            )
+
+    # A mirror has no position of its own: Hyprland places it on its source.
+    position = parse_position(str(fields.get("position", "")))
+    if position is not None and not fields.get("mirror"):
+        live_at = (monitor.get("x"), monitor.get("y"))
+        if live_at != position:
+            found.append(
+                f"{name} is at position {live_at[0]}, {live_at[1]}, "
+                f"the configuration asks for {position[0]}, {position[1]}"
+            )
+
+    wanted_transform = _number(fields.get("transform"))
+    live_transform = _number(monitor.get("transform"))
+    if (
+        wanted_transform is not None
+        and live_transform is not None
+        and wanted_transform != live_transform
+    ):
+        found.append(
+            f"{name}'s rotation is {_transform_name(live_transform)}, "
+            f"the configuration asks for {_transform_name(wanted_transform)}"
+        )
+    return found
+
+
+def _transform_name(transform: float) -> str:
+    """A transform as the word the Monitors page shows for it, never the bare code."""
+    index = int(transform)
+    if index == transform and 0 <= index < len(TRANSFORM_NAMES):
+        return TRANSFORM_NAMES[index].lower()
+    return f"transform {_trim(transform)}"
+
+
+_SCALE_TOLERANCE = 0.01
+"""Hyprland rounds a fractional scale to what the output can express (1.566667, not 1.57)."""
+
+
+def _number(value: object) -> float | None:
+    """A rule or IPC value as a number, or `None` for `auto` and friends. Never a bool."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _trim(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
 __all__ = [
     "CATCH_ALL_OUTPUT",
     "DISPLAY_BREAKING_FIELDS",
     "SPECIAL_MODES",
     "TRANSFORM_NAMES",
+    "arrangement_mismatches",
+    "breaks_display",
     "connected_rules",
     "description_of",
     "disconnected_rules",
@@ -284,6 +507,7 @@ __all__ = [
     "parse_mode",
     "parse_position",
     "preferred_identity",
+    "revert_breaking",
     "rule_for",
     "rule_matches_output",
     "snap_position",

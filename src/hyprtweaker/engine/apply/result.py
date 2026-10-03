@@ -202,6 +202,14 @@ class ApplyResult:
     detail: str = ""
     """Human-readable "why", for the outcomes whose cause is an exception message."""
 
+    entities: int | None = None
+    """The newest `commit_entities` serial this transaction carried, `None` for none.
+
+    Stamped by the queue when it takes the batch, so every entity commit with a serial up to
+    this one was rendered by this transaction and stands or falls with its verdict -- which
+    is when the session records (or drops) those gestures' undo steps.
+    """
+
     @property
     def ok(self) -> bool:
         """Nothing is known to have gone wrong -- so there is nothing to tell the user.
@@ -211,6 +219,22 @@ class ApplyResult:
         stricter question, and the one to ask before treating a write as good.
         """
         return self.outcome in (ApplyOutcome.OK, ApplyOutcome.NOTHING_TO_DO)
+
+    @property
+    def reloaded(self) -> bool:
+        """Hyprland answered a reload this transaction issued, so `errors` (empty included)
+        describe the config as it now is.
+
+        False for every outcome that learnt nothing about the config: no reload ran
+        (`ABORTED`, `WRITE_FAILED`, `NOTHING_TO_DO`), or one ran unanswered (`TIMEOUT`, whose
+        re-read is what finds out; `COMPOSITOR_GONE`). Their empty `errors` mean "not asked",
+        never "clean" -- reading them as clean would clear a Banner whose cause is on disk.
+        """
+        return self.outcome in (
+            ApplyOutcome.OK,
+            ApplyOutcome.CONFIG_ERRORS,
+            ApplyOutcome.READ_BACK_MISMATCH,
+        )
 
     @property
     def confirmed(self) -> bool:

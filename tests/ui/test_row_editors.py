@@ -22,7 +22,7 @@ from typing import Any
 
 from test_row_chrome import SCHEMA, FakeSession, build_row, children
 
-from hyprtweaker.engine.model import Color, CssGaps, Gradient, Vec2
+from hyprtweaker.engine.model import Color, CssGaps, FontWeight, Gradient, Vec2
 
 ACTIVE_BORDER = "general:col.active_border"
 GAPS_IN = "general:gaps_in"
@@ -31,6 +31,8 @@ SHADOW_OFFSET = "decoration:shadow:offset"
 BACKGROUND = "misc:background_color"
 INACTIVE_TEXT = "group:groupbar:text_color_inactive"
 SHADOW_INACTIVE = "decoration:shadow:color_inactive"
+WEIGHT_ACTIVE = "group:groupbar:font_weight_active"
+WEIGHT_INACTIVE = "group:groupbar:font_weight_inactive"
 
 
 class PreviewSession(FakeSession):
@@ -98,7 +100,7 @@ def test_a_nullable_colour_shows_its_label_instead_of_a_black_swatch() -> None:
 
     assert isinstance(row.control, Gtk.Stack)
     assert row.control.get_visible_child_name() == "none"
-    assert row.control.get_visible_child().get_label() == "Same as the title colour"
+    assert row.control.get_visible_child().get_label() == "Same as the title color"
 
 
 def test_clicking_a_nullable_colours_placeholder_gives_it_a_value() -> None:
@@ -185,8 +187,8 @@ def test_a_nullable_gradient_shows_its_label_rather_than_a_white_stop_at_zero() 
 
     assert isinstance(row.control, Gtk.Stack)
     assert row.control.get_visible_child_name() == "none"
-    assert row.control.get_visible_child().get_label() == "Same as shadow colour"
-    assert row.chrome.summary_text == "Same as shadow colour"
+    assert row.control.get_visible_child().get_label() == "Same as shadow color"
+    assert row.chrome.summary_text == "Same as shadow color"
 
 
 def test_clicking_a_nullable_gradients_placeholder_gives_it_one_stop() -> None:
@@ -370,6 +372,29 @@ def test_a_nullable_gaps_row_shows_its_label_rather_than_four_minus_ones() -> No
     assert row.chrome.summary_text == "Same as outer gaps"
 
 
+def test_an_imported_float_gaps_minus_one_shows_its_label_and_writes_back_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Import, show, write, untouched (#207): the user's `-1` is never four sides."""
+    import pytest
+
+    from hyprtweaker.engine.importer.lua import Consent, import_lua, lua_binary
+    from hyprtweaker.engine.writer import render_module
+
+    if lua_binary() is None:
+        pytest.skip("no Lua interpreter installed")
+    entry = tmp_path / "hyprland.lua"
+    entry.write_text("hl.config({ general = { float_gaps = -1 } })\n", encoding="utf-8")
+    session = PreviewSession()
+    session.model = import_lua(entry, SCHEMA, consent=Consent(evaluate=True)).model
+    row = build_row(FLOAT_GAPS, session)
+
+    assert row.control.get_visible_child_name() == "none"
+    assert row.chrome.summary_text == "Same as outer gaps"
+    general = render_module(session.model.section("general"), app_version="0.0.0-test")
+    assert "  float_gaps = -1,\n" in general
+
+
 # --- vec2 -------------------------------------------------------------------------------------
 
 
@@ -393,12 +418,382 @@ def test_a_vec2_row_edits_two_axes_within_their_curated_bounds() -> None:
     assert row.chrome.summary_text == "3.0, -2.0"
 
 
+# --- font weight ------------------------------------------------------------------------------
+
+
+def weight_parts(row: Any) -> tuple[Any, Any]:
+    """The font-weight Row's two controls: the names combo and the number spinner."""
+    from gi.repository import Gtk
+
+    (dropdown,) = controls(row, Gtk.DropDown)
+    (spin,) = controls(row, Gtk.SpinButton)
+    return dropdown, spin
+
+
+def choices(dropdown: Any) -> list[str]:
+    strings = dropdown.get_model()
+    return [strings.get_string(index) for index in range(strings.get_n_items())]
+
+
+def chosen(dropdown: Any) -> str:
+    return dropdown.get_selected_item().get_string()
+
+
+def choose(dropdown: Any, label: str) -> None:
+    dropdown.set_selected(choices(dropdown).index(label))
+
+
+def type_into(spin: Any, text: str) -> None:
+    """What typing and pressing Enter does: the spinner parses its text."""
+    spin.set_text(text)
+    spin.update()
+
+
+def refusal(row: Any) -> Any:
+    from gi.repository import Gtk
+
+    (label,) = [w for w in controls(row, Gtk.Label) if w.has_css_class("error")]
+    return label
+
+
+def group_lua(session: Any) -> str:
+    from hyprtweaker.engine.writer import render_module
+
+    return render_module(session.model.section("group"), app_version="0.0.0-test")
+
+
+def test_a_font_weight_row_offers_hyprlands_names_then_custom() -> None:
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, PreviewSession()))
+
+    assert choices(dropdown) == [
+        "Thin",
+        "Ultralight",
+        "Light",
+        "Semilight",
+        "Book",
+        "Normal",
+        "Medium",
+        "Semibold",
+        "Bold",
+        "Ultrabold",
+        "Heavy",
+        "Ultraheavy",
+        "Custom",
+    ]
+    assert chosen(dropdown) == "Normal", "the default is 400"
+    assert not spin.get_visible()
+
+
+def test_choosing_bold_writes_the_name() -> None:
+    session = PreviewSession()
+    dropdown, _spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+
+    choose(dropdown, "Bold")
+
+    assert session.applied == [WEIGHT_ACTIVE]
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight("bold")
+    assert 'font_weight_active = "bold"' in group_lua(session)
+
+
+def test_choosing_custom_shows_the_current_weight_and_writes_nothing() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, "semibold")
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+
+    choose(dropdown, "Custom")
+
+    assert spin.get_visible()
+    assert spin.get_value() == 600
+    assert session.applied == []
+
+
+def test_typing_550_writes_the_number() -> None:
+    session = PreviewSession()
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+    choose(dropdown, "Custom")
+
+    type_into(spin, "550")
+
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight(550)
+    assert "font_weight_active = 550," in group_lua(session)
+
+
+def leave(spin: Any) -> None:
+    """What focus leaving the spinner does, without a toplevel to move focus in."""
+    from gi.repository import Gtk
+
+    controllers = spin.observe_controllers()
+    for index in range(controllers.get_n_items()):
+        if isinstance(controller := controllers.get_item(index), Gtk.EventControllerFocus):
+            controller.emit("leave")
+
+
+def test_a_typed_weight_a_name_matches_shows_the_name_once_committed() -> None:
+    """Typed 700 reads "Bold" once Enter or focus leaving commits it, as a held 700 does;
+    the model keeps the number (display never rewrites a held value)."""
+    for commit in (leave, lambda spin: spin.emit("activate")):
+        session = PreviewSession()
+        dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+        choose(dropdown, "Custom")
+        type_into(spin, "700")
+        assert chosen(dropdown) == "Custom", "not while the number is still being typed"
+
+        commit(spin)
+
+        assert chosen(dropdown) == "Bold"
+        assert not spin.get_visible()
+        assert session.model.get(WEIGHT_ACTIVE) == FontWeight(700)
+
+
+def test_a_committed_weight_no_name_matches_stays_custom() -> None:
+    session = PreviewSession()
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+    choose(dropdown, "Custom")
+    type_into(spin, "550")
+
+    leave(spin)
+
+    assert chosen(dropdown) == "Custom"
+    assert spin.get_visible()
+
+
+def test_a_held_number_no_name_matches_shows_as_typed() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 550)
+    dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+
+    assert chosen(dropdown) == "Custom"
+    assert spin.get_visible()
+    assert spin.get_text() == "550"
+
+
+def test_a_held_number_a_name_matches_shows_the_name_and_stays_a_number() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 700)
+    dropdown, _spin = weight_parts(build_row(WEIGHT_ACTIVE, session))
+
+    assert chosen(dropdown) == "Bold"
+    assert session.applied == []
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight(700)
+
+
+def test_a_held_name_outside_the_list_is_offered_as_written_and_kept() -> None:
+    """An imported name the app does not list survives the Row untouched (decision #86)."""
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, "ExtraBold")
+    row = build_row(WEIGHT_ACTIVE, session)
+    dropdown, _spin = weight_parts(row)
+
+    assert chosen(dropdown) == "ExtraBold"
+    assert choices(dropdown)[-2:] == ["ExtraBold", "Custom"]
+    row.refresh()
+    assert session.applied == []
+    assert 'font_weight_active = "ExtraBold"' in group_lua(session)
+
+
+def test_a_held_number_out_of_range_shows_as_typed_and_is_not_rewritten() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 1200)
+    row = build_row(WEIGHT_ACTIVE, session)
+    dropdown, spin = weight_parts(row)
+
+    spin.update()  # what focus leaving the spinner does
+    row.refresh()
+
+    assert chosen(dropdown) == "Custom"
+    assert spin.get_text() == "1200"
+    assert session.applied == []
+    assert not refusal(row).get_visible()
+
+
+def test_typing_a_weight_out_of_range_is_refused_and_says_why() -> None:
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 550)
+    row = build_row(WEIGHT_ACTIVE, session)
+    _dropdown, spin = weight_parts(row)
+
+    type_into(spin, "1200")
+
+    assert session.applied == []
+    assert spin.get_value() == 550
+    assert refusal(row).get_visible()
+    assert refusal(row).get_text() == "1200 is out of range.\nUse a weight from 100 to 1000."
+
+    type_into(spin, "650")
+
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight(650)
+    assert not refusal(row).get_visible()
+
+
+def test_a_word_typed_as_a_weight_is_refused_as_not_a_number() -> None:
+    """#148 hand-test 22: `heavy` read as 0 and the caption said "0 is out of range"."""
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 550)
+    row = build_row(WEIGHT_ACTIVE, session)
+    _dropdown, spin = weight_parts(row)
+
+    spin.set_text("heavy")
+    spin.emit("activate")  # Enter
+
+    assert session.applied == []
+    assert spin.get_value() == 550
+    assert refusal(row).get_text() == "Type the weight as a number from 100 to 1000."
+
+
+def test_tab_after_an_out_of_range_weight_keeps_the_refusal_and_custom() -> None:
+    """#148 hand-test 24: focus leaving after `1200` cleared the caption and flipped the
+    combo to "Bold" (the held 700), so the refusal went unsaid."""
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 700)
+    row = build_row(WEIGHT_ACTIVE, session)
+    dropdown, spin = weight_parts(row)
+    dropdown.set_selected(dropdown.get_model().get_n_items() - 1)  # Custom, as the user does
+
+    spin.set_text("1200")
+    spin.update()  # what focus leaving the spinner does, before the leave handler runs
+    spin.emit("activate")
+
+    assert refusal(row).get_visible()
+    assert refusal(row).get_text() == "1200 is out of range.\nUse a weight from 100 to 1000."
+    assert chosen(dropdown) == "Custom"
+    assert session.applied == []
+
+
+def test_stepping_past_the_top_weight_is_refused_and_says_why() -> None:
+    from gi.repository import Gtk
+
+    session = PreviewSession()
+    session.model.set(WEIGHT_ACTIVE, 1000)
+    row = build_row(WEIGHT_ACTIVE, session)
+    _dropdown, spin = weight_parts(row)
+
+    spin.spin(Gtk.SpinType.STEP_FORWARD, 0)
+
+    assert session.applied == []
+    assert spin.get_value() == 1000
+    assert refusal(row).get_text() == "1010 is out of range.\nUse a weight from 100 to 1000."
+
+
+class HeldSession(PreviewSession):
+    """A session whose model holds a raw value no edit could have written."""
+
+    def __init__(self, held: Any) -> None:
+        super().__init__()
+        self.held = held
+
+    def value_of(self, option: Any) -> Any:
+        return self.held if option.name == WEIGHT_ACTIVE else super().value_of(option)
+
+
+def test_a_font_weight_row_survives_a_held_value_that_is_no_weight() -> None:
+    """An explicit null, an empty string or a float opens on Normal, not a dead Page."""
+    for held in (None, "", 1.5):
+        dropdown, spin = weight_parts(build_row(WEIGHT_ACTIVE, HeldSession(held)))
+
+        assert chosen(dropdown) == "Normal", held
+        assert not spin.get_visible(), held
+
+
+def test_the_weight_names_come_from_hyprlands_table_not_the_labels() -> None:
+    """A label the table lacks cannot break the combo; a name with no label still shows."""
+    from dataclasses import replace
+
+    from gi.repository import Adw
+
+    from hyprtweaker.ui.rows.factory import RowFactory
+
+    option = SCHEMA[WEIGHT_ACTIVE]
+    stray = replace(option, labels={"bold": "Bold", "extrablack": "Extra black"})
+    Adw.init()
+    session = PreviewSession()
+    dropdown, _spin = weight_parts(RowFactory(session).build(stray))  # type: ignore[arg-type]
+
+    assert "Extra black" not in choices(dropdown)
+    assert choices(dropdown)[:2] == ["Thin", "Ultralight"]
+    choose(dropdown, "Bold")
+    assert session.model.get(WEIGHT_ACTIVE) == FontWeight("bold")
+
+
+def test_activating_a_font_weight_row_activates_its_combo() -> None:
+    """Clicking the Row body opens the combo, as it does on every other combo Row."""
+    row = build_row(WEIGHT_ACTIVE, PreviewSession())
+    dropdown, _spin = weight_parts(row)
+
+    assert row.widget.get_activatable_widget() is dropdown
+
+
+def test_a_reset_font_weight_row_shows_the_default_again() -> None:
+    """After the reset arrow, the next refresh (the window's `sync`) shows Normal again."""
+    session = PreviewSession()
+    row = build_row(WEIGHT_ACTIVE, session)
+    dropdown, spin = weight_parts(row)
+    choose(dropdown, "Custom")
+    type_into(spin, "550")
+
+    row.chrome.reset.emit("clicked")
+    row.refresh()
+
+    assert chosen(dropdown) == "Normal"
+    assert not spin.get_visible()
+
+
+def _weight_lacking_session() -> PreviewSession:
+    from hyprtweaker.engine.ipc import LiveHyprland
+
+    present = tuple({"name": o.name} for o in SCHEMA if o.name != WEIGHT_INACTIVE)
+    session = PreviewSession()
+    session.live_hyprland = LiveHyprland("0.56.0", present)
+    return session
+
+
+def test_a_font_weight_row_hyprland_lacks_wears_its_pill_and_is_read_only() -> None:
+    """#215 over #194's two controls: the combo and the spinner both go insensitive."""
+    session = _weight_lacking_session()
+    session.unknown = frozenset({WEIGHT_INACTIVE})
+    row = build_row(WEIGHT_INACTIVE, session)
+    dropdown, spin = weight_parts(row)
+
+    assert row.chrome.pill_labels == ("Not in this Hyprland",)
+    assert not dropdown.is_sensitive() and not spin.is_sensitive()
+    assert row.widget.get_sensitive()
+    assert row.widget.get_subtitle().endswith(
+        "\nHyprland 0.56.0 does not have this setting, so it cannot be changed here."
+    )
+
+
+def test_a_retired_font_weight_row_shows_the_weight_it_keeps_read_only() -> None:
+    session = _weight_lacking_session()
+    session.retired = {WEIGHT_INACTIVE: "0.57.0"}
+    session.kept = {WEIGHT_INACTIVE: FontWeight("bold")}
+    row = build_row(WEIGHT_INACTIVE, session)
+    dropdown, spin = weight_parts(row)
+
+    assert row.chrome.pill_labels == ("Retired in 0.57.0",)
+    assert chosen(dropdown) == "Bold"
+    assert not dropdown.is_sensitive() and not spin.is_sensitive()
+    assert "\nYour value: " in row.widget.get_subtitle()
+
+
 # --- the Row contract still holds for all of them ---------------------------------------------
+
+
+def test_every_widget_type_builds_a_row_with_a_control_not_a_read_only_label() -> None:
+    """No type is read-only (#194): a widget the factory has no branch for raises here, and
+    one that fell back to a plain label of its value fails the assertion."""
+    from gi.repository import Gtk
+
+    from hyprtweaker.engine.schema import Widget
+
+    for widget in Widget:
+        option = next(o for o in SCHEMA if o.widget is widget)
+        row = build_row(option.name, PreviewSession())
+
+        assert not isinstance(row.control, Gtk.Label), widget
 
 
 def test_every_complex_editor_dims_only_its_control_on_a_read_only_session() -> None:
     """ADR-0013 §3, over the Rows that grew a whole editor rather than one widget."""
-    for name in (BACKGROUND, ACTIVE_BORDER, GAPS_IN, SHADOW_OFFSET):
+    for name in (BACKGROUND, ACTIVE_BORDER, GAPS_IN, SHADOW_OFFSET, WEIGHT_ACTIVE):
         row = build_row(name, PreviewSession(live=False))
 
         assert not row.control.get_sensitive(), name
@@ -427,3 +822,39 @@ def test_the_suffix_strip_reads_in_the_same_order_on_both_row_types() -> None:
         assert strip.index(row.chrome.summary) < strip.index(row.chrome.help), name
         assert strip.index(row.chrome.dependency_badge) < strip.index(row.chrome.reset), name
         assert strip[-1] is row.chrome.help, name
+
+
+# --- controls that read the right way round (review of spec #154, findings 16 to 18) -------
+
+
+def test_hardware_cursors_offers_choices_that_say_what_they_do() -> None:
+    """The setting is a negation (`no_hardware_cursors`): its own map names would show
+    "Disabled" for the value that keeps hardware cursors on (`Monitor.cpp:2297-2301`)."""
+    from gi.repository import Gtk
+
+    row = build_row("cursor:no_hardware_cursors", PreviewSession())
+    (dropdown,) = controls(row, Gtk.DropDown)
+
+    assert row.widget.get_title() == "Hardware cursors"
+    assert choices(dropdown) == ["Use when possible", "Never use", "Automatic"]
+    assert chosen(dropdown) == "Automatic", "the default is 2"
+
+
+def test_manual_crash_names_the_state_that_arms_it() -> None:
+    """1 arms; going back to 0 crashes (`lua/ConfigManager.cpp:832-839`), so 0 is "Off"."""
+    from gi.repository import Gtk
+
+    row = build_row("debug:manual_crash", PreviewSession())
+    (dropdown,) = controls(row, Gtk.DropDown)
+
+    assert choices(dropdown) == ["Off", "Armed"]
+    assert chosen(dropdown) == "Off", "the default is 0"
+    assert row.widget.get_subtitle() == (
+        "Choosing Armed and then Off crashes Hyprland on purpose, and you lose your session."
+    )
+
+
+def test_no_focus_fallback_is_titled_for_moving_focus_in_a_direction() -> None:
+    row = build_row("general:no_focus_fallback", PreviewSession())
+
+    assert row.widget.get_title() == "Keep focus when no window is in that direction"

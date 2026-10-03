@@ -1,0 +1,2385 @@
+{
+  "dispatchers": {
+    "cursor.move": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.cursor.move: expected a table { x, y }",
+          "label": "no_args",
+          "lua": "hl.dsp.cursor.move()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.cursor.move: 'x' is required | hl.cursor.move: 'y' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.cursor.move({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.cursor.move: expected a table { x, y }",
+          "label": "bare_string",
+          "lua": "hl.dsp.cursor.move('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.cursor.move: expected a table { x, y }",
+          "label": "bare_number",
+          "lua": "hl.dsp.cursor.move(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.cursor.move{x = 1, y = 1}"
+        }
+      ],
+      "hint_keys": [
+        "x",
+        "y"
+      ],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "x",
+        "y"
+      ],
+      "required_keys": [
+        "x",
+        "y"
+      ]
+    },
+    "cursor.move_to_corner": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.cursor.move_to_corner: expected a table { corner, window? }",
+          "label": "no_args",
+          "lua": "hl.dsp.cursor.move_to_corner()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.cursor.move_to_corner: 'corner' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.cursor.move_to_corner({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.cursor.move_to_corner: expected a table { corner, window? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.cursor.move_to_corner('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.cursor.move_to_corner: expected a table { corner, window? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.cursor.move_to_corner(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.cursor.move_to_corner{corner = 1}"
+        }
+      ],
+      "hint_keys": [
+        "corner"
+      ],
+      "hint_optional_keys": [
+        "window"
+      ],
+      "read_keys": [
+        "window",
+        "corner"
+      ],
+      "required_keys": [
+        "corner"
+      ]
+    },
+    "dpms": {
+      "confirmed_keys": [
+        "action"
+      ],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.dpms()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.dpms({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.dpms('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.dpms(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.dpms{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "monitor"
+      ],
+      "required_keys": []
+    },
+    "event": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "event: bad argument 1: expected string, got nil",
+          "label": "no_args",
+          "lua": "hl.dsp.event()"
+        },
+        {
+          "accepted": false,
+          "error": "event: bad argument 1: expected string, got table",
+          "label": "empty_table",
+          "lua": "hl.dsp.event({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.event('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.event(1)"
+        },
+        {
+          "accepted": false,
+          "error": "event: bad argument 1: expected string, got table",
+          "label": "base_table",
+          "lua": "hl.dsp.event{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "exec_cmd": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "exec_cmd: bad argument 1: expected string, got nil",
+          "label": "no_args",
+          "lua": "hl.dsp.exec_cmd()"
+        },
+        {
+          "accepted": false,
+          "error": "exec_cmd: bad argument 1: expected string, got table",
+          "label": "empty_table",
+          "lua": "hl.dsp.exec_cmd({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.exec_cmd('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.exec_cmd(1)"
+        },
+        {
+          "accepted": false,
+          "error": "exec_cmd: bad argument 1: expected string, got table",
+          "label": "base_table",
+          "lua": "hl.dsp.exec_cmd{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "exec_raw": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "exec_raw: bad argument 1: expected string, got nil",
+          "label": "no_args",
+          "lua": "hl.dsp.exec_raw()"
+        },
+        {
+          "accepted": false,
+          "error": "exec_raw: bad argument 1: expected string, got table",
+          "label": "empty_table",
+          "lua": "hl.dsp.exec_raw({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.exec_raw('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.exec_raw(1)"
+        },
+        {
+          "accepted": false,
+          "error": "exec_raw: bad argument 1: expected string, got table",
+          "label": "base_table",
+          "lua": "hl.dsp.exec_raw{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "exit": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.exit()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.exit({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.exit('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.exit(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.exit{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "focus": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.focus: expected a table, e.g. { direction = \"left\" }",
+          "label": "no_args",
+          "lua": "hl.dsp.focus()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.focus: unrecognized arguments. Expected one of: direction, monitor, window, urgent_or_last, last",
+          "label": "empty_table",
+          "lua": "hl.dsp.focus({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.focus: expected a table, e.g. { direction = \"left\" }",
+          "label": "bare_string",
+          "lua": "hl.dsp.focus('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.focus: expected a table, e.g. { direction = \"left\" }",
+          "label": "bare_number",
+          "lua": "hl.dsp.focus(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.focus{window = 'activewindow'}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [
+        "direction",
+        "monitor",
+        "window",
+        "urgent_or_last",
+        "last"
+      ],
+      "read_keys": [
+        "window",
+        "monitor",
+        "workspace",
+        "direction"
+      ],
+      "required_keys": []
+    },
+    "force_idle": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "force_idle: bad argument 1: expected number, got nil",
+          "label": "no_args",
+          "lua": "hl.dsp.force_idle()"
+        },
+        {
+          "accepted": false,
+          "error": "force_idle: bad argument 1: expected number, got table",
+          "label": "empty_table",
+          "lua": "hl.dsp.force_idle({})"
+        },
+        {
+          "accepted": false,
+          "error": "force_idle: bad argument 1: expected number, got string",
+          "label": "bare_string",
+          "lua": "hl.dsp.force_idle('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.force_idle(1)"
+        },
+        {
+          "accepted": false,
+          "error": "force_idle: bad argument 1: expected number, got table",
+          "label": "base_table",
+          "lua": "hl.dsp.force_idle{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "force_renderer_reload": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.force_renderer_reload()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.force_renderer_reload({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.force_renderer_reload('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.force_renderer_reload(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.force_renderer_reload{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "global": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "global: bad argument 1: expected string, got nil",
+          "label": "no_args",
+          "lua": "hl.dsp.global()"
+        },
+        {
+          "accepted": false,
+          "error": "global: bad argument 1: expected string, got table",
+          "label": "empty_table",
+          "lua": "hl.dsp.global({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.global('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.global(1)"
+        },
+        {
+          "accepted": false,
+          "error": "global: bad argument 1: expected string, got table",
+          "label": "base_table",
+          "lua": "hl.dsp.global{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "group.active": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.group.active: expected a table { index, window? }",
+          "label": "no_args",
+          "lua": "hl.dsp.group.active()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.group.active: 'index' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.group.active({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.group.active: expected a table { index, window? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.group.active('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.group.active: expected a table { index, window? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.group.active(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.group.active{index = 1}"
+        }
+      ],
+      "hint_keys": [
+        "index"
+      ],
+      "hint_optional_keys": [
+        "window"
+      ],
+      "read_keys": [
+        "window",
+        "index"
+      ],
+      "required_keys": [
+        "index"
+      ]
+    },
+    "group.lock": {
+      "confirmed_keys": [
+        "action"
+      ],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.group.lock()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.group.lock({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.group.lock('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.group.lock(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.group.lock{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "group.lock_active": {
+      "confirmed_keys": [
+        "action"
+      ],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.group.lock_active()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.group.lock_active({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.group.lock_active('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.group.lock_active(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.group.lock_active{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "group.move_window": {
+      "confirmed_keys": [
+        "forward"
+      ],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.group.move_window()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.group.move_window({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.group.move_window('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.group.move_window(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.group.move_window{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "group.next": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.group.next()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.group.next({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.group.next('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.group.next(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.group.next{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "group.prev": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.group.prev()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.group.prev({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.group.prev('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.group.prev(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.group.prev{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "group.toggle": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.group.toggle()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.group.toggle({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.group.toggle('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.group.toggle(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.group.toggle{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "layout": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "layout: bad argument 1: expected string, got nil",
+          "label": "no_args",
+          "lua": "hl.dsp.layout()"
+        },
+        {
+          "accepted": false,
+          "error": "layout: bad argument 1: expected string, got table",
+          "label": "empty_table",
+          "lua": "hl.dsp.layout({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.layout('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.layout(1)"
+        },
+        {
+          "accepted": false,
+          "error": "layout: bad argument 1: expected string, got table",
+          "label": "base_table",
+          "lua": "hl.dsp.layout{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "no_op": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.no_op()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.no_op({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.no_op('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.no_op(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.no_op{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "pass": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.pass: expected a table { window }",
+          "label": "no_args",
+          "lua": "hl.dsp.pass()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.pass: 'window' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.pass({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.pass: expected a table { window }",
+          "label": "bare_string",
+          "lua": "hl.dsp.pass('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.pass: expected a table { window }",
+          "label": "bare_number",
+          "lua": "hl.dsp.pass(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.pass{window = 'activewindow'}"
+        }
+      ],
+      "hint_keys": [
+        "window"
+      ],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": [
+        "window"
+      ]
+    },
+    "release_input_capture": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.release_input_capture()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.release_input_capture({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.release_input_capture('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.release_input_capture(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.release_input_capture{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "send_key_state": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "send_key_state: expected a table { mods, key, state, window? }",
+          "label": "no_args",
+          "lua": "hl.dsp.send_key_state()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.send_key_state: 'mods' is required | hl.send_key_state: 'key' is required | hl.send_key_state: 'state' is required | send_key_state: 'state' must be \"down\", \"up\", or \"repeat\"",
+          "label": "empty_table",
+          "lua": "hl.dsp.send_key_state({})"
+        },
+        {
+          "accepted": false,
+          "error": "send_key_state: expected a table { mods, key, state, window? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.send_key_state('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "send_key_state: expected a table { mods, key, state, window? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.send_key_state(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.send_key_state{mods = 'SUPER', key = 'a', state = 'down'}"
+        }
+      ],
+      "hint_keys": [
+        "mods",
+        "key",
+        "state"
+      ],
+      "hint_optional_keys": [
+        "window"
+      ],
+      "read_keys": [
+        "window",
+        "mods",
+        "key",
+        "state"
+      ],
+      "required_keys": [
+        "mods",
+        "key",
+        "state"
+      ]
+    },
+    "send_shortcut": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "send_shortcut: expected a table { mods, key, window? }",
+          "label": "no_args",
+          "lua": "hl.dsp.send_shortcut()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.send_shortcut: 'mods' is required | hl.send_shortcut: 'key' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.send_shortcut({})"
+        },
+        {
+          "accepted": false,
+          "error": "send_shortcut: expected a table { mods, key, window? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.send_shortcut('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "send_shortcut: expected a table { mods, key, window? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.send_shortcut(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.send_shortcut{mods = 'SUPER', key = 'a'}"
+        }
+      ],
+      "hint_keys": [
+        "mods",
+        "key"
+      ],
+      "hint_optional_keys": [
+        "window"
+      ],
+      "read_keys": [
+        "window",
+        "mods",
+        "key"
+      ],
+      "required_keys": [
+        "mods",
+        "key"
+      ]
+    },
+    "submap": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "submap: bad argument 1: expected string, got nil",
+          "label": "no_args",
+          "lua": "hl.dsp.submap()"
+        },
+        {
+          "accepted": false,
+          "error": "submap: bad argument 1: expected string, got table",
+          "label": "empty_table",
+          "lua": "hl.dsp.submap({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.submap('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.submap(1)"
+        },
+        {
+          "accepted": false,
+          "error": "submap: bad argument 1: expected string, got table",
+          "label": "base_table",
+          "lua": "hl.dsp.submap{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "window.alter_zorder": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.window.alter_zorder: expected a table { mode, window? }",
+          "label": "no_args",
+          "lua": "hl.dsp.window.alter_zorder()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.alter_zorder: 'mode' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.alter_zorder({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.alter_zorder: expected a table { mode, window? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.alter_zorder('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.alter_zorder: expected a table { mode, window? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.alter_zorder(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.alter_zorder{mode = 'top'}"
+        }
+      ],
+      "hint_keys": [
+        "mode"
+      ],
+      "hint_optional_keys": [
+        "window"
+      ],
+      "read_keys": [
+        "window",
+        "mode"
+      ],
+      "required_keys": [
+        "mode"
+      ]
+    },
+    "window.bring_to_top": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.bring_to_top()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.bring_to_top({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.bring_to_top('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.bring_to_top(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.bring_to_top{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "window.center": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.center()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.center({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.center('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.center(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.center{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "window.clear_tags": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.clear_tags()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.clear_tags({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.clear_tags('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.clear_tags(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.clear_tags{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "window.close": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.close()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.close({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.close('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.close(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.close{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "window.cycle_next": {
+      "confirmed_keys": [
+        "next",
+        "tiled",
+        "floating"
+      ],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.cycle_next()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.cycle_next({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.cycle_next('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.cycle_next(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.cycle_next{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "window.deny_from_group": {
+      "confirmed_keys": [
+        "action"
+      ],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.deny_from_group()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.deny_from_group({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.deny_from_group('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.deny_from_group(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.deny_from_group{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "window.drag": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.drag()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.drag({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.drag('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.drag(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.drag{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "window.float": {
+      "confirmed_keys": [
+        "action"
+      ],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.float()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.float({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.float('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.float(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.float{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "window.fullscreen": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.fullscreen()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.fullscreen({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.fullscreen('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.fullscreen(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.fullscreen{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window",
+        "action",
+        "mode"
+      ],
+      "required_keys": []
+    },
+    "window.fullscreen_state": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.window.fullscreen_state: expected a table { internal, client, action?, window? }",
+          "label": "no_args",
+          "lua": "hl.dsp.window.fullscreen_state()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.fullscreen_state: 'internal' and 'client' are required",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.fullscreen_state({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.fullscreen_state: expected a table { internal, client, action?, window? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.fullscreen_state('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.fullscreen_state: expected a table { internal, client, action?, window? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.fullscreen_state(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.fullscreen_state{internal = 1, client = 1}"
+        }
+      ],
+      "hint_keys": [
+        "internal",
+        "client"
+      ],
+      "hint_optional_keys": [
+        "action",
+        "window"
+      ],
+      "read_keys": [
+        "window",
+        "action",
+        "internal",
+        "client"
+      ],
+      "required_keys": [
+        "internal",
+        "client"
+      ]
+    },
+    "window.kill": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.kill()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.kill({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.kill('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.kill(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.kill{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "window.move": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.window.move: expected a table, e.g. { direction = \"left\" }",
+          "label": "no_args",
+          "lua": "hl.dsp.window.move()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.move: unrecognized arguments. Expected one of: direction, x+y(+relative), workspace, into_group, out_of_group",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.move({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.move: expected a table, e.g. { direction = \"left\" }",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.move('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.move: expected a table, e.g. { direction = \"left\" }",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.move(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.move{direction = 'left'}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [
+        "direction",
+        "x",
+        "y",
+        "workspace",
+        "into_group",
+        "out_of_group"
+      ],
+      "read_keys": [
+        "window",
+        "direction"
+      ],
+      "required_keys": []
+    },
+    "window.pin": {
+      "confirmed_keys": [
+        "action"
+      ],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.pin()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.pin({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.pin('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.pin(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.pin{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "window.pseudo": {
+      "confirmed_keys": [
+        "action"
+      ],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.pseudo()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.pseudo({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.pseudo('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.pseudo(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.pseudo{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": []
+    },
+    "window.resize": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.resize()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.focus: unrecognized arguments. Expected positions (x & y) or keep_aspect_ratio",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.resize({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.resize: expected no args, a table { x, y, relative?, window? }, or a table { keep_aspect_ratio }",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.resize('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.resize: expected no args, a table { x, y, relative?, window? }, or a table { keep_aspect_ratio }",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.resize(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.resize{x = 1, y = 1}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [
+        "keep_aspect_ratio"
+      ],
+      "read_keys": [
+        "window",
+        "x",
+        "y"
+      ],
+      "required_keys": []
+    },
+    "window.set_prop": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.window.set_prop: expected a table { prop, value, window? }",
+          "label": "no_args",
+          "lua": "hl.dsp.window.set_prop()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.set_prop: 'prop' is required | hl.window.set_prop: 'value' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.set_prop({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.set_prop: expected a table { prop, value, window? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.set_prop('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.set_prop: expected a table { prop, value, window? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.set_prop(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.set_prop{prop = 'opaque', value = '1'}"
+        }
+      ],
+      "hint_keys": [
+        "prop",
+        "value"
+      ],
+      "hint_optional_keys": [
+        "window"
+      ],
+      "read_keys": [
+        "window",
+        "prop",
+        "value"
+      ],
+      "required_keys": [
+        "prop",
+        "value"
+      ]
+    },
+    "window.signal": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.window.signal: expected a table { signal, window? }",
+          "label": "no_args",
+          "lua": "hl.dsp.window.signal()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.signal: 'signal' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.signal({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.signal: expected a table { signal, window? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.signal('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.signal: expected a table { signal, window? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.signal(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.signal{signal = 9}"
+        }
+      ],
+      "hint_keys": [
+        "signal"
+      ],
+      "hint_optional_keys": [
+        "window"
+      ],
+      "read_keys": [
+        "window",
+        "signal"
+      ],
+      "required_keys": [
+        "signal"
+      ]
+    },
+    "window.swap": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.window.swap: expected a table, e.g. { direction = \"left\" }",
+          "label": "no_args",
+          "lua": "hl.dsp.window.swap()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.swap: unrecognized arguments. Expected one of: direction, target/with/other, next, prev",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.swap({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.swap: expected a table, e.g. { direction = \"left\" }",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.swap('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.swap: expected a table, e.g. { direction = \"left\" }",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.swap(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.swap{direction = 'left'}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [
+        "direction",
+        "target",
+        "with",
+        "other",
+        "next",
+        "prev"
+      ],
+      "read_keys": [
+        "window",
+        "direction"
+      ],
+      "required_keys": []
+    },
+    "window.tag": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.window.tag: expected a table { tag, window? }",
+          "label": "no_args",
+          "lua": "hl.dsp.window.tag()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.tag: 'tag' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.tag({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.tag: expected a table { tag, window? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.tag('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.window.tag: expected a table { tag, window? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.tag(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.tag{tag = 'probe'}"
+        }
+      ],
+      "hint_keys": [
+        "tag"
+      ],
+      "hint_optional_keys": [
+        "window"
+      ],
+      "read_keys": [
+        "window"
+      ],
+      "required_keys": [
+        "tag"
+      ]
+    },
+    "window.toggle_swallow": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.window.toggle_swallow()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.window.toggle_swallow({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.window.toggle_swallow('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.window.toggle_swallow(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.window.toggle_swallow{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    },
+    "workspace.change_id": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.workspace.change_id: expected a table { workspace, id }",
+          "label": "no_args",
+          "lua": "hl.dsp.workspace.change_id()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.change_id: 'workspace' is required | hl.workspace.change_id: 'id' is required | hl.workspace.change_id: bad id",
+          "label": "empty_table",
+          "lua": "hl.dsp.workspace.change_id({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.change_id: expected a table { workspace, id }",
+          "label": "bare_string",
+          "lua": "hl.dsp.workspace.change_id('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.change_id: expected a table { workspace, id }",
+          "label": "bare_number",
+          "lua": "hl.dsp.workspace.change_id(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.workspace.change_id{workspace = 1, id = 2}"
+        }
+      ],
+      "hint_keys": [
+        "workspace",
+        "id"
+      ],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "workspace",
+        "id"
+      ],
+      "required_keys": [
+        "workspace",
+        "id"
+      ]
+    },
+    "workspace.move": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.workspace.move: expected a table, e.g. { monitor = \"DP-1\" }",
+          "label": "no_args",
+          "lua": "hl.dsp.workspace.move()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.move: 'monitor' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.workspace.move({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.move: expected a table, e.g. { monitor = \"DP-1\" }",
+          "label": "bare_string",
+          "lua": "hl.dsp.workspace.move('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.move: expected a table, e.g. { monitor = \"DP-1\" }",
+          "label": "bare_number",
+          "lua": "hl.dsp.workspace.move(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.workspace.move{monitor = 'DP-1'}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "monitor",
+        "workspace"
+      ],
+      "required_keys": [
+        "monitor"
+      ]
+    },
+    "workspace.rename": {
+      "confirmed_keys": [
+        "name"
+      ],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.workspace.rename: expected a table { workspace, name? }",
+          "label": "no_args",
+          "lua": "hl.dsp.workspace.rename()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.rename: 'workspace' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.workspace.rename({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.rename: expected a table { workspace, name? }",
+          "label": "bare_string",
+          "lua": "hl.dsp.workspace.rename('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.rename: expected a table { workspace, name? }",
+          "label": "bare_number",
+          "lua": "hl.dsp.workspace.rename(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.workspace.rename{workspace = 1}"
+        }
+      ],
+      "hint_keys": [
+        "workspace"
+      ],
+      "hint_optional_keys": [
+        "name"
+      ],
+      "read_keys": [
+        "workspace"
+      ],
+      "required_keys": [
+        "workspace"
+      ]
+    },
+    "workspace.swap_monitors": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": false,
+          "error": "hl.workspace.swap_monitors: expected a table { monitor1, monitor2 }",
+          "label": "no_args",
+          "lua": "hl.dsp.workspace.swap_monitors()"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.swap_monitors: 'monitor1' is required | hl.workspace.swap_monitors: 'monitor2' is required",
+          "label": "empty_table",
+          "lua": "hl.dsp.workspace.swap_monitors({})"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.swap_monitors: expected a table { monitor1, monitor2 }",
+          "label": "bare_string",
+          "lua": "hl.dsp.workspace.swap_monitors('probe')"
+        },
+        {
+          "accepted": false,
+          "error": "hl.workspace.swap_monitors: expected a table { monitor1, monitor2 }",
+          "label": "bare_number",
+          "lua": "hl.dsp.workspace.swap_monitors(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.workspace.swap_monitors{monitor1 = 'DP-1', monitor2 = 'DP-2'}"
+        }
+      ],
+      "hint_keys": [
+        "monitor1",
+        "monitor2"
+      ],
+      "hint_optional_keys": [],
+      "read_keys": [
+        "monitor1",
+        "monitor2"
+      ],
+      "required_keys": [
+        "monitor1",
+        "monitor2"
+      ]
+    },
+    "workspace.toggle_special": {
+      "confirmed_keys": [],
+      "forms": [
+        {
+          "accepted": true,
+          "error": "",
+          "label": "no_args",
+          "lua": "hl.dsp.workspace.toggle_special()"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "empty_table",
+          "lua": "hl.dsp.workspace.toggle_special({})"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_string",
+          "lua": "hl.dsp.workspace.toggle_special('probe')"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "bare_number",
+          "lua": "hl.dsp.workspace.toggle_special(1)"
+        },
+        {
+          "accepted": true,
+          "error": "",
+          "label": "base_table",
+          "lua": "hl.dsp.workspace.toggle_special{}"
+        }
+      ],
+      "hint_keys": [],
+      "hint_optional_keys": [],
+      "read_keys": [],
+      "required_keys": []
+    }
+  },
+  "effects": [
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "floating": [
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "path": "window.float"
+    },
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "pinned": [
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "path": "window.pin"
+    },
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "resized": [
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "path": "window.pseudo"
+    },
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "dpmsStatus": [
+          false,
+          false,
+          true,
+          true
+        ]
+      },
+      "path": "dpms"
+    },
+    {
+      "confirmed": true,
+      "key": "name",
+      "observed": {
+        "cleared": "",
+        "named": "probed"
+      },
+      "path": "workspace.rename"
+    },
+    {
+      "confirmed": true,
+      "key": "<positional>",
+      "observed": {
+        "positional": "special:probed",
+        "table": "special:special"
+      },
+      "path": "workspace.toggle_special"
+    },
+    {
+      "confirmed": true,
+      "key": "next",
+      "observed": {
+        "default": "pb",
+        "next_false": "pc"
+      },
+      "path": "window.cycle_next"
+    },
+    {
+      "confirmed": true,
+      "key": "tiled",
+      "observed": {
+        "default": "pb",
+        "tiled": "pa"
+      },
+      "path": "window.cycle_next"
+    },
+    {
+      "confirmed": true,
+      "key": "floating",
+      "observed": {
+        "default": "pc",
+        "floating": "pb"
+      },
+      "path": "window.cycle_next"
+    },
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "refused": [
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "path": "group.lock"
+    },
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "refused": [
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "path": "group.lock_active"
+    },
+    {
+      "confirmed": true,
+      "key": "action",
+      "observed": {
+        "refused": [
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "path": "window.deny_from_group"
+    },
+    {
+      "confirmed": true,
+      "key": "forward",
+      "observed": {
+        "default": [
+          "pa",
+          "pc",
+          "pb"
+        ],
+        "forward_false": [
+          "pb",
+          "pa",
+          "pc"
+        ],
+        "forward_true": [
+          "pa",
+          "pc",
+          "pb"
+        ]
+      },
+      "path": "group.move_window"
+    }
+  ],
+  "effects_skipped": "",
+  "hyprland_version": "0.56.2"
+}

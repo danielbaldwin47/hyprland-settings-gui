@@ -138,7 +138,7 @@ class TestVariables:
     def test_the_longest_name_wins_and_no_delimiter_is_needed(self, tmp_path: Path) -> None:
         result = parse_text(
             tmp_path,
-            "$col = ff\n$colour = 00ff99\ngeneral {\n  c = $colourAND$col\n}\n",
+            "$col = ff\n$color = 00ff99\ngeneral {\n  c = $colorAND$col\n}\n",
         )
         assert assignments(result)["general:c"] == "00ff99ANDff"
 
@@ -524,6 +524,35 @@ class TestSource:
         (tmp_path / "part.conf").write_text("kb_variant = $v\n")
         result = parse_text(tmp_path, "$v = intl\ninput {\n  source = part.conf\n}\n")
         assert assignments(result) == {"input:kb_variant": "intl"}
+
+    def test_a_tilde_source_resolves_against_the_home_it_was_given(
+        self, tmp_path: Path
+    ) -> None:
+        """`~` is the `HOME` Hyprland would see, as `$HOME` is, not this process's home.
+
+        ML4W sources every topic file as `~/.config/hypr/conf/<topic>.conf`; staged under a
+        throwaway home, those lines read the running user's home instead and matched nothing.
+        """
+        home = tmp_path / "home"
+        hypr = home / ".config" / "hypr"
+        (hypr / "conf").mkdir(parents=True)
+        (hypr / "conf" / "binds.conf").write_text("exec-once = from-the-given-home\n")
+        (hypr / "hyprland.conf").write_text("source = ~/.config/hypr/conf/binds.conf\n")
+        result = parse(Path("~/.config/hypr/hyprland.conf"), env={"HOME": str(home)})
+        assert [h.value for h in handlers(result)] == ["from-the-given-home"]
+        assert [p.name for p in result.files] == ["hyprland.conf", "binds.conf"]
+
+    def test_a_tilde_source_never_reads_this_process_home_when_given_none(
+        self, tmp_path: Path
+    ) -> None:
+        """Hyprland with no `HOME` expands no `~`: this process's home is no stand-in (#233)."""
+        (Path.home() / "binds.conf").write_text("exec-once = from-this-process-home\n")
+        (tmp_path / "hyprland.conf").write_text("source = ~/binds.conf\n")
+
+        result = parse(tmp_path / "hyprland.conf", env={})
+
+        assert handlers(result) == []
+        assert DiagnosticCode.SOURCE_NO_MATCH in codes(result)
 
     def test_a_sourced_file_that_leaves_a_category_open_is_reported(
         self, tmp_path: Path

@@ -251,6 +251,15 @@ class ApplyTransaction:
         self._reloader = reloader or Reloader(
             client=client, events=events, timeout=reload_timeout
         )
+        self._overwrite: set[str] = set()
+
+    def allow_overwrite(self, *modules: str) -> None:
+        """Let the next write replace these hand-edited Modules: the user said so (ADR-0005).
+
+        One-shot, consumed by the next `run` that reaches the Writer, because the answer was
+        about the file as it is now; a later hand edit is a new question.
+        """
+        self._overwrite.update(modules)
 
     @property
     def reloader(self) -> Reloader:
@@ -281,8 +290,13 @@ class ApplyTransaction:
             return ApplyResult(ApplyOutcome.ABORTED, keys=names, detail=str(error))
 
         draft = self._open_draft()
+        overwrite, self._overwrite = frozenset(self._overwrite), set()
         try:
-            write = self._writer.write(self._model)
+            write = self._writer.write(
+                self._model,
+                overwrite=overwrite,
+                before_replace=draft.preserve if draft is not None else None,
+            )
         except (LuaSyntaxError, ProtectedFile, ValueError) as error:
             # ADR-0010's guarantee: the gate runs over every rendered file before the first
             # one is replaced, so there is nothing on disk to undo -- and therefore nothing
@@ -433,7 +447,7 @@ class ApplyTransaction:
             for option in outstanding:
                 try:
                     reply = await self._client.getoption(option.name)
-                    mismatch = self._compare(option, reply)
+                    mismatch = compare(option, self._model.get(option.name), reply)
                 except MalformedReply as error:
                     # Not a reply at all: 0.56.2 answers `invalid type (internal error)` for
                     # both font-weight Options. No evidence either way about what the config
@@ -465,55 +479,57 @@ class ApplyTransaction:
             outstanding = again
             await asyncio.sleep(SETTLE_POLL_SECONDS)
 
-    def _compare(self, option: ResolvedOption, reply: OptionReply) -> Mismatch | None:
-        """The model's value for one Option against the live one. `None` means they agree.
 
-        Raises `MalformedReply` when the live config sets the key and the reply about it
-        cannot be read: that is the caller's "unconfirmed" branch, and routing it through the
-        exception the command client already raises for the same condition keeps one path
-        instead of two.
-        """
-        expected = self._model.get(option.name)
+def compare(option: ResolvedOption, expected: Any, reply: OptionReply) -> Mismatch | None:
+    """What the app asked for one Option against the live value. `None` means they agree.
 
-        if expected is UNSET:
-            # Reset to Hyprland's default: the model emits nothing, so the live config must
-            # not set it either. When it still does, something below the app in the require
-            # order does -- `user.lua`, a Bridge, `legacy.lua` -- which is exactly the drift
-            # the ADR-0005 badge exists to show.
-            if not reply.set_by_user:
-                return None
-            live_override = self._live_value(option, reply)
-            return Mismatch(option.name, expected, live_override, live_set=True)
+    `expected` is a model value: typed, `None` for explicit null, or `UNSET`. The
+    transaction's Read-back passes the model's; the drift scan passes the value the app's
+    own Module sets (`overrides.py`), so both badge by the same rules.
 
-        if expected is None:
-            # Explicit null emits the curated `null_value` *verbatim* -- `-1` in
-            # `general:float_gaps` is Hyprland's "same as the outer gaps" marker, not four
-            # gaps of -1. What `getoption` reports for that marker is the compositor's own
-            # interpretation and not something the app can predict, so the confirmation
-            # stops at "the live config sets this key".
-            if reply.set_by_user:
-                return None
-            return Mismatch(option.name, expected, UNREADABLE, live_set=False)
-
-        live = self._live_value(option, reply)
-        if live is UNREADABLE and reply.set_by_user:
-            # The live config sets the key and the reply about it is unreadable, so there is
-            # nothing to disagree with. Calling that a mismatch would badge the Row "didn't
-            # apply" for a write that did.
-            raise MalformedReply(
-                f"getoption {option.name} answered nothing readable as {option.type}"
-            )
-        if reply.set_by_user and values_match(expected, live):
+    Raises `MalformedReply` when the live config sets the key and the reply about it
+    cannot be read: that is the caller's "unconfirmed" branch, and routing it through the
+    exception the command client already raises for the same condition keeps one path
+    instead of two.
+    """
+    if expected is UNSET:
+        # Reset to Hyprland's default: the model emits nothing, so the live config must
+        # not set it either. When it still does, something below the app in the require
+        # order does -- `user.lua`, a Bridge, `legacy.lua` -- which is exactly the drift
+        # the ADR-0005 badge exists to show.
+        if not reply.set_by_user:
             return None
-        return Mismatch(option.name, expected, live, live_set=reply.set_by_user)
+        return Mismatch(option.name, expected, _live_value(option, reply), live_set=True)
 
-    @staticmethod
-    def _live_value(option: ResolvedOption, reply: OptionReply) -> Any:
-        """The reply as a model value, or `UNREADABLE` if this Option's parser refused it.
+    if expected is None:
+        # Explicit null emits the curated `null_value` *verbatim* -- `-1` in
+        # `general:float_gaps` is Hyprland's "same as the outer gaps" marker, not four
+        # gaps of -1. What `getoption` reports for that marker is the compositor's own
+        # interpretation and not something the app can predict, so the confirmation
+        # stops at "the live config sets this key".
+        if reply.set_by_user:
+            return None
+        return Mismatch(option.name, expected, UNREADABLE, live_set=False)
 
-        What a caller does with `UNREADABLE` depends on what was being asked: for a key the
-        model no longer sets, "the live config sets *something* here" is the whole finding
-        and the unreadable value only costs the badge its detail; for a key the model does
-        set, there is nothing left to compare and the key is unconfirmed.
-        """
-        return live_value(option, dict(reply.payload))
+    live = _live_value(option, reply)
+    if live is UNREADABLE and reply.set_by_user:
+        # The live config sets the key and the reply about it is unreadable, so there is
+        # nothing to disagree with. Calling that a mismatch would badge the Row "didn't
+        # apply" for a write that did.
+        raise MalformedReply(
+            f"getoption {option.name} answered nothing readable as {option.type}"
+        )
+    if reply.set_by_user and values_match(expected, live):
+        return None
+    return Mismatch(option.name, expected, live, live_set=reply.set_by_user)
+
+
+def _live_value(option: ResolvedOption, reply: OptionReply) -> Any:
+    """The reply as a model value, or `UNREADABLE` if this Option's parser refused it.
+
+    What a caller does with `UNREADABLE` depends on what was being asked: for a key the
+    model no longer sets, "the live config sets *something* here" is the whole finding
+    and the unreadable value only costs the badge its detail; for a key the model does
+    set, there is nothing left to compare and the key is unconfirmed.
+    """
+    return live_value(option, dict(reply.payload))

@@ -15,7 +15,11 @@ from hyprtweaker.engine.model.entities import (
     Unbind,
 )
 from hyprtweaker.engine.paths import BINDS_MODULE
-from hyprtweaker.engine.writer.binds import parse_binds_module, render_binds_module
+from hyprtweaker.engine.writer.binds import (
+    live_bind_count,
+    parse_binds_module,
+    render_binds_module,
+)
 
 VERSION = "0.1.0"
 
@@ -38,6 +42,44 @@ def exec_bind(keys: str, command: str, **kwargs: object) -> Bind:
         dispatcher=DispatcherCall(path="exec_cmd", positional=(command,)),
         **kwargs,  # type: ignore[arg-type]
     )
+
+
+class TestLiveBindCount:
+    """How many binds the compositor registers once the Module has loaded (#101)."""
+
+    def test_counts_only_the_binds_the_module_registers(self) -> None:
+        entities = EntitySet(
+            binds=[
+                exec_bind("SUPER + Q", "kitty"),
+                exec_bind("SUPER + W", "firefox", enabled=False),
+                Bind(keys="SUPER + F", dispatcher=None),
+                exec_bind("J", "x", submap="resize"),
+            ],
+            unbinds=[Unbind(keys="SUPER + P")],
+        )
+
+        assert live_bind_count(entities) == 2
+
+    def test_agrees_with_the_hl_bind_lines_the_module_actually_has(self) -> None:
+        entities = EntitySet(
+            binds=[
+                exec_bind("SUPER + Q", "kitty"),
+                exec_bind("SUPER + W", "firefox", enabled=False),
+                Bind(keys="SUPER + F", dispatcher=None),
+                exec_bind("J", "x", submap="resize"),
+                exec_bind("K", "y", submap="resize", enabled=False),
+            ],
+        )
+        live_lines = [
+            line
+            for line in render(entities).splitlines()
+            if line.lstrip().startswith("hl.bind(")
+        ]
+
+        assert live_bind_count(entities) == len(live_lines) == 2
+
+    def test_no_binds_is_zero(self) -> None:
+        assert live_bind_count(EntitySet()) == 0
 
 
 class TestRender:
@@ -193,8 +235,37 @@ class TestRoundTrip:
         assert parsed.binds[0].options.locked is True
         assert parsed.binds[0].options.description == "Terminal"
 
+    @pytest.mark.parametrize(
+        "flags",
+        [
+            {"click": True, "release": True},
+            {"drag": True, "release": True},
+            {"auto_consuming": True},
+        ],
+    )
+    def test_click_drag_and_auto_consuming_survive(self, flags: dict[str, bool]) -> None:
+        entities = EntitySet(
+            binds=[exec_bind("SUPER + Q", "kitty", options=BindOptions(**flags))]
+        )
+        parsed = parse_binds_module(render(entities))
+        assert parsed.binds[0].options.as_table() == {name: True for name in flags}
+
     def test_key_code_survives(self) -> None:
         self.assert_round_trips(EntitySet(binds=[exec_bind("SUPER + code:10", "x")]))
+
+    def test_switch_triggers_survive_with_the_exact_name(self) -> None:
+        """#107: the picker's three spellings, a name with inner spaces and mixed case, and
+        a switch bind next to a key bind (`switch:` binds are written like any other)."""
+        self.assert_round_trips(
+            EntitySet(
+                binds=[
+                    exec_bind("switch:on:Lid Switch", "lock"),
+                    exec_bind("switch:off:Lid Switch", "wake"),
+                    exec_bind("switch:Tablet  Mode switch", "rotate"),
+                    exec_bind("SUPER + Q", "kitty"),
+                ]
+            )
+        )
 
     def test_submap_membership_survives(self) -> None:
         self.assert_round_trips(
@@ -309,6 +380,35 @@ class TestDisabled:
         parsed = parse_binds_module(render(entities))
         assert [(b.keys, b.submap, b.enabled) for b in parsed.binds] == [
             ("right", "resize", False)
+        ]
+
+    def test_an_edited_dead_keysym_bind_stays_commented_out_golden(self) -> None:
+        """The gate #108 relaxes the editor's Save block on: an imported dead-keysym bind
+        whose description and flags were edited, trigger untouched, is written commented
+        out and reads back disabled. One live dead keysym fails the whole Lua config."""
+        from pathlib import Path
+
+        from _golden import assert_matches_golden
+
+        imported = exec_bind(
+            "SUPER + notakey", "kitty", enabled=False, origin="hyprland.conf:2"
+        )
+        edited = Bind(
+            keys=imported.keys,
+            dispatcher=imported.dispatcher,
+            options=BindOptions(description="open a terminal", repeating=True),
+            enabled=imported.enabled,
+            origin=imported.origin,
+        )
+        text = render(EntitySet(binds=[exec_bind("SUPER + Q", "a"), edited]))
+        golden = Path(__file__).parent.parent / "golden" / "writer" / "binds-dead-keysym.lua"
+        assert_matches_golden(text, golden, "the edited dead-keysym binds.lua")
+
+        # Checked apart from the golden, so regenerating it cannot bless a promoted bind.
+        parsed = parse_binds_module(text)
+        assert [(b.keys, b.enabled, b.options.description) for b in parsed.binds] == [
+            ("SUPER + Q", True, ""),
+            ("SUPER + notakey", False, "open a terminal"),
         ]
 
     def test_a_hand_written_comment_is_not_a_disabled_bind(self) -> None:

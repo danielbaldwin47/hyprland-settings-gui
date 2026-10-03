@@ -17,7 +17,7 @@ Binds are the largest Entity class in every corpus rice (89–197 per config) an
 
 ### Model owns bind state; `binds.lua` is round-trippable
 
-The app's model is the source of truth for binds, **write-only over IPC**: never reconstruct binds from `hyprctl binds` (blind to `code:N`); post-reload verification for binds is `configerrors` only.
+The app's model is the source of truth for binds, **write-only over IPC**: never reconstruct binds from `hyprctl binds` (blind to `code:N`); post-reload verification for binds is `configerrors` only (the Migration switch's one-time count checks, ADR-0009, compare counts only).
 
 Hand-editability is preserved by the *file*, not IPC: `binds.lua` is emitted in a **canonical, machine-parseable form** the app can also read back. On external change (manifest hash mismatch / file watch), the app re-parses `binds.lua`; constructs the parser can't represent are surfaced as read-only rows (offered adopt-into-`legacy.lua`), never silently dropped or overwritten.
 
@@ -30,6 +30,12 @@ An ordered entry: **Trigger + Action + flags + optional description + owning Sub
 - **Flags**: the `HL.BindOptions` set **including `auto_consuming`**, with constraints enforced in the editor (`click`/`drag` ⇒ `release`, mutually exclusive; `long_press`/`release` × `repeating`). **`mouse = true` is never emitted** — inert; `drag()`/`resize()` dispatchers are self-contained.
 - **Identity is position.** Order is preserved and user-reorderable; duplicates are legal.
 - **Submap**: first-class entity (name, optional reset-target, ordered binds), emitted as nested `hl.define_submap`. A submap no bind enters is badged unreachable.
+
+### Disabled binds (amended during #110)
+
+A disabled bind is written as its own `hl.bind(...)` line behind the comment prefix `-- disabled: ` (`DISABLED_PREFIX`, `engine/writer/binds.py`). A comment rather than a deletion, because deleting would renumber every bind after it (identity is position), and the line stays readable in a text editor. Read-back revives exactly that spelling — the prefix followed by an `hl.` call — line for line before evaluation, and re-marks those binds disabled by line number; any other comment stays a comment. Removing the prefix by hand re-enables the bind.
+
+The cost: only the exact spelling is recognised, and once user files carry these lines, changing it would orphan every bind they disable. The prefix is therefore part of the app's compatibility surface, held to the same care as the `hl.*` calls the app emits.
 
 ### Add flow: two doors
 
@@ -45,7 +51,7 @@ Conflict = same (submap, modmask, trigger) among enabled binds (`submap_universa
 
 ### Imported edge cases
 
-Dead-keysym binds arrive commented out from the Importer → disabled row, error badge, re-capture affordance. `catchall`-with-mods and multi-key `binds` (`A&B`) approximations are badged "imported approximately". Multi-key binds are read-only with raw-text editing — no capture UX (0 uses in corpus, mapping only approximate).
+Dead-keysym binds arrive commented out from the Importer → disabled row, error badge, re-capture affordance. Both Importers do this since #131; the editor saves a description or flag edit to such a bind with its trigger untouched, since the Writer keeps a disabled bind commented out, and still blocks an edit that changes a trigger to a dead name or saves an enabled bind with one (#108). The row is built in #139: its error badge names the key (`Unknown key "notakey"`), and in place of Enable it offers "Fix trigger…", which opens Capture and enables the bind with the captured trigger; it has no one-click Enable. Edit enables such a bind too once its trigger is valid, and says so above Save (decided in #149's review, owner call 4). A `catchall` bind that carried modifiers imports as plain `catchall` with an import-report note and no row badge: hyprlang already ignored those modifiers, so the bind behaves as it did (amended during #149's review, owner call 2). Multi-key binds (`A&B`) are read-only with no editor at all (amended during #162): on Hyprland 0.56.2 an enabled `&` bind fails the whole config (`hl.bind: failed to parse key string: Unknown keysym`), so such a bind can never be enabled and an editor would serve nothing. A trigger of two or more keys joined by `+` (`SUPER + A + B`) does load on 0.56.2, probed under `--verify-config` and in a nested instance (amended during #198): it registers as the last key only (`SUPER + B`), so `validate_trigger` warns and names the key that fires. Only a mouse, wheel or switch trigger beside another key fails the config, and that blocks. The row wears the multi-key read-only badge that #139 builds. One engine predicate, `trigger_load_problem` (dead keys, `&`, or a blocking `validate_trigger` problem), is the single definition of a trigger that can be written enabled (amended during #199): the Session refuses to store an enabled bind that fails it, and the row and the editor read it, so a disabled bind whose trigger fails it for a reason other than a dead key also gets the error badge ("Trigger can't load") and "Fix trigger…" in place of an Enable the Session would refuse. Disabling is never refused.
 
 ### Placement
 

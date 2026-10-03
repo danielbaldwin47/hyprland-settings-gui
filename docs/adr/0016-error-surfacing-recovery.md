@@ -35,6 +35,8 @@ When an ApplyResult carries config errors attributed to a Module this transactio
 
 No confirmation — instant apply has no cancel, and the restored bytes are the state that was live and confirmed moments before, so the cycle cannot loop. If the restore transaction itself errors (e.g. schema drift after a Hyprland upgrade), escalate to the Banner and stop auto-writing until the user acts.
 
+*Amended during #227.* One verdict, `Session._stands`, decides for every step kind whether a transaction stands. It does not stand on the rejection above, on a write the filesystem refused part-way (`WRITE_FAILED`: auto-reverted the same way, toast "The change could not be saved — reverted."), or on an abort before any write (`ABORTED`: the model goes back, nothing is written). Entity edits are reverted with Option edits: their lists go back and the re-apply reproduces the Snapshot. Everything else stands and records its step: an error in a file the transaction did not write, a read-back mismatch, a compositor that went away, and a timeout (below). A result that ran no reload, or whose reload went unanswered, is never observed, so it never clears the Banner.
+
 ### Last known good
 
 **Last known good** is per-Module: the newest Journal Snapshot whose transaction confirmed clean (empty `configerrors` + read-back ok). Journal entries gain a `confirmed` flag written after Read-back. **Restore last good** restores implicated Modules only — never the whole tree.
@@ -50,10 +52,10 @@ When a reload ends with config errors **and zero binds** (Hyprland's emergency m
 ### Surfacing
 
 - **One persistent Banner** (`Adw.Banner` under the header bar, app-wide) for any unhealthy state: non-empty `configerrors` after the last reload, Entrypoint refusal, active Quarantine. Its button opens **one error dialog**: monospace `file:line` list with per-class action buttons. No dedicated "Problems" page — errors are rare and file-scoped.
-- **Toasts** only for transient auto-revert events.
+- **Toasts**: transient auto-revert events, and one-time Info notices (ADR-0012's per-release Retired notice, rename migrations); never a persistent unhealthy state, which is the Banner's.
 - **Per-Row badges** stay reserved for key-scoped states already decided elsewhere (drift "overridden in user.lua", Pending restart, Retired). Config errors are file-scoped and never appear on Rows. An unexplained read-back mismatch (value didn't take, no error, no override) badges the Row "didn't apply" and joins the Banner.
 - **Startup and foreign reloads** feed the same pipeline: on launch and on any uncorrelated `configreloaded`, the full re-read + drift scan (ADR-0010) attributes any errors and raises the same Banner — breakage that happened while the app was closed surfaces identically.
-- **Timeout** ApplyResult: re-poll once; if still unconfirmed, treat as a foreign-unknown state — full re-read, Banner if errors.
+- **Timeout** ApplyResult: re-poll once; if still unconfirmed, treat as a foreign-unknown state — full re-read, Banner if errors. The edit is on disk, so its undo step is recorded at once, in order; the re-read is the check, and drops the steps over any Entity list it changes (amended during #227).
 
 ## Consequences
 

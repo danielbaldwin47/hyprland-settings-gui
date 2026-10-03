@@ -12,18 +12,27 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
 from collections.abc import Coroutine
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, TypeVar
 
 import pytest
 from _support import SAMPLE_APP_VERSION, sample_schema
 
-from hyprtweaker.engine.importer.loss import LossReport
-from hyprtweaker.engine.importer.lua.sandbox import Consent, lua_binary
+from hyprtweaker.engine.importer.loss import LossCode, LossReport
+from hyprtweaker.engine.importer.lua.sandbox import Cancelled, Consent, lua_binary
 from hyprtweaker.engine.migration import sentinel as sentinels
 from hyprtweaker.engine.migration.detect import ConfigKind
-from hyprtweaker.engine.migration.flow import Decision, MigrationFlow, Step, fresh_start
+from hyprtweaker.engine.migration.flow import (
+    Decision,
+    MigrationFlow,
+    Offered,
+    Step,
+    fresh_start,
+)
+from hyprtweaker.engine.model.values import CssGaps
 from hyprtweaker.engine.paths import ConfigPaths
 from hyprtweaker.engine.schema import Schema
 from hyprtweaker.engine.state import Manifest
@@ -45,16 +54,36 @@ decoration {
 class FakeClient:
     """A compositor that says the config loaded cleanly, and counts what it was asked."""
 
-    def __init__(self, *, errors: tuple[str, ...] = (), binds: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        errors: tuple[str, ...] = (),
+        binds: int = 0,
+        workspace_rules: int = 0,
+        monitors: tuple[dict[str, Any], ...] = (),
+    ) -> None:
         self.errors = errors
         self.binds = binds
+        self.workspace_rules = workspace_rules
+        self.outputs = monitors
         self.full_resets = 0
+        self.reads: list[str] = []
 
     async def configerrors(self) -> tuple[str, ...]:
+        self.reads.append("configerrors")
         return self.errors
 
     async def bind_count(self) -> int:
+        self.reads.append("binds")
         return self.binds
+
+    async def workspace_rule_count(self) -> int:
+        self.reads.append("workspacerules")
+        return self.workspace_rules
+
+    async def monitors(self) -> tuple[dict[str, Any], ...]:
+        self.reads.append("monitors")
+        return self.outputs
 
     async def reload_full_reset(self) -> None:
         self.full_resets += 1
@@ -282,6 +311,171 @@ class TestSwitchOrdering:
         assert manifest.migration["source"].endswith("hyprland.conf")
 
 
+ENTITY_CONF = """\
+bind = SUPER, Q, exec, kitty
+bind = SUPER, W, killactive
+workspace = 1, gapsin:3
+workspace = 2, gapsin:4
+monitor = DP-1, 1920x1080@60, 0x0, 1.5
+"""
+
+DISPLAY = {
+    "name": "DP-1",
+    "description": "Dell U2720Q",
+    "width": 1920,
+    "height": 1080,
+    "x": 0,
+    "y": 0,
+    "scale": 1.5,
+    "transform": 0,
+}
+
+
+class TestTheSwitchWritesTheEntities:
+    """Found while building the live checks: the wizard imported binds, rules and monitors and
+    wrote none of them, because the Writer renders `model.entities` and nothing adopted the
+    importer's. The count checks below compare against what is written, so this has to hold."""
+
+    def test_the_converted_tree_carries_the_binds_the_workspace_rules_and_the_monitors(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        paths.hyprland_conf.write_text(ENTITY_CONF, encoding="utf-8")
+        flow = flow_for(
+            paths, schema, FakeClient(binds=2, workspace_rules=2, monitors=(DISPLAY,))
+        )
+        flow.build_preview()
+        flow.back_up()
+
+        run(flow.switch())
+
+        written = {item.name for item in paths.app_dir.glob("*.lua")}
+        assert {"binds.lua", "monitors.lua", "workspace_rules.lua"} <= written
+        binds = (paths.app_dir / "binds.lua").read_text(encoding="utf-8")
+        assert 'hl.bind("SUPER + Q", hl.dsp.exec_cmd("kitty"))' in binds
+
+
+class TestLiveChecks:
+    """ADR-0009's live checks: what the compositor registered against what was imported."""
+
+    @pytest.fixture
+    def entities_conf(self, paths: ConfigPaths) -> ConfigPaths:
+        paths.hyprland_conf.write_text(ENTITY_CONF, encoding="utf-8")
+        return paths
+
+    def switch(self, paths: ConfigPaths, schema: Schema, client: FakeClient) -> Any:
+        flow = flow_for(paths, schema, client)
+        flow.build_preview()
+        flow.back_up()
+        return run(flow.switch())
+
+    def test_a_switch_that_registered_everything_passes_every_check(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        client = FakeClient(binds=2, workspace_rules=2, monitors=(DISPLAY,))
+
+        result = self.switch(entities_conf, schema, client)
+
+        assert result.ok
+        assert [check.name for check in result.checks] == [
+            "configerrors",
+            "binds",
+            "workspace rules",
+            "monitors",
+        ]
+        assert all(check.ok for check in result.checks)
+        assert client.reads == ["configerrors", "binds", "workspacerules", "monitors"]
+
+    def test_missing_binds_roll_the_switch_back(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        """A config that loads with no keybinds is the stranded user ADR-0016 exists for."""
+        result = self.switch(entities_conf, schema, FakeClient(binds=1, workspace_rules=2))
+
+        assert not result.ok
+        assert [check.detail for check in result.failures] == [
+            "Only 1 of the 2 keybinds in the new configuration are active."
+        ]
+
+    def test_extra_binds_from_a_script_or_legacy_file_are_not_a_failure(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        result = self.switch(entities_conf, schema, FakeClient(binds=9, workspace_rules=2))
+
+        assert result.ok
+
+    def test_a_bind_the_writer_never_emits_is_not_expected_live(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        """A disabled bind is a comment in `binds.lua`: counting it would roll back real
+        migrations over a bind that was never going to fire."""
+        flow = flow_for(entities_conf, schema, FakeClient(binds=1, workspace_rules=2))
+        preview = flow.build_preview()
+        binds = preview.result.entities.binds
+        binds[0] = replace(binds[0], enabled=False)
+        flow.back_up()
+
+        result = run(flow.switch())
+
+        assert result.ok
+
+    def test_a_missing_workspace_rule_is_reported_without_rolling_back(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        result = self.switch(entities_conf, schema, FakeClient(binds=2, workspace_rules=1))
+
+        assert result.ok
+        assert [check.detail for check in result.warnings] == [
+            "Only 1 of the 2 workspace rules in the new configuration are active."
+        ]
+
+    def test_a_display_that_differs_from_its_rule_is_reported_without_rolling_back(
+        self, entities_conf: ConfigPaths, schema: Schema
+    ) -> None:
+        display = {**DISPLAY, "scale": 1.0}
+
+        result = self.switch(
+            entities_conf, schema, FakeClient(binds=2, workspace_rules=2, monitors=(display,))
+        )
+
+        assert result.ok
+        assert [check.detail for check in result.warnings] == [
+            "DP-1 is at scale 1, the configuration asks for 1.5"
+        ]
+
+    def test_a_config_with_no_entities_asks_only_for_configerrors(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        client = FakeClient()
+
+        result = self.switch(legacy, schema, client)
+
+        assert result.ok
+        assert client.reads == ["configerrors"]
+
+    def test_window_and_layer_rules_are_verified_by_configerrors_alone(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """Hyprland offers no listing of either, so there is nothing to count and no row to
+        show: a "could not confirm" line the user cannot act on is noise (ADR-0009)."""
+        paths.hyprland_conf.write_text(
+            "windowrule {\n    name = float-pavucontrol\n"
+            "    match:class = ^(pavucontrol)$\n    float = on\n}\n"
+            "layerrule {\n    name = blur-bar\n    match:namespace = bar\n    blur = on\n}\n",
+            encoding="utf-8",
+        )
+        client = FakeClient()
+        flow = flow_for(paths, schema, client)
+        entities = flow.build_preview().result.entities
+        assert entities.window_rules and entities.layer_rules  # the premise
+        flow.back_up()
+
+        result = run(flow.switch())
+
+        assert result.ok
+        assert [check.name for check in result.checks] == ["configerrors"]
+        assert client.reads == ["configerrors"]
+
+
 class TestCrashSafety:
     """ "Killing the app mid-wizard leaves the previous config active."""
 
@@ -438,6 +632,51 @@ class TestForeignLuaPath:
 
         assert paths.entrypoint.read_text(encoding="utf-8") == original
         assert not paths.entrypoint.with_name("hyprland.lua.bak").exists()
+
+    def test_a_second_roll_back_leaves_the_restored_original_alone(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """#148 hand-test 19: the relaunch offer's close response is Roll back, so closing it
+        after the press rolled back twice; the second found no .bak and deleted the user's
+        restored hyprland.lua, and Hyprland put its autogenerated default in its place."""
+        original = "hl.config({ general = { gaps_in = 7 } })\n"
+        paths.entrypoint.write_text(original, encoding="utf-8")
+        first = flow_for(paths, schema, FakeClient())
+        first.detect()
+        first.build_preview(consent=Consent(evaluate=True))
+        first.back_up()
+        run(first.switch())
+
+        relaunched = flow_for(paths, schema, FakeClient())
+        pending = relaunched.pending_switch()
+        relaunched.roll_back(pending)
+        relaunched.roll_back(pending)
+
+        assert paths.entrypoint.read_text(encoding="utf-8") == original
+
+    def test_a_roll_back_leaves_no_app_dir_claiming_the_config(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """#148 hand-tests 20 and 25: the Manifest and Modules stayed behind, and the next
+        launch took the user's own hyprland.lua for the app's and wrote where nothing
+        loads. They move into the state directory: kept, and claiming nothing."""
+        from hyprtweaker.engine.migration.detect import detect
+
+        original = "hl.config({ general = { gaps_in = 7 } })\n"
+        paths.entrypoint.write_text(original, encoding="utf-8")
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(consent=Consent(evaluate=True))
+        flow.back_up()
+        run(flow.switch())
+        assert paths.manifest.is_file()
+
+        flow.roll_back()
+
+        assert not paths.app_dir.exists()
+        kept = list((paths.state_dir / "rolled-back").glob("*/hyprtweaker/manifest.json"))
+        assert len(kept) == 1
+        assert detect(paths, app_version="x", schema_version="y").kind is ConfigKind.FOREIGN_LUA
 
 
 class TestTheRescueLine:
@@ -668,3 +907,362 @@ class TestReloadSettling:
         flow.back_up()
 
         assert not run(flow.switch()).ok
+
+
+def _foreign_lua(paths: ConfigPaths, source: str) -> MigrationFlow:
+    paths.entrypoint.write_text(source, encoding="utf-8")
+    flow = flow_for(paths, sample_schema())
+    flow.detect()
+    return flow
+
+
+@pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter on this machine")
+class TestAReadOffTheMainLoop:
+    """The wizard reads in a worker and holds the result on the main loop (#216)."""
+
+    def test_a_read_is_the_flow_s_preview_only_once_held(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(paths, "hl.config({ general = { gaps_in = 7 } })\n")
+
+        preview = flow.read_preview(consent=Consent(evaluate=True))
+
+        assert flow.preview is None
+        flow.hold(preview)
+        assert flow.preview is not None
+        assert flow.preview.model.get("general:gaps_in") == CssGaps(7, 7, 7, 7)
+        assert flow.step is Step.BACK_UP
+
+    def test_a_cancelled_read_leaves_the_flow_where_it_was(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(paths, "hl.config({ general = { gaps_in = 7 } })\n")
+        cancel = threading.Event()
+        cancel.set()
+
+        with pytest.raises(Cancelled):
+            flow.read_preview(consent=Consent(evaluate=True), cancel=cancel)
+
+        assert flow.preview is None
+        assert flow.step is Step.PREVIEW
+
+
+@pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter on this machine")
+class TestTheSecondOffer:
+    """After a blocked read that found nothing, the commands it would have run (#190).
+
+    Offered only when the blocked run came back empty or erroring *and* it tried to run a
+    command: a config that builds itself from shell output reads as nothing under `BLOCK`,
+    and running those commands for real is the only way to read it at all.
+    """
+
+    def test_a_config_built_from_a_pipe_offers_its_command(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(
+            paths,
+            'local f = io.popen("echo 5")\n'
+            'hl.config({ general = { gaps_in = tonumber(f:read("*a")) } })\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == (Offered("echo 5", "command"),)
+        assert preview.imported == 0
+
+    def test_a_blocked_run_that_errors_offers_what_it_ran_before_the_error(
+        self, paths: ConfigPaths
+    ) -> None:
+        flow = _foreign_lua(
+            paths,
+            'os.execute("hyprctl version")\n'
+            'local n = tonumber(io.popen("echo 5"):read("*a"))\n'
+            "hl.config({ general = { gaps_in = n + 1 } })\n"
+            'io.popen("never reached")\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == (
+            Offered("hyprctl version", "command"),
+            Offered("echo 5", "command"),
+        )
+
+    def test_file_operations_are_listed_and_repeats_counted(self, paths: ConfigPaths) -> None:
+        """Running for real runs everything the blocked read faked, file operations and
+        every repeat included, so the offer lists all of it: once each, with a count."""
+        flow = _foreign_lua(
+            paths,
+            'os.remove("stale")\nio.popen("echo 5")\nos.execute("echo 5")\n'
+            'os.rename("a.lua", "b.lua")\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == (
+            Offered("stale", "delete"),
+            Offered("echo 5", "command", times=2),
+            Offered("a.lua -> b.lua", "move"),
+        )
+
+    def test_file_operations_alone_offer_nothing(self, paths: ConfigPaths) -> None:
+        """Deleting a file never builds a setting: a config that only does that has
+        nothing to gain from running for real."""
+        flow = _foreign_lua(paths, 'os.remove("stale")\n')
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == ()
+
+    def test_an_erroring_read_counts_what_it_imported_before_the_error(
+        self, paths: ConfigPaths
+    ) -> None:
+        """The Commands page tells the user what they already have without running
+        anything (#150 review, owner call 2): Options plus Entities of the blocked read."""
+        flow = _foreign_lua(
+            paths,
+            "hl.config({ general = { gaps_in = 7, gaps_out = 9 } })\n"
+            'hl.bind("SUPER + Q", hl.dsp.exec_cmd("kitty"))\n'
+            'local n = tonumber(io.popen("echo 5"):read("*a"))\n'
+            "hl.config({ general = { border_size = n + 1 } })\n",
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert preview.offered == (Offered("echo 5", "command"),)
+        assert preview.imported == 3
+
+    def test_a_config_that_read_something_offers_nothing(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(
+            paths,
+            'io.popen("echo 5")\nhl.config({ general = { gaps_in = 7 } })\n',
+        )
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert len(preview.model) == 1
+        assert preview.offered == ()
+
+    def test_an_error_with_no_command_offers_nothing(self, paths: ConfigPaths) -> None:
+        flow = _foreign_lua(paths, 'error("broken")\n')
+
+        preview = flow.build_preview(consent=Consent(evaluate=True))
+
+        assert LossCode.EVAL_ERROR in preview.loss.code_counts()
+        assert preview.offered == ()
+
+    def test_running_them_for_real_reads_the_config_and_offers_nothing_more(
+        self, paths: ConfigPaths, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "ran"
+        flow = _foreign_lua(
+            paths,
+            f'local f = io.popen("touch {marker}; echo 5")\n'
+            'hl.config({ general = { gaps_in = tonumber(f:read("*a")) } })\n',
+        )
+        flow.build_preview(consent=Consent(evaluate=True))
+        assert not marker.exists()
+
+        preview = flow.build_preview(consent=Consent(evaluate=True, passthrough=True))
+
+        assert marker.exists()
+        assert preview.model.get("general:gaps_in") == CssGaps(5, 5, 5, 5)
+        assert preview.offered == ()
+
+
+def _hypr_dir(paths: ConfigPaths) -> dict[str, str]:
+    """The hypr dir as the user has it: every file by its bytes, every symlink by target."""
+    found: dict[str, str] = {}
+    for item in sorted(paths.hypr_dir.rglob("*")):
+        relative = str(item.relative_to(paths.hypr_dir))
+        if item.is_symlink():
+            found[relative] = f"-> {item.readlink()}"
+        elif item.is_file():
+            found[relative] = hashlib.sha256(item.read_bytes()).hexdigest()
+    return found
+
+
+def _app_generated(paths: ConfigPaths, schema: Schema) -> Path:
+    """An app user's config with presets, a Monitor profile and a `user.lua`; the menu
+    Import reads another `.conf` over it (#148 review R1)."""
+    from hyprtweaker.engine.writer import Writer
+
+    model = fresh_start(paths, schema, app_version=SAMPLE_APP_VERSION)
+    model.set("general:gaps_in", CssGaps(3, 3, 3, 3))
+    Writer(paths, app_version=SAMPLE_APP_VERSION).write(model)
+    paths.presets_dir.mkdir(parents=True, exist_ok=True)
+    (paths.presets_dir / "mine.json").write_text('{"name": "Mine"}\n', encoding="utf-8")
+    paths.monitor_profiles_dir.mkdir(parents=True, exist_ok=True)
+    (paths.monitor_profiles_dir / "docked.json").write_text("{}\n", encoding="utf-8")
+    paths.user_lua.write_text("-- mine\n", encoding="utf-8")
+    other = paths.state_dir.parent / "other.conf"
+    other.write_text(CONF.replace("gaps_in = 5", "gaps_in = 9"), encoding="utf-8")
+    return other
+
+
+def _legacy(paths: ConfigPaths, _schema: Schema) -> None:
+    paths.hyprland_conf.write_text(CONF, encoding="utf-8")
+
+
+def _foreign(paths: ConfigPaths, _schema: Schema) -> Path:
+    paths.entrypoint.write_text("-- mine, not the app's\n", encoding="utf-8")
+    other = paths.state_dir.parent / "other.conf"
+    other.write_text(CONF, encoding="utf-8")
+    return other
+
+
+def _foreign_beside_an_app_dir(paths: ConfigPaths, schema: Schema) -> Path:
+    """A `hyprland.lua` of the user's own beside an App dir it does not load."""
+    _app_generated(paths, schema)
+    return _foreign(paths, schema)
+
+
+def _answered_in_process(flow: MigrationFlow) -> None:
+    flow.roll_back()
+
+
+def _answered_by_silence(flow: MigrationFlow) -> None:
+    assert run(flow.decide(seconds=0.01, tick=0.005)) is Decision.EXPIRED
+
+
+def _answered_at_relaunch(flow: MigrationFlow) -> None:
+    relaunched = flow_for(flow.paths, flow.schema, FakeClient())
+    relaunched.roll_back(relaunched.pending_switch())
+
+
+def _answered_twice_at_relaunch(flow: MigrationFlow) -> None:
+    """Hand-test 19: the offer's close response is Roll back too."""
+    relaunched = flow_for(flow.paths, flow.schema, FakeClient())
+    pending = relaunched.pending_switch()
+    relaunched.roll_back(pending)
+    relaunched.roll_back(pending)
+
+
+class TestRollBackPutsEveryFileBack:
+    """The Roll back invariant (#148 review R1): after any Roll back, by any route, every
+    file the user had before the switch is back byte for byte, and the config detects as
+    what it was. What the switch wrote is moved out of the hypr dir, never left loaded."""
+
+    @pytest.mark.parametrize(
+        "route",
+        [
+            _answered_in_process,
+            _answered_by_silence,
+            _answered_at_relaunch,
+            _answered_twice_at_relaunch,
+        ],
+    )
+    @pytest.mark.parametrize(
+        "config", [_legacy, _foreign, _app_generated, _foreign_beside_an_app_dir]
+    )
+    def test_every_file_is_back(
+        self, paths: ConfigPaths, schema: Schema, config, route
+    ) -> None:
+        from hyprtweaker.engine.migration.detect import detect
+
+        source = config(paths, schema)
+        before = _hypr_dir(paths)
+        kind = detect(paths, app_version=SAMPLE_APP_VERSION, schema_version="x").kind
+
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        flow.back_up()
+        run(flow.switch())
+        assert _hypr_dir(paths) != before
+        route(flow)
+
+        assert _hypr_dir(paths) == before
+        assert detect(paths, app_version=SAMPLE_APP_VERSION, schema_version="x").kind is kind
+        assert not paths.sentinel.exists()
+
+    def test_the_rescue_line_puts_an_app_users_files_back_too(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        """The rescue is the manual spelling of Roll back, so for an app user it moves both
+        the Entrypoint and the App dir back -- `rm hyprland.lua` left them on `hyprland.conf`
+        or Hyprland's defaults, with their own config renamed aside."""
+        source = _app_generated(paths, schema)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        preview = flow.build_preview(source)
+        flow.back_up()
+        run(flow.switch())
+
+        assert "rm " not in flow.rescue_command
+        assert "hyprtweaker.bak ~/.config/hypr/hyprtweaker" in flow.rescue_command
+        assert "hyprland.lua.bak ~/.config/hypr/hyprland.lua" in flow.rescue_command
+        assert preview.result.loss.rescue_line == flow.rescue_line
+
+
+def _listing(directory: Path) -> dict[str, str]:
+    return {
+        str(item.relative_to(directory)): hashlib.sha256(item.read_bytes()).hexdigest()
+        for item in sorted(directory.rglob("*"))
+        if item.is_file()
+    }
+
+
+class TestAnImportKeepsWhatTheUserSavedInTheApp:
+    """#148 fix review R8: an Import over an app config, then Keep, emptied the Presets and
+    Monitor profiles: the App dir moved aside whole. An Import replaces the config, not what
+    the user saved in the app. Presets and profiles carry over; the active-profile pointer
+    does not, since the imported config sets the displays. Roll back puts all of it back."""
+
+    def _app_user(self, paths: ConfigPaths, schema: Schema) -> Path:
+        source = _app_generated(paths, schema)
+        (paths.presets_dir / "nord" / "wall.png").parent.mkdir(parents=True)
+        (paths.presets_dir / "nord" / "wall.png").write_bytes(b"\x89PNG")
+        (paths.monitor_profiles_dir / "active.json").write_text('{"slug": "docked"}\n')
+        return source
+
+    def test_keep_carries_presets_and_profiles_but_not_the_active_pointer(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = self._app_user(paths, schema)
+        presets = _listing(paths.presets_dir)
+        profiles = _listing(paths.monitor_profiles_dir)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        flow.back_up()
+        run(flow.switch())
+        flow.keep()
+
+        assert _listing(paths.presets_dir) == presets
+        assert _listing(paths.monitor_profiles_dir) == {
+            name: digest for name, digest in profiles.items() if name != "active.json"
+        }
+        kept = paths.hypr_dir / "hyprtweaker.bak" / "monitor-profiles" / "active.json"
+        assert kept.read_text() == '{"slug": "docked"}\n'
+
+    def test_roll_back_puts_the_app_dir_back_as_it_was(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = self._app_user(paths, schema)
+        before = _listing(paths.app_dir)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+        flow.back_up()
+        run(flow.switch())
+        flow.roll_back()
+
+        assert _listing(paths.app_dir) == before
+
+    def test_the_preview_says_what_carries_over_and_where_the_rest_is(
+        self, paths: ConfigPaths, schema: Schema
+    ) -> None:
+        source = self._app_user(paths, schema)
+        flow = flow_for(paths, schema, FakeClient())
+        flow.detect()
+        flow.build_preview(source)
+
+        assert flow.app_data_note == (
+            "Kept from the app: 1 preset and 1 display profile. None of the profiles stays "
+            "marked active, because the imported config sets your displays. The app's "
+            "previous folder is kept as ~/.config/hypr/hyprtweaker.bak."
+        )
+
+    def test_nothing_is_said_without_an_app_dir(
+        self, legacy: ConfigPaths, schema: Schema
+    ) -> None:
+        flow = flow_for(legacy, schema, FakeClient())
+        flow.detect()
+        flow.build_preview()
+
+        assert flow.app_data_note is None

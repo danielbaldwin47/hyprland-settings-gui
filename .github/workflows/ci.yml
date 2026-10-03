@@ -3,18 +3,21 @@ name: CI
 # The done checks on main and on a pull request out of draft. An effort branch
 # (docs/agents/implement-spec.md) is checked once when its PR leaves draft, then
 # on each push after that, so a green check means everything on the PR has been
-# addressed.
+# addressed. The Harness tier runs nightly and on dispatch only (the `harness` job).
 on:
   push:
     branches: [main]
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
+  schedule:
+    - cron: '17 6 * * *'
   workflow_dispatch:
 
 concurrency:
   # The draft flag is in the key: a push to a draft and the `ready_for_review` run that
-  # follows on the same SHA must not cancel each other.
-  group: ci-${{ github.ref }}-${{ github.event.pull_request.draft }}
+  # follows on the same SHA must not cancel each other. The schedule flag keeps the
+  # nightly run and a push to main from cancelling each other.
+  group: ci-${{ github.ref }}-${{ github.event_name == 'schedule' }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
 permissions:
@@ -22,8 +25,11 @@ permissions:
 
 env:
   # Skip ceiling for the pytest jobs: equals today's intentional data-driven
-  # skips (corpus rices without binds, parametrized doc-skips, and one #70 test
-  # that runs the real `Hyprland` binary, which no runner has). A missing
+  # skips in the ui-smoke job's `tests/ui tests/unit`, 13: 10 corpus rices
+  # without binds (test_writer_binds_corpus), 2 parametrized doc-skips
+  # (test_no_hyprctl_spawn), and one #70 test that runs the real `Hyprland`
+  # binary, which no runner has. `tests/static` runs only under `meson test`,
+  # which has no ceiling, so its skips never count here. A missing
   # dependency skips tests silently -- lua5.4's absence once skipped 72 tests
   # while the job stayed green -- so any count above this fails the job.
   # The PR that adds or removes an intentional skip moves this number with it.
@@ -32,7 +38,9 @@ env:
 jobs:
   lint:
     name: ruff + mypy (engine)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A hung test would otherwise burn the 6-hour default (#148 review F30).
+    timeout-minutes: 15
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +57,9 @@ jobs:
 
   unit:
     name: unit tier (engine, headless)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A hung test would otherwise burn the 6-hour default (#148 review F30).
+    timeout-minutes: 15
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,13 +77,13 @@ jobs:
       # against the masked one in the ui-smoke job below.
       - env:
           HYPRTWEAKER_REQUIRE_LUAC: '1'
-          # This job runs `tests/unit` only, so it does not see the
-          # Hyprland-gated test in `tests/ui` that the global ceiling counts:
-          # 12 of those intentional skips, plus 3 module-level `importorskip`s
-          # for gi (test_ui_binds_text, test_ui_rules_text,
-          # test_ui_declaration_text) which this runner lacks. Their tests run
-          # for real in the ui-smoke job, where gi exists.
-          SKIP_CEILING: '15'
+          # This job runs `tests/unit` only. Its intentional skips are 12
+          # (10 corpus rices without binds in test_writer_binds_corpus, 2
+          # parametrized doc-skips in test_no_hyprctl_spawn), and the ceiling
+          # is exactly that: the next intentional skip moves it. Nothing in
+          # tests/unit imports gi (the two text modules that did live in
+          # tests/ui since F11 of the #148 review).
+          SKIP_CEILING: '12'
         run: |
           set -o pipefail
           pytest tests/unit -n auto -v 2>&1 | tee pytest-out.log
@@ -84,8 +94,12 @@ jobs:
 
   ui-smoke:
     name: UI smoke tier (GTK4 + libadwaita)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    # A hung test would otherwise burn the 6-hour default (#148 review F30).
+    timeout-minutes: 15
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    # Pinned, not ubuntu-latest: the app needs libadwaita >= 1.7 (Adw.WrapBox,
+    # MINIMUM_LIBADWAITA) and PyGObject >= 3.50; noble (24.04) ships 1.5 and 3.48.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - name: Install GTK4 / libadwaita
@@ -93,7 +107,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
-            libgtk-4-1 libadwaita-1-0 xvfb lua5.4
+            libgtk-4-1 libadwaita-1-0 xvfb dbus lua5.4
       - name: Create venv with system gi visible
         run: |
           python3 -m venv --system-site-packages .venv
@@ -109,7 +123,8 @@ jobs:
         # Same skip ceiling: the UI tier itself must contribute zero skips
         # (HYPRTWEAKER_REQUIRE_UI hard-fails a dead GTK env).
         # No xvfb-run: the UI tier starts an Xvfb of its own in each worker
-        # (tests/ui/conftest.py), the same path a developer's desktop run takes.
+        # and a dbus-daemon (tests/ui/conftest.py), the same path a developer's desktop
+        # run takes.
         run: |
           set -o pipefail
           .venv/bin/python -m pytest tests/ui tests/unit -n auto -v 2>&1 | tee pytest-out.log
@@ -120,16 +135,23 @@ jobs:
 
   build:
     name: meson build + install
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    # A hung test would otherwise burn the 6-hour default (#148 review F30).
+    timeout-minutes: 15
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    # Pinned, not ubuntu-latest: meson.build refuses PyGObject < 3.50 (`import gi.events`),
+    # and noble (24.04) ships python3-gi 3.48. resolute (26.04) ships 3.56.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - name: Install build deps
+        # desktop-file-utils and appstream: `meson test` validates the desktop entry and
+        # the metainfo, and -Dtests=enabled requires both validators.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             meson ninja-build python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 \
-            libgtk-4-1 libadwaita-1-0 lua5.4
+            libgtk-4-1 libadwaita-1-0 lua5.4 desktop-file-utils appstream
+          apt-cache policy python3-gi
       # Deliberately no actions/setup-python here: this job must use the system
       # python3 that apt's python3-gi belongs to, so `meson setup`'s gi check and
       # the installed launcher both exercise the interpreter a package would use.
@@ -140,20 +162,25 @@ jobs:
       - run: meson setup build --prefix=/usr -Dtests=enabled
       - run: meson compile -C build
       - name: meson test
-        # Exercises the wiring a PKGBUILD check() will use (ADR-0019). The UI
-        # tier skips here: the runner image ships Xvfb, so the host-display
-        # opt-in points the tier at this job's display, which it has none of.
-        # Run serially under apt's pytest it would make this the slowest job,
-        # and the ui-smoke job already runs it.
-        # No skip ceiling here: this job wraps the same suites the two pytest
-        # jobs already guard, and its UI-tier skip is intentional.
-        env:
-          HYPRTWEAKER_UI_HOST_DISPLAY: '1'
-        run: meson test -C build --print-errorlogs
+        # Exercises the wiring a PKGBUILD check() will use (ADR-0019): every suite but
+        # ui-smoke, named rather than skipped. Run serially under apt's pytest the UI
+        # tier takes minutes, and the ui-smoke job already runs it. No host-display
+        # opt-in: set for every suite, it turned off the unit tier's desktop fence, and
+        # with no session bus on the runner left the bus address unset (#148).
+        # No skip ceiling here: this job wraps the same suites the two pytest jobs
+        # already guard.
+        run: meson test -C build --print-errorlogs validate-desktop validate-metainfo unit static
       - run: DESTDIR="$PWD/_install" meson install -C build
       - name: The installed launcher runs, and the install is complete
         run: |
           test -x _install/usr/bin/hyprtweaker
+          # The App id's desktop entry, metainfo and icons (ADR-0019).
+          APP_ID=io.github.danielbaldwin47.Hyprtweaker
+          for file in applications/$APP_ID.desktop metainfo/$APP_ID.metainfo.xml \
+              icons/hicolor/scalable/apps/$APP_ID.svg \
+              icons/hicolor/symbolic/apps/$APP_ID-symbolic.svg; do
+            test -f "_install/usr/share/$file" || { echo "not installed: $file"; exit 1; }
+          done
           # Locate the install by finding it, not by predicting it: Debian puts
           # it in dist-packages while sysconfig reports site-packages, so every
           # formula for this path is wrong on some distro.
@@ -193,3 +220,60 @@ jobs:
               assert option.title and option.widget and option.visibility
           print(f"resolved {len(schema)} options for Hyprland {schema.hyprland_version}")
           PY
+
+  harness:
+    # ADR-0011 tier 3: the nested Hyprland, on a stock runner. Nightly and on dispatch only,
+    # never per push: it is minutes long and gates nothing. A runner has no GPU, so the
+    # Harness gets the kernel's virtual KMS card (`vkms`) with its connector forced off, the
+    # one render-node-less card `drm_card_problem` accepts. Ubuntu has no Hyprland, so the
+    # tier runs in an Arch container, as an unprivileged user: Hyprland refuses root.
+    name: Harness tier (nested Hyprland on vkms)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: A vkms card with its connector forced off
+        id: card
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)" >/dev/null
+          sudo modprobe vkms
+          sudo udevadm settle
+          # Read the card from sysfs: its number depends on what else the runner has.
+          card=""
+          for path in /sys/class/drm/card*; do
+            name="${path##*/}"
+            [[ "$name" =~ ^card[0-9]+$ ]] || continue
+            device="$(readlink -f "$path/device")"
+            echo "$name: device $device, driver $(readlink -f "$path/device/driver" || true)"
+            if [ "${device##*/}" = vkms ]; then card="$name"; fi
+          done
+          [ -n "$card" ] || { echo "::error::modprobe vkms gave no vkms card"; exit 1; }
+          # A connected connector is a monitor to the gate, which refuses the card.
+          for status in /sys/class/drm/"$card"-*/status; do
+            echo off | sudo tee "$status" >/dev/null
+            echo "$status: $(cat "$status")"
+          done
+          sudo chmod 666 "/dev/dri/$card"
+          # bwrap needs an unprivileged user namespace, which Ubuntu's AppArmor withholds.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          echo "card=$card" >> "$GITHUB_OUTPUT"
+      - name: The Harness tier in an Arch container
+        env:
+          HARNESS_DRM_CARD: /dev/dri/${{ steps.card.outputs.card }}
+        run: |
+          docker run --rm --privileged -v /dev:/dev -v /sys:/sys -v "$PWD:/repo" -w /repo \
+            -e HARNESS_DRM_CARD -e CI archlinux:latest bash -euo pipefail -c '
+              pacman -Syu --noconfirm --needed hyprland grim bubblewrap mesa ttf-dejavu foot wtype \
+                python python-pytest python-gobject gtk4 python-numpy python-pillow \
+                >/tmp/pacman.log || { tail -40 /tmp/pacman.log; exit 1; }
+              pacman -Q hyprland mesa python
+              useradd -m harness
+              install -d -m 700 -o harness /tmp/xdg-harness
+              # HYPRTWEAKER_REQUIRE_HARNESS: a skipped tier fails the job, never goes green.
+              runuser -u harness -- env XDG_RUNTIME_DIR=/tmp/xdg-harness \
+                HARNESS_DRM_CARD="$HARNESS_DRM_CARD" CI="$CI" HYPRTWEAKER_REQUIRE_HARNESS=1 \
+                PYTHONDONTWRITEBYTECODE=1 \
+                python -m pytest tests/integration -p no:cacheprovider -v -rs'

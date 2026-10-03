@@ -1,0 +1,2487 @@
+# What each setting's Row says (#129).
+#
+# One `["<setting>"]` entry per setting, with exactly one of:
+#   help = "..."   replaces the upstream line in the Row subtitle, the Help popover and the
+#                  search text: what the setting does, then when you would change it. At
+#                  most 160 characters and two sentences, ending with a period.
+#   skip = "..."   why the upstream line stands as it is.
+# Say "setting", "Hyprland", "this version"; never "option", "schema" or "wiki". Do not list
+# values the combo already names, and do not restate restart needs (the restart pill does).
+# The rules are code: tools/overlay_help.py, run by tests/unit/test_overlay_help.py.
+#
+# After editing, write the `help` entries into data/schema/overlay.json:
+#     .venv/bin/python tools/curate_overlay.py
+# The comment above each entry is generated: tools/seed_overlay_help.py rewrites it and
+# keeps your decisions. Never edit `help` in overlay.json by hand.
+
+
+# --- general -----------------------------------------------------------------------------------
+
+# general:border_size: Border size [Borders] (int, default 1)
+#   upstream: size of the border around windows
+#   wiki:     size of the border around windows
+#   candidate: short (33 chars)
+["general:border_size"]
+help = "Width of the border around every window, in pixels. Set it to 0 to remove borders."
+
+# general:gaps_in: Inner gaps [Layout and gaps] (css_gaps, default '5 5 5 5')
+#   upstream: gaps between windows
+#   wiki:     gaps between windows
+#   candidate: short (20 chars)
+["general:gaps_in"]
+help = "Space left between neighbouring tiled windows. Raise it for a more open layout, or set 0 to make windows touch."
+
+# general:gaps_out: Outer gaps [Layout and gaps] (css_gaps, default '20 20 20 20')
+#   upstream: gaps between windows and monitor edges
+#   wiki:     gaps between windows and monitor edges
+#   candidate: short (38 chars)
+["general:gaps_out"]
+help = "Space left between tiled windows and the screen edges. Set 0 to let windows reach the edges."
+
+# general:float_gaps: Floating window gaps [Layout and gaps] (css_gaps, default '0 0 0 0')
+#   upstream: gaps between windows and monitor edges for floating windows
+#   wiki:     gaps between windows and monitor edges for floating windows `-1` means default
+#   candidate: wiki is longer (78 chars)
+["general:float_gaps"]
+help = "Space Hyprland leaves between floating windows and the screen edges when it places or moves them. Same as outer gaps reuses the outer gaps."
+
+# general:gaps_workspaces: Workspace gaps [Layout and gaps] (int, default 0)
+#   upstream: gaps between workspaces. Stacks with gaps_out.
+#   wiki:     gaps between workspaces. Stacks with gaps_out.
+["general:gaps_workspaces"]
+help = "Space between workspaces, in pixels. It adds to the outer gaps."
+
+# general:col.inactive_border: Inactive border colour [Borders] (gradient, default 'ff444444 0deg')
+#   upstream: border color for inactive windows
+#   wiki:     border color for inactive windows
+#   candidate: short (33 chars)
+["general:col.inactive_border"]
+help = "Border color of windows without focus. Use one color, or several with an angle for a gradient."
+
+# general:col.active_border: Active border colour [Borders] (gradient, default 'ffffffff 0deg')
+#   upstream: border color for the active window
+#   wiki:     border color for the active window
+#   candidate: short (34 chars)
+["general:col.active_border"]
+help = "Border color of the window with focus. Use one color, or several with an angle for a gradient."
+
+# general:col.nogroup_border: Ungrouped border colour [Borders] (gradient, default 'ffffaaff 0deg')
+#   upstream: inactive border color for window that cannot be added to a group
+#   wiki:     inactive border color for window that cannot be added to a group (see `hl.dsp.window.deny_from_group` dispatcher)
+#   candidate: wiki is longer (113 chars)
+["general:col.nogroup_border"]
+help = "Border color of a window without focus that a window rule keeps out of groups."
+
+# general:col.nogroup_border_active: Active ungrouped border colour [Borders] (gradient, default 'ffff00ff 0deg')
+#   upstream: active border color for window that cannot be added to a group
+#   wiki:     active border color for window that cannot be added to a group
+["general:col.nogroup_border_active"]
+help = "Border color of the window with focus when a window rule keeps it out of groups."
+
+# general:layout: Layout [Layout and gaps] (string, default 'dwindle')
+#   upstream: which layout to use. [dwindle/master/scrolling/monocle/lua:<name>]
+#   wiki:     which layout to use. \[`"dwindle"`/`"master"`/`"scrolling"`/`"monocle"`\]
+#   the combo already names its values (labels)
+#   candidate: lists values the combo shows: dwindle, master, scrolling, monocle
+["general:layout"]
+help = "Which tiling layout to use. Layouts your Lua files register are listed too, marked “Lua layout”."
+
+# general:no_focus_fallback: Never refocus after closing a window [Behaviour] (bool, default False)
+#   upstream: if true, will not fall back to the next available window when moving focus in a direction where no window was found
+#   wiki:     if true, will not fall back to the next available window when moving focus in a direction where no window was found
+["general:no_focus_fallback"]
+help = "Stops focus from jumping to another window when you move it in a direction that has no window."
+
+# general:resize_on_border: Resize windows by dragging their border [Resizing] (bool, default False)
+#   upstream: enables resizing windows by clicking and dragging on borders and gaps
+#   wiki:     enables resizing windows by clicking and dragging on borders and gaps
+["general:resize_on_border"]
+help = "Lets you resize a window by dragging its border, or the gaps around it, with the mouse."
+
+# general:extend_border_grab_area: Border grab area [Resizing] (int, default 15)
+#   upstream: extends the area around the border where you can click and drag on, only used when general:resize_on_border is on.
+#   wiki:     extends the area around the border where you can click and drag on, only used when `general.resize_on_border` is on.
+["general:extend_border_grab_area"]
+help = "How far outside a border, in pixels, you can still grab it to resize. Applies only when resizing by border is on."
+
+# general:hover_icon_on_border: Show the resize cursor on borders [Resizing] (bool, default True)
+#   upstream: show a cursor icon when hovering over borders, only used when general:resize_on_border is on.
+#   wiki:     show a cursor icon when hovering over borders, only used when `general.resize_on_border` is on.
+["general:hover_icon_on_border"]
+help = "Shows a resize cursor when the pointer is over a border. Applies only when resizing by border is on."
+
+# general:allow_tearing: Allow tearing [Behaviour] (bool, default False)
+#   upstream: master switch for allowing tearing to occur.
+#   wiki:     master switch for allowing tearing to occur. See [the Tearing page](../../Advanced-and-Cool/Tearing).
+#   candidate: wiki is longer (101 chars)
+["general:allow_tearing"]
+help = "Master switch for screen tearing. A window tears only when it asks to, or when a window rule marks it immediate."
+
+# general:resize_corner: Resize corner [Resizing] (int, default 0)
+#   upstream: force floating windows to use a specific corner when being resized (1-4 going clockwise from top left, 0 to disable)
+#   wiki:     force floating windows to use a specific corner when being resized (1-4 going clockwise from top left, 0 to disable)
+#   the combo already names its values (map)
+["general:resize_corner"]
+help = "Makes floating windows always resize from one corner, instead of the one nearest the pointer."
+
+# general:snap:enabled: Snap floating windows [Snapping] (bool, default False)
+#   upstream: enable snapping for floating windows
+#   wiki:     enable snapping for floating windows
+#   candidate: short (36 chars)
+["general:snap:enabled"]
+help = "Makes a floating window you drag line up with nearby windows and screen edges."
+
+# general:snap:window_gap: Snap distance to windows [Snapping] (int, default 10)
+#   upstream: minimum gap in pixels between windows before snapping
+#   wiki:     minimum gap in pixels between windows before snapping
+["general:snap:window_gap"]
+help = "How close, in pixels, a dragged window must come to another window before it snaps to it."
+
+# general:snap:monitor_gap: Snap distance to monitor edges [Snapping] (int, default 10)
+#   upstream: minimum gap in pixels between window and monitor edges before snapping
+#   wiki:     minimum gap in pixels between window and monitor edges before snapping
+["general:snap:monitor_gap"]
+help = "How close, in pixels, a dragged window must come to a screen edge before it snaps to it."
+
+# general:snap:border_overlap: Overlap borders when snapping [Snapping] (bool, default False)
+#   upstream: if true, windows snap such that only one border's worth of space is between them
+#   wiki:     if true, windows snap such that only one border's worth of space is between them
+["general:snap:border_overlap"]
+help = "Lets snapped windows sit with only one border's width between them, so their borders overlap."
+
+# general:snap:respect_gaps: Respect gaps when snapping [Snapping] (bool, default False)
+#   upstream: if true, snapping will respect gaps between windows
+#   wiki:     if true, snapping will respect gaps between windows(set in general:gaps_in)
+#   candidate: wiki is longer (75 chars)
+["general:snap:respect_gaps"]
+help = "Keeps the inner gap between snapped windows instead of letting them touch."
+
+# general:modal_parent_blocking: Block interaction with modal parents [Behaviour] (bool, default True)
+#   upstream: if true, parent windows of modals will not be interactive.
+#   wiki:     whether parent windows of modals will be interactive
+["general:modal_parent_blocking"]
+help = "Blocks clicks and typing in a window while one of its modal dialogs is open."
+
+# general:locale: Locale [Behaviour] (string, default '')
+#   upstream: overrides the system locale
+#   wiki:     overrides the system locale (e.g. `"en_US"`, `"es"`)
+#   candidate: short (27 chars); wiki is longer (52 chars)
+["general:locale"]
+help = "Language of Hyprland's own messages, such as en_US or es. Leave it empty to follow the system."
+
+
+# --- decoration --------------------------------------------------------------------------------
+
+# decoration:rounding: Corner rounding [Corners and opacity] (int, default 0)
+#   upstream: rounded corners' radius (in layout px)
+#   wiki:     rounded corners' radius (in layout px)
+#   candidate: short (38 chars)
+["decoration:rounding"]
+help = "Radius of rounded window corners. Set it to 0 for square corners."
+
+# decoration:rounding_power: Rounding power [Corners and opacity] (float, default 2)
+#   upstream: rounding power of corners (2 is a circle)
+#   wiki:     adjusts the curve used for rounding corners, larger is smoother, 2.0 is a circle, 4.0 is a squircle. [2.0 - 10.0]
+#   candidate: wiki is longer (113 chars)
+["decoration:rounding_power"]
+help = "Shapes the rounded corners: 2 is a circle, 4 a squircle, and higher is squarer still."
+
+# decoration:active_opacity: Active window opacity [Corners and opacity] (float, default 1)
+#   upstream: opacity of active windows.
+#   wiki:     opacity of active windows. [0.0 - 1.0]
+#   candidate: short (26 chars)
+["decoration:active_opacity"]
+help = "How opaque the window with focus is, from 0 (invisible) to 1 (solid)."
+
+# decoration:inactive_opacity: Inactive window opacity [Corners and opacity] (float, default 1)
+#   upstream: opacity of inactive windows.
+#   wiki:     opacity of inactive windows. [0.0 - 1.0]
+#   candidate: short (28 chars)
+["decoration:inactive_opacity"]
+help = "How opaque windows without focus are, from 0 (invisible) to 1 (solid)."
+
+# decoration:fullscreen_opacity: Fullscreen window opacity [Corners and opacity] (float, default 1)
+#   upstream: opacity of fullscreen windows.
+#   wiki:     opacity of fullscreen windows. [0.0 - 1.0]
+#   candidate: short (30 chars)
+["decoration:fullscreen_opacity"]
+help = "How opaque fullscreen windows are, from 0 (invisible) to 1 (solid)."
+
+# decoration:shadow:enabled: Drop shadow [Shadow] (bool, default True)
+#   upstream: enable drop shadows on windows
+#   wiki:     enable drop shadows on windows
+#   candidate: short (30 chars)
+["decoration:shadow:enabled"]
+help = "Draws a soft shadow behind every window."
+
+# decoration:shadow:range: Shadow size [Shadow] (int, default 4)
+#   upstream: Shadow range (size) in layout px
+#   wiki:     Shadow range ("size") in layout px
+#   candidate: short (32 chars)
+["decoration:shadow:range"]
+help = "How far a shadow reaches out from its window."
+
+# decoration:shadow:render_power: Shadow falloff [Shadow] (int, default 3)
+#   upstream: in what power to render the falloff (more power, the faster the falloff)
+#   wiki:     in what power to render the falloff (more power, the faster the falloff) [1 - 4]
+#   the combo already names its values (labels)
+["decoration:shadow:render_power"]
+help = "How quickly a shadow fades towards its outer edge. A sharper falloff keeps the shadow tight against the window."
+
+# decoration:shadow:sharp: Sharp shadow [Shadow] (bool, default False)
+#   upstream: whether the shadow should be sharp or not.
+#   wiki:     if enabled, will make the shadows sharp, akin to an infinite render power
+#   candidate: wiki is longer (73 chars)
+["decoration:shadow:sharp"]
+help = "Gives shadows a hard edge instead of a soft fade."
+
+# decoration:shadow:color: Shadow colour [Shadow] (gradient, default 'ee1a1a1a 0deg')
+#   upstream: shadow's color. Alpha dictates shadow's opacity.
+#   wiki:     shadow's color. Alpha dictates shadow's opacity.
+["decoration:shadow:color"]
+help = "Color of window shadows. Its alpha sets how opaque the shadow is."
+
+# decoration:shadow:color_inactive: Inactive shadow colour [Shadow] (gradient, default 'ffffffff 0deg')
+#   upstream: inactive shadow color. (if not set, will fall back to col.shadow)
+#   wiki:     inactive shadow color. (if not set, will fall back to color)
+["decoration:shadow:color_inactive"]
+help = "Shadow color of windows without focus."
+
+# decoration:shadow:offset: Shadow offset [Shadow] (vec2, default [0, 0])
+#   upstream: shadow's rendering offset.
+#   wiki:     shadow's rendering offset.
+#   candidate: short (26 chars)
+["decoration:shadow:offset"]
+help = "How far shadows shift from their window, horizontally and vertically."
+
+# decoration:shadow:scale: Shadow scale [Shadow] (float, default 1)
+#   upstream: shadow's scale.
+#   wiki:     shadow's scale. [0.0 - 1.0]
+#   candidate: short (15 chars)
+["decoration:shadow:scale"]
+help = "Size of each shadow compared with its full size: 1 is full size, and lower values shrink it towards the window's center."
+
+# decoration:glow:enabled: Inner glow [Glow] (bool, default False)
+#   upstream: enable inner glow on windows
+#   wiki:     enable inner glow on windows
+#   candidate: short (28 chars)
+["decoration:glow:enabled"]
+help = "Draws a colored light just inside each window's edge."
+
+# decoration:glow:range: Glow size [Glow] (int, default 10)
+#   upstream: glow range (size) in layout px
+#   wiki:     Glow range ("size") in layout px
+#   candidate: short (30 chars)
+["decoration:glow:range"]
+help = "How far the glow reaches into the window."
+
+# decoration:glow:render_power: Glow falloff [Glow] (int, default 3)
+#   upstream: in what power to render the falloff (more power, the faster the falloff)
+#   wiki:     in what power to render the falloff (more power, the faster the falloff) [1 - 4]
+#   the combo already names its values (labels)
+["decoration:glow:render_power"]
+help = "How quickly the glow fades as it reaches into the window. A sharper falloff keeps the glow tight against the edge."
+
+# decoration:glow:color: Glow colour [Glow] (gradient, default 'ee33ccff 0deg')
+#   upstream: glow's color. Alpha dictates glow's opacity.
+#   wiki:     glow's color. Alpha dictates glow's opacity.
+["decoration:glow:color"]
+help = "Color of the glow. Its alpha sets how strong the glow is."
+
+# decoration:glow:color_inactive: Inactive glow colour [Glow] (gradient, default 'ffffffff 0deg')
+#   upstream: inactive glow color. (if not set, will fall back to decoration:glow:color)
+#   wiki:     inactive glow color. (if not set, will fall back to color)
+["decoration:glow:color_inactive"]
+help = "Glow color of windows without focus."
+
+# decoration:dim_modal: Dim parents of modal windows [Dimming] (bool, default True)
+#   upstream: enables dimming of parents of modal windows
+#   wiki:     enables dimming of parents of modal windows
+["decoration:dim_modal"]
+help = "Dims the parent window while one of its modal dialogs is open."
+
+# decoration:dim_inactive: Dim inactive windows [Dimming] (bool, default False)
+#   upstream: enables dimming of inactive windows
+#   wiki:     enables dimming of inactive windows
+#   candidate: short (35 chars)
+["decoration:dim_inactive"]
+help = "Dims windows that do not have focus, by the amount set in dim strength."
+
+# decoration:dim_strength: Dim strength [Dimming] (float, default 0.5)
+#   upstream: how much inactive windows should be dimmed
+#   wiki:     how much inactive windows should be dimmed [0.0 - 1.0]
+["decoration:dim_strength"]
+help = "How strongly windows without focus are dimmed, from 0 (not at all) to 1 (fully dark)."
+
+# decoration:dim_special: Special workspace dim [Dimming] (float, default 0.2)
+#   upstream: how much to dim the rest of the screen by when a special workspace is open.
+#   wiki:     how much to dim the rest of the screen by when a special workspace is open. [0.0 - 1.0]
+["decoration:dim_special"]
+help = "How much the rest of the screen dims while a special workspace is open, from 0 (not at all) to 1 (black)."
+
+# decoration:dim_around: Dim around dialogs [Dimming] (float, default 0.4)
+#   upstream: how much the dimaround window rule should dim by.
+#   wiki:     how much the `dim_around` window rule should dim by. [0.0 - 1.0]
+["decoration:dim_around"]
+help = "How much a window with the dim around rule darkens everything behind it, from 0 (not at all) to 1 (black)."
+
+# decoration:screen_shader: Screen shader [Screen effects] (string, default '[[EMPTY]]')
+#   upstream: a path to a custom shader to be applied at the end of rendering.
+#   wiki:     a path to a custom shader to be applied at the end of rendering. See `examples/screenShader.frag` for an example.
+#   candidate: wiki is longer (113 chars)
+["decoration:screen_shader"]
+help = "Path to a GLSL shader file applied to the whole screen after everything else is drawn. Leave it empty for none."
+
+# decoration:border_part_of_window: Border counts as part of the window [Corners and opacity] (bool, default True)
+#   upstream: whether the border should be treated as a part of the window.
+#   wiki:     whether the window border should be a part of the window
+["decoration:border_part_of_window"]
+help = "Treats the border as part of the window rather than as something drawn around it."
+
+# decoration:blur:enabled: Blur [Blur] (bool, default True)
+#   upstream: enable kawase window background blur
+#   wiki:     enable kawase window background blur
+#   candidate: short (36 chars)
+["decoration:blur:enabled"]
+help = "Blurs whatever shows through see-through windows. It costs some graphics performance."
+
+# decoration:blur:size: Blur size [Blur] (int, default 8)
+#   upstream: blur size (distance)
+#   wiki:     blur size (distance)
+#   candidate: short (20 chars)
+["decoration:blur:size"]
+help = "How far each blur pass spreads. Larger values look softer, and the blur also grows with the number of passes."
+
+# decoration:blur:passes: Blur passes [Blur] (int, default 1)
+#   upstream: the amount of passes to perform
+#   wiki:     the amount of passes to perform
+#   candidate: short (31 chars)
+["decoration:blur:passes"]
+help = "How many times the blur is applied. More passes look smoother but cost more performance."
+
+# decoration:blur:ignore_opacity: Ignore window opacity when blurring [Blur] (bool, default True)
+#   upstream: make the blur layer ignore the opacity of the window
+#   wiki:     make the blur layer ignore the opacity of the window
+["decoration:blur:ignore_opacity"]
+help = "Keeps the blur at full strength behind a see-through window, instead of fading it with the window's opacity."
+
+# decoration:blur:new_optimizations: Blur optimisations [Blur] (bool, default True)
+#   upstream: whether to enable further optimizations to the blur.
+#   wiki:     whether to enable further optimizations to the blur. Recommended to leave on, as it will massively improve performance.
+#   candidate: wiki is longer (119 chars)
+["decoration:blur:new_optimizations"]
+help = "Blurs tiled windows from one cached blur of the background, which is cheaper than blurring behind each window separately."
+
+# decoration:blur:xray: X-ray blur [Blur] (bool, default False)
+#   upstream: if enabled, floating windows will ignore tiled windows in their blur.
+#   wiki:     if enabled, floating windows will ignore tiled windows in their blur. Only available if new_optimizations is true. Will reduce overhead on floating blur significantly.
+#   candidate: wiki is longer (167 chars)
+["decoration:blur:xray"]
+help = "Makes floating windows blur only the wallpaper behind them, not the tiled windows. Needs blur optimisations, and is cheaper."
+
+# decoration:blur:noise: Blur noise [Blur] (float, default 0.0117)
+#   upstream: how much noise to apply.
+#   wiki:     how much noise to apply. [0.0 - 1.0]
+#   candidate: short (24 chars)
+["decoration:blur:noise"]
+help = "How much film grain is added to the blur."
+
+# decoration:blur:contrast: Blur contrast [Blur] (float, default 0.8916)
+#   upstream: contrast modulation for blur.
+#   wiki:     contrast modulation for blur. [0.0 - 2.0]
+#   candidate: short (29 chars)
+["decoration:blur:contrast"]
+help = "Contrast of the blurred area: 1 leaves it unchanged, lower flattens it and higher strengthens it."
+
+# decoration:blur:brightness: Blur brightness [Blur] (float, default 1)
+#   upstream: brightness modulation for blur.
+#   wiki:     brightness modulation for blur. [0.0 - 2.0]
+#   candidate: short (31 chars)
+["decoration:blur:brightness"]
+help = "Brightness of the blurred area: 1 leaves it unchanged, lower darkens it and higher brightens it."
+
+# decoration:blur:vibrancy: Blur vibrancy [Blur] (float, default 0.1696)
+#   upstream: Increase saturation of blurred colors.
+#   wiki:     Increase saturation of blurred colors. [0.0 - 1.0]
+#   candidate: short (38 chars)
+["decoration:blur:vibrancy"]
+help = "Boosts the color saturation of the blur. Set it to 0 to turn the boost off."
+
+# decoration:blur:vibrancy_darkness: Blur vibrancy on dark colours [Blur] (float, default 0)
+#   upstream: How strong the effect of vibrancy is on dark areas.
+#   wiki:     How strong the effect of `vibrancy` is on dark areas . [0.0 - 1.0]
+["decoration:blur:vibrancy_darkness"]
+help = "How much the saturation boost also reaches dark colors, which it otherwise holds back."
+
+# decoration:blur:special: Blur the special workspace [Blurred surfaces] (bool, default False)
+#   upstream: whether to blur behind the special workspace (note: expensive)
+#   wiki:     whether to blur behind the special workspace (note: expensive)
+["decoration:blur:special"]
+help = "Blurs what is behind the special workspace. This costs extra performance."
+
+# decoration:blur:popups: Blur popups [Blurred surfaces] (bool, default False)
+#   upstream: whether to blur popups (e.g. right-click menus)
+#   wiki:     whether to blur popups (e.g. right-click menus)
+["decoration:blur:popups"]
+help = "Blurs popups such as right-click menus."
+
+# decoration:blur:popups_ignorealpha: Popup blur alpha threshold [Blurred surfaces] (float, default 0.2)
+#   upstream: works like ignorealpha in layer rules. If pixel opacity is below set value, will not blur.
+#   wiki:     works like ignore_alpha in layer rules. If pixel opacity is below set value, will not blur. [0.0 - 1.0]
+["decoration:blur:popups_ignorealpha"]
+help = "Popup pixels more see-through than this are not blurred."
+
+# decoration:blur:input_methods: Blur input methods [Blurred surfaces] (bool, default False)
+#   upstream: whether to blur input methods (e.g. fcitx5)
+#   wiki:     whether to blur input methods (e.g. fcitx5)
+["decoration:blur:input_methods"]
+help = "Blurs behind input method popups, such as those of fcitx5."
+
+# decoration:blur:input_methods_ignorealpha: Input method blur alpha threshold [Blurred surfaces] (float, default 0.2)
+#   upstream: works like ignorealpha in layer rules. If pixel opacity is below set value, will not blur.
+#   wiki:     works like ignore_alpha in layer rules. If pixel opacity is below set value, will not blur. [0.0 - 1.0]
+["decoration:blur:input_methods_ignorealpha"]
+help = "Input method pixels more see-through than this are not blurred."
+
+# decoration:motion_blur:enabled: Motion blur [Screen effects] (bool, default False)
+#   upstream: enable motion blur for moving and resizing windows
+#   wiki:     enable motion blur on moving / resizing windows
+["decoration:motion_blur:enabled"]
+help = "Blurs windows while they move or resize, whether you drag them or Hyprland animates them."
+
+# decoration:motion_blur:samples: Motion blur samples [Screen effects] (int, default 7)
+#   upstream: amount of samples used for motion blur
+#   wiki:     The amount of samples to render. More will mean clearer blur, at the cost of more compute.
+#   candidate: short (38 chars); wiki is longer (90 chars)
+["decoration:motion_blur:samples"]
+help = "How many copies of a moving window are blended into its motion blur; 1 turns it off. More look smoother but cost more performance."
+
+
+# --- animations --------------------------------------------------------------------------------
+
+# animations:enabled: Animations [Behaviour] (bool, default True)
+#   upstream: enable animations
+#   wiki:     enable animations
+#   candidate: short (17 chars)
+["animations:enabled"]
+help = "Turns all of Hyprland's animations on or off. Turn it off for instant window and workspace changes."
+
+# animations:workspace_wraparound: Wrap workspace animations [Behaviour] (bool, default False)
+#   upstream: changes the direction of slide animations between the first and last workspaces
+#   wiki:     enable workspace wraparound, causing directional workspace animations to animate as if the first and last workspaces were adjacent
+#   candidate: wiki is longer (130 chars)
+["animations:workspace_wraparound"]
+help = "Slides between the first and last workspace as if they were neighbours."
+
+
+# --- input -------------------------------------------------------------------------------------
+
+# input:kb_model: Keyboard model [Keyboard layout] (string, default '[[EMPTY]]')
+#   upstream: Appropriate XKB keymap parameter.
+#   wiki:     Appropriate XKB keymap parameter. See the note below.
+#   candidate: short (33 chars); wiki is longer (53 chars)
+["input:kb_model"]
+help = "The XKB keyboard model. Keep the default unless your keyboard needs a specific one."
+
+# input:kb_layout: Keyboard layout [Keyboard layout] (string, default 'us')
+#   upstream: Appropriate XKB keymap parameter
+#   wiki:     Appropriate XKB keymap parameter
+#   candidate: short (32 chars)
+["input:kb_layout"]
+help = "Your keyboard layout as an XKB code, such as us or de. Separate several layouts with commas to switch between them."
+
+# input:kb_variant: Keyboard variant [Keyboard layout] (string, default '[[EMPTY]]')
+#   upstream: Appropriate XKB keymap parameter
+#   wiki:     Appropriate XKB keymap parameter
+#   candidate: short (32 chars)
+["input:kb_variant"]
+help = "A variant of your layout, such as dvorak. With several layouts, give one variant for each, separated by commas."
+
+# input:kb_options: Keyboard options [Keyboard layout] (string, default '[[EMPTY]]')
+#   upstream: Appropriate XKB keymap parameter
+#   wiki:     Appropriate XKB keymap parameter
+#   candidate: short (32 chars)
+["input:kb_options"]
+help = "Extra XKB options, such as caps:escape or grp:alt_shift_toggle. Separate several with commas."
+
+# input:kb_rules: Keyboard rules [Keyboard layout] (string, default '[[EMPTY]]')
+#   upstream: Appropriate XKB keymap parameter
+#   wiki:     Appropriate XKB keymap parameter
+#   candidate: short (32 chars)
+["input:kb_rules"]
+help = "The XKB rules Hyprland builds the keymap from. Keep the default unless you know you need other rules."
+
+# input:kb_file: Keymap file [Keyboard layout] (string, default '[[EMPTY]]')
+#   upstream: Appropriate XKB keymap file
+#   wiki:     If you prefer, you can use a path to your custom .xkb file.
+#   candidate: short (27 chars); wiki is longer (59 chars)
+["input:kb_file"]
+help = "Path to your own .xkb keymap file. If it loads, it takes the place of the keyboard layout, variant, model, rules and XKB options."
+
+# input:numlock_by_default: Enable Num Lock at startup [Typing] (bool, default False)
+#   upstream: Engage numlock by default.
+#   wiki:     Engage numlock by default.
+#   candidate: short (26 chars)
+["input:numlock_by_default"]
+help = "Turns Num Lock on when Hyprland starts."
+
+# input:resolve_binds_by_sym: Match keybinds by symbol [Typing] (bool, default False)
+#   upstream: Determines how keybinds act when multiple layouts are used.
+#   wiki:     Determines how keybinds act when multiple layouts are used. If false, keybinds will always act as if the first specified layout is active. If true, keybinds specified by symbols are activated when you type the respective symbol with the current layout.
+#   candidate: wiki is longer (252 chars)
+["input:resolve_binds_by_sym"]
+help = "With several layouts, matches a keybind against the symbol you type, not the key's place in the first layout."
+
+# input:repeat_rate: Key repeat rate [Typing] (int, default 25)
+#   upstream: The repeat rate for held-down keys, in repeats per second.
+#   wiki:     The repeat rate for held-down keys, in repeats per second.
+["input:repeat_rate"]
+help = "How many times per second a held key repeats."
+
+# input:repeat_delay: Key repeat delay [Typing] (int, default 600)
+#   upstream: Delay before a held-down key is repeated, in milliseconds.
+#   wiki:     Delay before a held-down key is repeated, in milliseconds.
+["input:repeat_delay"]
+help = "How long you hold a key, in milliseconds, before it starts repeating."
+
+# input:sensitivity: Pointer sensitivity [Pointer] (float, default 0)
+#   upstream: Sets the mouse input sensitivity. Value is clamped to the range -1.0 to 1.0.
+#   wiki:     Sets the mouse input sensitivity. Value is clamped to the range -1.0 to 1.0. [libinput#pointer-acceleration](https://wayland.freedesktop.org/libinput/doc/latest/pointer-acceleration.html#pointer-acceleration)
+#   candidate: wiki is longer (208 chars)
+["input:sensitivity"]
+help = "Pointer speed for mice and touchpads. Lower values slow the pointer down and higher values speed it up."
+
+# input:accel_profile: Pointer acceleration [Pointer] (string, default '[[EMPTY]]')
+#   upstream: Sets the cursor acceleration profile. [adaptive/flat/custom]
+#   wiki:     Sets the cursor acceleration profile. Can be one of `"adaptive"`, `"flat"`. Can also be `"custom"`, see [below](#accel_profile). Leave empty to use `libinput`'s default mode for your input device. [libinput#pointer-acceleration](https://wayland.freedesktop.org/libinput/doc/latest/pointer-acceleration.html#pointer-acceleration) \[`"adaptive"`/`"flat"`/`"custom"`\]
+#   the combo already names its values (labels)
+#   candidate: lists values the combo shows: adaptive, flat, custom; wiki is longer (365 chars)
+["input:accel_profile"]
+help = "How the pointer speeds up as you move it faster; Device default keeps the device's own. Custom needs acceleration points this app cannot set yet."
+
+# input:force_no_accel: Disable pointer acceleration [Pointer] (bool, default False)
+#   upstream: Force no cursor acceleration.
+#   wiki:     Force no cursor acceleration. This bypasses most of your pointer settings to get as raw of a signal as possible. **Enabling this is not recommended due to potential cursor desynchronization.**
+#   candidate: short (29 chars); wiki is longer (192 chars)
+["input:force_no_accel"]
+help = "Removes pointer acceleration and most pointer adjustments for a raw signal. Not recommended: the cursor can fall out of sync."
+
+# input:rotation: Pointer rotation [Pointer] (int, default 0)
+#   upstream: Sets the rotation of a device in degrees clockwise. Value is clamped to the range 0 to 359.
+#   wiki:     Sets the rotation of a device in degrees clockwise off the logical neutral position. Value is clamped to the range 0 to 359.
+#   candidate: wiki is longer (124 chars)
+["input:rotation"]
+help = "Rotates a device's input by this many degrees clockwise. Devices that cannot be rotated ignore it."
+
+# input:left_handed: Swap left and right buttons [Pointer] (bool, default False)
+#   upstream: Switches RMB and LMB
+#   wiki:     Switches RMB and LMB
+#   candidate: short (20 chars)
+["input:left_handed"]
+help = "Swaps the left and right mouse buttons."
+
+# input:scroll_points: Custom acceleration points [Pointer] (string, default '[[EMPTY]]')
+#   upstream: Sets the scroll acceleration profile, when accel_profile is set to custom.
+#   wiki:     Sets the scroll acceleration profile, when `accel_profile` is set to `"custom"`. Has to be in the form `"<step> <points>"`. Leave empty to have a flat scroll curve.
+#   candidate: wiki is longer (164 chars)
+["input:scroll_points"]
+help = "Custom scroll acceleration curve, written as a step and then the points. Used only when the pointer acceleration profile is custom."
+
+# input:scroll_method: Scroll method [Scrolling] (string, default '[[EMPTY]]')
+#   upstream: Sets the scroll method. [2fg/edge/on_button_down/no_scroll]
+#   wiki:     Sets the scroll method. Can be one of `"2fg"` (2 fingers), `"edge"`, `"on_button_down"`, `"no_scroll"`. [libinput#scrolling](https://wayland.freedesktop.org/libinput/doc/latest/scrolling.html) [`"2fg"`/`"edge"`/`"on_button_down"`/`"no_scroll"`]
+#   the combo already names its values (labels)
+#   candidate: lists values the combo shows: 2fg, edge, on_button_down, no_scroll; wiki is longer (244 chars)
+["input:scroll_method"]
+help = "What you do on a touchpad or mouse to scroll. Device default keeps the device's own method."
+
+# input:scroll_button: Scroll button [Scrolling] (int, default 0)
+#   upstream: Sets the scroll button. 0 means default.
+#   wiki:     Sets the scroll button. Has to be an int, cannot be a string. Check `wev` if you have any doubts regarding the ID. 0 means default.
+#   candidate: wiki is longer (131 chars)
+["input:scroll_button"]
+help = "Which mouse button scrolls while held, as a button code; 0 keeps the device's default. Find a code with the wev tool."
+
+# input:scroll_button_lock: Scroll button lock [Scrolling] (bool, default False)
+#   upstream: If the scroll button lock is enabled, the button does not need to be held down.
+#   wiki:     If the scroll button lock is enabled, the button does not need to be held down. Pressing and releasing the button toggles the button lock, which logically holds the button down or releases it. While the button is logically held down, motion events are converted to scroll events.
+#   candidate: wiki is longer (279 chars)
+["input:scroll_button_lock"]
+help = "Lets you press the scroll button once to start scrolling and again to stop, instead of holding it."
+
+# input:scroll_factor: Mouse scroll speed [Scrolling] (float, default 1)
+#   upstream: Multiplier added to scroll movement for external mice.
+#   wiki:     Multiplier added to scroll movement for external mice. Note that there is a separate setting for [touchpad scroll_factor](#touchpad).
+#   candidate: wiki is longer (133 chars)
+["input:scroll_factor"]
+help = "Multiplier for scrolling with an external mouse; 1 is the normal speed. Touchpads have their own setting."
+
+# input:natural_scroll: Mouse natural scrolling [Scrolling] (bool, default False)
+#   upstream: Inverts scrolling direction.
+#   wiki:     Inverts scrolling direction. When enabled, scrolling moves content directly, rather than manipulating a scrollbar.
+#   candidate: short (28 chars); wiki is longer (114 chars)
+["input:natural_scroll"]
+help = "Reverses the mouse scroll direction, so scrolling moves the content directly instead of the scrollbar."
+
+# input:follow_mouse: Focus follows mouse [Focus] (int, default 1)
+#   upstream: Specify if and how cursor movement should affect window focus.
+#   wiki:     Specify if and how cursor movement should affect window focus. See the note below. [`0`/`1`/`2`/`3`]
+#   the combo already names its values (map)
+#   candidate: wiki is longer (100 chars)
+["input:follow_mouse"]
+help = "Whether moving the pointer changes which window has focus, and how. When off, you click a window to focus it."
+
+# input:follow_mouse_threshold: Focus follows mouse threshold [Focus] (float, default 0)
+#   upstream: The smallest distance in logical pixels the mouse needs to travel for the window under it to get focused.
+#   wiki:     The smallest distance in logical pixels the mouse needs to travel for the window under it to get focused. Works only with follow_mouse = 1.
+#   candidate: wiki is longer (139 chars)
+["input:follow_mouse_threshold"]
+help = "How far the pointer must travel, in logical pixels, before the window under it gets focus. Applies only when Focus follows mouse is set to Follow."
+
+# input:focus_on_close: Focus after closing a window [Focus] (int, default 0)
+#   upstream: Controls the window focus behavior when a window is closed.
+#   wiki:     Controls the window focus behavior when a window is closed. When set to 0, focus will shift to the next window candidate. When set to 1, focus will shift to the window under the cursor. When set to 2, focus will shift to the most recently used/active window. [`0`/`1`/`2`]
+#   the combo already names its values (map)
+#   candidate: wiki is longer (272 chars)
+["input:focus_on_close"]
+help = "Which window gets focus after you close the focused one. Most recently used picks the window you used last on that workspace."
+
+# input:mouse_refocus: Refocus when the mouse moves [Focus] (bool, default True)
+#   upstream: if disabled, mouse focus won't switch to the hovered window unless the mouse crosses a window boundary when follow_mouse=1.
+#   wiki:     If disabled, mouse focus won't switch to the hovered window unless the mouse crosses a window boundary when `follow_mouse=1`.
+["input:mouse_refocus"]
+help = "When off, hovering a window does not move focus unless the pointer crosses into it from another window. Applies when focus follows the mouse."
+
+# input:float_switch_override_focus: Refocus on float/tile switch [Focus] (int, default 1)
+#   upstream: If enabled (1 or 2), focus will change to the window under the cursor when changing from tiled-to-floating and vice versa. If 2, focus will also follow mouse on float-to-float switches.
+#   wiki:     If enabled (1 or 2), focus will change to the window under the cursor when changing from tiled-to-floating and vice versa. If 2, focus will also follow mouse on float-to-float switches.
+#   the combo already names its values (labels)
+#   candidate: too long for a Row (185 chars); lists values the combo shows: 1, 2
+["input:float_switch_override_focus"]
+help = "Moves focus to the window under the pointer when it crosses between a tiled and a floating window. Applies only when Focus follows mouse is not Follow."
+
+# input:special_fallthrough: Special workspace fallthrough [Focus] (bool, default False)
+#   upstream: if enabled, having only floating windows in the special workspace will not block focusing windows in the regular workspace.
+#   wiki:     if enabled, having only floating windows in the special workspace will not block focusing windows in the regular workspace.
+["input:special_fallthrough"]
+help = "Lets you focus windows on the regular workspace when the special workspace holds only floating windows."
+
+# input:off_window_axis_events: Scroll events outside windows [Scrolling] (int, default 1)
+#   upstream: How to handle axis events around a focused window.
+#   wiki:     Handles axis events around (gaps/border for tiled, dragarea/border for floated) a focused window. `0` ignores axis events `1` sends out-of-bound coordinates `2` fakes pointer coordinates to the closest point inside the window `3` warps the cursor to the closest point inside the window
+#   the combo already names its values (map)
+#   candidate: wiki is longer (285 chars)
+["input:off_window_axis_events"]
+help = "How scrolling is handled when the pointer is just outside the focused window, in its gaps or at its edges."
+
+# input:emulate_discrete_scroll: Emulate discrete scrolling [Scrolling] (int, default 1)
+#   upstream: Emulates discrete scrolling from high resolution scrolling events.
+#   wiki:     Emulates discrete scrolling from high resolution scrolling events. `0` disables it, `1` enables handling of non-standard events only, and `2` force enables all scroll wheel events to be handled
+#   the combo already names its values (map)
+#   candidate: wiki is longer (193 chars)
+["input:emulate_discrete_scroll"]
+help = "Turns smooth, high-resolution scrolling into notched wheel steps, for apps that expect them."
+
+# input:follow_mouse_shrink: Shrink focus hitboxes by [Focus] (int, default 0)
+#   upstream: Shrinks the inactive window hitboxes used for focus detection by the specified number of pixels. This creates a dead zone in gaps between windows where moving the cursor will not change focus. Works only with follow_mouse = 1.
+#   wiki:     Shrinks the inactive window hitboxes used for focus detection by the specified number of pixels. This creates a dead zone in gaps between windows where moving the cursor will not change focus. Works only with follow_mouse = 1.
+#   candidate: too long for a Row (226 chars)
+["input:follow_mouse_shrink"]
+help = "Shrinks the area of inactive windows that counts for focus by this many pixels, leaving a dead zone in the gaps. Applies when focus follows the mouse."
+
+# input:touchpad:disable_while_typing: Disable while typing [Touchpad] (bool, default True)
+#   upstream: Disable the touchpad while typing.
+#   wiki:     Disable the touchpad while typing.
+#   candidate: short (34 chars)
+["input:touchpad:disable_while_typing"]
+help = "Turns the touchpad off while you type, so a resting palm does not move the cursor."
+
+# input:touchpad:natural_scroll: Touchpad natural scrolling [Scrolling] (bool, default False)
+#   upstream: Inverts scrolling direction.
+#   wiki:     Inverts scrolling direction. When enabled, scrolling moves content directly, rather than manipulating a scrollbar.
+#   candidate: short (28 chars); wiki is longer (114 chars)
+["input:touchpad:natural_scroll"]
+help = "Reverses the touchpad scroll direction, so scrolling moves the content directly instead of the scrollbar."
+
+# input:touchpad:scroll_factor: Touchpad scroll speed [Scrolling] (float, default 1)
+#   upstream: Multiplier applied to the amount of scroll movement.
+#   wiki:     Multiplier applied to the amount of scroll movement.
+["input:touchpad:scroll_factor"]
+help = "Multiplier for touchpad scrolling; 1 is the normal speed. Mice have their own setting."
+
+# input:touchpad:middle_button_emulation: Middle button emulation [Touchpad] (bool, default False)
+#   upstream: Sending LMB and RMB simultaneously will be interpreted as a middle click.
+#   wiki:     Sending LMB and RMB simultaneously will be interpreted as a middle click. This disables any touchpad area that would normally send a middle click based on location. [libinput#middle-button-emulation](https://wayland.freedesktop.org/libinput/doc/latest/middle-button-emulation.html)
+#   candidate: wiki is longer (281 chars)
+["input:touchpad:middle_button_emulation"]
+help = "Pressing the left and right buttons together counts as a middle click. This turns off any touchpad area that sends a middle click."
+
+# input:touchpad:tap_button_map: Tap button mapping [Touchpad] (string, default '[[EMPTY]]')
+#   upstream: Sets the tap button mapping for touchpad button emulation. [lrm/lmr]
+#   wiki:     Sets the tap button mapping for touchpad button emulation. Can be one of `"lrm"` (default) or `"lmr"` (Left, Middle, Right Buttons). [`"lrm"`/`"lmr"`]
+#   the combo already names its values (labels)
+#   candidate: lists values the combo shows: lrm, lmr; wiki is longer (150 chars)
+["input:touchpad:tap_button_map"]
+help = "Which mouse buttons a tap with one, two and three fingers sends."
+
+# input:touchpad:clickfinger_behavior: Clickfinger behaviour [Touchpad] (bool, default False)
+#   upstream: Button presses with 1, 2, or 3 fingers will be mapped to LMB, RMB, and MMB respectively.
+#   wiki:     Button presses with 1, 2, or 3 fingers will be mapped to LMB, RMB, and MMB respectively. This disables interpretation of clicks based on location on the touchpad. [libinput#clickfinger-behavior](https://wayland.freedesktop.org/libinput/doc/latest/clickpad-softbuttons.html#clickfinger-behavior)
+#   candidate: wiki is longer (294 chars)
+["input:touchpad:clickfinger_behavior"]
+help = "Clicking with 1, 2 or 3 fingers sends a left, right or middle click, instead of depending on where you press."
+
+# input:touchpad:tap-to-click: Tap to click [Touchpad] (bool, default True)
+#   upstream: Tapping on the touchpad with 1, 2, or 3 fingers will send LMB, RMB, and MMB respectively.
+#   wiki:     Tapping on the touchpad with 1, 2, or 3 fingers will send LMB, RMB, and MMB respectively.
+["input:touchpad:tap-to-click"]
+help = "Tapping with 1, 2 or 3 fingers sends a left, right or middle click."
+
+# input:touchpad:drag_lock: Drag lock [Touchpad] (int, default 0)
+#   upstream: When enabled, lifting the finger off while dragging will not drop the dragged item.
+#   wiki:     When enabled, lifting the finger off while dragging will not drop the dragged item. 0 -> disabled, 1 -> enabled with timeout, 2 -> enabled sticky. [libinput#tap-and-drag](https://wayland.freedesktop.org/libinput/doc/latest/tapping.html#tap-and-drag)
+#   the combo already names its values (labels)
+#   candidate: wiki is longer (249 chars)
+["input:touchpad:drag_lock"]
+help = "Lifting your finger during a tap-and-drag does not drop the item. With timeout drops it after a short wait."
+
+# input:touchpad:tap-and-drag: Tap and drag [Touchpad] (bool, default True)
+#   upstream: Sets the tap and drag mode for the touchpad
+#   wiki:     Sets the tap and drag mode for the touchpad
+["input:touchpad:tap-and-drag"]
+help = "Lets you tap, then touch again and drag, to move things with one finger."
+
+# input:touchpad:flip_x: Flip the horizontal axis [Touchpad] (bool, default False)
+#   upstream: Inverts the horizontal movement of the touchpad
+#   wiki:     inverts the horizontal movement of the touchpad
+["input:touchpad:flip_x"]
+help = "Reverses left and right movement on the touchpad."
+
+# input:touchpad:flip_y: Flip the vertical axis [Touchpad] (bool, default False)
+#   upstream: Inverts the vertical movement of the touchpad
+#   wiki:     inverts the vertical movement of the touchpad
+["input:touchpad:flip_y"]
+help = "Reverses up and down movement on the touchpad."
+
+# input:touchpad:drag_3fg: Three-finger drag [Touchpad] (int, default 0)
+#   upstream: Whether to use 3 or 4 finger drag.
+#   wiki:     enables three finger drag, 0 -> disabled, 1 -> 3 fingers, 2 -> 4 fingers [libinput#drag-3fg](https://wayland.freedesktop.org/libinput/doc/latest/drag-3fg.html)
+#   the combo already names its values (map)
+#   candidate: short (34 chars); wiki is longer (159 chars)
+["input:touchpad:drag_3fg"]
+help = "Lets you drag with three or four fingers on the touchpad. Touchpads that cannot do it ignore this setting."
+
+# input:touchdevice:transform: Rotation [Touchscreen] (int, default 0)
+#   upstream: Transform the input from touchdevices.
+#   wiki:     Transform the input from touchdevices. The possible transformations are the same as [those of the monitors](../Monitors/#rotating).
+#   the combo already names its values (labels)
+#   candidate: short (38 chars); wiki is longer (131 chars)
+["input:touchdevice:transform"]
+help = "Rotates or flips touchscreen input so that touches line up with a rotated monitor."
+
+# input:touchdevice:output: Bound monitor [Touchscreen] (string, default '[[Auto]]')
+#   upstream: The monitor to bind touch devices.
+#   wiki:     The monitor to bind touch devices. The default is auto-detection. To stop auto-detection, use an empty string.
+#   candidate: short (34 chars); wiki is longer (110 chars)
+["input:touchdevice:output"]
+help = "Which monitor touchscreen input maps to. With Focused monitor, each touch lands on the monitor that has focus."
+
+# input:touchdevice:enabled: Enable touch devices [Touchscreen] (bool, default True)
+#   upstream: Whether input is enabled for touch devices.
+#   wiki:     Whether input is enabled for touch devices.
+["input:touchdevice:enabled"]
+skip = "the upstream line already says it in full"
+
+# input:virtualkeyboard:share_states: Share virtual keyboard states [Virtual keyboards] (int, default 2)
+#   upstream: Unify key down states and modifier states with other keyboards.
+#   wiki:     Unify key down states and modifier states with other keyboards. 0 -> no, 1 -> yes, 2 -> yes unless IME client
+#   the combo already names its values (map)
+#   candidate: wiki is longer (109 chars)
+["input:virtualkeyboard:share_states"]
+help = "Whether keys and modifiers held on a virtual keyboard combine with those held on your other keyboards."
+
+# input:virtualkeyboard:release_pressed_on_close: Release pressed keys on close [Virtual keyboards] (bool, default False)
+#   upstream: Release all pressed keys by virtual keyboard on close.
+#   wiki:     Release all pressed keys by virtual keyboard on close.
+["input:virtualkeyboard:release_pressed_on_close"]
+help = "Releases every key a virtual keyboard still holds down when it closes."
+
+# input:tablet:transform: Rotation [Drawing tablet] (int, default 0)
+#   upstream: transform the input from tablets.
+#   wiki:     transform the input from tablets. The possible transformations are the same as [those of the monitors](../Monitors/#rotating).
+#   the combo already names its values (labels)
+#   candidate: short (33 chars); wiki is longer (126 chars)
+["input:tablet:transform"]
+help = "Rotates or flips tablet input, for a tablet you use turned sideways or upside down."
+
+# input:tablet:output: Bound monitor [Drawing tablet] (string, default '[[EMPTY]]')
+#   upstream: the monitor to bind tablets.
+#   wiki:     the monitor to bind tablets. Can be `"current"` or a monitor name. Leave empty to map across all monitors.
+#   candidate: short (28 chars); wiki is longer (106 chars)
+["input:tablet:output"]
+help = "Which monitor the tablet maps to. With no monitor chosen, it spans all monitors."
+
+# input:tablet:region_position: Region position [Tablet area] (vec2, default [0, 0])
+#   upstream: position of the mapped region in monitor layout.
+#   wiki:     position of the mapped region in monitor layout relative to the top left corner of the bound monitor or all monitors.
+#   candidate: wiki is longer (117 chars)
+["input:tablet:region_position"]
+help = "Where the tablet's screen region starts, in logical pixels from the top left of the bound monitor, or of all monitors together."
+
+# input:tablet:absolute_region_position: Absolute region position [Tablet area] (bool, default False)
+#   upstream: whether to treat the region_position as an absolute position in monitor layout.
+#   wiki:     whether to treat the `region_position` as an absolute position in monitor layout. Only applies when `output` is empty.
+#   candidate: wiki is longer (118 chars)
+["input:tablet:absolute_region_position"]
+help = "Treats the region position as a spot in the layout of all monitors. Applies only when no monitor is bound."
+
+# input:tablet:region_size: Region size [Tablet area] (vec2, default [0, 0])
+#   upstream: size of the mapped region.
+#   wiki:     size of the mapped region. When this variable is set, tablet input will be mapped to the region. `{0, 0}` or invalid size means unset.
+#   candidate: short (26 chars); wiki is longer (134 chars)
+["input:tablet:region_size"]
+help = "Size of the screen region the tablet maps to, in logical pixels. At 0 by 0 it keeps the size of the bound monitor, or of all monitors."
+
+# input:tablet:relative_input: Relative input [Drawing tablet] (bool, default False)
+#   upstream: whether the input should be relative
+#   wiki:     whether the input should be relative
+#   candidate: short (36 chars)
+["input:tablet:relative_input"]
+help = "Makes the tablet move the pointer like a mouse, relative to where it is, instead of by absolute position."
+
+# input:tablet:left_handed: Left-handed [Drawing tablet] (bool, default False)
+#   upstream: if enabled, the tablet will be rotated 180 degrees
+#   wiki:     if enabled, the tablet will be rotated 180 degrees
+["input:tablet:left_handed"]
+help = "Rotates the tablet by 180 degrees, for left-handed use."
+
+# input:tablet:active_area_size: Active area size [Tablet area] (vec2, default [0, 0])
+#   upstream: size of tablet's active area in mm
+#   wiki:     size of tablet's active area in mm
+#   candidate: short (34 chars)
+["input:tablet:active_area_size"]
+help = "Size of the part of the tablet that responds, in millimetres."
+
+# input:tablet:active_area_position: Active area position [Tablet area] (vec2, default [0, 0])
+#   upstream: position of the active area in mm
+#   wiki:     position of the active area in mm
+#   candidate: short (33 chars)
+["input:tablet:active_area_position"]
+help = "Where the responding part of the tablet starts, in millimetres."
+
+# input:tablettool:eraser_button_mode: Eraser button [Drawing tablet] (int, default 0)
+#   upstream: Change the eraser button behavior on the tool. When set to 0, use the default hardware behavior of the tool. When set to 1, the eraser button on the tool sends a button event instead.
+#   wiki:     Change the eraser button behavior on the tool. When set to `0`, use the default hardware behavior of the tool. When set to `1`, the eraser button on the tool sends a button event instead.
+#   the combo already names its values (labels)
+#   candidate: too long for a Row (183 chars); lists values the combo shows: 0, 1
+["input:tablettool:eraser_button_mode"]
+help = "Whether the pen's eraser button keeps its hardware behavior or acts as an ordinary button. Set the button it sends under Eraser button code."
+
+# input:tablettool:eraser_button_override: Eraser button code [Drawing tablet] (int, default 0)
+#   upstream: Set a button to be button event when eraser_button_mode is set to 1. Has to be an int, cannot be a string. Must be a valid button (e.g. BTN_STYLUS) excluding fake buttons (e.g. BTN_TOOL_*) and keys (KEY_*). Check wev if you have any doubts regarding the ID. 0 means default.
+#   wiki:     Set a button to be button event when eraser_button_mode is set to `1`. Has to be an int, cannot be a string. Must be a valid button (e.g. BTN_STYLUS) excluding fake buttons (e.g. BTN_TOOL_*) and keys (KEY_*). Check wev if you have any doubts regarding the ID. `0` means default.
+#   candidate: too long for a Row (274 chars)
+["input:tablettool:eraser_button_override"]
+help = "Button code the eraser button sends when set to Send a button event. 0 keeps the pen's default button; the wev tool shows codes."
+
+# input:tablettool:pressure_range_min: Minimum pressure [Drawing tablet] (float, default -1)
+#   upstream: Set the minimum pressure range for the tool, a negative number will set the default minimum pressure value. This is usually 0.0
+#   wiki:     Set the minimum pressure range for the tool, a negative number will set the default minimum pressure value. This is usually `0.0`
+["input:tablettool:pressure_range_min"]
+help = "Lower end of the pen's pressure range. Device default keeps the pen's own minimum, usually 0."
+
+# input:tablettool:pressure_range_max: Maximum pressure [Drawing tablet] (float, default -1)
+#   upstream: Set the maximum pressure range for the tool, a negative number will set the default maximum pressure value. This is usually 1.0
+#   wiki:     Set the maximum pressure range for the tool, a negative number will set the default maximum pressure value. This is usually `1.0`
+["input:tablettool:pressure_range_max"]
+help = "Upper end of the pen's pressure range. Device default keeps the pen's own maximum, usually 1."
+
+
+# --- gestures ----------------------------------------------------------------------------------
+
+# gestures:workspace_swipe_distance: Swipe distance [Workspace swipe] (int, default 300)
+#   upstream: in px, the distance of the touchpad gesture
+#   wiki:     in px, the distance of the touchpad gesture
+["gestures:workspace_swipe_distance"]
+help = "How far you drag on the touchpad, in pixels, to swipe one workspace."
+
+# gestures:workspace_swipe_touch: Swipe on touchscreens [Workspace swipe] (bool, default False)
+#   upstream: enable workspace swiping from the edge of a touchscreen
+#   wiki:     enable workspace swiping from the edge of a touchscreen
+["gestures:workspace_swipe_touch"]
+help = "Lets you swipe between workspaces from the edge of a touchscreen."
+
+# gestures:workspace_swipe_invert: Invert swipe direction [Workspace swipe] (bool, default True)
+#   upstream: invert the direction (touchpad only)
+#   wiki:     invert the direction (touchpad only)
+#   candidate: short (36 chars)
+["gestures:workspace_swipe_invert"]
+help = "Reverses the direction of workspace swipes on the touchpad."
+
+# gestures:workspace_swipe_touch_invert: Invert touchscreen swipe direction [Workspace swipe] (bool, default False)
+#   upstream: invert the direction (touchscreen only)
+#   wiki:     invert the direction (touchscreen only)
+#   candidate: short (39 chars)
+["gestures:workspace_swipe_touch_invert"]
+help = "Reverses the direction of workspace swipes on a touchscreen."
+
+# gestures:workspace_swipe_min_speed_to_force: Minimum speed to force a switch [Swipe sensitivity] (int, default 30)
+#   upstream: minimum speed in px per timepoint to force the change ignoring cancel_ratio.
+#   wiki:     minimum speed in px per timepoint to force the change ignoring `cancel_ratio`. Setting to `0` will disable this mechanic.
+#   candidate: wiki is longer (121 chars)
+["gestures:workspace_swipe_min_speed_to_force"]
+help = "A swipe faster than this switches workspace even if it was short, ignoring the cancel ratio. 0 turns this off."
+
+# gestures:workspace_swipe_cancel_ratio: Cancel ratio [Swipe sensitivity] (float, default 0.5)
+#   upstream: how much the swipe has to proceed in order to commence it.
+#   wiki:     how much the swipe has to proceed in order to commence it. (0.7 -> if > 0.7 * distance, switch, if less, revert) [0.0 - 1.0]
+#   candidate: wiki is longer (124 chars)
+["gestures:workspace_swipe_cancel_ratio"]
+help = "How much of the swipe distance you must cover to switch workspace. At 0.7, less than 70 percent snaps back."
+
+# gestures:workspace_swipe_create_new: Create a workspace by swiping past the end [Workspace swipe] (bool, default True)
+#   upstream: whether a swipe right on the last workspace should create a new one.
+#   wiki:     whether a swipe right on the last workspace should create a new one.
+["gestures:workspace_swipe_create_new"]
+help = "Swiping right on the last workspace creates a new one."
+
+# gestures:workspace_swipe_direction_lock: Direction lock [Swipe sensitivity] (bool, default True)
+#   upstream: if enabled, switching direction will be locked when you swipe past the direction_lock_threshold.
+#   wiki:     if enabled, switching direction will be locked when you swipe past the `direction_lock_threshold` (touchpad only).
+#   candidate: wiki is longer (114 chars)
+["gestures:workspace_swipe_direction_lock"]
+help = "Once a swipe passes the lock threshold, it can no longer change direction. Touchpad only."
+
+# gestures:workspace_swipe_direction_lock_threshold: Direction lock threshold [Swipe sensitivity] (int, default 10)
+#   upstream: in px, the distance to swipe before direction lock activates.
+#   wiki:     in px, the distance to swipe before direction lock activates (touchpad only).
+#   candidate: wiki is longer (77 chars)
+["gestures:workspace_swipe_direction_lock_threshold"]
+help = "How far a swipe must travel, in pixels, before its direction locks. Touchpad only."
+
+# gestures:workspace_swipe_forever: Keep swiping past the last workspace [Workspace swipe] (bool, default False)
+#   upstream: if enabled, swiping will not clamp at the neighboring workspaces but continue to the further ones.
+#   wiki:     if enabled, swiping will not clamp at the neighboring workspaces but continue to the further ones.
+["gestures:workspace_swipe_forever"]
+help = "Lets a swipe carry past the neighbouring workspace to ones further away, instead of stopping at it."
+
+# gestures:workspace_swipe_use_r: Use the r workspace prefix [Workspace swipe] (bool, default False)
+#   upstream: if enabled, swiping will use the r prefix instead of the m prefix for finding workspaces.
+#   wiki:     if enabled, swiping will use the `r` prefix instead of the `m` prefix for finding workspaces.
+["gestures:workspace_swipe_use_r"]
+help = "Swipes step through every workspace number on this monitor, even empty ones, instead of only the workspaces that are open."
+
+# gestures:close_max_timeout: Close gesture timeout [Window gestures] (int, default 1000)
+#   upstream: Timeout for closing windows with the close gesture, in ms.
+#   wiki:     the timeout for a window to close when using a 1:1 gesture, in ms
+["gestures:close_max_timeout"]
+help = "How long, in milliseconds, a window has to close after a close gesture before it springs back."
+
+# gestures:scrolling:move_snap_to_grid: Snap to the grid when moving [Window gestures] (bool, default True)
+#   upstream: When releasing the scroll move gesture, whether it shoud try to snap to the grid.
+#   wiki:     when releasing the scroll move gesture, whether it should try to snap to the grid
+["gestures:scrolling:move_snap_to_grid"]
+help = "Settles the scrolling layout on a column when you release the gesture that scrolls it. When off, it stops wherever the swipe leaves it."
+
+# gestures:scrolling:move_snap_cursor: Snap to the cursor when moving [Window gestures] (bool, default True)
+#   upstream: When releasing the scroll move gesture, whether it shoud snap the cursor to the newly focused window.
+#   wiki:     when releasing the scroll move gesture, whether it should snap the cursor to the newly focused window
+["gestures:scrolling:move_snap_cursor"]
+help = "Moves the cursor to the middle of the newly focused window when you release the gesture that scrolls the scrolling layout."
+
+
+# --- group -------------------------------------------------------------------------------------
+
+# group:insert_after_current: Insert after the current window [Behaviour] (bool, default True)
+#   upstream: whether new windows in a group spawn after current or at group tail
+#   wiki:     whether new windows in a group spawn after current or at group tail
+["group:insert_after_current"]
+help = "Opens a new window in a group right after the current tab instead of at the end."
+
+# group:focus_removed_window: Focus a window removed from a group [Behaviour] (bool, default True)
+#   upstream: whether Hyprland should focus on the window that has just been moved out of the group
+#   wiki:     whether Hyprland should focus on the window that has just been moved out of the group
+["group:focus_removed_window"]
+help = "Focuses a window right after you move it out of its group."
+
+# group:merge_groups_on_drag: Merge groups on drag [Dragging] (bool, default True)
+#   upstream: whether window groups can be dragged into other groups
+#   wiki:     whether window groups can be dragged into other groups
+["group:merge_groups_on_drag"]
+help = "Lets you drag one group into another to merge them."
+
+# group:merge_groups_on_groupbar: Merge groups dropped on a group bar [Dragging] (bool, default True)
+#   upstream: whether one group will be merged with another when dragged into its groupbar
+#   wiki:     whether one group will be merged with another when dragged into its groupbar. *Note: enabling this option only works when combined with `drag_into_group = 2` and `merge_groups_on_drag = true`*
+#   candidate: wiki is longer (192 chars)
+["group:merge_groups_on_groupbar"]
+help = "Lets you merge a group into another by dropping it on that group's bar. Needs Merge groups on drag on, and Drag windows into groups not Disabled."
+
+# group:col.border_active: Active group border colour [Border colours] (gradient, default '66ffff00 0deg')
+#   upstream: active group border color
+#   wiki:     active group border color
+#   candidate: short (25 chars)
+["group:col.border_active"]
+help = "Border color of the group with focus. Use one color, or several with an angle for a gradient."
+
+# group:col.border_inactive: Inactive group border colour [Border colours] (gradient, default '66777700 0deg')
+#   upstream: inactive group border color
+#   wiki:     inactive (out of focus) group border color
+#   candidate: short (27 chars)
+["group:col.border_inactive"]
+help = "Border color of groups without focus. Use one color, or several with an angle for a gradient."
+
+# group:col.border_locked_inactive: Locked inactive group border colour [Border colours] (gradient, default '66ff5500 0deg')
+#   upstream: inactive locked group border color
+#   wiki:     inactive locked group border color
+#   candidate: short (34 chars)
+["group:col.border_locked_inactive"]
+help = "Border color of a locked group without focus."
+
+# group:col.border_locked_active: Locked active group border colour [Border colours] (gradient, default '66775500 0deg')
+#   upstream: active locked group border color
+#   wiki:     active locked group border color
+#   candidate: short (32 chars)
+["group:col.border_locked_active"]
+help = "Border color of a locked group with focus."
+
+# group:auto_group: Group new windows automatically [Behaviour] (bool, default True)
+#   upstream: automatically group new windows
+#   wiki:     whether new windows will be automatically grouped into the focused unlocked group. *Note: if you want to disable auto_group only for specific windows, use [the "group barred" window rule](../Window-Rules/#group-window-rule-options) instead.*
+#   candidate: short (31 chars); wiki is longer (241 chars)
+["group:auto_group"]
+help = "Puts each new window into the focused group automatically, unless that group is locked."
+
+# group:drag_into_group: Drag windows into groups [Dragging] (int, default 1)
+#   upstream: whether dragging a window into a unlocked group will merge them.
+#   wiki:     whether dragging a window into a unlocked group will merge them. Options: `0` (disabled), `1` (enabled), `2` (only when dragging into the groupbar)
+#   the combo already names its values (map)
+#   candidate: wiki is longer (147 chars)
+["group:drag_into_group"]
+help = "Whether dragging a window onto an unlocked group adds it to that group, and where you must drop it."
+
+# group:merge_floated_into_tiled_on_groupbar: Merge floating windows into tiled groups [Dragging] (bool, default False)
+#   upstream: whether dragging a floating window into a tiled window groupbar will merge them
+#   wiki:     whether dragging a floating window into a tiled window groupbar will merge them
+["group:merge_floated_into_tiled_on_groupbar"]
+help = "Lets you drop a floating window on a tiled window's group bar to merge them."
+
+# group:group_on_movetoworkspace: Group when moving to a workspace [Behaviour] (bool, default False)
+#   upstream: whether using movetoworkspace[silent] will merge the window into the workspace's solitary unlocked group
+#   wiki:     whether using movetoworkspace[silent] will merge the window into the workspace's solitary unlocked group
+["group:group_on_movetoworkspace"]
+help = "Moving a window to a workspace that holds nothing but one unlocked group adds the window to that group."
+
+# group:groupbar:enabled: Group bar [Tab bar] (bool, default True)
+#   upstream: enables groupbars
+#   wiki:     enables groupbars
+#   candidate: short (17 chars)
+["group:groupbar:enabled"]
+help = "Shows a bar with one tab per window on every group."
+
+# group:groupbar:disable_when_only: Hide when the group has one window [Tab bar] (bool, default False)
+#   upstream: disable if contains single window. Considered only if enabled == true
+#   wiki:     disable if contains single window. Considered only if enabled == true
+["group:groupbar:disable_when_only"]
+help = "Hides the group bar when its group holds only one window."
+
+# group:groupbar:font_family: Font [Tab titles] (string, default '[[EMPTY]]')
+#   upstream: font used to display groupbar titles
+#   wiki:     font used to display groupbar titles, use `misc.font_family` if not specified
+#   candidate: short (36 chars); wiki is longer (77 chars)
+["group:groupbar:font_family"]
+help = "Font for the titles in the group bar. With none chosen, it uses the Global font setting."
+
+# group:groupbar:font_weight_active: Active title weight [Tab titles] (font_weight, default '400')
+#   upstream: weight of the font used to display active groupbar titles
+#   wiki:     font weight of active groupbar title
+#   the combo already names its values (labels)
+["group:groupbar:font_weight_active"]
+help = "How heavy the font of the active window's title is in the group bar. Pick a name, or type a number from 100 to 1000."
+
+# group:groupbar:font_weight_inactive: Inactive title weight [Tab titles] (font_weight, default '400')
+#   upstream: weight of the font used to display inactive groupbar titles
+#   wiki:     font weight of inactive groupbar title
+#   the combo already names its values (labels)
+["group:groupbar:font_weight_inactive"]
+help = "How heavy the font of the other windows' titles is in the group bar. Pick a name, or type a number from 100 to 1000."
+
+# group:groupbar:font_size: Font size [Tab titles] (int, default 8)
+#   upstream: font size of groupbar title
+#   wiki:     font size of groupbar title
+#   candidate: short (27 chars)
+["group:groupbar:font_size"]
+help = "Size of the title text in the group bar, in pixels."
+
+# group:groupbar:gradients: Gradient backgrounds [Tab backgrounds] (bool, default False)
+#   upstream: enables gradients
+#   wiki:     enables gradients
+#   candidate: short (17 chars)
+["group:groupbar:gradients"]
+help = "Paints a gradient background behind each tab in the group bar."
+
+# group:groupbar:height: Height [Tab spacing] (int, default 14)
+#   upstream: height of the groupbar
+#   wiki:     height of the groupbar
+#   candidate: short (22 chars)
+["group:groupbar:height"]
+help = "Height of the group bar, in pixels."
+
+# group:groupbar:indicator_gap: Indicator gap [Tab spacing] (int, default 0)
+#   upstream: height of the gap between the groupbar indicator and title
+#   wiki:     height of gap between groupbar indicator and title
+["group:groupbar:indicator_gap"]
+help = "Space between each tab's indicator and its title, in pixels."
+
+# group:groupbar:indicator_height: Indicator height [Tab spacing] (int, default 3)
+#   upstream: height of the groupbar indicator
+#   wiki:     height of the groupbar indicator
+#   candidate: short (32 chars)
+["group:groupbar:indicator_height"]
+help = "Height of each tab's indicator, the colored strip below its title, in pixels."
+
+# group:groupbar:stacked: Stack titles vertically [Tab bar] (bool, default False)
+#   upstream: render the groupbar as a vertical stack
+#   wiki:     render the groupbar as a vertical stack
+#   candidate: short (39 chars)
+["group:groupbar:stacked"]
+help = "Lists a group's tabs one above the other instead of side by side."
+
+# group:groupbar:priority: Decoration priority [Tab bar] (int, default 3)
+#   upstream: sets the decoration priority for groupbars
+#   wiki:     sets the decoration priority for groupbars
+["group:groupbar:priority"]
+skip = "where a higher number places the bar among other decorations is not stated anywhere"
+
+# group:groupbar:render_titles: Show window titles [Tab bar] (bool, default True)
+#   upstream: whether to render titles in the group bar decoration
+#   wiki:     whether to render titles in the group bar decoration
+["group:groupbar:render_titles"]
+help = "Shows each window's title on its tab."
+
+# group:groupbar:scrolling: Scroll to switch windows [Tab bar] (bool, default True)
+#   upstream: whether scrolling in the groupbar changes group active window
+#   wiki:     whether scrolling in the groupbar changes group active window
+["group:groupbar:scrolling"]
+help = "Scrolling over the group bar switches to the next or previous window in the group."
+
+# group:groupbar:middle_click_close: Middle-click to close [Tab bar] (bool, default True)
+#   upstream: whether middle clicking the groupbar closes the clicked window
+#   wiki:     whether middle clicking the groupbar closes the clicked window
+["group:groupbar:middle_click_close"]
+help = "Middle-clicking a tab closes that window."
+
+# group:groupbar:rounding: Corner rounding [Tab corners] (int, default 1)
+#   upstream: how much to round the groupbar
+#   wiki:     how much to round the indicator
+#   candidate: short (30 chars)
+["group:groupbar:rounding"]
+help = "Rounds the corners of the group bar's indicator, in pixels."
+
+# group:groupbar:rounding_power: Rounding power [Tab corners] (float, default 2)
+#   upstream: rounding power of groupbar corners (2 is a circle)
+#   wiki:     adjusts the curve used for rounding groupbar corners, larger is smoother, 2.0 is a circle, 4.0 is a squircle. [2.0 - 10.0]
+#   candidate: wiki is longer (122 chars)
+["group:groupbar:rounding_power"]
+help = "Shapes the rounded corners of the tab indicators: 2 is a circle, 4 a squircle."
+
+# group:groupbar:gradient_rounding: Gradient corner rounding [Tab corners] (int, default 2)
+#   upstream: how much to round the groupbar gradient
+#   wiki:     how much to round the gradients
+#   candidate: short (39 chars)
+["group:groupbar:gradient_rounding"]
+help = "Rounds the corners of the gradient backgrounds, in pixels."
+
+# group:groupbar:gradient_rounding_power: Gradient rounding power [Tab corners] (float, default 2)
+#   upstream: rounding power of groupbar gradient corners (2 is a circle)
+#   wiki:     adjusts the curve used for rounding gradient corners, larger is smoother, 2.0 is a circle, 4.0 is a squircle. [2.0 - 10.0]
+#   candidate: wiki is longer (122 chars)
+["group:groupbar:gradient_rounding_power"]
+help = "Shapes the rounded corners of the gradient backgrounds: 2 is a circle, 4 a squircle."
+
+# group:groupbar:round_only_edges: Round only the outer edges [Tab corners] (bool, default True)
+#   upstream: if yes, will only round at the groupbar edges
+#   wiki:     round only the indicator edges of the entire groupbar
+["group:groupbar:round_only_edges"]
+help = "Rounds only the outer ends of the indicator across the whole bar, not every tab's corners."
+
+# group:groupbar:gradient_round_only_edges: Round only the outer gradient edges [Tab corners] (bool, default True)
+#   upstream: if yes, will only round at the groupbar gradient edges
+#   wiki:     round only the gradient edges of the entire groupbar
+["group:groupbar:gradient_round_only_edges"]
+help = "Rounds only the outer ends of the gradients across the whole bar, not every tab's corners."
+
+# group:groupbar:text_color: Title colour [Tab titles] (color, default 'ffffffff')
+#   upstream: color for window titles in the groupbar
+#   wiki:     color for window titles in the groupbar
+#   candidate: short (39 chars)
+["group:groupbar:text_color"]
+help = "Color of the window titles in the group bar."
+
+# group:groupbar:text_color_inactive: Inactive title colour [Tab titles] (color, default '-1')
+#   upstream: color for inactive windows' titles in the groupbar
+#   wiki:     color for inactive windows' titles in the groupbar (if unset, defaults to text_color)
+#   candidate: wiki is longer (85 chars)
+["group:groupbar:text_color_inactive"]
+help = "Title color of windows without focus in the group bar."
+
+# group:groupbar:text_color_locked_active: Locked active title colour [Tab titles] (color, default '-1')
+#   upstream: color for the active window's title in a locked group
+#   wiki:     color for the active window's title in a locked group (if unset, defaults to text_color)
+#   candidate: wiki is longer (88 chars)
+["group:groupbar:text_color_locked_active"]
+help = "Title color of the active window in a locked group."
+
+# group:groupbar:text_color_locked_inactive: Locked inactive title colour [Tab titles] (color, default '-1')
+#   upstream: color for inactive windows' titles in locked groups
+#   wiki:     color for inactive windows' titles in locked groups (if unset, defaults to text_color_inactive)
+#   candidate: wiki is longer (95 chars)
+["group:groupbar:text_color_locked_inactive"]
+help = "Title color of the other windows in a locked group."
+
+# group:groupbar:col.active: Active background [Tab backgrounds] (gradient, default '66ffff00 0deg')
+#   upstream: active group border color
+#   wiki:     active group bar background color
+#   candidate: short (25 chars)
+["group:groupbar:col.active"]
+help = "Color of the focused tab's indicator in the group bar, and its background when Gradient backgrounds is on. The indicator uses only the first color."
+
+# group:groupbar:col.inactive: Inactive background [Tab backgrounds] (gradient, default '66777700 0deg')
+#   upstream: inactive (out of focus) group border color
+#   wiki:     inactive (out of focus) group bar background color
+["group:groupbar:col.inactive"]
+help = "Color of the other tabs' indicators in the group bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first color."
+
+# group:groupbar:col.locked_active: Locked active background [Tab backgrounds] (gradient, default '66ff5500 0deg')
+#   upstream: active locked group border color
+#   wiki:     active locked group bar background color
+#   candidate: short (32 chars)
+["group:groupbar:col.locked_active"]
+help = "Color of the focused tab's indicator in a locked group's bar, and its background when Gradient backgrounds is on. The indicator uses only the first color."
+
+# group:groupbar:col.locked_inactive: Locked inactive background [Tab backgrounds] (gradient, default '66775500 0deg')
+#   upstream: inactive locked group border color
+#   wiki:     inactive locked group bar background color
+#   candidate: short (34 chars)
+["group:groupbar:col.locked_inactive"]
+help = "Color of the other tabs' indicators in a locked group's bar, and their backgrounds when Gradient backgrounds is on. Indicators use only the first color."
+
+# group:groupbar:gaps_out: Outer gaps [Tab spacing] (int, default 2)
+#   upstream: gap between gradients and window
+#   wiki:     gap size between gradients and window
+#   candidate: short (32 chars)
+["group:groupbar:gaps_out"]
+help = "Space between the group bar and its window, in pixels. Keep the upper gap adds the same space above the bar."
+
+# group:groupbar:gaps_in: Inner gaps [Tab spacing] (int, default 2)
+#   upstream: gap between gradients
+#   wiki:     gap size between gradients
+#   candidate: short (21 chars)
+["group:groupbar:gaps_in"]
+help = "Space between neighbouring tabs in the group bar, in pixels."
+
+# group:groupbar:keep_upper_gap: Keep the upper gap [Tab spacing] (bool, default True)
+#   upstream: keep an upper gap above gradient
+#   wiki:     add or remove upper gap
+#   candidate: short (32 chars)
+["group:groupbar:keep_upper_gap"]
+help = "Adds the Outer gaps value again as space above the group bar. Turn it off to remove that gap."
+
+# group:groupbar:text_offset: Text offset [Tab spacing] (int, default 0)
+#   upstream: set an offset for a text
+#   wiki:     adjust vertical position for titles
+#   candidate: short (24 chars)
+["group:groupbar:text_offset"]
+help = "Moves the titles up or down in the group bar, in pixels."
+
+# group:groupbar:text_padding: Text padding [Tab spacing] (int, default 0)
+#   upstream: set horizontal padding for a text
+#   wiki:     set horizontal padding for titles
+#   candidate: short (33 chars)
+["group:groupbar:text_padding"]
+help = "Space on each side of a title in the group bar, in pixels."
+
+# group:groupbar:blur: Blur the background [Tab backgrounds] (bool, default False)
+#   upstream: enable background blur for groupbars
+#   wiki:     applies blur to the groupbar indicators and gradients
+#   candidate: short (36 chars); wiki is longer (53 chars)
+["group:groupbar:blur"]
+help = "Blurs what lies behind the group bar's tab indicators and gradient backgrounds."
+
+
+# --- misc --------------------------------------------------------------------------------------
+
+# misc:disable_hyprland_logo: Hide the Hyprland logo [Wallpaper and splash] (bool, default False)
+#   upstream: disables the random Hyprland logo / anime girl background. :(
+#   wiki:     disables the random Hyprland logo / anime girl background. :(
+["misc:disable_hyprland_logo"]
+help = "Hides the built-in wallpaper Hyprland draws on the desktop background, whichever one is chosen."
+
+# misc:disable_splash_rendering: Hide the splash text [Wallpaper and splash] (bool, default False)
+#   upstream: disables the Hyprland splash rendering.
+#   wiki:     disables the Hyprland splash rendering. (requires a monitor reload to take effect)
+#   the wiki notes a restart is needed
+#   candidate: short (39 chars); wiki is longer (82 chars)
+["misc:disable_splash_rendering"]
+help = "Hides the splash text drawn on the Hyprland background."
+
+# misc:col.splash: Splash text colour [Wallpaper and splash] (color, default '55ffffff')
+#   upstream: Changes the color of the splash text.
+#   wiki:     Changes the color of the splash text (requires a monitor reload to take effect).
+#   the wiki notes a restart is needed
+#   candidate: short (37 chars); wiki is longer (80 chars)
+["misc:col.splash"]
+skip = "the upstream line already says it in full"
+
+# misc:font_family: Font [Wallpaper and splash] (string, default 'Sans')
+#   upstream: Set the global default font to render the text.
+#   wiki:     Set the global default font to render the text including debug fps/notification, config error messages and etc., selected from system fonts.
+#   candidate: wiki is longer (140 chars)
+["misc:font_family"]
+help = "The font Hyprland uses for its own text, such as the FPS counter, notifications and error messages."
+
+# misc:splash_font_family: Splash font [Wallpaper and splash] (string, default '[[EMPTY]]')
+#   upstream: Changes the font used to render the splash text.
+#   wiki:     Changes the font used to render the splash text, selected from system fonts (requires a monitor reload to take effect).
+#   the wiki notes a restart is needed
+#   candidate: wiki is longer (119 chars)
+["misc:splash_font_family"]
+help = "The font used for the splash text. Choose one installed on this system."
+
+# misc:force_default_wallpaper: Default wallpaper [Wallpaper and splash] (int, default -1)
+#   upstream: Force any of the 3 default wallpapers. [-1/0/1/2]
+#   wiki:     Enforce any of the 3 default wallpapers. Setting this to `0` or `1` disables the anime background. `-1` means "random". [-1/0/1/2]
+#   the combo already names its values (labels)
+#   candidate: lists values the combo shows: 0, 1, 2; wiki is longer (130 chars)
+["misc:force_default_wallpaper"]
+help = "Which of Hyprland's three built-in wallpapers is drawn. Random picks one each time Hyprland starts."
+
+# misc:vrr: Variable refresh rate [Displays and power] (int, default 0)
+#   upstream: controls the VRR (Adaptive Sync) of your monitors
+#   wiki:     controls the VRR (Adaptive Sync) of your monitors. 0 - off, 1 - on, 2 - fullscreen only, 3 - fullscreen with `video` or `game` content type [0/1/2/3]
+#   the combo already names its values (map)
+#   candidate: wiki is longer (149 chars)
+["misc:vrr"]
+help = "Lets monitors change their refresh rate to match what is on screen, which smooths motion and reduces tearing."
+
+# misc:mouse_move_enables_dpms: Wake displays on mouse movement [Displays and power] (bool, default False)
+#   upstream: If DPMS is set to off, wake up the monitors if the mouse moves
+#   wiki:     If DPMS is set to off, wake up the monitors if the mouse moves.
+["misc:mouse_move_enables_dpms"]
+help = "Wakes sleeping monitors when you move the mouse."
+
+# misc:key_press_enables_dpms: Wake displays on key press [Displays and power] (bool, default False)
+#   upstream: If DPMS is set to off, wake up the monitors if a key is pressed.
+#   wiki:     If DPMS is set to off, wake up the monitors if a key is pressed.
+["misc:key_press_enables_dpms"]
+help = "Wakes sleeping monitors when you press a key."
+
+# misc:name_vk_after_proc: Name virtual keyboards after their process [Input] (bool, default True)
+#   upstream: Name virtual keyboards after the processes that create them.
+#   wiki:     (none)
+["misc:name_vk_after_proc"]
+help = "Names each virtual keyboard after the program that created it."
+
+# misc:always_follow_on_dnd: Follow drag and drop [Focus and placement] (bool, default True)
+#   upstream: Will make mouse focus follow the mouse when drag and dropping.
+#   wiki:     Will make mouse focus follow the mouse when drag and dropping. Recommended to leave it enabled, especially for people using focus follows mouse at 0.
+#   candidate: wiki is longer (149 chars)
+["misc:always_follow_on_dnd"]
+help = "During a drag and drop, focus moves with the pointer as if Focus follows mouse were set to Follow. Best left on."
+
+# misc:layers_hog_keyboard_focus: Layers may hold keyboard focus [Focus and placement] (bool, default True)
+#   upstream: If true, will make keyboard-interactive layers keep their focus on mouse move.
+#   wiki:     If true, will make keyboard-interactive layers keep their focus on mouse move (e.g. wofi, bemenu)
+#   candidate: wiki is longer (97 chars)
+["misc:layers_hog_keyboard_focus"]
+help = "Lets launchers such as wofi and bemenu keep keyboard focus when the mouse moves."
+
+# misc:animate_manual_resizes: Animate manual resizes [Window handling] (bool, default False)
+#   upstream: If true, will animate manual window resizes/moves
+#   wiki:     If true, will animate manual window resizes/moves
+["misc:animate_manual_resizes"]
+help = "Animates windows when you resize or move them by hand."
+
+# misc:animate_mouse_windowdragging: Animate window dragging [Window handling] (bool, default False)
+#   upstream: If true, will animate windows being dragged by mouse.
+#   wiki:     If true, will animate windows being dragged by mouse, note that this can cause weird behavior on some curves
+#   candidate: wiki is longer (108 chars)
+["misc:animate_mouse_windowdragging"]
+help = "Animates a window as you drag it with the mouse. Some animation curves look odd with this on."
+
+# misc:disable_autoreload: Disable config auto-reload [Reloads and warnings] (bool, default False)
+#   upstream: If true, the config will not reload automatically on save.
+#   wiki:     If true, the config will not reload automatically on save, and instead needs to be reloaded with `hyprctl reload`. Might save on battery.
+#   the wiki notes a restart is needed
+#   candidate: wiki is longer (137 chars)
+["misc:disable_autoreload"]
+help = "Stops Hyprland reloading the config when you save it, so changes apply only on a manual reload."
+
+# misc:enable_swallow: Window swallowing [Swallowing] (bool, default False)
+#   upstream: Enable window swallowing
+#   wiki:     Enable window swallowing
+#   candidate: short (24 chars)
+["misc:enable_swallow"]
+help = "Hides a window, usually a terminal, while a program launched from it is open. Does nothing until Swallow window class is set."
+
+# misc:swallow_regex: Swallow window class [Swallowing] (string, default '[[EMPTY]]')
+#   upstream: The class regex to be used for windows that should be swallowed.
+#   wiki:     The _class_ regex to be used for windows that should be swallowed (usually, a terminal). To know more about the list of regex which can be used [use this cheatsheet](https://github.com/ziishaned/learn-regex/blob/master/README.md).
+#   candidate: wiki is longer (230 chars)
+["misc:swallow_regex"]
+help = "A regular expression matching the class of windows that get swallowed, usually your terminal."
+
+# misc:swallow_exception_regex: Swallow exception title [Swallowing] (string, default '[[EMPTY]]')
+#   upstream: The title regex to be used for windows that should not be swallowed.
+#   wiki:     The _title_ regex to be used for windows that should _not_ be swallowed by the windows specified in swallow_regex  (e.g. wev). The regex is matched against the parent (e.g. Kitty) window's title on the assumption that it changes to whatever process it's running.
+#   candidate: wiki is longer (262 chars)
+["misc:swallow_exception_regex"]
+help = "A regular expression for the terminal's title. When it matches, the terminal is not swallowed, which excludes programs such as wev."
+
+# misc:focus_on_activate: Focus windows that request activation [Focus and placement] (bool, default False)
+#   upstream: Whether Hyprland should focus an app that requests to be focused.
+#   wiki:     Whether Hyprland should focus an app that requests to be focused (an `activate` request)
+#   candidate: wiki is longer (88 chars)
+["misc:focus_on_activate"]
+help = "Lets an app take focus when it asks for it."
+
+# misc:mouse_move_focuses_monitor: Mouse movement focuses the monitor [Focus and placement] (bool, default True)
+#   upstream: Whether mouse moving into a different monitor should focus it
+#   wiki:     Whether mouse moving into a different monitor should focus it
+["misc:mouse_move_focuses_monitor"]
+help = "Moving the pointer onto another monitor gives that monitor focus."
+
+# misc:allow_session_lock_restore: Allow session lock restore [Session lock] (bool, default False)
+#   upstream: if true, will allow you to restart a lockscreen app in case it crashes.
+#   wiki:     if true, will allow you to restart a lockscreen app in case it crashes
+#   the wiki notes a restart is needed
+["misc:allow_session_lock_restore"]
+help = "Lets you start a lockscreen app again if it crashes while the session is locked."
+
+# misc:session_lock_xray: Session lock X-ray [Session lock] (bool, default False)
+#   upstream: keep rendering workspaces below your lockscreen
+#   wiki:     if true, keep rendering workspaces below your lockscreen
+["misc:session_lock_xray"]
+help = "Keeps drawing your workspaces underneath the lockscreen, so it can show them through."
+
+# misc:session_lock_blur: Blur under the session lock [Session lock] (bool, default False)
+#   upstream: Enable blur for lockscreen. You probably want to enable `session_lock_xray`.
+#   wiki:     Enables blur for lockscreen. `session_lock_xray` must be enabled.
+["misc:session_lock_blur"]
+help = "Blurs what shows through the lockscreen. Works only while Session lock X-ray is on."
+
+# misc:background_color: Background colour [Wallpaper and splash] (color, default 'ff111111')
+#   upstream: change the background color.
+#   wiki:     change the background color. (requires enabled `disable_hyprland_logo`)
+#   candidate: short (28 chars); wiki is longer (71 chars)
+["misc:background_color"]
+help = "Color shown behind everything when no wallpaper covers the screen. Needs the built-in wallpaper hidden."
+
+# misc:close_special_on_empty: Close the special workspace when empty [Window handling] (bool, default True)
+#   upstream: close the special workspace if the last window is removed
+#   wiki:     close the special workspace if the last window is removed
+["misc:close_special_on_empty"]
+help = "Closes the special workspace when its last window goes away."
+
+# misc:on_focus_under_fullscreen: Focusing a window under a fullscreen one [Focus and placement] (int, default 2)
+#   upstream: if there is a fullscreen or maximized window, decide whether a tiled window requested to focus should replace it.
+#   wiki:     if there is a fullscreen or maximized window, decide whether a tiled window requested to focus should replace it, stay behind or disable the fullscreen/maximized state. 0 - ignore focus request (keep focus on fullscreen window), 1 - takes over, 2 - unfullscreen/unmaximize [0/1/2]
+#   the combo already names its values (map)
+#   candidate: wiki is longer (280 chars)
+["misc:on_focus_under_fullscreen"]
+help = "What happens when something asks to focus a tiled window while another window is fullscreen or maximized."
+
+# misc:exit_window_retains_fullscreen: Keep fullscreen when a window exits [Window handling] (bool, default False)
+#   upstream: if true, closing a fullscreen window makes the next focused window fullscreen
+#   wiki:     whether closing a fullscreen window makes the next focused window to be fullscreened. 0 - disabled, 1 - enabled, 2 - only when closing a grouped window, 3 - only when closing a non-grouped window [0/1/2/3]
+#   candidate: wiki is longer (205 chars)
+["misc:exit_window_retains_fullscreen"]
+help = "Closing a fullscreen window makes the window that gets focus next fullscreen too."
+
+# misc:initial_workspace_tracking: Initial workspace tracking [Focus and placement] (int, default 1)
+#   upstream: if enabled, windows will open on the workspace they were invoked on.
+#   wiki:     if enabled, windows will open on the workspace they were invoked on. 0 - disabled, 1 - single-shot, 2 - persistent (all children too)
+#   the combo already names its values (labels)
+#   candidate: wiki is longer (133 chars)
+["misc:initial_workspace_tracking"]
+help = "Opens a launched program's first window on the workspace you started it from. Persistent also covers its later windows while the first one stays open."
+
+# misc:initial_workspace_token_timeout: Workspace token timeout [Focus and placement] (int, default 10)
+#   upstream: the time in seconds a window has to open on its invoked workspace before the tracking token expires.
+#   wiki:     the time in seconds a window has to open on its invoked workspace before the tracking token expires.
+["misc:initial_workspace_token_timeout"]
+help = "How long, in seconds, a new window has to open before it stops following the workspace it was launched from."
+
+# misc:middle_click_paste: Middle-click paste [Input] (bool, default True)
+#   upstream: whether to enable middle-click-paste (aka primary selection)
+#   wiki:     whether to enable middle-click-paste (aka primary selection)
+["misc:middle_click_paste"]
+help = "Middle-clicking pastes the primary selection, which is the text you last highlighted."
+
+# misc:render_unfocused_fps: Unfocused render rate [Displays and power] (int, default 15)
+#   upstream: the maximum limit for renderunfocused windows' fps in the background
+#   wiki:     the maximum limit for render_unfocused windows' fps in the background (see also [Window-Rules](../Window-Rules/#dynamic-effects) - `render_unfocused`)
+#   candidate: wiki is longer (150 chars)
+["misc:render_unfocused_fps"]
+help = "Caps the frame rate, in frames per second, of windows the Render unfocused window rule keeps rendering in the background."
+
+# misc:disable_xdg_env_checks: Skip XDG environment checks [Reloads and warnings] (bool, default False)
+#   upstream: disable the warning if XDG environment is externally managed
+#   wiki:     disable the warning if XDG environment is externally managed
+["misc:disable_xdg_env_checks"]
+help = "Hides the warning shown when the XDG environment is set up outside Hyprland."
+
+# misc:disable_hyprland_guiutils_check: Skip the hyprland-guiutils check [Reloads and warnings] (bool, default False)
+#   upstream: disable the warning if hyprland-guiutils is missing
+#   wiki:     disable the warning if hyprland-guiutils is not installed
+["misc:disable_hyprland_guiutils_check"]
+help = "Hides the warning shown when hyprland-guiutils is not installed."
+
+# misc:disable_watchdog_warning: Hide the watchdog warning [Reloads and warnings] (bool, default False)
+#   upstream: whether to disable the warning about not using start-hyprland.
+#   wiki:     whether to disable the warning about not using start-hyprland
+["misc:disable_watchdog_warning"]
+help = "Hides the warning shown when Hyprland was not started with start-hyprland."
+
+# misc:lockdead_screen_delay: Lock-dead screen delay [Session lock] (int, default 1000)
+#   upstream: the delay in ms after the lockdead screen appears.
+#   wiki:     delay after which the "lockdead" screen will appear in case a lockscreen app fails to cover all the outputs (5 seconds max)
+#   candidate: wiki is longer (123 chars)
+["misc:lockdead_screen_delay"]
+help = "How long Hyprland waits, in milliseconds, before showing its recovery screen when a lockscreen app dies or leaves a monitor uncovered."
+
+# misc:enable_anr_dialog: Show the “not responding” dialog [Reloads and warnings] (bool, default True)
+#   upstream: whether to enable the ANR (app not responding) dialog when your apps hang
+#   wiki:     whether to enable the ANR (app not responding) dialog when your apps hang
+["misc:enable_anr_dialog"]
+help = "Shows a dialog when an app stops responding."
+
+# misc:anr_missed_pings: Missed pings before “not responding” [Reloads and warnings] (int, default 5)
+#   upstream: number of missed pings before showing the ANR dialog
+#   wiki:     number of missed pings before showing the ANR dialog
+["misc:anr_missed_pings"]
+help = "How many missed checks before an app counts as not responding and the dialog appears."
+
+# misc:screencopy_force_8b: Force 8-bit screen capture [Displays and power] (bool, default True)
+#   upstream: forces 8 bit screencopy
+#   wiki:     forces 8 bit screencopy
+#   candidate: short (23 chars)
+["misc:screencopy_force_8b"]
+help = "Forces 8-bit color in screen captures and recordings."
+
+# misc:disable_scale_notification: Hide the scale notification [Reloads and warnings] (bool, default False)
+#   upstream: disables notification popup when a monitor fails to set a suitable scale
+#   wiki:     disables notification popup when a monitor fails to set a suitable scale
+["misc:disable_scale_notification"]
+help = "Hides the popup shown when a monitor cannot use the scale you asked for."
+
+# misc:size_limits_tiled: Apply size limits to tiled windows [Window handling] (bool, default False)
+#   upstream: whether to apply minsize and maxsize rules to tiled windows
+#   wiki:     whether to apply min_size and max_size rules to tiled windows
+["misc:size_limits_tiled"]
+help = "Applies the minimum and maximum size window rules to tiled windows, not only floating ones."
+
+
+# --- binds -------------------------------------------------------------------------------------
+
+# binds:pass_mouse_when_bound: Pass mouse events when bound [Mouse and scroll] (bool, default False)
+#   upstream: if disabled, will not pass the mouse events to apps / dragging windows around if a keybind has been triggered.
+#   wiki:     if disabled, will not pass the mouse events to apps / dragging windows around if a keybind has been triggered.
+["binds:pass_mouse_when_bound"]
+help = "Also sends a mouse click to the app or window beneath it when that click triggered a keybind. When off, the keybind takes the click."
+
+# binds:scroll_event_delay: Scroll bind delay [Mouse and scroll] (int, default 300)
+#   upstream: in ms, how many ms to wait after a scroll event to allow passing another one for the binds.
+#   wiki:     in ms, how many ms to wait after a scroll event to allow passing another one for the binds.
+["binds:scroll_event_delay"]
+help = "How long to wait, in milliseconds, after a scroll event before another one can trigger a scroll keybind."
+
+# binds:workspace_back_and_forth: Workspace back and forth [Workspaces] (bool, default False)
+#   upstream: If enabled, an attempt to switch to the currently focused workspace will instead switch to the previous workspace.
+#   wiki:     If enabled, an attempt to switch to the currently focused workspace will instead switch to the previous workspace. Akin to i3's _auto_back_and_forth_.
+#   candidate: wiki is longer (150 chars)
+["binds:workspace_back_and_forth"]
+help = "Switching to the workspace you are already on takes you back to the previous one, as in i3."
+
+# binds:hide_special_on_workspace_change: Hide the special workspace on switch [Workspaces] (bool, default False)
+#   upstream: If enabled, changing the active workspace will hide the special workspace on the monitor.
+#   wiki:     If enabled, changing the active workspace (including to itself) will hide the special workspace on the monitor where the newly active workspace resides.
+#   candidate: wiki is longer (152 chars)
+["binds:hide_special_on_workspace_change"]
+help = "Switching workspace also hides the special workspace on that monitor."
+
+# binds:allow_workspace_cycles: Allow workspace cycles [Workspaces] (bool, default False)
+#   upstream: If enabled, workspaces don't forget their previous workspace.
+#   wiki:     If enabled, workspaces don't forget their previous workspace, so cycles can be created by switching to the first workspace in a sequence, then endlessly going to the previous workspace.
+#   candidate: wiki is longer (185 chars)
+["binds:allow_workspace_cycles"]
+help = "Workspaces remember the one before them, so going to the previous workspace can cycle endlessly."
+
+# binds:workspace_center_on: Centre the cursor on workspace switch [Workspaces] (int, default 1)
+#   upstream: Whether switching workspaces should center the cursor on the workspace (0) or on the last active window (1)
+#   wiki:     Whether switching workspaces should center the cursor on the workspace (0) or on the last active window for that workspace (1)
+#   the combo already names its values (labels)
+#   candidate: lists values the combo shows: 0, 1; wiki is longer (126 chars)
+["binds:workspace_center_on"]
+help = "Where the cursor goes when you switch to a workspace shown on another monitor."
+
+# binds:focus_preferred_method: Directional focus method [Moving focus] (int, default 0)
+#   upstream: sets the preferred focus finding method when using focuswindow/movewindow/etc with a direction.
+#   wiki:     sets the preferred focus finding method when using `hl.dsp.focus({ direction })`/`hl.dsp.window.move({ direction })`/etc. 0 - history (recent have priority), 1 - length (longer shared edges have priority)
+#   the combo already names its values (labels)
+#   candidate: wiki is longer (204 chars)
+["binds:focus_preferred_method"]
+help = "How moving focus in a direction picks between neighbours: History prefers the most recently used window, Length the one sharing the longest edge."
+
+# binds:ignore_group_lock: Ignore group lock [Overrides] (bool, default False)
+#   upstream: If enabled, dispatchers like moveintogroup, moveoutofgroup and movewindoworgroup will ignore lock per group.
+#   wiki:     If enabled, dispatchers like `hl.dsp.window.move({ into_group })` and `hl.dsp.window.move({ out_of_group })` will ignore lock per group.
+#   candidate: wiki is longer (136 chars)
+["binds:ignore_group_lock"]
+help = "Moving a window into or out of a group works even when the group is locked."
+
+# binds:movefocus_cycles_fullscreen: Move focus cycles fullscreen windows [Moving focus] (bool, default False)
+#   upstream: If enabled, when on a fullscreen window, movefocus will cycle fullscreen.
+#   wiki:     If enabled, when on a fullscreen window, `hl.dsp.focus({ direction })` will cycle fullscreen, if not, it will move the focus in a direction.
+#   candidate: wiki is longer (140 chars)
+["binds:movefocus_cycles_fullscreen"]
+help = "On a fullscreen window, moving focus switches to the next or previous window instead of moving in a direction."
+
+# binds:movefocus_cycles_groupfirst: Move focus cycles the group first [Moving focus] (bool, default False)
+#   upstream: If enabled, when in a grouped window, movefocus will cycle windows in the groups first.
+#   wiki:     If enabled, when in a grouped window, `hl.dsp.focus({ direction })` will cycle windows in the groups first, then at each ends of tabs, it'll move on to other windows/groups
+#   candidate: wiki is longer (172 chars)
+["binds:movefocus_cycles_groupfirst"]
+help = "On a grouped window, moving focus steps through the group's tabs first, then moves on to other windows."
+
+# binds:disable_keybind_grabbing: Disable keybind grabbing [Overrides] (bool, default False)
+#   upstream: If enabled, apps that request keybinds to be disabled will not be able to do so.
+#   wiki:     If enabled, apps that request keybinds to be disabled (e.g. VMs) will not be able to do so.
+["binds:disable_keybind_grabbing"]
+help = "Stops apps that ask to disable your keybinds, such as virtual machines, from doing so."
+
+# binds:window_direction_monitor_fallback: Fall back to the monitor for directional moves [Moving focus] (bool, default True)
+#   upstream: If enabled, moving a window or focus over the edge of a monitor with a direction will move it to the next monitor.
+#   wiki:     If enabled, moving a window or focus over the edge of a monitor with a direction will move it to the next monitor in that direction.
+#   candidate: wiki is longer (132 chars)
+["binds:window_direction_monitor_fallback"]
+help = "Moving a window or focus past a monitor's edge continues onto the next monitor in that direction."
+
+# binds:allow_pin_fullscreen: Allow pinning fullscreen windows [Overrides] (bool, default False)
+#   upstream: Allows fullscreen to pinned windows, and restore their pinned status afterwards
+#   wiki:     If enabled, Allow fullscreen to pinned windows, and restore their pinned status afterwards
+["binds:allow_pin_fullscreen"]
+help = "Lets a pinned window go fullscreen, then pins it again when it leaves fullscreen."
+
+# binds:drag_threshold: Drag threshold [Mouse and scroll] (int, default 0)
+#   upstream: Movement threshold in pixels for window dragging and c/g bind flags. 0 to disable.
+#   wiki:     Movement threshold in pixels for window dragging and c/g bind flags. 0 to disable and grab on mousedown.
+#   candidate: wiki is longer (104 chars)
+["binds:drag_threshold"]
+help = "How far the mouse must move, in pixels, before a window drag or a click-or-drag keybind starts. 0 starts on mouse down."
+
+
+# --- xwayland ----------------------------------------------------------------------------------
+
+# xwayland:enabled: XWayland [X11 apps] (bool, default True)
+#   upstream: allow running applications using X11
+#   wiki:     allow running applications using X11
+#   candidate: short (36 chars)
+["xwayland:enabled"]
+help = "Lets apps written for X11 run under Wayland, through XWayland."
+
+# xwayland:use_nearest_neighbor: Nearest-neighbour scaling [X11 apps] (bool, default True)
+#   upstream: uses the nearest neighbor filtering for xwayland apps, making them pixelated rather than blurry
+#   wiki:     uses the nearest neighbor filtering for xwayland apps, making them pixelated rather than blurry
+["xwayland:use_nearest_neighbor"]
+help = "Scales X11 apps without smoothing, so they look pixelated instead of blurry on scaled monitors."
+
+# xwayland:force_zero_scaling: Force zero scaling [X11 apps] (bool, default False)
+#   upstream: forces a scale of 1 on xwayland windows on scaled displays.
+#   wiki:     forces a scale of 1 on xwayland windows on scaled displays.
+["xwayland:force_zero_scaling"]
+help = "Draws X11 apps at scale 1 on scaled monitors. They look sharp but small unless the app scales itself."
+
+# xwayland:create_abstract_socket: Create an abstract socket [X11 apps] (bool, default False)
+#   upstream: Create the abstract Unix domain socket for XWayland
+#   wiki:     Create the [abstract Unix domain socket](../../Advanced-and-Cool/XWayland/#abstract-unix-domain-socket) for XWayland connections. (XWayland restart is required for changes to take effect; Linux only)
+#   the wiki notes a restart is needed
+#   candidate: wiki is longer (199 chars)
+["xwayland:create_abstract_socket"]
+skip = "upstream line is accurate; no plain-language effect is documented"
+
+
+# --- opengl ------------------------------------------------------------------------------------
+
+# opengl:nvidia_anti_flicker: NVIDIA anti-flicker [NVIDIA workarounds] (bool, default True)
+#   upstream: reduces flickering on nvidia at the cost of possible frame drops on lower-end GPUs.
+#   wiki:     reduces flickering on nvidia at the cost of possible frame drops on lower-end GPUs. On non-nvidia, this is ignored.
+#   candidate: wiki is longer (115 chars)
+["opengl:nvidia_anti_flicker"]
+help = "Reduces flicker on NVIDIA cards, at the cost of possible dropped frames on weaker GPUs. Ignored on other cards."
+
+
+# --- render ------------------------------------------------------------------------------------
+
+# render:direct_scanout: Direct scanout [Performance] (int, default 0)
+#   upstream: Enables direct scanout.
+#   wiki:     Enables direct scanout. Direct scanout attempts to reduce lag when there is only one fullscreen application on a screen (e.g. game). It is also recommended to set this to false if the fullscreen application shows graphical glitches. 0 - off, 1 - on, 2 - auto (on with content type 'game')
+#   the combo already names its values (map)
+#   candidate: short (23 chars); wiki is longer (288 chars)
+["render:direct_scanout"]
+help = "Sends a lone fullscreen app's frames straight to the display, which can cut lag in games. Turn it off if the app shows glitches."
+
+# render:expand_undersized_textures: Expand undersized textures [Blur and textures] (bool, default True)
+#   upstream: Whether to expand textures that have not yet resized to be larger.
+#   wiki:     Whether to expand undersized textures along the edge, or rather stretch the entire texture.
+#   candidate: wiki is longer (91 chars)
+["render:expand_undersized_textures"]
+help = "While a window is still resizing, stretches its edge to fill the gap instead of scaling the whole picture."
+
+# render:xp_mode: XP mode [Performance] (bool, default False)
+#   upstream: Disable back buffer and bottom layer rendering.
+#   wiki:     Disables back buffer and bottom layer rendering.
+["render:xp_mode"]
+help = "Stops drawing the wallpaper and everything else that sits below windows."
+
+# render:ctm_animation: Colour transform animation [Colour management] (int, default 2)
+#   upstream: Whether to enable a fade animation for CTM changes.
+#   wiki:     Whether to enable a fade animation for CTM changes (hyprsunset). 2 means "auto" which disables them on Nvidia.
+#   the combo already names its values (map)
+#   candidate: wiki is longer (110 chars)
+["render:ctm_animation"]
+help = "Fades between color filter changes, such as from hyprsunset, instead of jumping."
+
+# render:cm_enabled: Colour management [Colour management] (bool, default True)
+#   upstream: Enable Color Management pipelines (requires restart to fully take effect)
+#   wiki:     Whether the color management pipeline should be enabled or not (requires a restart of Hyprland to fully take effect)
+#   the wiki notes a restart is needed
+#   candidate: wiki is longer (116 chars)
+["render:cm_enabled"]
+help = "Runs Hyprland's color management, which HDR tone mapping relies on. When off, apps also cannot tell Hyprland their color space."
+
+# render:send_content_type: Send the content type [Colour management] (bool, default True)
+#   upstream: Report content type to allow monitor profile autoswitch
+#   wiki:     Report content type to allow monitor profile autoswitch (may result in a black screen during the switch)
+#   candidate: wiki is longer (104 chars)
+["render:send_content_type"]
+help = "Tells the monitor what kind of content is on screen so it can switch picture profile. This can cause a black screen during the switch."
+
+# render:cm_auto_hdr: Automatic HDR [Colour management] (int, default 1)
+#   upstream: Auto-switch to hdr mode when fullscreen app is in hdr
+#   wiki:     Auto-switch to HDR in fullscreen when needed. 0 - off, 1 - switch to `cm, hdr`, 2 - switch to `cm, hdredid`
+#   the combo already names its values (map)
+#   candidate: wiki is longer (107 chars)
+["render:cm_auto_hdr"]
+help = "Switches to HDR mode by itself when a fullscreen app shows HDR content."
+
+# render:new_render_scheduling: New render scheduling [Performance] (bool, default False)
+#   upstream: enable new render scheduling, which should improve FPS on underpowered devices.
+#   wiki:     Automatically uses triple buffering when needed, improves FPS on underpowered devices.
+["render:new_render_scheduling"]
+help = "Uses triple buffering when needed, which can improve the frame rate on underpowered machines."
+
+# render:non_shader_cm: Non-shader colour management [Colour pipeline] (int, default 3)
+#   upstream: Enable CM without shader.
+#   wiki:     Enable CM without shader. 0 - disable, 1 - whenever possible, 2 - DS and passthrough only, 3 - disable and ignore CM issues
+#   the combo already names its values (map)
+#   candidate: short (25 chars); wiki is longer (123 chars)
+["render:non_shader_cm"]
+help = "Corrects a fullscreen window's colors with the display hardware instead of a shader. On demand does so only during direct scanout; Ignore skips the checks."
+
+# render:cm_sdr_eotf: SDR transfer function [Colour management] (string, default 'default')
+#   upstream: Default transfer function for displaying SDR apps.
+#   wiki:     Default transfer function for displaying SDR apps. `"default"` - Use default value (sRGB), `"gamma22"` - Treat unspecified as Gamma 2.2, `"gamma22force"` - Treat unspecified and sRGB as Gamma 2.2, `"srgb"` - Treat unspecified as sRGB
+#   the combo already names its values (labels)
+#   candidate: wiki is longer (233 chars)
+["render:cm_sdr_eotf"]
+help = "Which gamma curve ordinary SDR apps are shown with."
+
+# render:commit_timing_enabled: Commit timing [Performance] (bool, default True)
+#   upstream: Enable commit timing proto. Requires restart
+#   wiki:     Enable commit timing proto. Requires restart
+#   the wiki notes a restart is needed
+["render:commit_timing_enabled"]
+help = "Supports the commit timing protocol, which lets apps schedule exactly when a frame appears."
+
+# render:icc_vcgt_enabled: Apply ICC VCGT tables [Colour management] (bool, default True)
+#   upstream: Enable sending VCGT ramps to KMS with ICC profiles
+#   wiki:     Enable sending VCGT ramps to KMS with ICC profiles
+["render:icc_vcgt_enabled"]
+help = "Sends the calibration curves of an ICC color profile to the display hardware."
+
+# render:use_shader_blur_blend: Shader blur blending [Blur and textures] (bool, default False)
+#   upstream: Use experimental blurred bg blending
+#   wiki:     Use experimental blurred bg blending (glitched on rotated screens). Set to true if blur is missing with fp16 or keep_unmodified_copy
+#   candidate: short (36 chars); wiki is longer (132 chars)
+["render:use_shader_blur_blend"]
+help = "Blends the blurred background in a shader. Experimental and glitchy on rotated screens; try it if blur goes missing with FP16 buffers."
+
+# render:use_fp16: Use FP16 buffers [Colour pipeline] (int, default 2)
+#   upstream: Use experimental internal FP16 buffer.
+#   wiki:     Use FP16 buffers internally. 0 - disabled, 1 - enabled, 2 - enabled in hdr mode
+#   the combo already names its values (map)
+#   candidate: short (38 chars); wiki is longer (79 chars)
+["render:use_fp16"]
+help = "Draws into experimental 16-bit floating-point buffers internally. Auto uses them only on a monitor not in plain sRGB, such as one in HDR."
+
+# render:keep_unmodified_copy: Keep an unmodified copy [Colour pipeline] (int, default 2)
+#   upstream: Keep umodified SDR frame copy for sreensharing.
+#   wiki:     Keep unmodified SDR frame copy for screensharing. 0 - disabled, 1 - on, 2 - auto (enabled in HDR with SDR modifiers). Set to 1 if screenshots are transparent.
+#   the combo already names its values (map)
+#   candidate: wiki is longer (158 chars)
+["render:keep_unmodified_copy"]
+help = "Keeps an unmodified SDR copy of each frame for screen sharing. Choose Enable if screenshots come out transparent."
+
+# render:non_shader_cm_interop: Non-shader colour management interop [Colour pipeline] (int, default 2)
+#   upstream: non_shader_cm interaction with ctm proto (hyprsunset and similar).
+#   wiki:     0 - external ctm (hyprsunset, etc.) is disabled in fullscreen, 1 - external ctm is enabled in fullscreen, 2 - external ctm is disabled for fullscreen photo/video/game content types
+#   the combo already names its values (map)
+#   candidate: wiki is longer (180 chars)
+["render:non_shader_cm_interop"]
+help = "Whether color filters from tools such as hyprsunset stay active in fullscreen. Auto turns them off only for fullscreen photo, video and game content."
+
+# render:fp16_sdr_tf: FP16 SDR transfer function [Colour pipeline] (int, default 0)
+#   upstream: Internal workbuffer transfer function for fp16 in SDR mode
+#   wiki:     Internal workbuffer transfer function for fp16 in SDR mode. 0 - monitor, 1 - linear
+#   the combo already names its values (map)
+#   candidate: wiki is longer (83 chars)
+["render:fp16_sdr_tf"]
+skip = "upstream line states it; no source gives a user-visible difference between Monitor and Linear"
+
+
+# --- cursor ------------------------------------------------------------------------------------
+
+# cursor:invisible: Hide the cursor [Hiding] (bool, default False)
+#   upstream: don't render cursors
+#   wiki:     don't render cursors
+#   candidate: short (20 chars)
+["cursor:invisible"]
+help = "Hides the cursor everywhere."
+
+# cursor:no_hardware_cursors: Hardware cursors [Theme and drawing] (int, default 2)
+#   upstream: disables hardware cursors.
+#   wiki:     disables hardware cursors. 0 - use hw cursors if possible, 1 - don't use hw cursors, 2 - auto (disable when tearing)
+#   the combo already names its values (map)
+#   candidate: short (26 chars); wiki is longer (116 chars)
+["cursor:no_hardware_cursors"]
+help = "Lets the display hardware draw the cursor instead of Hyprland drawing it into every frame. Automatic avoids it on NVIDIA with several GPUs or with VRR on."
+
+# cursor:no_break_fs_vrr: Keep VRR in fullscreen [Fullscreen VRR] (int, default 2)
+#   upstream: disables scheduling new frames on cursor movement for fullscreen apps with VRR enabled.
+#   wiki:     disables scheduling new frames on cursor movement for fullscreen apps with VRR enabled to avoid framerate spikes (may require no_hardware_cursors = true) 0 - off, 1 - on, 2 - auto (on with content type 'game')
+#   the combo already names its values (map)
+#   candidate: wiki is longer (209 chars)
+["cursor:no_break_fs_vrr"]
+help = "Stops cursor movement from scheduling extra frames in fullscreen apps with variable refresh rate, which avoids frame rate spikes."
+
+# cursor:min_refresh_rate: Minimum refresh rate [Fullscreen VRR] (int, default 24)
+#   upstream: minimum refresh rate for cursor movement when no_break_fs_vrr is active.
+#   wiki:     minimum refresh rate for cursor movement when `no_break_fs_vrr` is active. Set to minimum supported refresh rate or higher
+#   candidate: wiki is longer (122 chars)
+["cursor:min_refresh_rate"]
+help = "Lowest refresh rate, in Hz, for cursor movement while Keep VRR in fullscreen is in effect. Set it to your monitor's minimum rate or higher."
+
+# cursor:hotspot_padding: Hotspot padding [Theme and drawing] (int, default 0)
+#   upstream: the padding, in logical px, between screen edges and the cursor
+#   wiki:     the padding, in logical px, between screen edges and the cursor
+["cursor:hotspot_padding"]
+help = "Space kept between the screen edges and the cursor's hotspot, in pixels."
+
+# cursor:inactive_timeout: Hide after inactivity [Hiding] (float, default 0)
+#   upstream: in seconds, after how many seconds of cursor's inactivity to hide it. Set to 0 for never.
+#   wiki:     in seconds, after how many seconds of cursor's inactivity to hide it. Set to `0` for never.
+["cursor:inactive_timeout"]
+help = "Hides the cursor after this many seconds without movement. 0 never hides it."
+
+# cursor:no_warps: Disable cursor warps [Warping] (bool, default False)
+#   upstream: if true, will not warp the cursor in many cases
+#   wiki:     if true, will not warp the cursor in many cases (focusing, keybinds, etc)
+#   candidate: wiki is longer (73 chars)
+["cursor:no_warps"]
+help = "Stops Hyprland moving the cursor by itself, for example when focus changes or a keybind runs."
+
+# cursor:persistent_warps: Persistent warps [Warping] (bool, default False)
+#   upstream: When a window is refocused, the cursor returns to its last position relative to that window.
+#   wiki:     When a window is refocused, the cursor returns to its last position relative to that window, rather than to the centre.
+#   candidate: wiki is longer (119 chars)
+["cursor:persistent_warps"]
+help = "When a window regains focus, the cursor returns to where it was in that window instead of its center."
+
+# cursor:warp_on_change_workspace: Warp on workspace change [Warping] (int, default 0)
+#   upstream: Move the cursor to the last focused window after changing the workspace.
+#   wiki:     Move the cursor to the last focused window after changing the workspace. Options: 0 (Disabled), 1 (Enabled), 2 (Force - ignores cursor:no_warps option)
+#   the combo already names its values (map)
+#   candidate: wiki is longer (151 chars)
+["cursor:warp_on_change_workspace"]
+help = "Moves the cursor to the last focused window after a workspace change. Force does so even when Disable cursor warps is on."
+
+# cursor:warp_on_toggle_special: Warp on special workspace toggle [Warping] (int, default 0)
+#   upstream: Move the cursor to the last focused window when toggling a special workspace.
+#   wiki:     Move the cursor to the last focused window when toggling a special workspace. Options: 0 (Disabled), 1 (Enabled), 2 (Force - ignores cursor:no_warps option)
+#   the combo already names its values (map)
+#   candidate: wiki is longer (156 chars)
+["cursor:warp_on_toggle_special"]
+help = "Moves the cursor to the last focused window when you toggle a special workspace. Force does so even when Disable cursor warps is on."
+
+# cursor:default_monitor: Startup monitor [Warping] (string, default '[[EMPTY]]')
+#   upstream: the name of a default monitor for the cursor to be set to on startup
+#   wiki:     the name of a default monitor for the cursor to be set to on startup (see `hyprctl monitors` for names)
+#   candidate: wiki is longer (103 chars)
+["cursor:default_monitor"]
+help = "The monitor the cursor starts on when Hyprland launches. Auto puts it on the first monitor Hyprland detects."
+
+# cursor:zoom_factor: Zoom factor [Zoom] (float, default 1)
+#   upstream: the factor to zoom by around the cursor. 1 means no zoom.
+#   wiki:     the factor to zoom by around the cursor. Like a magnifying glass. Minimum 1.0 (meaning no zoom)
+#   candidate: wiki is longer (95 chars)
+["cursor:zoom_factor"]
+help = "How much the screen is magnified around the cursor, like a magnifying glass. 1 means no zoom."
+
+# cursor:zoom_rigid: Rigid zoom [Zoom] (bool, default False)
+#   upstream: whether the zoom should follow the cursor rigidly or loosely
+#   wiki:     whether the zoom should follow the cursor rigidly (cursor is always centered if it can be) or loosely
+#   candidate: wiki is longer (101 chars)
+["cursor:zoom_rigid"]
+help = "Keeps the cursor centerd in the zoomed view when it can, instead of letting it drift."
+
+# cursor:zoom_disable_aa: Disable zoom antialiasing [Zoom] (bool, default False)
+#   upstream: If enabled, when zooming, no antialiasing will be used
+#   wiki:     disable antialiasing when zooming, which means things will be pixelated instead of blurry
+#   candidate: wiki is longer (89 chars)
+["cursor:zoom_disable_aa"]
+help = "Shows zoomed-in content as sharp pixels instead of smoothing it."
+
+# cursor:zoom_detached_camera: Detached zoom camera [Zoom] (bool, default True)
+#   upstream: Detaches the camera from the mouse when zoomed in
+#   wiki:     detach the camera from the mouse when zoomed in, only ever moving the camera to keep the mouse in view when it goes past the screen edges
+#   candidate: wiki is longer (137 chars)
+["cursor:zoom_detached_camera"]
+help = "While zoomed in, the view moves only when the cursor reaches the screen edge, instead of following it."
+
+# cursor:enable_hyprcursor: Use hyprcursor [Theme and drawing] (bool, default True)
+#   upstream: whether to enable hyprcursor support
+#   wiki:     whether to enable hyprcursor support
+#   candidate: short (36 chars)
+["cursor:enable_hyprcursor"]
+help = "Uses hyprcursor themes for the cursor. When off, Hyprland falls back to XCursor themes."
+
+# cursor:hide_on_key_press: Hide on key press [Hiding] (bool, default False)
+#   upstream: Hides the cursor when you press any key until the mouse is moved.
+#   wiki:     Hides the cursor when you press any key until the mouse is moved.
+["cursor:hide_on_key_press"]
+help = "Hides the cursor while you type, until the mouse moves again."
+
+# cursor:hide_on_touch: Hide on touch [Hiding] (bool, default True)
+#   upstream: Hides the cursor when the last input was a touch input until a mouse input is done.
+#   wiki:     Hides the cursor when the last input was a touch input until a mouse input is done.
+["cursor:hide_on_touch"]
+help = "Hides the cursor after touch input, until you use the mouse again."
+
+# cursor:hide_on_tablet: Hide on tablet input [Hiding] (bool, default False)
+#   upstream: Hides the cursor when the last input was a tablet input until a mouse input is done.
+#   wiki:     Hides the cursor when the last input was a tablet input until a mouse input is done.
+["cursor:hide_on_tablet"]
+help = "Hides the cursor after tablet input, until you use the mouse again."
+
+# cursor:use_cpu_buffer: Use a CPU buffer [Theme and drawing] (int, default 2)
+#   upstream: Makes HW cursors use a CPU buffer.
+#   wiki:     Makes HW cursors use a CPU buffer. Required on Nvidia to have HW cursors. 0 - off, 1 - on, 2 - auto (nvidia only)
+#   the combo already names its values (map)
+#   candidate: short (34 chars); wiki is longer (113 chars)
+["cursor:use_cpu_buffer"]
+help = "Makes hardware cursors use a CPU buffer, which NVIDIA cards need for hardware cursors. Auto turns it on for NVIDIA only."
+
+# cursor:sync_gsettings_theme: Sync the cursor theme to GSettings [Theme and drawing] (bool, default True)
+#   upstream: sync xcursor theme with gsettings
+#   wiki:     sync xcursor theme with gsettings, it applies cursor-theme and cursor-size on theme load to gsettings making most CSD gtk based clients use same xcursor theme and size.
+#   candidate: short (33 chars); wiki is longer (168 chars)
+["cursor:sync_gsettings_theme"]
+help = "Shares the cursor theme with GTK apps through GSettings, so most of them use the same cursor."
+
+# cursor:warp_back_after_non_mouse_input: Warp back after non-mouse input [Warping] (bool, default False)
+#   upstream: warp the cursor back to where it was after using a non-mouse input to move it.
+#   wiki:     Warp the cursor back to where it was after using a non-mouse input to move it, and then returning back to mouse.
+#   candidate: wiki is longer (112 chars)
+["cursor:warp_back_after_non_mouse_input"]
+help = "After a keyboard or touch action moves the cursor, returns it to where it was once you use the mouse again."
+
+
+# --- ecosystem ---------------------------------------------------------------------------------
+
+# ecosystem:no_update_news: Hide update news [Notices and permissions] (bool, default False)
+#   upstream: disable the popup that shows up when you update hyprland to a new version.
+#   wiki:     disable the popup that shows up when you update hyprland to a new version.
+["ecosystem:no_update_news"]
+help = "Hides the popup shown after Hyprland updates to a new version."
+
+# ecosystem:no_donation_nag: Hide the donation reminder [Notices and permissions] (bool, default False)
+#   upstream: disable the popup that shows up twice a year encouraging to donate.
+#   wiki:     disable the popup that shows up twice a year encouraging to donate.
+["ecosystem:no_donation_nag"]
+help = "Hides the donation reminder popup that appears twice a year."
+
+# ecosystem:enforce_permissions: Enforce permissions [Notices and permissions] (bool, default False)
+#   upstream: whether to enable permission control.
+#   wiki:     whether to enable [permission control](../../Advanced-and-Cool/Permissions).
+#   candidate: short (37 chars); wiki is longer (76 chars)
+["ecosystem:enforce_permissions"]
+help = "Turns on permission control, so apps must be allowed to use features such as screen capture."
+
+
+# --- debug -------------------------------------------------------------------------------------
+
+# debug:overlay: Debug overlay [Overlays and tracing] (bool, default False)
+#   upstream: print the debug performance overlay.
+#   wiki:     print the debug performance overlay. Disable VFR for accurate results.
+#   candidate: short (36 chars); wiki is longer (70 chars)
+["debug:overlay"]
+help = "Draws a performance panel on screen. Turn off variable frame rate for accurate numbers."
+
+# debug:damage_blink: Blink on damage [Overlays and tracing] (bool, default False)
+#   upstream: flash damaged areas
+#   wiki:     (epilepsy warning!) flash areas updated with damage tracking
+#   candidate: short (19 chars); wiki is longer (60 chars)
+["debug:damage_blink"]
+help = "Flashes the screen areas that were redrawn. Warning: flashing lights."
+
+# debug:gl_debugging: OpenGL debugging [Overlays and tracing] (bool, default False)
+#   upstream: enable OpenGL debugging and error checking.
+#   wiki:     enables OpenGL debugging with glGetError and EGL_KHR_debug, requires a restart after changing.
+#   the wiki notes a restart is needed
+#   candidate: wiki is longer (94 chars)
+["debug:gl_debugging"]
+skip = "upstream line is accurate; no source says what it changes beyond logging"
+
+# debug:disable_logs: Disable logging [Logging] (bool, default True)
+#   upstream: disable logging to a file
+#   wiki:     disable logging to a file
+#   candidate: short (25 chars)
+["debug:disable_logs"]
+help = "Stops Hyprland writing its log to a file."
+
+# debug:disable_time: Omit timestamps from logs [Logging] (bool, default True)
+#   upstream: disables time logging
+#   wiki:     disables time logging
+#   candidate: short (21 chars)
+["debug:disable_time"]
+help = "Leaves the time out of log lines."
+
+# debug:damage_tracking: Damage tracking [Frame rendering] (int, default 2)
+#   upstream: redraw only the needed bits of the display.
+#   wiki:     redraw only the needed bits of the display. Do **not** change. (default: full - 2) monitor - 1, none - 0
+#   the combo already names its values (map)
+#   candidate: wiki is longer (104 chars)
+["debug:damage_tracking"]
+help = "Redraws only the parts of the screen that changed. Best left alone."
+
+# debug:enable_stdout_logs: Log to stdout [Logging] (bool, default False)
+#   upstream: enables logging to stdout
+#   wiki:     enables logging to stdout
+#   candidate: short (25 chars)
+["debug:enable_stdout_logs"]
+help = "Also prints Hyprland's log to standard output."
+
+# debug:manual_crash: Manual crash [Errors and crashes] (int, default 0)
+#   upstream: set to 1 and then back to 0 to crash Hyprland.
+#   wiki:     set to 1 and then back to 0 to crash Hyprland.
+#   the combo already names its values (labels)
+#   candidate: lists values the combo shows: 0, 1
+["debug:manual_crash"]
+help = "Choosing Armed and then Off crashes Hyprland on purpose, and you lose your session."
+
+# debug:suppress_errors: Suppress errors [Errors and crashes] (bool, default False)
+#   upstream: if true, do not display config file parsing errors.
+#   wiki:     if true, do not display config file parsing errors.
+["debug:suppress_errors"]
+help = "Hides the error bar Hyprland shows when your config has mistakes."
+
+# debug:disable_scale_checks: Disable scale checks [Frame rendering] (bool, default False)
+#   upstream: disables verification of the scale factors.
+#   wiki:     disables verification of the scale factors. Will result in pixel alignment and rounding errors.
+#   candidate: wiki is longer (95 chars)
+["debug:disable_scale_checks"]
+help = "Skips checking that monitor scales fit the pixel grid, which causes rounding errors."
+
+# debug:error_limit: Displayed error limit [Errors and crashes] (int, default 5)
+#   upstream: limits the number of displayed config file parsing errors.
+#   wiki:     limits the number of displayed config file parsing errors.
+["debug:error_limit"]
+help = "The most config errors the error bar lists at once."
+
+# debug:error_position: Error position [Errors and crashes] (int, default 0)
+#   upstream: sets the position of the error bar.
+#   wiki:     sets the position of the error bar. top - 0, bottom - 1
+#   the combo already names its values (map)
+#   candidate: short (35 chars); wiki is longer (55 chars)
+["debug:error_position"]
+help = "Where the config error bar appears on the screen."
+
+# debug:colored_stdout_logs: Colour stdout logs [Logging] (bool, default True)
+#   upstream: enables colors in the stdout logs.
+#   wiki:     enables colors in the stdout logs.
+#   candidate: short (34 chars)
+["debug:colored_stdout_logs"]
+help = "Colors the log lines printed to standard output."
+
+# debug:log_damage: Log damage [Overlays and tracing] (bool, default False)
+#   upstream: enables logging the damage.
+#   wiki:     enables logging the damage.
+#   candidate: short (27 chars)
+["debug:log_damage"]
+help = "Logs which screen areas were redrawn."
+
+# debug:pass: Log render passes [Overlays and tracing] (bool, default False)
+#   upstream: enables render pass debugging.
+#   wiki:     enables render pass debugging.
+#   candidate: short (30 chars)
+["debug:pass"]
+skip = "no source explains what render pass debugging prints"
+
+# debug:full_cm_proto: Full colour-management protocol [Protocol workarounds] (bool, default False)
+#   upstream: claims support for all cm proto features (requires restart)
+#   wiki:     claims support for all cm proto features (requires restart)
+#   the wiki notes a restart is needed
+["debug:full_cm_proto"]
+help = "Tells apps that every color management feature is supported."
+
+# debug:ds_handle_same_buffer: Direct scanout of the same buffer [Protocol workarounds] (bool, default True)
+#   upstream: Special case for DS with unmodified buffer
+#   wiki:     special case for direct scanout with unmodified buffer
+["debug:ds_handle_same_buffer"]
+skip = "internal compatibility switch; no plain-language effect is documented"
+
+# debug:ds_handle_same_buffer_fifo: Direct scanout of the same buffer (FIFO) [Protocol workarounds] (bool, default True)
+#   upstream: Special case for DS with unmodified buffer unlocks fifo
+#   wiki:     special case for direct scanout with unmodified buffer unlocks fifo
+["debug:ds_handle_same_buffer_fifo"]
+skip = "internal compatibility switch; no plain-language effect is documented"
+
+# debug:fifo_pending_workaround: FIFO pending workaround [Protocol workarounds] (bool, default False)
+#   upstream: Fifo workaround for empty pending list
+#   wiki:     fifo workaround for empty pending list
+#   candidate: short (38 chars)
+["debug:fifo_pending_workaround"]
+skip = "internal workaround; no plain-language effect is documented"
+
+# debug:render_solitary_wo_damage: Render solitary windows without damage [Frame rendering] (bool, default False)
+#   upstream: Render solitary window with empty damage
+#   wiki:     render solitary window with empty damage
+["debug:render_solitary_wo_damage"]
+skip = "internal compatibility switch; no plain-language effect is documented"
+
+# debug:vfr: Variable frame rate [Frame rendering] (bool, default True)
+#   upstream: controls the VFR status of Hyprland. Do not turn off unless debugging
+#   wiki:     controls the VFR status of Hyprland. Heavily recommended to leave enabled to conserve resources.
+#   candidate: wiki is longer (96 chars)
+["debug:vfr"]
+help = "Redraws only when something changes, which saves power and processing. Leave it on unless you are debugging."
+
+# debug:invalidate_fp16: Invalidate FP16 buffers [Frame rendering] (int, default 1)
+#   upstream: allow fp16 buffer invalidation.
+#   wiki:     Allow fp16 buffer invalidation (invalidation increases performance but produces glitches on some systems). 0 - not allowed, 1 - allowed, 2 - not allowed on nvidia
+#   the combo already names its values (map)
+#   candidate: short (31 chars); wiki is longer (162 chars)
+["debug:invalidate_fp16"]
+help = "Lets Hyprland discard the contents of unused FP16 buffers, which is faster but can glitch on some systems. Auto does not on NVIDIA."
+
+
+# --- layout ------------------------------------------------------------------------------------
+
+# layout:single_window_aspect_ratio: Single window aspect ratio [Single window] (vec2, default [0, 0])
+#   upstream: If specified, whenever only a single window is open, it will be coerced into the specified aspect ratio.
+#   wiki:     whenever only a single window is shown on a screen, add padding so that it conforms to the specified aspect ratio. A value like `4 3` on a 16:9 screen will make it a 4:3 window in the middle with padding to the sides.
+#   candidate: wiki is longer (217 chars)
+["layout:single_window_aspect_ratio"]
+help = "Pads a lone tiled window to this width-to-height ratio, so 4 and 3 on a 16:9 screen give a centerd 4:3 window. A height of 0 turns it off."
+
+# layout:single_window_aspect_ratio_tolerance: Aspect ratio tolerance [Single window] (float, default 0.1)
+#   upstream: Minimum distance for single_window_aspect_ratio to take effect.
+#   wiki:     sets a tolerance for `single_window_aspect_ratio`, so that if the padding that would have been added is smaller than the specified fraction of the height or width of the screen, it will not attempt to adjust the window size [0 - 1]
+#   candidate: wiki is longer (231 chars)
+["layout:single_window_aspect_ratio_tolerance"]
+help = "If the padding on each side would be smaller than this fraction of the screen, the window is left unpadded."
+
+
+# --- dwindle -----------------------------------------------------------------------------------
+
+# dwindle:force_split: Force split direction [Split direction] (int, default 0)
+#   upstream: force a split direction for new windows
+#   wiki:     0 -> split follows mouse, 1 -> always split to the left (new = left or top) 2 -> always split to the right (new = right or bottom)
+#   the combo already names its values (map)
+#   candidate: short (39 chars); wiki is longer (130 chars)
+["dwindle:force_split"]
+help = "Which side of a split a new window opens on. Left also means top in a stacked split, and Right means bottom."
+
+# dwindle:preserve_split: Preserve the split direction [Split direction] (bool, default False)
+#   upstream: if enabled, the split will not change regardless of what happens to the container.
+#   wiki:     if enabled, the split (side/top) will not change regardless of what happens to the container.
+["dwindle:preserve_split"]
+help = "Keeps each split's direction, side by side or stacked, fixed whatever happens to the windows."
+
+# dwindle:smart_split: Smart split [Split direction] (bool, default False)
+#   upstream: if enabled, allows a more precise control over the window split direction based on the cursor's position.
+#   wiki:     if enabled, allows a more precise control over the window split direction based on the cursor's position. The window is conceptually divided into four triangles, and cursor's triangle determines the split direction. This feature also turns on preserve_split.
+#   candidate: wiki is longer (258 chars)
+["dwindle:smart_split"]
+help = "Splits a window towards the edge the cursor is nearest, so you pick the side by pointing. It also keeps split directions, like Preserve the split direction."
+
+# dwindle:smart_resizing: Smart resizing [Mouse] (bool, default True)
+#   upstream: if enabled, resizing direction will be determined by the mouse's position on the window.
+#   wiki:     if enabled, resizing direction will be determined by the mouse's position on the window (nearest to which corner). Else, it is based on the window's tiling position.
+#   candidate: wiki is longer (165 chars)
+["dwindle:smart_resizing"]
+help = "When you resize a window with the mouse, the corner nearest the pointer moves. When off, the direction depends on the window's place in the layout."
+
+# dwindle:permanent_direction_override: Permanent direction override [Split direction] (bool, default False)
+#   upstream: if enabled, makes the preselect direction persist.
+#   wiki:     if enabled, makes the preselect direction persist until either this mode is turned off, another direction is specified, or a non-direction is specified (anything other than l,r,u/t,d/b)
+#   candidate: wiki is longer (185 chars)
+["dwindle:permanent_direction_override"]
+help = "Keeps a preselected split direction until you pick another or turn this off, instead of using it once."
+
+# dwindle:special_scale_factor: Special workspace scale [Split sizes] (float, default 1)
+#   upstream: specifies the scale factor of windows on the special workspace
+#   wiki:     specifies the scale factor of windows on the special workspace [0 - 1]
+["dwindle:special_scale_factor"]
+help = "Scales windows on the special workspace, from 0 to 1. 1 leaves them unscaled."
+
+# dwindle:split_width_multiplier: Split width multiplier [Split sizes] (float, default 1)
+#   upstream: specifies the auto-split width multiplier
+#   wiki:     specifies the auto-split width multiplier. Multiplying window size is useful on widescreen monitors where window W > H even after several splits.
+#   candidate: wiki is longer (145 chars)
+["dwindle:split_width_multiplier"]
+help = "A window splits side by side only when it is wider than its height times this number. Raise it on wide monitors to get stacked splits sooner."
+
+# dwindle:use_active_for_splits: Split from the active window [Split direction] (bool, default True)
+#   upstream: whether to prefer the active window or the mouse position for splits
+#   wiki:     whether to prefer the active window or the mouse position for splits
+["dwindle:use_active_for_splits"]
+help = "Splits the focused window instead of the one under the mouse."
+
+# dwindle:default_split_ratio: Default split ratio [Split sizes] (float, default 1)
+#   upstream: the default split ratio on window open.
+#   wiki:     the default split ratio on window open. 1 means even 50/50 split. [0.1 - 1.9]
+#   candidate: short (39 chars); wiki is longer (77 chars)
+["dwindle:default_split_ratio"]
+help = "How a new window shares space with its neighbour. 1 is an even 50/50 split; the range is 0.1 to 1.9."
+
+# dwindle:split_bias: Split bias [Split sizes] (int, default 0)
+#   upstream: specifies which window will receive the split ratio.
+#   wiki:     specifies which window will receive the split ratio. 0 -> directional (the top or left window), 1 -> the current window
+#   the combo already names its values (map)
+#   candidate: wiki is longer (119 chars)
+["dwindle:split_bias"]
+help = "Which window of a split gets the split ratio: the top or left one, or the current one."
+
+# dwindle:precise_mouse_move: Precise mouse move [Mouse] (bool, default False)
+#   upstream: if enabled, bindm movewindow will drop the window more precisely depending on where your mouse is.
+#   wiki:     bindm movewindow will drop the window more precisely depending on where your mouse is.
+["dwindle:precise_mouse_move"]
+help = "Drops a window you drag with a mouse bind more precisely, depending on where the pointer is."
+
+
+# --- master ------------------------------------------------------------------------------------
+
+# master:allow_small_split: Allow small splits [Size and position] (bool, default False)
+#   upstream: enable adding additional master windows in a horizontal split style
+#   wiki:     enable adding additional master windows in a horizontal split style
+["master:allow_small_split"]
+help = "Lets you add more master windows by splitting the master area horizontally."
+
+# master:special_scale_factor: Special workspace scale [Size and position] (float, default 1)
+#   upstream: the scale of the special workspace windows.
+#   wiki:     the scale of the special workspace windows. [0.0 - 1.0]
+["master:special_scale_factor"]
+help = "Scales windows on the special workspace, from 0 to 1. 1 leaves them unscaled."
+
+# master:mfact: Master area size [Size and position] (float, default 0.55)
+#   upstream: the size as a percentage of the master window.
+#   wiki:     the size as a percentage of the master window, for example `mfact = 0.70` would mean 70% of the screen will be the master window, and 30% the slave [0.0 - 1.0]
+#   candidate: wiki is longer (159 chars)
+["master:mfact"]
+help = "How much of the screen the master area takes, from 0 to 1. At 0.7 the master takes 70 percent and the other windows 30."
+
+# master:new_status: New window placement [New windows] (string, default 'slave')
+#   upstream: `master`: new window becomes master; `slave`: new windows are added to slave stack; `inherit`: inherit from focused window
+#   wiki:     `"master"`: new window becomes master; `"slave"`: new windows are added to slave stack; `"inherit"`: inherit from focused window
+#   the combo already names its values (labels)
+#   candidate: lists values the combo shows: master, slave, inherit
+["master:new_status"]
+help = "Decides the role a new window takes in the master layout."
+
+# master:new_on_top: New windows on top [New windows] (bool, default False)
+#   upstream: whether a newly open window should be on the top of the stack
+#   wiki:     whether a newly open window should be on the top of the stack
+["master:new_on_top"]
+help = "Puts a newly opened window at the top of the stack instead of the bottom."
+
+# master:new_on_active: Place new windows relative to focus [New windows] (string, default 'none')
+#   upstream: `before`, `after`: place new window relative to the focused window; `none`: place new window according to new_on_top.
+#   wiki:     `"before"`, `"after"`: place new window relative to the focused window; `"none"`: place new window according to the value of `new_on_top`.
+#   the combo already names its values (labels)
+#   candidate: lists values the combo shows: before, after, none; wiki is longer (138 chars)
+["master:new_on_active"]
+help = "Places a new window just before or after the focused one, instead of at the top or bottom of the stack."
+
+# master:orientation: Master area position [Size and position] (string, default 'left')
+#   upstream: default placement of the master area
+#   wiki:     default placement of the master area, can be `"left"`, `"right"`, `"top"`, `"bottom"` or `"center"`
+#   the combo already names its values (labels)
+#   candidate: short (36 chars); wiki is longer (99 chars)
+["master:orientation"]
+help = "Which side of the screen the master area takes. Center puts it in the middle with the stack on both sides, once enough windows are open."
+
+# master:slave_count_for_center_master: Stack windows before centring master [Centred master] (int, default 2)
+#   upstream: when using orientation=center, make the master window centered only when at least this many slave windows are open.
+#   wiki:     when using orientation=center, make the master window centered only when at least this many slave windows are open. (Set 0 to always_center_master)
+#   candidate: wiki is longer (147 chars)
+["master:slave_count_for_center_master"]
+help = "With a centerd master, centers it only when at least this many other windows are open. 0 always centers it."
+
+# master:center_master_fallback: Centre master fallback [Centred master] (string, default 'left')
+#   upstream: Set fallback for center master when slaves are less than slave_count_for_center_master
+#   wiki:     Set fallback for center master when slaves are less than slave_count_for_center_master, can be `"left"`, `"right"`, `"top"`, `"bottom"`
+#   the combo already names its values (labels)
+#   candidate: wiki is longer (135 chars)
+["master:center_master_fallback"]
+help = "Where the master goes when there are too few other windows to center it."
+
+# master:center_ignores_reserved: Centre ignores the reserved area [Centred master] (bool, default False)
+#   upstream: centers the master window on monitor ignoring reserved areas
+#   wiki:     (none)
+["master:center_ignores_reserved"]
+help = "Centers the master window on the whole monitor, ignoring areas reserved by bars."
+
+# master:smart_resizing: Smart resizing [Mouse and focus] (bool, default True)
+#   upstream: if enabled, resizing direction will be determined by the mouse's position on the window.
+#   wiki:     if enabled, resizing direction will be determined by the mouse's position on the window (nearest to which corner). Else, it is based on the window's tiling position.
+#   candidate: wiki is longer (165 chars)
+["master:smart_resizing"]
+help = "When you resize a window with the mouse, the corner nearest the pointer moves. When off, the direction depends on the window's place in the layout."
+
+# master:drop_at_cursor: Drop at the cursor [Mouse and focus] (bool, default True)
+#   upstream: when enabled, dragging and dropping windows will put them at the cursor position.
+#   wiki:     when enabled, dragging and dropping windows will put them at the cursor position. Otherwise, when dropped at the stack side, they will go to the top/bottom of the stack depending on new_on_top.
+#   candidate: wiki is longer (193 chars)
+["master:drop_at_cursor"]
+help = "Dropping a dragged window places it at the cursor. When off, a window dropped on the stack goes to its top or bottom."
+
+# master:always_keep_position: Always keep position [Size and position] (bool, default False)
+#   upstream: whether to keep the master window in its configured position when there are no slave windows
+#   wiki:     whether to keep the master window in its configured position when there are no slave windows
+["master:always_keep_position"]
+help = "Keeps the master window where it is configured even when there are no other windows."
+
+# master:focus_master_on_close: Focus master when a window closes [Mouse and focus] (bool, default False)
+#   upstream: when enabled, closing a window focuses the master window
+#   wiki:     when enabled, closing a window focuses the master window
+["master:focus_master_on_close"]
+help = "Closing a window focuses the master window."
+
+
+# --- scrolling ---------------------------------------------------------------------------------
+
+# scrolling:fullscreen_on_one_column: Fullscreen with a single column [Columns] (bool, default True)
+#   upstream: when enabled, a single column on a workspace will always span the entire screen.
+#   wiki:     when enabled, a single column on a workspace will always span the entire screen.
+["scrolling:fullscreen_on_one_column"]
+help = "A single column on a workspace always fills the screen."
+
+# scrolling:column_width: Column width [Columns] (float, default 0.5)
+#   upstream: the default width of a column.
+#   wiki:     the default width of a column, [0.1 - 1.0].
+#   candidate: short (30 chars)
+["scrolling:column_width"]
+help = "Default width of a new column, as a fraction of the screen from 0.1 to 1."
+
+# scrolling:focus_fit_method: Focus fit method [Focus and wrapping] (int, default 1)
+#   upstream: When a column is focused, what method should be used to bring it into view
+#   wiki:     When a column is focused, what method should be used to bring it into view. 0 = center, 1 = fit
+#   the combo already names its values (map)
+#   candidate: wiki is longer (95 chars)
+["scrolling:focus_fit_method"]
+help = "How a focused column is brought into view: centerd, or moved only as far as needed to fit."
+
+# scrolling:follow_focus: Follow focus [Focus and wrapping] (bool, default True)
+#   upstream: when a window is focused, should the layout move to bring it into view automatically
+#   wiki:     when a window is focused, should the layout move to bring it into view automatically
+["scrolling:follow_focus"]
+help = "Scrolls the layout to bring a newly focused window into view."
+
+# scrolling:follow_min_visible: Minimum visible fraction [Focus and wrapping] (float, default 0.4)
+#   upstream: when a window is focused, require that at least a given fraction of it is visible for focus to follow
+#   wiki:     when a window is focused, require that at least a given fraction of it is visible for focus to follow. Hard input (e.g. binds, clicks) will always follow. [0.0 - 1.0]
+#   candidate: wiki is longer (166 chars)
+["scrolling:follow_min_visible"]
+help = "When focus moves other than by a click or keybind, the layout scrolls to the window only if it already fills this fraction of the screen."
+
+# scrolling:explicit_column_widths: Preset column widths [Columns] (string, default '0.333, 0.5, 0.667, 1.0')
+#   upstream: A comma-separated list of preconfigured widths for colresize +conf/-conf
+#   wiki:     A comma-separated list of preconfigured widths for colresize +conf/-conf
+["scrolling:explicit_column_widths"]
+help = "Preset column widths, as fractions of the screen, that the column resize keybinds step through."
+
+# scrolling:direction: Scroll direction [Columns] (string, default 'right')
+#   upstream: Direction in which new windows appear and the layout scrolls
+#   wiki:     Direction in which new windows appear and the layout scrolls. `"left"`/`"right"`/`"down"`/`"up"`
+#   the combo already names its values (labels)
+#   candidate: wiki is longer (96 chars)
+["scrolling:direction"]
+help = "Which way new windows appear and the layout scrolls."
+
+# scrolling:wrap_focus: Wrap focus [Focus and wrapping] (bool, default True)
+#   upstream: Determines if column focus wraps around
+#   wiki:     When enabled, causes `hl.dsp.layout("focus l/r")` to wrap around at the beginning and end.
+#   candidate: short (39 chars); wiki is longer (90 chars)
+["scrolling:wrap_focus"]
+help = "Moving focus past the first or last column wraps around to the other end."
+
+# scrolling:wrap_swapcol: Wrap column swapping [Focus and wrapping] (bool, default True)
+#   upstream: Determines if column movement wraps around
+#   wiki:     When enabled, causes `hl.dsp.layout("swapcol l/r")` to wrap around at the beginning and end.
+#   candidate: wiki is longer (92 chars)
+["scrolling:wrap_swapcol"]
+help = "Swapping columns past the first or last wraps around to the other end."
+
+
+# --- experimental ------------------------------------------------------------------------------
+
+# experimental:wp_cm_1_2: Colour-management protocol v1.2 [Colour management] (bool, default True)
+#   upstream: Allow wp-cm-v1 version 2
+#   wiki:     allow wp-cm-v1 version 2
+#   candidate: short (24 chars)
+["experimental:wp_cm_1_2"]
+help = "Offers apps a newer revision of the color management protocol. Has no effect while Color management is off."
+
+
+# --- input-capture -----------------------------------------------------------------------------
+
+# input-capture:capture_modifiers: Capture modifiers [Barriers and modifiers] (bool, default False)
+#   upstream: If enabled, modifiers are also captured and sent to the program
+#   wiki:     if enabled, modifiers are also captured and sent to the program
+["input-capture:capture_modifiers"]
+skip = "the upstream line already says it in full"
+
+# input-capture:enforce_barriers: Enforce barriers [Barriers and modifiers] (bool, default True)
+#   upstream: If enabled, throw a wayland error when a invalid barrier is received
+#   wiki:     if enabled, throw a wayland error when an invalid barrier is received
+["input-capture:enforce_barriers"]
+help = "Sends an input capture app an error when it sets up an invalid barrier. When off, Hyprland adds the barrier anyway."
+
+
+# --- quirks ------------------------------------------------------------------------------------
+
+# quirks:prefer_hdr: Prefer HDR [Display workarounds] (int, default 0)
+#   upstream: Prefer HDR mode.
+#   wiki:     Report HDR mode as preferred. 0 - off, 1 - always, 2 - gamescope only
+#   the combo already names its values (map)
+#   candidate: short (16 chars); wiki is longer (69 chars)
+["quirks:prefer_hdr"]
+help = "Tells apps that HDR is the preferred mode, always or only for gamescope."
+
+# quirks:skip_non_kms_dmabuf_formats: Skip non-KMS DMA-BUF formats [Display workarounds] (bool, default False)
+#   upstream: Do not report dmabuf formats which cannot be imported into KMS
+#   wiki:     do not report dmabuf formats which cannot be imported into KMS
+["quirks:skip_non_kms_dmabuf_formats"]
+skip = "upstream line is accurate; graphics-protocol detail with no plain-language effect"

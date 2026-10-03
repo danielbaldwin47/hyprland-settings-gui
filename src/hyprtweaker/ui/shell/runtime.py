@@ -4,7 +4,9 @@ The engine's IPC is async because a transaction waiting on a reload must not sto
 stream from draining (ADR-0010). GTK's loop is GLib's. PyGObject ≥ 3.50 reconciles the two
 directly: `gi.events.GLibEventLoopPolicy` hands out an `asyncio` event loop that *is* the
 GLib main context, so `await` works inside a running `Gtk.Application` with no second thread
-anywhere.
+for the engine. (Blocking work that is not the engine's -- a theming tool's run, a config
+read in the wizard -- runs on a worker thread and hands its result back with
+`GLib.idle_add`, to whichever widget is showing then.)
 
 That is the whole reason this module is eleven lines of work rather than a threaded bridge.
 One thread means the model has exactly one owner: `Applier` renders the same `ConfigModel`
@@ -29,6 +31,11 @@ _log = logging.getLogger(__name__)
 MINIMUM_PYGOBJECT = "3.50"
 """The release that added `gi.events`. Only live apply depends on it; the Config view
 builds and reads correctly without it."""
+
+MINIMUM_LIBADWAITA = "1.7"
+"""The release that added `Adw.WrapBox`, which the rules filter chips are laid out in
+(`ui/pages/rules.py`); `Adw.SpinnerPaintable` (1.6) is older. `meson.build` checks it by
+capability and the PKGBUILD pins it (tests/unit/test_packaging.py keeps the three equal)."""
 
 
 class MainLoopRunner:

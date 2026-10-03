@@ -16,12 +16,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from _fake_hyprland import FakeHyprland
-from _support import Runner, session_for
+import pytest
+from _fake_hyprland import FakeHyprland, option_reply, run_with_fake
+from _support import Runner, drain_events, sample_schema, section_conversation, session_for
 
-from hyprtweaker.engine.apply.result import UNREADABLE, Mismatch
+from hyprtweaker.engine.apply.result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch
+from hyprtweaker.engine.importer.lua.sandbox import lua_binary
 from hyprtweaker.engine.model import UNSET
 from hyprtweaker.engine.model.values import CssGaps
+from hyprtweaker.session import Session
 
 ROUNDING = "decoration:rounding"
 
@@ -84,36 +87,541 @@ def test_a_key_the_model_does_not_set_is_not_an_override() -> None:
 # --- what the session does with it ----------------------------------------------------------
 
 
+def read_back(*mismatches: Mismatch, keys: tuple[str, ...]) -> ApplyResult:
+    """A transaction over `keys` whose Read-back found `mismatches`."""
+    outcome = ApplyOutcome.READ_BACK_MISMATCH if mismatches else ApplyOutcome.OK
+    return ApplyResult(outcome, keys=keys, mismatches=mismatches)
+
+
 def test_the_session_reports_only_the_diverging_keys() -> None:
-    """`_note` is the single funnel every observed reload passes through, so the badge is
-    computed in exactly one place for its own transactions and for foreign ones alike."""
+    """Every observed reload passes through `_observe`, so the badge is computed in exactly
+    one place for every transaction the app runs."""
     with TemporaryDirectory() as root:
         session = session_for(FakeHyprland(), Path(root), Runner())
-        session._note(
-            [],
-            written=[],
-            binds=1,
-            mismatches=[
+        session._observe(
+            read_back(
                 Mismatch(name=ROUNDING, expected=10, actual=20, live_set=True),
                 Mismatch(name="general:border_size", expected=2, actual=2, live_set=True),
                 Mismatch(name="general:gaps_in", expected=5, actual=None, live_set=False),
-            ],
+                keys=(ROUNDING, "general:border_size", "general:gaps_in"),
+            )
         )
 
         assert session.overridden == {ROUNDING}, "only the key that actually diverged"
         assert session.unapplied == {"general:gaps_in"}, "the loud shape stays separate"
 
 
-def test_a_clean_transaction_clears_a_stale_badge() -> None:
-    """Replaced per transaction, never accumulated: a badge that outlived the write that
-    earned it would be describing a value that has since applied perfectly well."""
+def test_a_clean_read_back_clears_that_keys_stale_badge() -> None:
+    """A badge that outlived the reading that earned it would be describing a value that
+    has since applied perfectly well."""
     with TemporaryDirectory() as root:
         session = session_for(FakeHyprland(), Path(root), Runner())
-        session._note(
-            [], written=[], binds=1, mismatches=[Mismatch(ROUNDING, 10, 20, live_set=True)]
-        )
+        session._observe(read_back(Mismatch(ROUNDING, 10, 20, live_set=True), keys=(ROUNDING,)))
         assert session.overridden == {ROUNDING}
 
-        session._note([], written=[], binds=1, mismatches=[])
+        session._observe(read_back(keys=(ROUNDING,)))
 
         assert session.overridden == frozenset()
+
+
+def test_a_read_back_leaves_the_badges_of_keys_it_did_not_read() -> None:
+    """An edit to one Option says nothing about another: erasing its badge would hide an
+    override that is still in force (#191, settled)."""
+    with TemporaryDirectory() as root:
+        session = session_for(FakeHyprland(), Path(root), Runner())
+        session._observe(
+            read_back(
+                Mismatch(ROUNDING, 10, 20, live_set=True),
+                Mismatch("general:gaps_in", 5, None, live_set=False),
+                keys=(ROUNDING, "general:gaps_in"),
+            )
+        )
+
+        session._observe(read_back(keys=("general:border_size",)))
+
+        assert session.overridden == {ROUNDING}
+        assert session.unapplied == {"general:gaps_in"}
+
+
+# --- the drift scan: what the Row knows before the first edit (#191) ----------------------
+
+GAPS_IN = "general:gaps_in"
+WRITTEN = CssGaps(5, 5, 5, 5)
+OVERRIDE = CssGaps(20, 20, 20, 20)
+
+needs_lua = pytest.mark.skipif(lua_binary() is None, reason="no Lua interpreter installed")
+
+
+def live_says(fake: FakeHyprland, name: str, value: Any, *, live_set: bool = True) -> None:
+    """What the running config answers about `name` from now on."""
+    fake.conversation[f"j/getoption {name}"] = option_reply(
+        sample_schema()[name], value, live_set=live_set
+    )
+
+
+async def launch(fake: FakeHyprland, root: Path) -> tuple[Session, Runner]:
+    runner = Runner()
+    session = session_for(fake, root, runner)
+    session.start()
+    await runner.settle()
+    assert session.live, session.offline_reason
+    return session, runner
+
+
+async def edit(session: Session, runner: Runner, name: str, value: Any) -> None:
+    session.set_option(name, value)
+    await session.drain()
+    await runner.settle()
+
+
+async def app_wrote(fake: FakeHyprland, root: Path, name: str, value: Any) -> None:
+    """A previous run of the app wrote `value` into its own Module, and it applied."""
+    live_says(fake, name, value)
+    session, runner = await launch(fake, root)
+    await edit(session, runner, name, value)
+    assert name not in session.overridden
+    await session.aclose()
+
+
+async def foreign_reload(fake: FakeHyprland, session: Session, runner: Runner) -> None:
+    """A `configreloaded` nobody asked for, and everything the session does about it."""
+    await fake.emit("configreloaded")
+    await drain_events(runner)
+    await session.drain()
+    await runner.settle()
+
+
+def compositor() -> FakeHyprland:
+    return FakeHyprland(section_conversation("general", "decoration"), reload_emits_event=True)
+
+
+@needs_lua
+def test_an_override_already_in_place_at_launch_is_badged_before_any_edit(
+    tmp_path: Path,
+) -> None:
+    """The reason the scan exists: `user.lua` won before the app opened, and the Row has to
+    say so on sight rather than after the user's first edit happens to read it back."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        session, _ = await launch(fake, tmp_path)
+
+        assert session.overridden == {GAPS_IN}
+        assert session.unapplied == frozenset()
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_editing_another_option_keeps_the_launch_badge(tmp_path: Path) -> None:
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        live_says(fake, GAPS_IN, OVERRIDE)
+        session, runner = await launch(fake, tmp_path)
+
+        live_says(fake, ROUNDING, 12)
+        await edit(session, runner, ROUNDING, 12)
+
+        assert session.overridden == {GAPS_IN}
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+@pytest.mark.parametrize(
+    ("live", "why"),
+    [(WRITTEN, "user.lua sets what the app wrote"), ("not gaps", "an unreadable reply")],
+)
+def test_no_badge_without_a_disagreement(tmp_path: Path, live: Any, why: str) -> None:
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        live_says(fake, GAPS_IN, live)
+
+        session, _ = await launch(fake, tmp_path)
+
+        assert session.overridden == frozenset(), why
+        assert session.unapplied == frozenset(), why
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_a_module_that_never_ran_is_unapplied_at_launch(tmp_path: Path) -> None:
+    """The loud shape the same scan finds: a `require` that failed while the app was shut."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        live_says(fake, GAPS_IN, CssGaps(0, 0, 0, 0), live_set=False)
+
+        session, _ = await launch(fake, tmp_path)
+
+        assert session.unapplied == {GAPS_IN}
+        assert session.overridden == frozenset()
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_a_hand_edited_module_is_not_read_as_what_the_app_asked_for(tmp_path: Path) -> None:
+    """ADR-0016 class 2: bytes the Manifest does not recognise are somebody's edit, and say
+    nothing about what the app wrote."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        module = tmp_path / "hypr" / "hyprtweaker" / "options" / "general.lua"
+        module.write_text(module.read_text() + "-- tweaked by hand\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        session, _ = await launch(fake, tmp_path)
+
+        assert session.overridden == frozenset()
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_a_foreign_reload_badges_an_override_it_adds_and_clears_one_it_removes(
+    tmp_path: Path,
+) -> None:
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        assert session.overridden == frozenset()
+
+        live_says(fake, GAPS_IN, OVERRIDE)
+        await foreign_reload(fake, session, runner)
+        assert session.overridden == {GAPS_IN}, "user.lua gained the key"
+
+        live_says(fake, GAPS_IN, WRITTEN)
+        await foreign_reload(fake, session, runner)
+        assert session.overridden == frozenset(), "user.lua lost it again"
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_without_lua_the_session_is_read_only_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No interpreter means the app cannot read its own Modules back: ruling A1 of the #148
+    review (F9) opens the session read-only, saying what to install, and nothing is
+    written: an edit then would drop every key the unread model misses."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        live_says(fake, GAPS_IN, OVERRIDE)
+        module = tmp_path / "hypr" / "hyprtweaker" / "options" / "general.lua"
+        before = module.read_bytes()
+        monkeypatch.setenv("PATH", str(tmp_path / "no-bin"))
+
+        runner = Runner()
+        session = session_for(fake, tmp_path, runner)
+        session.start()
+        await runner.settle()
+        session.set_option(ROUNDING, 3)
+        await runner.settle()
+
+        assert not session.live
+        assert session.health.title == (
+            "This app reads your settings with Lua, which is not installed. Install Lua "
+            "(lua5.5, lua5.4, lua5.3, lua or luajit) and open the app again — settings are "
+            "read-only."
+        )
+        assert module.read_bytes() == before
+        assert session.overridden == frozenset()
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_a_read_back_that_lands_during_a_scan_keeps_its_newer_answer(tmp_path: Path) -> None:
+    """The scan reads the Modules before it asks the compositor; a transaction confirmed in
+    between knows better about its keys, and the scan must not overwrite that."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        def mid_scan(request: str, _seen: int) -> None:
+            # The scan's own question about the key, not the re-read's before it.
+            if request == f"j/getoption {GAPS_IN}" and session._drift_watches:
+                fake.on_request = None
+                session._observe(read_back(keys=(GAPS_IN,)))
+
+        fake.on_request = mid_scan
+        await foreign_reload(fake, session, runner)
+
+        assert session.overridden == frozenset()
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_an_override_is_never_adopted_as_the_users_own_value(tmp_path: Path) -> None:
+    """Finding 11 of the #153 review: the launch and foreign-reload re-reads copied the
+    value `user.lua` set into the model, so the next write put it in the app's own Module
+    and the pill's "a value you set here is kept" was false after a relaunch."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        live_says(fake, GAPS_IN, OVERRIDE)
+        session, runner = await launch(fake, tmp_path)
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+        live_says(fake, "general:border_size", 3)
+        await edit(session, runner, "general:border_size", 3)
+
+        module = tmp_path / "hypr" / "hyprtweaker" / "options" / "general.lua"
+        assert session.model.get(GAPS_IN) == WRITTEN
+        assert "gaps_in = { top = 5, right = 5, bottom = 5, left = 5 }," in module.read_text()
+        await foreign_reload(fake, session, runner)
+        assert session.model.get(GAPS_IN) == WRITTEN
+        assert session.overridden == {GAPS_IN}
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_a_timed_out_edit_reads_not_confirmed_until_a_reload_confirms_it(
+    tmp_path: Path,
+) -> None:
+    """Owner call 3 of the #153 review: after a timeout the live value is the old one, and
+    "Overridden" (blaming user.lua) would be false; the next reading settles it."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+
+        fake.reload_emits_event = False
+        await edit(session, runner, GAPS_IN, CssGaps(10, 10, 10, 10))
+        await session.drain()
+        await runner.settle()
+
+        assert GAPS_IN not in session.overridden
+        assert session.unconfirmed == {GAPS_IN}
+
+        fake.reload_emits_event = True
+        live_says(fake, GAPS_IN, CssGaps(10, 10, 10, 10))
+        await foreign_reload(fake, session, runner)
+
+        assert session.unconfirmed == frozenset()
+        assert session.overridden == frozenset()
+        assert session.unapplied == frozenset()
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_quarantining_user_lua_clears_the_overrides_it_made(tmp_path: Path) -> None:
+    """F4 of the #148 review: after an Entrypoint recovery the drift marks were never read
+    again, so every key `user.lua` used to override kept reading "Overridden"."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        (tmp_path / "hypr" / "user.lua").write_text("-- the user's own\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+        session, runner = await launch(fake, tmp_path)
+        assert session.overridden == {GAPS_IN}
+
+        live_says(fake, GAPS_IN, WRITTEN)
+        assert session.quarantine("user")
+        await session.drain()
+        await runner.settle()
+
+        assert session.quarantined == ("user",)
+        assert session.overridden == frozenset()
+
+    run_with_fake(scenario, compositor())
+
+
+@needs_lua
+def test_a_write_that_starts_loading_user_lua_marks_what_it_overrides(tmp_path: Path) -> None:
+    """Found with #148's j7 journey: the edit that rewrote the Entrypoint to require a new
+    user.lua read back only its own key, so the key user.lua overrides went unmarked."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        (tmp_path / "hypr" / "user.lua").write_text("-- mine\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        live_says(fake, ROUNDING, 12)
+        await edit(session, runner, ROUNDING, 12)
+        await session.drain()
+        await runner.settle()
+
+        assert session.overridden == {GAPS_IN}
+
+    run_with_fake(scenario, compositor())
+
+
+def _general(root: Path) -> Path:
+    return root / "hypr" / "hyprtweaker" / "options" / "general.lua"
+
+
+GAPS_LINE = "gaps_in = { top = 5, right = 5, bottom = 5, left = 5 },"
+
+
+def test_a_hand_edited_modules_keys_come_from_its_text_never_the_override(
+    tmp_path: Path,
+) -> None:
+    """R3 of the #148 review: a comment added to general.lua made its keys read live, so
+    `user.lua`'s 20 entered the model, and Replace wrote 20 where the app had written 5."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.write_text(path.read_text() + "-- tweaked by hand\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        await foreign_reload(fake, session, runner)
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+        assert session.replace_edited_file("options/general.lua")
+        await session.drain()
+        await runner.settle()
+        assert GAPS_LINE in path.read_text()
+
+    run_with_fake(scenario, compositor())
+
+
+def test_a_module_put_back_by_hand_is_written_as_its_text_says(tmp_path: Path) -> None:
+    """R3, the second route: the user undid their edit in the editor, and the next edit to
+    an unrelated setting re-rendered general.lua with the override's 20."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        original = path.read_bytes()
+        path.write_text(path.read_text() + "-- tweaked by hand\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+        await foreign_reload(fake, session, runner)
+        path.write_bytes(original)
+        await foreign_reload(fake, session, runner)
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+        live_says(fake, "decoration:rounding", 12)
+        await edit(session, runner, "decoration:rounding", 12)
+
+        assert GAPS_LINE in path.read_text()
+
+    run_with_fake(scenario, compositor())
+
+
+def test_a_value_changed_by_hand_is_read_off_the_file(tmp_path: Path) -> None:
+    """The edited Module's own text is the source: a value the user changed there is the
+    model's, while the compositor still answers with `user.lua`'s."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.write_text(path.read_text().replace("top = 5, right = 5", "top = 7, right = 5"))
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        await foreign_reload(fake, session, runner)
+
+        assert session.model.get(GAPS_IN) == CssGaps(7, 5, 5, 5)
+
+    run_with_fake(scenario, compositor())
+
+
+def test_an_entrypoint_recovery_reads_an_edited_module_off_its_text(tmp_path: Path) -> None:
+    """R3 on the recovery route: `_recover_entrypoint` re-read every unverified owned key
+    live, so a hand-edited Module's took the override there too."""
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.write_text(path.read_text() + "-- tweaked by hand\n")
+        live_says(fake, GAPS_IN, OVERRIDE)
+
+        assert session.regenerate_entrypoint()
+        await session.drain()
+        await runner.settle()
+
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+    run_with_fake(scenario, compositor())
+
+
+def test_replace_of_a_module_that_does_not_read_writes_the_apps_last_version(
+    tmp_path: Path,
+) -> None:
+    """R9 of the #148 fix review: a typo made the file read as "sets nothing", the re-read
+    unset its every Option, and Replace pruned the file while saying it was replaced."""
+    from hyprtweaker.session import Replaced
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.write_text(path.read_text() + "this is ( not lua\n")
+        await foreign_reload(fake, session, runner)
+        assert session.model.get(GAPS_IN) == WRITTEN
+
+        assert session.replace_edited_file("options/general.lua") is Replaced.DONE
+        await session.drain()
+        await runner.settle()
+
+        assert GAPS_LINE in path.read_text()
+        copies = list((tmp_path / "state" / "edited-copies").rglob("general.lua"))
+        assert [c.read_text().endswith("this is ( not lua\n") for c in copies] == [True]
+
+    run_with_fake(scenario, compositor())
+
+
+def test_with_no_earlier_version_a_broken_module_is_not_replaced_and_says_why(
+    tmp_path: Path,
+) -> None:
+    """R9: without the app's last version to rebuild from, the values are not known, and
+    Replace writes nothing rather than an empty Module."""
+    import shutil
+
+    from hyprtweaker.session import Replaced
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        shutil.rmtree(tmp_path / "state" / "snapshots")
+        path = _general(tmp_path)
+        broken = path.read_text() + "this is ( not lua\n"
+        path.write_text(broken)
+        live_says(fake, GAPS_IN, OVERRIDE)
+        session, runner = await launch(fake, tmp_path)
+        assert session.model.get(GAPS_IN) is UNSET, "an unknown Module's key was read live"
+
+        assert session.replace_edited_file("options/general.lua") is Replaced.NOT_KNOWN
+        await session.drain()
+        await runner.settle()
+
+        assert path.read_text() == broken
+
+    run_with_fake(scenario, compositor())
+
+
+def test_a_module_deleted_by_hand_is_replaced_from_the_apps_last_version(
+    tmp_path: Path,
+) -> None:
+    """A missing Module has nothing to copy, and is not one that sets nothing."""
+    from hyprtweaker.session import Replaced
+
+    async def scenario(fake: FakeHyprland) -> None:
+        await app_wrote(fake, tmp_path, GAPS_IN, WRITTEN)
+        session, runner = await launch(fake, tmp_path)
+        path = _general(tmp_path)
+        path.unlink()
+        await foreign_reload(fake, session, runner)
+
+        assert session.replace_edited_file("options/general.lua") is Replaced.DONE
+        await session.drain()
+        await runner.settle()
+
+        assert GAPS_LINE in path.read_text()
+
+    run_with_fake(scenario, compositor())

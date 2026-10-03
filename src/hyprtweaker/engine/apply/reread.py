@@ -25,7 +25,7 @@ Three rules, each learned from a defect the schema layer already names:
    better information, and here there is none to be had: `getoption` has no spelling for
    "this key has no value", so a compositor asked about one answers with whatever the
    marker resolved to. Parsing that back would turn "same as the outer gaps" into four gaps
-   of -1. `ApplyTransaction._compare` already stops at "the live config sets this key" for
+   of -1. `transaction.compare` already stops at "the live config sets this key" for
    exactly this reason, and the two must not disagree.
 
    That holds even when something else has since overridden the key: the model records what
@@ -39,11 +39,13 @@ Three rules, each learned from a defect the schema layer already names:
 
 from __future__ import annotations
 
+import enum
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
-from ..ipc import CommandClient, NoSuchOption
+from ..ipc import CommandClient, NoSuchOption, OptionReply
 from ..model import ConfigModel, getoption_raw
 from ..schema import ResolvedOption, Schema
 from ..schema.infer import STRING_SENTINELS
@@ -127,17 +129,14 @@ async def read_state(
             unknown.append(option.name)
             continue
 
-        if not reply.set_by_user:
+        answer = classify_reply(option, reply)
+        if answer.kind is Answer.DEFAULT:
             if model.is_set(option.name):
                 model.unset(option.name)
                 cleared.append(option.name)
             continue
 
-        payload = dict(reply.payload)
-        try:
-            no_value = _is_no_value(option, payload)
-        except KeyError as error:
-            _log.warning("unreadable getoption reply for %s: %s", option.name, error)
+        if answer.kind is Answer.UNREADABLE:
             unreadable.append(option.name)
             continue
 
@@ -146,15 +145,12 @@ async def read_state(
             # reply can say it better.
             continue
 
-        if no_value:
+        if answer.kind is Answer.NO_VALUE:
             model.set_null(option.name)
             adopted.append(option.name)
             continue
 
-        value = live_value(option, payload)
-        if value is UNREADABLE:
-            unreadable.append(option.name)
-            continue
+        value = answer.value
 
         try:
             model.set(option.name, value)
@@ -174,6 +170,47 @@ async def read_state(
         unreadable=tuple(unreadable),
         unknown=tuple(unknown),
     )
+
+
+class Answer(enum.Enum):
+    """What one `getoption` reply says about an Option, before anyone acts on it."""
+
+    DEFAULT = "default"
+    """Nothing sets it: Hyprland's default applies."""
+    NO_VALUE = "no-value"
+    """Set to "no value": a nullable Option's sentinel or curated `null_value`."""
+    VALUE = "value"
+    """Set to `value`, parsed into the Option's own type."""
+    UNREADABLE = "unreadable"
+    """A reply this app cannot read: no evidence either way."""
+
+
+@dataclass(frozen=True, slots=True)
+class LiveAnswer:
+    kind: Answer
+    value: Any = None
+
+
+def classify_reply(option: ResolvedOption, reply: OptionReply) -> LiveAnswer:
+    """The one reading of a `getoption` reply, for the re-read and for Preset capture.
+
+    Pure: the reply in, what it says out. Two readers that each spelled this out drifted
+    once already -- Preset capture lost the no-value check and saved `[[EMPTY]]` as a
+    value (F17 of the #148 review).
+    """
+    if not reply.set_by_user:
+        return LiveAnswer(Answer.DEFAULT)
+    payload = dict(reply.payload)
+    try:
+        if _is_no_value(option, payload):
+            return LiveAnswer(Answer.NO_VALUE)
+    except KeyError as error:
+        _log.warning("unreadable getoption reply for %s: %s", option.name, error)
+        return LiveAnswer(Answer.UNREADABLE)
+    value = live_value(option, payload)
+    if value is UNREADABLE:
+        return LiveAnswer(Answer.UNREADABLE)
+    return LiveAnswer(Answer.VALUE, value)
 
 
 def _is_no_value(option: ResolvedOption, payload: dict[str, object]) -> bool:

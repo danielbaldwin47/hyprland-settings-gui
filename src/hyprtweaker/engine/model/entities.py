@@ -299,10 +299,30 @@ class Permission:
 
 @dataclass(frozen=True, slots=True)
 class PluginLoad:
-    """`hl.plugin.load(path)`."""
+    """`hl.plugin.load(path)`: one entry of the ordered plugin load list (ADR-0018).
+
+    `path` is kept exactly as written: Hyprland neither expands `~` nor resolves a relative
+    path here (probed on 0.56.2, #174), so a rewritten path would load a different file or
+    none. A disabled entry stays in the list, written as a comment, so switching it back on
+    puts it where it was.
+    """
 
     path: str
+    enabled: bool = True
     origin: str = ""
+
+    @property
+    def name(self) -> str:
+        """The name Hyprland most likely reports for this file once it is loaded.
+
+        A loaded plugin is listed by the name it gives itself, never by its path, so this is
+        the file's stem lower-cased with a leading `lib` dropped: `libhyprbars.so` and
+        `hyprbars.so` both answer `hyprbars`. A guess, which is why a loaded plugin no entry
+        matches is still shown rather than dropped.
+        """
+        stem = self.path.rsplit("/", 1)[-1].lower()
+        stem = stem.removesuffix(".so")
+        return stem.removeprefix("lib")
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,23 +343,54 @@ class StartupCommand:
 
 # --- container -------------------------------------------------------------------------
 
-_LISTS: tuple[str, ...] = (
-    "submaps",
-    "binds",
-    "unbinds",
-    "window_rules",
-    "layer_rules",
-    "workspace_rules",
-    "monitors",
-    "curves",
-    "animations",
-    "gestures",
-    "devices",
-    "env",
-    "permissions",
-    "plugins",
-    "startup",
-)
+ENTITY_NOUNS: dict[str, tuple[str, str]] = {
+    "submaps": ("Submap", "Submaps"),
+    "binds": ("Keybind", "Keybinds"),
+    "unbinds": ("Unbind", "Unbinds"),
+    "window_rules": ("Window rule", "Window rules"),
+    "layer_rules": ("Layer rule", "Layer rules"),
+    "workspace_rules": ("Workspace rule", "Workspace rules"),
+    "monitors": ("Display", "Displays"),
+    "curves": ("Curve", "Curves"),
+    "animations": ("Animation", "Animations"),
+    "gestures": ("Gesture", "Gestures"),
+    "devices": ("Device", "Devices"),
+    "env": ("Variable", "Variables"),
+    "permissions": ("Permission", "Permissions"),
+    "plugins": ("Plugin", "Plugins"),
+    "startup": ("Command", "Commands"),
+}
+"""Each Entity list, in `EntitySet` order, and its name in UI copy: singular and plural.
+
+One noun per Page, the word its title uses -- "Keybind" on Keybinds, "Display" on Displays
+-- for the undo toasts ("Keybind removed", "Window rules reordered"), the display countdown's
+step, and the declaration Pages' own buttons (`DeclarationKind.singular` reads it here). In
+the engine because the Session titles its undo steps and cannot import a GTK module. The
+keys are the list of lists, so a list cannot exist without a noun.
+"""
+
+_LISTS: tuple[str, ...] = tuple(ENTITY_NOUNS)
+
+KEYBIND_KINDS: frozenset[str] = frozenset({"binds", "unbinds", "submaps"})
+"""The lists the Keybinds Page shows."""
+
+DISPLAY_KINDS: frozenset[str] = frozenset({"monitors", "workspace_rules"})
+"""The lists a display profile sets, and so the ones a display countdown holds steps over."""
+
+
+def entity_noun(kind: str, *, plural: bool = False) -> str:
+    """`"Keybind"`: what the Page showing the `kind` list calls one of its entries."""
+    singular, plurals = ENTITY_NOUNS[kind]
+    return plurals if plural else singular
+
+
+def entity_title(kind: str, verb: str, *, plural: bool = False) -> str:
+    """`"Keybind removed"`: the kind's noun and what happened to it, for an undo step.
+
+    `plural` for a gesture that moved the list rather than one entity in it: "Keybinds
+    reordered", or "Keybinds changed" from a caller that did not say what it did.
+    """
+    return f"{entity_noun(kind, plural=plural)} {verb}"
 
 
 @dataclass(slots=True)

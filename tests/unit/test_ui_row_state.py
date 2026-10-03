@@ -17,13 +17,16 @@ from typing import Any
 
 from _support import SAMPLE_VERSION, SCHEMA_DIR
 
+from hyprtweaker.engine.ipc import LiveHyprland
 from hyprtweaker.engine.model import UNSET, ConfigModel, CssGaps, Gradient, OptionValue, Vec2
 from hyprtweaker.engine.schema import (
     ResolvedOption,
     Schema,
+    SupplementKind,
     Visibility,
     Widget,
     load_schema,
+    supplement,
 )
 from hyprtweaker.ui.rows.state import (
     ADVANCED_PILL,
@@ -33,10 +36,12 @@ from hyprtweaker.ui.rows.state import (
     PENDING_RESTART_PILL,
     RESTART_PILL,
     UNAPPLIED_PILL,
+    Pill,
     default_label,
     help_content,
     no_value_label,
     row_state,
+    row_value,
     shown_value,
     unmet_dependency,
     value_label,
@@ -59,15 +64,38 @@ class FakeContext:
         pending_restart: frozenset[str] = frozenset(),
         unapplied: frozenset[str] = frozenset(),
         overridden: frozenset[str] = frozenset(),
+        unconfirmed: frozenset[str] = frozenset(),
         device_overrides: Mapping[str, tuple[str, ...]] | None = None,
+        live_hyprland: LiveHyprland | None = None,
+        retired: Mapping[str, str] | None = None,
+        kept: Mapping[str, Any] | None = None,
+        bridge_owners: Mapping[str, str] | None = None,
+        schema: Schema = SCHEMA,
     ) -> None:
-        self.schema: Schema = SCHEMA
+        self.schema = schema
         self.live = live
         self.pending_restart = pending_restart
         self.unapplied = unapplied
         self.overridden = overridden
+        self.unconfirmed = unconfirmed
         self.device_overrides: Mapping[str, tuple[str, ...]] = device_overrides or {}
-        self.model = ConfigModel(SCHEMA)
+        self.live_hyprland = live_hyprland
+        self.retired: Mapping[str, str] = retired or {}
+        """Retired Option name -> the release that retired it."""
+        self.kept: Mapping[str, Any] = kept or {}
+        """Retired Option name -> the value the Manifest keeps for it, for every reason."""
+        self.bridge_owners: Mapping[str, str] = bridge_owners or {}
+        """Option name -> the tool whose loading Bridge module sets it (#163, #165)."""
+        self.model = ConfigModel(schema)
+
+    def unknown_to_version(self, option: ResolvedOption) -> bool:
+        return self.live_hyprland is not None and option.name not in self.live_hyprland.names
+
+    def retired_in(self, option: ResolvedOption) -> str | None:
+        return self.retired.get(option.name)
+
+    def kept_value(self, name: str) -> OptionValue:
+        return self.kept.get(name, UNSET)
 
     def value_of(self, option: ResolvedOption) -> OptionValue:
         return self.model.get(option.name)
@@ -265,10 +293,408 @@ def test_a_device_override_does_not_dim_the_row_or_block_editing() -> None:
     assert state.dependency is None
 
 
-def test_an_advanced_restart_flagged_option_wears_both_pills_in_order() -> None:
-    option = SCHEMA["debug:gl_debugging"]
+def test_two_pills_show_in_rank_order_with_their_own_tooltips() -> None:
+    """Restart outranks Advanced: what the setting does beats why the Row is visible."""
+    pills = row_state(SCHEMA["debug:gl_debugging"], FakeContext()).pills
 
-    assert _pills(option, FakeContext()) == (ADVANCED_PILL, RESTART_PILL)
+    assert [pill.label for pill in pills] == ["Restart", "Advanced"]
+    assert pills[1].tooltip == "A low-level setting: shown only here, in the Config view."
+
+
+def _live_without(*missing: str, version: str = "0.56.0") -> LiveHyprland:
+    """A running Hyprland that describes every shipped Option except `missing`."""
+    return LiveHyprland(
+        version, tuple({"name": o.name} for o in SCHEMA if o.name not in missing)
+    )
+
+
+def test_an_option_the_running_hyprland_lacks_wears_the_not_in_this_hyprland_pill() -> None:
+    """#77: an older compositor degrades onto a newer Schema with unknown-to-this-version
+    Rows, so the user can tell an option their Hyprland ignores from one it obeys."""
+    context = FakeContext(live_hyprland=_live_without("decoration:rounding"))
+
+    (pill,) = row_state(SCHEMA["decoration:rounding"], context).pills
+
+    assert pill.label == "Not in this Hyprland"
+    assert pill.tooltip == (
+        "Hyprland 0.56.0 does not have this setting, so it cannot be changed here."
+    )
+    assert _pills(SCHEMA["general:gaps_in"], context) == (), "only the option it lacks"
+
+
+def test_a_retired_option_wears_its_release_in_place_of_not_in_this_hyprland() -> None:
+    """ADR-0012 "the Row is badged": a newer Hyprland dropped an Option the user set. Its
+    unset neighbour, equally absent, keeps #181's pill: nothing of the user's was retired."""
+    context = FakeContext(
+        live_hyprland=_live_without("decoration:rounding", "decoration:dim_strength"),
+        retired={"decoration:rounding": "0.57.0"},
+    )
+
+    assert row_state(SCHEMA["decoration:rounding"], context).pills == (
+        Pill(
+            "Retired in 0.57.0",
+            "Hyprland 0.57.0 removed this setting, so it cannot be changed here. Your value is "
+            "kept and comes back if the setting returns.",
+        ),
+    )
+    assert _pills(SCHEMA["decoration:dim_strength"], context) == ("Not in this Hyprland",)
+
+
+def test_a_retired_pill_ranks_below_didn_t_apply_and_above_overridden() -> None:
+    option = SCHEMA["decoration:rounding"]
+    context = FakeContext(
+        unapplied=frozenset({option.name}),
+        overridden=frozenset({option.name}),
+        retired={option.name: "0.57.0"},
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Retired in 0.57.0")
+    assert second.tooltip.endswith("\nAlso: Overridden.")
+
+
+def test_no_running_hyprland_means_no_option_is_unknown_to_it() -> None:
+    assert _pills(SCHEMA["decoration:rounding"], FakeContext(live_hyprland=None)) == ()
+
+
+def test_a_retired_row_is_read_only_and_says_what_it_keeps() -> None:
+    """#215: Hyprland no longer takes the setting, so the control cannot change it, and
+    the Row shows the value the app kept rather than the default it is not using."""
+    option = SCHEMA["decoration:rounding"]
+    context = FakeContext(retired={option.name: "0.57.0"}, kept={option.name: 8})
+
+    state = row_state(option, context)
+
+    assert not state.editable
+    assert not state.resettable
+    assert row_value(option, context) == 8
+    assert state.subtitle == (
+        f"{option.description}\n"
+        "Your value: 8. Hyprland 0.57.0 removed this setting; it is kept for when the "
+        "setting returns."
+    )
+    assert state.pills[0].tooltip == (
+        "Hyprland 0.57.0 removed this setting, so it cannot be changed here. Your value is "
+        "kept and comes back if the setting returns."
+    )
+
+
+def test_a_value_kept_for_a_quiet_reason_is_read_only_without_a_pill() -> None:
+    """settled.md #215: every retirement reason locks the Row; only REMOVED is announced."""
+    option = SCHEMA["general:gaps_in"]
+    context = FakeContext(kept={option.name: CssGaps(4, 4, 4, 4)})
+
+    state = row_state(option, context)
+
+    assert (state.editable, state.resettable, state.pills) == (False, False, ())
+    assert state.subtitle == (
+        f"{option.description}\nYour value: 4. It is kept for when Hyprland has this "
+        "setting again."
+    )
+    assert state.summary is not None and state.summary.text == "4"
+
+
+def test_a_set_row_the_running_hyprland_lacks_is_read_only_but_resettable() -> None:
+    """#215: every edit would be a config error and an auto-revert; Reset takes the key out."""
+    option = SCHEMA["decoration:rounding"]
+    context = FakeContext(live_hyprland=_live_without(option.name))
+    context.model.set(option.name, 8)
+
+    state = row_state(option, context)
+
+    assert (state.editable, state.resettable, state.modified) == (False, True, True)
+    assert row_value(option, context) == 8
+    assert state.pills[0].tooltip == (
+        "Hyprland 0.56.0 does not have this setting, so it cannot be changed here. Reset "
+        "removes it from your config."
+    )
+    assert state.subtitle.endswith(
+        "\nHyprland 0.56.0 does not have this setting. Reset removes it from your config."
+    )
+
+
+def test_an_unset_row_the_running_hyprland_lacks_is_read_only() -> None:
+    option = SCHEMA["decoration:rounding"]
+    context = FakeContext(live_hyprland=_live_without(option.name))
+
+    state = row_state(option, context)
+
+    assert (state.editable, state.modified) == (False, False)
+    assert state.pills[0].tooltip == (
+        "Hyprland 0.56.0 does not have this setting, so it cannot be changed here."
+    )
+    assert state.subtitle == (
+        f"{option.description}\n"
+        "Hyprland 0.56.0 does not have this setting, so it cannot be changed here."
+    )
+    other = row_state(SCHEMA["general:gaps_in"], context)
+    assert other.editable and other.subtitle == SCHEMA["general:gaps_in"].description
+
+
+def test_a_row_matching_more_than_two_pills_shows_the_top_two_and_lists_the_rest() -> None:
+    """At most two pills (inbox #79); the second's tooltip names every other one, in rank
+    order, so nothing that applies is hidden from a user who hovers."""
+    option = SCHEMA["debug:gl_debugging"]  # Advanced and Restart before anything happens
+    context = FakeContext(
+        unapplied=frozenset({option.name}),
+        overridden=frozenset({option.name}),
+        live_hyprland=_live_without(option.name),
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Overridden")
+    assert first.tooltip == "This was written to your config, but Hyprland is not using it."
+    assert second.tooltip.endswith("\nAlso: Not in this Hyprland, Restart, Advanced.")
+    assert second.tooltip.startswith("Something loaded after the app's own settings")
+
+
+MATUGEN_KEYS = frozenset(
+    {
+        "general:col.active_border",
+        "general:col.inactive_border",
+        "group:col.border_active",
+        "group:col.border_inactive",
+        "group:col.border_locked_active",
+        "group:col.border_locked_inactive",
+    }
+)
+"""What the app's matugen template sets (#163 reading 7), written out by hand."""
+
+
+def _loading(*tools: str) -> Mapping[str, str]:
+    """`Session.bridge_owners` for these tools set up and loading, from the real registry."""
+    from hyprtweaker.engine.bridge import REGISTRY, entries_for, owners
+
+    entries = [
+        entry
+        for tool in tools
+        for entry in entries_for(
+            REGISTRY[tool], present={m.file for m in REGISTRY[tool].modules}
+        )
+    ]
+    return owners(entries)
+
+
+def _set_by(context: FakeContext) -> dict[str, str]:
+    """Every Option in the Schema wearing a "Set by" pill, with that pill's label."""
+    found = {}
+    for option in SCHEMA:
+        for pill in row_state(option, context).pills:
+            if pill.label.startswith("Set by "):
+                found[option.name] = pill.label
+    return found
+
+
+def test_every_option_matugen_sets_is_badged_and_no_other_is() -> None:
+    """#73 AC: "Options a tool controls are badged 'set by tool'", over the whole Schema."""
+    assert _set_by(FakeContext(bridge_owners=_loading("matugen"))) == dict.fromkeys(
+        MATUGEN_KEYS, "Set by matugen"
+    )
+    assert _set_by(FakeContext()) == {}, "no tool loading, no pill"
+
+
+def test_each_tool_badges_exactly_the_options_it_owns_by_its_display_name() -> None:
+    """The relation across the registry: what `bridge_owners` names, and nothing else."""
+    from hyprtweaker.engine.bridge import REGISTRY
+
+    owned = _loading("dms", "matugen")
+    in_schema = {name: tool for name, tool in owned.items() if name in SCHEMA}
+
+    assert _set_by(FakeContext(bridge_owners=owned)) == {
+        name: f"Set by {REGISTRY[tool].title}" for name, tool in in_schema.items()
+    }
+    assert "Set by DMS" in _set_by(FakeContext(bridge_owners=_loading("dms"))).values()
+
+
+def test_a_tool_owned_row_says_what_that_means_and_leads_to_the_tool() -> None:
+    """The pill answers "why does my change not stick": the tool's value is the one in use,
+    the user's is kept, and the pill opens that tool on the Theming page (ADR-0006)."""
+    option = SCHEMA["general:col.active_border"]
+
+    (pill,) = row_state(option, FakeContext(bridge_owners={option.name: "matugen"})).pills
+
+    assert pill.label == "Set by matugen"
+    assert pill.backend == "matugen"
+    assert pill.tooltip == (
+        "matugen sets this, so Hyprland uses matugen's value unless your user.lua also sets "
+        "it. A value you set here is kept and applies once matugen no longer sets it. Click "
+        "to open matugen on the Theming page."
+    )
+    assert row_state(option, FakeContext(bridge_owners={option.name: "matugen"})).subtitle == (
+        f"{option.description}\n"
+        "matugen sets this. Your value applies once matugen no longer does."
+    )
+
+
+def test_a_timed_out_key_reads_not_confirmed_over_both_drift_marks() -> None:
+    """Owner call 3 of the #153 review: nothing overrides it and nothing says it failed."""
+    option = SCHEMA["general:gaps_in"]
+    context = FakeContext(
+        unconfirmed=frozenset({option.name}),
+        overridden=frozenset({option.name}),
+        unapplied=frozenset({option.name}),
+    )
+
+    (pill,) = row_state(option, context).pills
+
+    assert pill.label == "Not confirmed"
+    assert pill.tooltip == (
+        "Saved to your config, but Hyprland did not answer in time, so the app could not "
+        "check that it took. It is checked again at the next reload."
+    )
+    assert [
+        p.label for p in row_state(option, FakeContext(unapplied=context.unapplied)).pills
+    ] == ["Didn't apply"]
+
+
+def test_a_tool_owned_row_stays_editable_and_resettable() -> None:
+    """ADR-0014 "no inline unlock": the control keeps working and the pill explains."""
+    option = SCHEMA["general:col.active_border"]
+    context = FakeContext(bridge_owners={option.name: "matugen"})
+    context.model.set(option.name, Gradient.parse("rgba(33ccffee)"))
+
+    state = row_state(option, context)
+
+    assert (state.editable, state.resettable, state.modified) == (True, True, True)
+    assert state.subtitle.startswith(f"{option.description}\nmatugen sets this.")
+
+
+def test_set_by_a_tool_replaces_overridden_rather_than_joining_it() -> None:
+    """The tool is what overrides the app's value: one pill, the one that names it."""
+    option = SCHEMA["general:col.active_border"]
+    context = FakeContext(
+        bridge_owners={option.name: "matugen"}, overridden=frozenset({option.name})
+    )
+
+    (pill,) = row_state(option, context).pills
+
+    assert pill.label == "Set by matugen"
+    assert "Also" not in pill.tooltip
+
+
+def test_didn_t_apply_outranks_set_by_and_a_capped_pill_keeps_its_link() -> None:
+    """Third pill folds into the second's tooltip; the second still opens the Theming page."""
+    option = SCHEMA["general:col.active_border"]
+    context = FakeContext(
+        bridge_owners={option.name: "matugen"},
+        unapplied=frozenset({option.name}),
+        device_overrides={option.name: ("epic-mouse-v1",)},
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Set by matugen")
+    assert second.tooltip.endswith("\nAlso: Per-device.")
+    assert second.backend == "matugen"
+    assert first.backend is None
+
+
+def _supplemented(record: dict[str, Any]) -> tuple[ResolvedOption, Schema]:
+    """An Option a newer Hyprland 0.58.0 described beyond the shipped Schema (#177)."""
+    schema = supplement(SCHEMA, (record,), version="0.58.0")
+    return schema[str(record["name"])], schema
+
+
+def test_an_option_only_a_newer_hyprland_has_wears_a_new_in_pill_and_stays_editable() -> None:
+    option, schema = _supplemented(
+        {"name": "general:snap_new", "description": "x", "default": False}
+    )
+    context = FakeContext(schema=schema)
+
+    state = row_state(option, context)
+
+    assert [(pill.label, pill.tooltip) for pill in state.pills] == [
+        (
+            "New in 0.58.0",
+            "Hyprland 0.58.0 added this setting after this version of the app was made, so it "
+            "gets a basic control until you update the app.",
+        )
+    ]
+    assert state.editable
+    assert _pills(SCHEMA["general:gaps_in"], context) == (), "a shipped option has none"
+
+
+def test_the_version_pills_speak_the_users_words_not_the_apps_internals() -> None:
+    """#150 review finding 3: a user knows Hyprland versions and settings; "schema" and
+    "release check" are the app's own machinery and mean nothing on a Row."""
+    newer, schema = _supplemented(
+        {"name": "general:snap_new", "description": "x", "default": False}
+    )
+    older = FakeContext(live_hyprland=_live_without("decoration:rounding"))
+
+    tooltips = [
+        *(pill.tooltip for pill in row_state(newer, FakeContext(schema=schema)).pills),
+        *(pill.tooltip for pill in row_state(SCHEMA["decoration:rounding"], older).pills),
+    ]
+
+    assert len(tooltips) == 2
+    for tooltip in tooltips:
+        assert "schema" not in tooltip.lower()
+        assert "release check" not in tooltip.lower()
+        assert tooltip.startswith("Hyprland 0.5")
+
+
+def test_the_new_in_pill_ranks_below_what_failed_and_above_advanced() -> None:
+    option, schema = _supplemented(
+        {"name": "debug:new_trace", "description": "x", "default": False}
+    )
+    context = FakeContext(unapplied=frozenset({option.name}), schema=schema)
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "New in 0.58.0")
+    assert second.tooltip.endswith("\nAlso: Advanced.")
+
+
+def _plugin_option() -> tuple[ResolvedOption, Schema]:
+    """A loaded plugin's setting, as the running Hyprland described it (#175)."""
+    record = {"name": "plugin:hyprbars:bar_height", "description": "x", "default": 15}
+    schema = supplement(SCHEMA, (record,), version="0.56.2", kind=SupplementKind.PLUGIN)
+    return schema["plugin:hyprbars:bar_height"], schema
+
+
+def test_a_plugins_setting_wears_a_plugin_option_pill_and_stays_editable() -> None:
+    option, schema = _plugin_option()
+
+    state = row_state(option, FakeContext(schema=schema))
+
+    assert [(pill.label, pill.tooltip) for pill in state.pills] == [
+        (
+            "Plugin option",
+            "Added by a loaded plugin. The app knows only its name and type, so it gets a "
+            "basic control.",
+        )
+    ]
+    assert state.editable
+
+
+def test_the_plugin_option_pill_ranks_below_what_failed_and_above_per_device() -> None:
+    option, schema = _plugin_option()
+    context = FakeContext(
+        unapplied=frozenset({option.name}),
+        device_overrides={option.name: ("Logitech MX",)},
+        schema=schema,
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Didn't apply", "Plugin option")
+    assert second.tooltip.endswith("\nAlso: Per-device.")
+
+
+def test_a_pending_restart_replaces_the_restart_pill_rather_than_joining_it() -> None:
+    """Suppression is the table's: a suppressed pill is not shown and not listed."""
+    option = SCHEMA["debug:gl_debugging"]
+    context = FakeContext(
+        pending_restart=frozenset({option.name}), live_hyprland=_live_without(option.name)
+    )
+
+    first, second = row_state(option, context).pills
+
+    assert (first.label, second.label) == ("Not in this Hyprland", "Pending restart")
+    assert second.tooltip.endswith("\nAlso: Advanced.")
 
 
 # --- dependency badges ------------------------------------------------------------------------
@@ -542,3 +968,13 @@ class TestValueSummary:
         assert state.summary is not None
         assert state.summary.text == "8"
         assert row_state(SCHEMA["decoration:rounding"], context).summary is None
+
+
+def test_the_popover_default_reads_in_the_controls_words() -> None:
+    """#148 hand-test 3: "Default: [0, 0]", "Default: ffffffff 0deg", "Default: 5 5 5 5",
+    "Default: 400" (a weight the combo calls Normal)."""
+    assert default_label(SCHEMA["decoration:shadow:offset"]) == "0.0, 0.0"
+    assert default_label(SCHEMA["general:col.active_border"]) == "#ffffff"
+    assert default_label(SCHEMA["misc:background_color"]) == "#111111"
+    assert default_label(SCHEMA["general:gaps_in"]) == "5"
+    assert default_label(SCHEMA["group:groupbar:font_weight_active"]) == "Normal"

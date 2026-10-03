@@ -59,6 +59,22 @@ Five steps, each an `Adw.NavigationView` subpage in one dialog (prototyped in #7
   `hl.plugin` logic) are extracted by source range into `legacy.lua`. Conditionals and loops
   *execute* — their result is baked, reported exactly like `# hyprlang if`. This importer is
   a new risky piece and gets its own prototype before the spec.
+
+  Reading a `.lua` runs it, so the wizard asks first, on a page before Preview: "Reading your
+  hyprland.lua means running it once: none of its commands run and no files change." with
+  "Read it" and "Not now" (the default; it closes the wizard having read nothing). The read
+  is blocked (`Policy.BLOCK`): the config's commands and writes are faked. When that blocked
+  read comes back empty (no Option, no Entity) or erroring *and* it tried `os.execute` or
+  `io.popen`, a second page lists those commands verbatim, with the file deletes and moves
+  that running for real would also do and how often each repeats, says others may run, and
+  offers to run them for real (`Policy.PASSTHROUGH`); its safe exit is the default, and the
+  run-for-real button is never default or suggested, and is unclickable until clicks queued
+  behind the read have drained. When the erroring read still imported settings, the page
+  says how many and adds "Continue without running them", which is then the default and
+  goes to the Preview of that read. Neither consent is remembered: every wizard run asks
+  again. Import… of any `.lua` opens on the consent page. (Decided on inbox #79,
+  2026-10-01; #190. Wording, listing and Continue decided in the #150 review, owner calls 2
+  and 3, 2026-10-02.)
 - Either way, every key present in the source is marked **set** (ADR-0005 tri-state), and
   import provenance (date, source hash) lands in the Manifest.
 
@@ -83,6 +99,10 @@ switching anything — interop, not lock-in.
 - `.conf` path: the conf tree stays in place untouched. `.lua` path: the foreign file is
   renamed `hyprland.lua.bak` beside itself (the filename is contested by the Entrypoint;
   a rename, never a delete).
+- A menu Import over an app-generated config renames the app's own Entrypoint the same way,
+  and an existing App dir (presets and Monitor profiles included) to `hyprtweaker.bak`:
+  Roll back moves both back and the imported App dir into the state dir's `rolled-back/`
+  (#148 review R1).
 - Bridge setup (ADR-0006) happens here: detected tools offered per-tool, each flip behind
   explicit confirmation.
 - **Static gate:** the generated tree is written and `Hyprland --verify-config` must pass;
@@ -95,9 +115,23 @@ Requires a live session; without an IPC socket the wizard runs Detect/Preview on
 1. Write a `migration-pending` sentinel to the state dir, then the Entrypoint.
 2. `hyprctl reload full-reset`; treat socket2 `configreloaded` as "reload started", then poll.
 3. Live checks over the IPC socket (spoken directly — no `hyprctl` spawns): `configerrors`
-   empty; bind count vs model (`code:N` counted from source); monitor arrangement matches;
-   window/layer/workspace rule counts match. `hl.env`/`hl.permission` are excluded and noted
-   as "applies at next login"; autostart entries are noted as possibly re-run by the switch.
+   empty; bind count; workspace-rule count; monitor arrangement. `hl.env`/`hl.permission` are
+   excluded and noted as "applies at next login"; autostart entries are noted as possibly
+   re-run by the switch.
+   - **Bind count** is hard. The expected count is what the Writer emits (`live_bind_count`: a
+     disabled bind is a comment and a function-valued one is never written), and the check
+     is `live >= expected`, because `legacy.lua` and preserved scripts can register more. It
+     is hard only because a Harness run over the `tests/corpus/` rices showed no false
+     rollback, with every hard check, `configerrors` included, asserted for every rice; a
+     config that loads with no keybinds is ADR-0016's emergency.
+   - **Workspace-rule count** and **monitor arrangement** are soft: reported on the Keep or
+     roll back page under "What this could not confirm", never a rollback, because each
+     compares against what Hyprland *did* with a request (merged a selector, picked the
+     closest mode). Monitor arrangement compares scale, resolution, position and rotation
+     where a rule states them as numbers, for each connected display.
+   - **Window and layer rule counts are not readable over IPC** (probed on Hyprland 0.56.2:
+     no `hyprctl` listing, no `hl.get_*` getter), so those two kinds are verified by
+     `configerrors` only, and the switch shows no row for them.
 4. Any hard check fails → automatic rollback, report shown.
 
 ### Keep or roll back

@@ -16,6 +16,7 @@ goes in the list -- because position is identity, and only the list knows the po
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import replace
 
@@ -29,21 +30,39 @@ from gi.repository import Adw, Gtk  # noqa: E402
 from hyprtweaker.engine.dispatchers import (  # noqa: E402
     EXEC_PATH,
     NAMESPACE_LABELS,
+    ArgSpec,
     Dispatcher,
     lookup,
     namespaces,
 )
 from hyprtweaker.engine.model.entities import Bind, BindOptions, DispatcherCall  # noqa: E402
-from hyprtweaker.engine.triggers import parse_trigger, validate_trigger  # noqa: E402
-from hyprtweaker.ui.dialogs.capture import CaptureDialog  # noqa: E402
+from hyprtweaker.engine.triggers import (  # noqa: E402
+    DeadKeys,
+    parse_trigger,
+    trigger_load_problem,
+)
+from hyprtweaker.engine.writer.binds import lua_value  # noqa: E402
+from hyprtweaker.engine.writer.lua import table_key  # noqa: E402
+from hyprtweaker.ui.dialogs.capture import CaptureDialog, FetchSwitches  # noqa: E402
+from hyprtweaker.ui.rows.state import NOT_SET  # noqa: E402
 
 TRIGGER_HELP = "Modifiers and one key, joined by +. For example: SUPER + SHIFT + Q"
+
+ENABLES_NOTE = "Saving with a working key also enables this bind."
+"""Shown above Save while Save would enable an Importer-disabled bind (#149's review)."""
 
 FLAGS: tuple[tuple[str, str, str], ...] = (
     ("locked", "Works on the lock screen", ""),
     ("release", "Fires when the key is released", ""),
+    ("click", "Fires on a click", "Mouse button pressed and released without moving"),
+    ("drag", "Fires on a drag", "Mouse button held while the pointer moves"),
     ("repeating", "Repeats while held", ""),
     ("non_consuming", "Lets the key through to the app", ""),
+    (
+        "auto_consuming",
+        "Lets the key through if the action fails",
+        "The app gets the key when the action could not run",
+    ),
     ("transparent", "Does not block other binds", ""),
     ("ignore_mods", "Ignores extra modifiers", ""),
     ("long_press", "Fires on a long press", ""),
@@ -51,16 +70,44 @@ FLAGS: tuple[tuple[str, str, str], ...] = (
     ("allow_input_capture", "Works during input capture", ""),
     ("submap_universal", "Works in every submap", "Fires everywhere, not just where defined"),
 )
-"""The flags the editor offers, in the order they read best.
+"""The flags the editor offers, in the order they read best: every `BindOptions` flag.
 
-Not the whole of `BindOptions`: `click` and `drag` imply `release` and are mutually
-exclusive with it (ADR-0007), and `auto_consuming` is absent from the stub though the code
-parses it (#105). Those need constraint handling rather than a switch, and a switch that
-silently produced an invalid combination would be worse than not offering it yet.
+`click` and `drag` imply `release` and exclude each other (ADR-0007): the editor sets
+`release` for the user while either is on (`_sync_release`) and refuses the pairs in
+`INCOMPATIBLE`. `auto_consuming`'s words are Hyprland 0.56.2's `KeybindManager.cpp`: the
+bind keeps the key from the app only when its dispatcher succeeds.
 """
 
-INCOMPATIBLE = (("long_press", "repeating"), ("release", "repeating"))
-"""Pairs the compositor rejects. Enforced as the editor's own validation (ADR-0007)."""
+INCOMPATIBLE: tuple[tuple[str, str, str], ...] = (
+    ("click", "drag", "Click and Drag can't both be on."),
+    ("click", "repeating", "Click fires on release, so it can't repeat."),
+    ("drag", "repeating", "Drag fires on release, so it can't repeat."),
+    ("long_press", "repeating", "Long press can't repeat."),
+    ("release", "repeating", "Release can't repeat."),
+)
+"""Pairs the compositor rejects (`Hyprland --verify-config`, 0.56.2), each with the words
+the form shows, as the switch that makes the pair flips; Save refuses it too (ADR-0007).
+
+Probed and accepted, so left unconstrained: `click` with `long_press`, `auto_consuming`
+with `non_consuming`. `release` here is the user's own, not the one `click` or `drag` sets:
+those two name themselves in their own pairs, so the message blames what the user turned on.
+"""
+
+_CONFLICT_MESSAGES = frozenset(message for _left, _right, message in INCOMPATIBLE)
+
+FREE_FORM_HOW = "Type each setting as key = value, one per line."
+"""Follows the dispatcher's own `free_form_reason` above the raw table."""
+
+UNKNOWN_ACTION = "This version of the app does not know this action."
+"""The raw table's reason for a saved dispatcher the catalog has never heard of."""
+
+KEPT_TITLE = "Also kept from your config"
+KEPT_NOTE = "The form has no field for these, so Save keeps them as they are."
+
+HELD_NOTE = " (from your config)"
+"""Follows a saved value a yes-or-no field cannot read, shown as a choice of its own."""
+
+_NUMBER = re.compile(r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 
 
 class BindEditor(Adw.Dialog):
@@ -72,9 +119,12 @@ class BindEditor(Adw.Dialog):
         on_done: Callable[[Bind], None],
         bind: Bind | None = None,
         submap: str | None = None,
+        fetch_switches: FetchSwitches | None = None,
     ) -> None:
-        """`submap` is where a *new* bind will live (#66's per-submap add); an edited
-        bind keeps the submap it already has, and the parameter is ignored."""
+        """`fetch_switches` is the live switch list Capture's picker reads (#107), `None`
+        with no compositor connected. `submap` is where a *new* bind will live (#66's
+        per-submap add); an edited bind keeps the submap it already has, and the parameter
+        is ignored."""
         super().__init__(
             title="Edit keybind" if bind else "Add keybind",
             content_width=560,
@@ -83,9 +133,13 @@ class BindEditor(Adw.Dialog):
         self._on_done = on_done
         self._original = bind
         self._submap = bind.submap if bind is not None else submap
+        self._fetch_switches = fetch_switches
         self._chosen: Dispatcher | None = None
         self._arg_entries: dict[str, Gtk.Widget] = {}
+        self._bool_choices: dict[str, list[object]] = {}
+        self._kept: dict[str, object] = {}
         self._flag_switches: dict[str, Adw.SwitchRow] = {}
+        self._own_release = False
 
         self._view = Adw.NavigationView()
         self.set_child(self._view)
@@ -95,7 +149,7 @@ class BindEditor(Adw.Dialog):
         else:
             path = bind.dispatcher.path if bind.dispatcher else EXEC_PATH
             self._chosen = lookup(path) or Dispatcher(
-                path=path, label=f"hl.dsp.{path}", free_form=True
+                path=path, label=f"hl.dsp.{path}", free_form_reason=UNKNOWN_ACTION
             )
             self._view.push(self._form_page())
 
@@ -180,11 +234,23 @@ class BindEditor(Adw.Dialog):
         trigger_group.add(self._description)
         box.append(trigger_group)
 
+        self._kept = self._kept_args(entry)
         box.append(self._args_group(entry))
+        if self._kept:
+            box.append(self._kept_group())
         box.append(self._flags_group())
 
         self._error = Gtk.Label(css_classes=["error"], visible=False, wrap=True)
         box.append(self._error)
+        self._show_flag_conflict()  # an imported bind may open with a pair Hyprland refuses
+
+        # An enable is never quiet: when Save would turn the bind on, this line says so.
+        self._enables_note = Gtk.Label(label=ENABLES_NOTE, visible=False, wrap=True)
+        box.append(self._enables_note)
+        self._trigger.connect(
+            "changed",
+            lambda _row: self._enables_note.set_visible(self._enables_on_save()),
+        )
 
         save = Gtk.Button(label="Save", css_classes=["suggested-action"], halign=Gtk.Align.END)
         save.connect("clicked", lambda _button: self._save())
@@ -197,16 +263,18 @@ class BindEditor(Adw.Dialog):
         existing = self._original.dispatcher if self._original else None
         group = Adw.PreferencesGroup(title="Action")
 
-        if entry is None or entry.free_form:
-            group.set_description(
-                "This action's arguments are not documented in a form this app can "
-                "generate, so they are entered as Lua-style key = value pairs, one per line."
-            )
+        if entry is None or entry.free_form_reason is not None:
+            reason = entry.free_form_reason if entry is not None else UNKNOWN_ACTION
+            group.set_description(f"{reason} {FREE_FORM_HOW}")
             view = Gtk.TextView(monospace=True, top_margin=6, bottom_margin=6, left_margin=6)
             view.set_size_request(-1, 96)
             if existing is not None:
                 view.get_buffer().set_text(
-                    "\n".join(f"{key} = {value}" for key, value in existing.args.items())
+                    "\n".join(
+                        f"{key} = {_free_text(value)}"
+                        for key, value in existing.args.items()
+                        if key not in self._kept
+                    )
                 )
             frame = Gtk.Frame(child=view)
             group.add(frame)
@@ -214,21 +282,105 @@ class BindEditor(Adw.Dialog):
             return group
 
         self._arg_entries = {}
+        self._bool_choices = {}
         for spec in entry.args:
-            row = Adw.EntryRow(title=spec.title())
-            if spec.placeholder:
-                row.set_tooltip_text(spec.placeholder)
+            current = None
             if existing is not None:
                 current = existing.args.get(spec.name)
                 if current is None and existing.positional:
                     current = existing.positional[0]
-                if current is not None:
-                    row.set_text(str(current))
-            self._arg_entries[spec.name] = row
+                if not _is_scalar(current):
+                    current = None
+            row = (
+                self._bool_row(spec, current)
+                if spec.type == "bool"
+                else self._text_row(spec, current)
+            )
             group.add(row)
 
         if not entry.args:
             group.set_description("This action takes no arguments.")
+        return group
+
+    def _text_row(self, spec: ArgSpec, current: object) -> Adw.ActionRow:
+        """A text argument: the hint is the row's subtitle, so it shows without hovering.
+
+        `Adw.EntryRow` has no subtitle, so the row is an `Adw.ActionRow` with the entry as
+        its suffix. `_arg_entries` holds the entry.
+        """
+        entry = Gtk.Entry(width_chars=26, valign=Gtk.Align.CENTER)
+        entry.update_property([Gtk.AccessibleProperty.LABEL], [spec.title()])
+        if current is not None:
+            entry.set_text(_field_text(current))
+        row = Adw.ActionRow(
+            subtitle_lines=0,
+            use_markup=False,
+        )
+        row.set_title(spec.title())
+        row.set_subtitle(spec.placeholder)
+        row.add_suffix(entry)
+        row.set_activatable_widget(entry)
+        self._arg_entries[spec.name] = entry
+        return row
+
+    def _bool_row(self, spec: ArgSpec, current: object) -> Adw.PreferencesRow:
+        """A yes-or-no argument as a choice, so nobody types `true`.
+
+        Required and holding a boolean (or nothing): a switch. Optional: "Not set", "Yes",
+        "No", where "Not set" writes no key and the compositor's default holds. A saved
+        value that is not a boolean (`next = "yes"`) is a last choice of its own, as written
+        and selected: Save writes it back unchanged and nothing moves it silently (ADR-0007).
+        """
+        held = current is not None and not isinstance(current, bool)
+        if spec.required and not held:
+            switch = Adw.SwitchRow(title=spec.title(), active=current is True)
+            self._arg_entries[spec.name] = switch
+            return switch
+        values: list[object] = [True, False] if spec.required else [None, True, False]
+        labels = ["Yes", "No"] if spec.required else [NOT_SET, "Yes", "No"]
+        if held:
+            values.append(current)
+            labels.append(f"{lua_value(current)}{HELD_NOTE}")
+        row = Adw.ComboRow(title=spec.title(), model=Gtk.StringList.new(labels))
+        # Not `values.index`: it compares by equality, and `1 == True`.
+        row.set_selected(len(values) - 1 if held else values.index(current))
+        self._bool_choices[spec.name] = values
+        self._arg_entries[spec.name] = row
+        return row
+
+    def _kept_args(self, entry: Dispatcher | None) -> dict[str, object]:
+        """The saved keys of this action the form has no field for, to carry through Save.
+
+        A curated form rebuilds the call from its `ArgSpec` names, and the raw table can only
+        spell scalars, so without this a hand-written `layout_aware = true` on
+        `fullscreen_state`, or a nested table, would be lost on any Save, even an untouched
+        one (#126 owner call 4, decided 2026-10-02). They belong to the saved action: once
+        another one is picked they are not carried.
+        """
+        existing = self._original.dispatcher if self._original else None
+        if existing is None or entry is None or entry.path != existing.path:
+            return {}
+        if entry.positional:
+            return {}
+        fields = (
+            None if entry.free_form_reason is not None else {spec.name for spec in entry.args}
+        )
+        return {
+            key: value
+            for key, value in existing.args.items()
+            if not _is_scalar(value) or (fields is not None and key not in fields)
+        }
+
+    def _kept_group(self) -> Adw.PreferencesGroup:
+        """The kept keys, read-only, one `key = value` line each, as the file spells them."""
+        group = Adw.PreferencesGroup(title=KEPT_TITLE, description=KEPT_NOTE)
+        for key, value in self._kept.items():
+            row = Adw.ActionRow(
+                use_markup=False,
+                css_classes=["monospace"],
+            )
+            row.set_title(f"{table_key(key)}{lua_value(value)}")
+            group.add(row)
         return group
 
     def _flags_group(self) -> Adw.PreferencesGroup:
@@ -239,16 +391,80 @@ class BindEditor(Adw.Dialog):
             row.set_active(bool(getattr(options, name)))
             self._flag_switches[name] = row
             group.add(row)
+        # The Importer sets `release` on every click and drag bind, so on those it is the
+        # flag's doing, not the user's: their own value starts off.
+        self._own_release = options.release and not (options.click or options.drag)
+        release = self._flag_switches["release"]
+        release.connect("notify::active", self._release_toggled)
+        for name in ("click", "drag"):
+            self._flag_switches[name].connect("notify::active", lambda *_: self._sync_release())
+        self._sync_release()
+        # Connected last, so it reads the flags after `_sync_release` and `_own_release`.
+        for row in self._flag_switches.values():
+            row.connect("notify::active", lambda *_: self._show_flag_conflict())
         return group
+
+    def _release_toggled(self, row: Adw.SwitchRow, _pspec: object) -> None:
+        """Remember what the user chose. The row is insensitive while click or drag locks
+        it on, so a locked toggle is `_sync_release`'s and not remembered."""
+        if row.get_sensitive():
+            self._own_release = row.get_active()
+
+    def _sync_release(self) -> None:
+        """Show `release` as click or drag leave it: on and locked while either is on,
+        the user's own value, visibly, once both are off."""
+        release = self._flag_switches["release"]
+        implied = next(
+            (
+                title
+                for name, title in (("click", "Click"), ("drag", "Drag"))
+                if self._flag_switches[name].get_active()
+            ),
+            None,
+        )
+        if implied:
+            release.set_sensitive(False)
+            release.set_active(True)
+            release.set_subtitle(f"Set by {implied}")
+        else:
+            release.set_sensitive(True)
+            release.set_active(self._own_release)
+            release.set_subtitle("")
+
+    def _flag_conflict(self) -> str | None:
+        """The words for the first `INCOMPATIBLE` pair the user has on, if any."""
+        chosen = self._flags_the_user_chose()
+        return next(
+            (message for left, right, message in INCOMPATIBLE if {left, right} <= chosen),
+            None,
+        )
+
+    def _show_flag_conflict(self) -> None:
+        """Say a conflict as the switch flips (Save still refuses it), and take the words
+        back once it is resolved; a refusal Save showed about something else stays."""
+        conflict = self._flag_conflict()
+        if conflict is not None:
+            self._error.set_text(conflict)
+            self._error.set_visible(True)
+        elif self._error.get_text() in _CONFLICT_MESSAGES:
+            self._error.set_visible(False)
+            self._error.set_text("")
+
+    def _flags_the_user_chose(self) -> set[str]:
+        """The flags on, with `release` as the user's own: click and drag name themselves in
+        their refusals rather than as a release the user never touched."""
+        on = {name for name, row in self._flag_switches.items() if row.get_active()}
+        on.discard("release")
+        return on | ({"release"} if self._own_release else set())
 
     # --- saving ---------------------------------------------------------------------------
 
     def _collect_args(self) -> tuple[dict[str, object], tuple[object, ...]]:
         entry = self._chosen
-        if entry is None or entry.free_form:
+        if entry is None or entry.free_form_reason is not None:
             view = self._arg_entries.get("__free__")
             if view is None:
-                return {}, ()
+                return self._with_kept({}), ()
             buffer = view.get_buffer()
             text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
             args: dict[str, object] = {}
@@ -257,7 +473,7 @@ class BindEditor(Adw.Dialog):
                     continue
                 key, _, value = line.partition("=")
                 args[key.strip()] = _coerce(value.strip())
-            return args, ()
+            return self._with_kept(args), ()
 
         # Typed, not stringly: `ArgSpec.type` exists so an int argument reaches Lua as `9`
         # rather than `"9"`. The catalog carries the type precisely because the compositor
@@ -265,17 +481,30 @@ class BindEditor(Adw.Dialog):
         specs = {spec.name: spec for spec in entry.args}
         values: dict[str, object] = {}
         for name, row in self._arg_entries.items():
-            if not isinstance(row, Adw.EntryRow):
-                continue
-            text = row.get_text().strip()
-            if not text:
-                continue
-            values[name] = _typed(text, specs[name].type if name in specs else "string")
+            if isinstance(row, Gtk.Entry):
+                text = row.get_text().strip()
+                if text:
+                    values[name] = _typed(text, specs[name].type if name in specs else "string")
+            elif isinstance(row, Adw.SwitchRow):
+                values[name] = row.get_active()
+            elif isinstance(row, Adw.ComboRow):
+                if (chosen := self._bool_choices[name][row.get_selected()]) is not None:
+                    values[name] = chosen
+            else:
+                raise TypeError(f"argument {name!r} has a row the editor cannot read")
 
         if entry.positional:
             first = entry.args[0].name if entry.args else ""
             return {}, (values[first],) if first in values else ()
-        return values, ()
+        return self._with_kept(values), ()
+
+    def _with_kept(self, values: dict[str, object]) -> dict[str, object]:
+        """`values` plus the kept keys, in the saved call's key order; a typed key wins."""
+        if not self._kept or self._original is None or self._original.dispatcher is None:
+            return values
+        merged = {**self._kept, **values}
+        rank = {key: index for index, key in enumerate(self._original.dispatcher.args)}
+        return dict(sorted(merged.items(), key=lambda item: rank.get(item[0], len(rank))))
 
     def _in_submap(self) -> bool:
         """Whether `catchall` is a legal Trigger for this bind.
@@ -293,27 +522,56 @@ class BindEditor(Adw.Dialog):
             on_done=self._trigger.set_text,
             initial=self._trigger.get_text(),
             in_submap=self._in_submap(),
+            fetch_switches=self._fetch_switches,
         )
         dialog.present(self)
+
+    def _enables_on_save(self) -> bool:
+        """Whether Save turns the bind on: the Importer disabled it for a dead key, and the
+        trigger now names working keys.
+
+        The Importer's disable is not the user's choice, so a working key undoes it, as
+        "Fix trigger…" on the row does. A bind disabled with a working trigger (the conflict
+        surface's disable) is the user's choice and stays off. Without an xkb validator no
+        key reads as dead (`trigger_load_problem`), so nothing here enables: it fails safe.
+        """
+        original = self._original
+        if original is None or original.enabled:
+            return False
+        if not isinstance(trigger_load_problem(original.keys), DeadKeys):
+            return False
+        return trigger_load_problem(str(parse_trigger(self._trigger.get_text()))) is None
 
     def _validate(self) -> str:
         trigger = self._trigger.get_text().strip()
         if not trigger:
             return "A keybind needs a trigger."
-        # Typed triggers get the same hard block Capture applies. A dead keysym reaching
-        # the writer is not a cosmetic problem: Lua fails the whole config on it, and the
-        # compositor gives no error to find it by (ADR-0007).
-        problem = validate_trigger(trigger, in_submap=self._in_submap())
-        if problem is not None and problem.blocking:
-            return problem.full_text()
-        for left, right in INCOMPATIBLE:
-            if (
-                self._flag_switches[left].get_active()
-                and self._flag_switches[right].get_active()
-            ):
-                return f"{left} and {right} cannot both be set."
+        # Typed triggers get the same hard block Capture applies, through the one rule the
+        # Session enforces (`trigger_load_problem`). A dead keysym reaching the writer is
+        # not a cosmetic problem: Lua fails the whole config on it, and the compositor
+        # gives no error to find it by (ADR-0007). The one exception is a disabled bind
+        # whose trigger this edit left alone, such as a dead keysym the Importer disabled
+        # (#108): the Writer keeps a disabled bind commented out, so nothing dead reaches
+        # the compositor, and blocking would mean the user cannot fix the description until
+        # they have fixed the key.
+        problem = trigger_load_problem(str(parse_trigger(trigger)))
+        original = self._original
+        untouched_and_disabled = (
+            original is not None
+            and not original.enabled
+            and parse_trigger(trigger) == parse_trigger(original.keys)
+        )
+        if problem is not None and not untouched_and_disabled:
+            return problem.message
+        if conflict := self._flag_conflict():
+            return conflict
         entry = self._chosen
-        if entry is not None and not entry.free_form:
+        if entry is not None and entry.free_form_reason is None:
+            for spec in entry.args:
+                row = self._arg_entries.get(spec.name)
+                text = row.get_text().strip() if isinstance(row, Gtk.Entry) else ""
+                if text and (refusal := _type_refusal(spec.title(), spec.type, text)):
+                    return refusal
             args, positional = self._collect_args()
             for spec in entry.args:
                 if spec.required and spec.name not in args and not positional:
@@ -331,12 +589,12 @@ class BindEditor(Adw.Dialog):
         path = entry.path if entry else EXEC_PATH
 
         # `replace` rather than a fresh `BindOptions`, so editing a bind keeps the fields
-        # this dialog does not show. `device`, `auto_consuming`, `click`, `drag` and
-        # `submap_universal` all belong to binds this app can import but not yet edit
-        # (#105, #66), and building the options from the switches alone would delete them
-        # the first time a user touched an unrelated flag -- exactly the silent overwrite
-        # ADR-0007 forbids. `origin` is carried for the same reason: it is where the bind
-        # came from, and this edit does not move it.
+        # this dialog does not show. `device` is one: building the options from the switches
+        # alone would delete it the first time a user touched an unrelated flag -- exactly
+        # the silent overwrite ADR-0007 forbids. `release` is saved as the switch shows it:
+        # on for the user's own choice and for a click or drag, which imply it.
+        # `origin` is carried for the same reason: it is where the bind came from, and
+        # this edit does not move it.
         base = self._original.options if self._original else BindOptions()
         options = replace(
             base,
@@ -356,29 +614,63 @@ class BindEditor(Adw.Dialog):
                 options=options,
                 submap=self._submap,
                 # Editing must not quietly re-enable a bind the conflict surface
-                # disabled -- `enabled` is list state, not something this form shows.
-                enabled=self._original.enabled if self._original else True,
+                # disabled -- `enabled` is list state, not something this form shows. The
+                # one enable is a dead key fixed, and `_enables_note` says so above Save.
+                enabled=(self._original.enabled if self._original else True)
+                or self._enables_on_save(),
                 origin=self._original.origin if self._original else "",
             )
         )
         self.close()
 
 
+def _type_refusal(title: str, arg_type: str, text: str) -> str:
+    """Why `text` cannot be the field's type, or "" when it can: refused, never guessed.
+
+    Only text fields reach here. A yes-or-no argument is a choice row (`_bool_row`), so it
+    has no text to refuse.
+    """
+    if arg_type == "int" and not re.fullmatch(r"-?\d+", text):
+        return f"{title} must be a whole number."
+    return ""
+
+
 def _typed(text: str, arg_type: str) -> object:
     """One form field's text as the type the catalog says the dispatcher wants.
 
-    A field the user left in a shape the type cannot take comes back as the string they
-    typed rather than raising: `_validate` has already run, and silently substituting `0`
-    for what someone wrote would emit a bind that works and does the wrong thing.
+    `_validate` has refused any text the type cannot take, so the fallback to the string
+    as typed is only a guard: silently substituting `0` or `false` for what someone wrote
+    would emit a bind that works and does the wrong thing.
     """
     if arg_type == "int":
         try:
             return int(text)
         except ValueError:
             return text
-    if arg_type == "bool":
-        return text.strip().lower() in {"true", "yes", "1"}
     return text
+
+
+def _is_scalar(value: object) -> bool:
+    """A value one text field can show and read back: not a table, not missing."""
+    return isinstance(value, bool | int | float | str)
+
+
+def _field_text(value: object) -> str:
+    """A saved scalar as a typed form field shows it: Lua's `true`, never Python's `True`."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _free_text(value: object) -> str:
+    """A saved argument as the raw table shows it, such that `_coerce` reads back the same.
+
+    `str(False)` is `False`, which comes back as the string "False", and an unquoted `"3"`
+    comes back as the integer 3; either changes what Hyprland is told to do on Save.
+    """
+    if isinstance(value, str) and _coerce(value) != value:
+        return f'"{value}"'
+    return _field_text(value)
 
 
 def _coerce(text: str) -> object:
@@ -391,10 +683,9 @@ def _coerce(text: str) -> object:
         return text[1:-1]
     if text in {"true", "false"}:
         return text == "true"
-    try:
-        return int(text)
-    except ValueError:
-        return text
+    if _NUMBER.fullmatch(text):
+        return int(text) if text.lstrip("-").isdigit() else float(text)
+    return text
 
 
 def _dialog_body(child: Gtk.Widget) -> Gtk.Widget:

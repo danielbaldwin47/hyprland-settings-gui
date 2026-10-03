@@ -11,11 +11,9 @@
 `Session` is what the window calls, so this is the app's own path with the widgets left off.
 Nothing is stubbed: the real `Writer`, the real `Applier`, the real sockets.
 
-No CI workflow runs this, and that is the tier's decided cadence rather than an oversight:
-ADR-0011 tier 3 was amended during #55 from "nightly" to **on demand**, because a nested
-Hyprland needs a host Wayland session and a stock runner has none -- a scheduled job could
-only skip and report green. `HYPRTWEAKER_REQUIRE_HARNESS=1` turns the skip into a failure
-for a machine that is supposed to host it; #89 is the spike to give CI a virtual seat.
+CI runs this nightly, never per commit: the `harness` job in `.github/workflows/ci.yml` hands
+the nested Hyprland a `vkms` card in an Arch container (ADR-0011 tier 3, #195), with
+`HYPRTWEAKER_REQUIRE_HARNESS=1` so a skip fails the job instead of reporting green.
 
     pytest tests/integration/test_shell_session.py -m hyprland
 """
@@ -164,6 +162,43 @@ def test_values_round_trip_after_the_app_is_closed_and_reopened(
         assert second[GAPS_IN] == CssGaps(AFTER_GAPS, AFTER_GAPS, AFTER_GAPS, AFTER_GAPS)
         assert second[ROUNDING] == BEFORE[ROUNDING]
         assert set(second) == set(BEFORE), "and nothing beyond what the app itself wrote"
+
+
+def test_an_override_already_in_user_lua_is_badged_at_launch(
+    harness_home: Path, artifacts: Path
+) -> None:
+    """The drift scan (#191) against a real compositor: `user.lua` beats the app's Module
+    while the app is closed, and the next session knows before anything is edited."""
+    paths = config_root(harness_home)
+    paths.entrypoint.write_text(f'require("{paths.require_path(paths.user_lua)}")\n')
+
+    with start_nested(paths, harness_home, artifacts / "nested.log") as nested:
+        asyncio.run(run_session(nested, paths, {ROUNDING: AFTER_ROUNDING}))
+        with paths.user_lua.open("a", encoding="utf-8") as user_lua:
+            user_lua.write("hl.config({ decoration = { rounding = 3 } })\n")
+        nested.hyprctl_text("reload")
+        assert _value(nested.getoptions([ROUNDING])[ROUNDING]) == 3
+
+        async def launch() -> tuple[frozenset[str], frozenset[str]]:
+            loop = Loop()
+            session = Session(
+                spawn=loop.spawn,
+                schema=SCHEMA,
+                paths=paths,
+                app_version=APP_VERSION,
+                connect=lambda: nested.instance,
+            )
+            session.start()
+            await loop.settle()
+            assert session.live, session.offline_reason
+            marks = session.overridden, session.unapplied
+            await session.aclose()
+            return marks
+
+        overridden, unapplied = asyncio.run(launch())
+
+        assert overridden == {ROUNDING}
+        assert unapplied == frozenset()
 
 
 def _value(record: Any) -> Any:

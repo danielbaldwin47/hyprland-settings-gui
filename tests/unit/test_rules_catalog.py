@@ -112,3 +112,30 @@ class TestShape:
             catalog.match_props("monitor")
         with pytest.raises(ValueError, match="unknown rule kind"):
             catalog.effects("monitor")
+
+
+class TestGrammars:
+    def test_the_effects_with_a_helper_grammar(self) -> None:
+        graded = {e.name: e.grammar for e in catalog.WINDOW_EFFECTS if e.grammar is not None}
+
+        assert graded == {
+            "border_color": "gradient",
+            "fullscreen_state": "fullscreen_state",
+            "opacity": "opacity",
+            "suppress_event": "suppress_event",
+        }
+
+    def test_only_string_effects_carry_a_grammar(self) -> None:
+        for effect in (*catalog.WINDOW_EFFECTS, *catalog.LAYER_EFFECTS):
+            if effect.grammar is not None:
+                assert effect.type is catalog.EffectType.STRING, effect.name
+
+    def test_find_effect_returns_the_grammar(self) -> None:
+        found = catalog.find_effect("window", "opacity")
+
+        assert found is not None and found.grammar == "opacity"
+
+    def test_a_plain_text_effect_has_none(self) -> None:
+        found = catalog.find_effect("window", "animation")
+
+        assert found is not None and found.grammar is None

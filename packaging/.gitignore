@@ -1,0 +1,6 @@
+# makepkg output, so a build from this directory leaves the checkout clean.
+/src/
+/pkg/
+/hyprland-settings-gui/
+*.pkg.tar.*
+*.log

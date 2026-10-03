@@ -20,6 +20,7 @@ from __future__ import annotations
 from .mapping import import_lua, map_recording
 from .sandbox import (
     Call,
+    Cancelled,
     Consent,
     ConsentRequired,
     LuaUnavailable,
@@ -33,6 +34,7 @@ from .scripts import ScriptSource, render_legacy
 
 __all__ = [
     "Call",
+    "Cancelled",
     "Consent",
     "ConsentRequired",
     "LuaUnavailable",

@@ -21,6 +21,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+from _live_window import live_entity_window
+from started_app import started_application
+
 APP_VERSION = "0.0.0-test"
 
 ROUNDING = "decoration:rounding"
@@ -66,7 +70,7 @@ def build_window(tmp_path: Path) -> Any:
         connect=no_compositor,
     )
     session.undone = []
-    app = Adw.Application(application_id="io.github.danielbaldwin47.HyprtweakerTest")
+    app = started_application()
     return session, MainWindow(session, application=app)
 
 
@@ -136,6 +140,51 @@ def test_a_landed_gesture_is_offered_back(tmp_path: Path) -> None:
     assert toast.get_title() == f"{session.schema[ROUNDING].title} changed"
 
 
+def test_an_applied_preset_is_offered_back_by_its_name(tmp_path: Path) -> None:
+    from hyprtweaker.engine.apply import PresetStep
+
+    _session, window = build_window(tmp_path)
+
+    window.offer_undo(PresetStep("Nord", a_gesture()))
+
+    toast = window.undo_toast
+    assert toast is not None
+    assert toast.get_title() == "Applied Nord. Press Ctrl+Z to undo."
+    assert toast.get_button_label() == "Undo"
+
+
+def test_a_preset_name_with_markup_characters_shows_as_typed(tmp_path: Path) -> None:
+    """F7 of the #148 review: a toast parsed its title as markup, so `&` or `<` blanked it."""
+    from hyprtweaker.engine.apply import PresetStep
+
+    _session, window = build_window(tmp_path)
+
+    window.offer_undo(PresetStep("Rock & <Roll>", a_gesture()))
+
+    toast = window.undo_toast
+    assert toast.get_use_markup() is False
+    assert toast.get_title() == "Applied Rock & <Roll>. Press Ctrl+Z to undo."
+
+
+def test_a_preset_that_stood_with_a_key_not_taken_says_so_in_its_offer(tmp_path: Path) -> None:
+    """Finding 13 of the #153 review: the offer names what did not take."""
+    from hyprtweaker.engine.apply import PresetStep
+
+    session, window = build_window(tmp_path)
+    session._overridden = (ROUNDING,)
+    window.offer_undo(PresetStep("Nord", a_gesture()))
+    assert window.undo_toast.get_title() == (
+        "Applied Nord. 1 setting is overridden. Press Ctrl+Z to undo."
+    )
+
+    session._overridden = ()
+    session._unconfirmed = (ROUNDING,)
+    window.offer_undo(PresetStep("Nord", a_gesture()))
+    assert window.undo_toast.get_title() == (
+        "Applied Nord. 1 setting was not confirmed by Hyprland. Press Ctrl+Z to undo."
+    )
+
+
 def test_the_toasts_button_asks_the_session_to_undo(tmp_path: Path) -> None:
     session, window = build_window(tmp_path)
     window.offer_undo(a_gesture())
@@ -190,6 +239,34 @@ def test_an_auto_revert_toasts_and_withdraws_the_undo_offer(tmp_path: Path) -> N
     assert window.undo_toast is None
 
 
+@pytest.mark.parametrize(
+    ("outcome", "restored", "title"),
+    [
+        ("config-errors", True, "Hyprland rejected the change — reverted."),
+        ("config-errors", False, "Hyprland rejected the change, and it could not be reverted."),
+        ("write-failed", True, "The change could not be saved — reverted."),
+        ("write-failed", False, "The change could not be saved, and it could not be reverted."),
+    ],
+)
+def test_the_revert_toast_says_what_refused_the_change(
+    outcome: str, restored: bool, title: str
+) -> None:
+    """#227: a write the disk refused is reverted too, and Hyprland never saw it."""
+    from hyprtweaker.engine.apply import ApplyOutcome
+    from hyprtweaker.session import AutoRevert
+    from hyprtweaker.ui.shell.window import _revert_summary
+
+    revert = AutoRevert(
+        keys=(ROUNDING,),
+        modules=("options/general.lua",),
+        errors=(),
+        restored=restored,
+        outcome=ApplyOutcome(outcome),
+    )
+
+    assert _revert_summary(revert) == title
+
+
 def test_the_error_dialog_shows_the_lines_verbatim(tmp_path: Path) -> None:
     """The `file:line` prefix is the only evidence of whose file failed, and the only part a
     user can paste into an editor's go-to-line box (ADR-0016)."""
@@ -225,3 +302,116 @@ def _label_text(widget: Any) -> str | None:
             return found
         child = child.get_next_sibling()
     return None
+
+
+# --- entity steps (#189) ----------------------------------------------------------------------
+
+
+def exec_bind(keys: str) -> Any:
+    from hyprtweaker.engine.model.entities import Bind, DispatcherCall
+
+    return Bind(keys=keys, dispatcher=DispatcherCall(path="exec_cmd", positional=("foot",)))
+
+
+def test_removing_a_bind_offers_bind_removed_and_undo_restores_it(tmp_path: Path) -> None:
+    """#189 AC 5: the toast names the gesture, and its button puts the bind back in place."""
+    session, window, applier = live_entity_window(tmp_path)
+    for keys in ("SUPER + A", "SUPER + B", "SUPER + C"):
+        session.add_bind(exec_bind(keys))
+    applier.settle()
+
+    window._remove_bind(1)
+    applier.settle()
+
+    toast = window.undo_toast
+    assert toast is not None
+    assert toast.get_title() == "Keybind removed"
+    assert toast.get_button_label() == "Undo"
+
+    page = window.binds_page
+    assert page is not None
+    assert len(page.rows) == 2
+
+    toast.emit("button-clicked")
+
+    assert [bind.keys for bind in session.model.entities.binds] == [
+        "SUPER + A",
+        "SUPER + B",
+        "SUPER + C",
+    ]
+    assert len(page.rows) == 3, "the Binds page still shows the list from before the undo"
+
+
+def test_ctrl_z_over_a_removal_in_flight_undoes_it_once_it_lands(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Review of #151, finding 12: add A, add B, remove A, Ctrl+Z before the removal has
+    reported. It used to drop "Keybind added" and say it could not undo; now it waits, puts
+    A back, and leaves B's step to undo next."""
+    session, window, applier = live_entity_window(tmp_path)
+    for keys in ("SUPER + A", "SUPER + B"):
+        session.add_bind(exec_bind(keys))
+        applier.settle()
+    toasts: list[str] = []
+    monkeypatch.setattr(window._toasts, "add_toast", lambda t: toasts.append(t.get_title()))
+
+    window._remove_bind(0)
+    window.activate_action("win.undo")
+    assert toasts == [], "Ctrl+Z over an edit in flight was refused"
+
+    applier.settle()
+    assert [bind.keys for bind in session.model.entities.binds] == ["SUPER + A", "SUPER + B"]
+    assert window.binds_page is not None
+    assert len(window.binds_page.rows) == 2
+    assert toasts == [], "an undo offer was raised for the removal already being undone"
+    applier.settle()
+    window.activate_action("win.undo")
+    applier.settle()
+    assert [bind.keys for bind in session.model.entities.binds] == ["SUPER + A"]
+
+
+def test_a_reverted_display_change_leaves_nothing_to_undo(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """#189 AC 4: the edit never stood, so neither the stack nor a toast mentions it."""
+    from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog
+
+    session, window, applier = live_entity_window(tmp_path)
+    shown: list[Any] = []
+    monkeypatch.setattr(
+        ConfirmRevertDialog, "present", lambda self, _parent=None: shown.append(self)
+    )
+
+    window._apply_monitor_breaking("eDP-1", {"mode": "1920x1080@144"})
+    window.flush_monitor_edits()
+    applier.settle()
+    (dialog,) = shown
+    dialog._on_response(dialog, "revert")
+    applier.settle()
+
+    assert session.monitor_rules == []
+    assert session.last_gesture is None
+    assert window.undo_toast is None
+
+
+def test_a_kept_display_change_is_one_step(tmp_path: Path, monkeypatch: Any) -> None:
+    from hyprtweaker.ui.dialogs.confirm_revert import ConfirmRevertDialog
+
+    session, window, applier = live_entity_window(tmp_path)
+    shown: list[Any] = []
+    monkeypatch.setattr(
+        ConfirmRevertDialog, "present", lambda self, _parent=None: shown.append(self)
+    )
+
+    window._apply_monitor_breaking("eDP-1", {"mode": "1920x1080@144"})
+    window.flush_monitor_edits()
+    applier.settle()
+    assert window.undo_toast is None, "a held step raised a toast mid-countdown"
+    (dialog,) = shown
+    dialog._on_response(dialog, "keep")
+
+    toast = window.undo_toast
+    assert toast is not None
+    assert toast.get_title() == "Display changed"
+    toast.emit("button-clicked")
+    assert session.monitor_rules == []

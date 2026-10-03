@@ -17,7 +17,8 @@ Four modules, in dependency order:
 - `reread.py` -- `read_state`, the full state re-read that answers a foreign reload and
   recovers the model at startup;
 - `ownership.py` -- `attribute`, whose file a `configerrors` line blames (ADR-0016);
-- `undo.py` -- `UndoStack`, one gesture per step, replayed through the pipeline above;
+- `undo.py` -- `UndoStack`, one Option or Entity gesture per step, replayed through the
+  pipeline above;
 - `applier.py` -- `Applier`, the three wired together, which is what the app holds.
 
 Two of those are inputs to recovery rather than to applying, and the split is deliberate.
@@ -52,7 +53,7 @@ from .preview import EvalPreview, preview_code
 from .queue import DEBOUNCE_SECONDS, ApplyQueue, Transaction
 from .recovery import Action, Problem, Recovery, plan
 from .reread import ReRead, app_owned_options, read_state
-from .restore import RestoreTransaction
+from .restore import EntrypointTransaction, RestoreTransaction
 from .result import UNREADABLE, ApplyOutcome, ApplyResult, Mismatch
 from .transaction import (
     RELOAD_TIMEOUT_SECONDS,
@@ -61,7 +62,19 @@ from .transaction import (
     Reloader,
     ReloadReport,
 )
-from .undo import UNDO_MAX_DEPTH, Edit, UndoStack, UndoStep
+from .undo import (
+    UNDO_MAX_DEPTH,
+    Edit,
+    EntityEdit,
+    EntityStep,
+    PresetStep,
+    SourceChange,
+    Step,
+    UndoGroup,
+    UndoStack,
+    UndoStep,
+    WallpaperChange,
+)
 
 __all__ = [
     "DEBOUNCE_SECONDS",
@@ -77,19 +90,27 @@ __all__ = [
     "ApplyTransaction",
     "ConfigError",
     "Edit",
+    "EntityEdit",
+    "EntityStep",
+    "EntrypointTransaction",
     "EvalPreview",
     "ForeignReloadWatch",
     "Mismatch",
     "Ownership",
+    "PresetStep",
     "Problem",
     "ReRead",
     "Recovery",
     "ReloadReport",
     "Reloader",
     "RestoreTransaction",
+    "SourceChange",
+    "Step",
     "Transaction",
+    "UndoGroup",
     "UndoStack",
     "UndoStep",
+    "WallpaperChange",
     "app_owned_options",
     "attribute",
     "own_write_modules",

@@ -25,7 +25,6 @@ from functools import lru_cache
 
 __all__ = ["known_keysym", "validator_available"]
 
-XKB_KEYSYM_NO_FLAGS = 0
 XKB_KEYSYM_CASE_INSENSITIVE = 1
 """The flag Hyprland passes, which is why `Q` and `q` both bind lowercase q."""
 

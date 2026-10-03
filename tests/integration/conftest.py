@@ -20,15 +20,15 @@ attached to every marked item.
 `HYPRTWEAKER_REQUIRE_HARNESS=1` turns the skip into a failure -- the same escape hatch
 `tests/ui/conftest.py` gives the UI tier. Any environment that is *supposed* to be able to
 host a compositor should not go green by quietly skipping everything. That variable is also
-what makes the tier safe to schedule the day it can be: an automated run that skips its whole
-point would otherwise report success (ADR-0011 tier 3, amended during #55; #89).
+what makes the nightly CI job honest: an automated run that skips its whole point would
+otherwise report success (ADR-0011 tier 3, amended during #55 and #195).
 """
 
 from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 
 import pytest
@@ -39,9 +39,14 @@ for entry in (str(TESTS_INTEGRATION), str(ROOT / "src")):
     if entry not in sys.path:
         sys.path.insert(0, entry)
 
-from harness import HarnessUnavailable, unavailable_reason  # noqa: E402
-
-REQUIRE_VARIABLE = "HYPRTWEAKER_REQUIRE_HARNESS"
+from harness import (  # noqa: E402
+    REQUIRE_VARIABLE,
+    GuardedInstance,
+    HarnessUnavailable,
+    NestedHyprland,
+    guarded,
+    unavailable_reason,
+)
 
 
 # trylast, and scoped by path, for the reasons tests/ui/conftest.py documents: pytest hands
@@ -121,3 +126,31 @@ def artifacts(tmp_path: Path) -> Path:
     directory = tmp_path / "artifacts"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
+
+
+#: Enough config for a compositor to answer IPC; tests that need values write their own.
+GUARDED_CONFIG = "hl.config({ general = { gaps_in = 3 } })\n"
+
+
+@pytest.fixture(scope="module")
+def guarded_hyprland(tmp_path_factory: pytest.TempPathFactory) -> Iterator[GuardedInstance]:
+    """A nested Hyprland for one module, handed out only through the desktop guard.
+
+    Module-scoped: the tests that use it read, they do not reconfigure, so one compositor
+    serves them all. `HarnessUnavailable` is handled here rather than by
+    `pytest_runtest_call`, which does not see fixture setup.
+    """
+    home = tmp_path_factory.mktemp("guarded-home")
+    config = home / "hyprland.lua"
+    config.write_text(GUARDED_CONFIG)
+    nested = NestedHyprland(config, home=home, log=home / "nested.log")
+    try:
+        nested.start()
+    except HarnessUnavailable as unavailable:
+        if os.environ.get(REQUIRE_VARIABLE) == "1":
+            raise
+        pytest.skip(f"Harness tier: {unavailable}")
+    try:
+        yield guarded(nested.instance)
+    finally:
+        nested.stop()

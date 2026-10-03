@@ -1,15 +1,21 @@
 """The Manifest: what the app wrote, and proof of what it looked like (ADR-0005).
 
-`manifest.json` sits in the App dir and answers three questions nothing else can:
+`manifest.json` sits in the App dir and answers four questions nothing else can:
 
-- **Which Hyprland version's Schema produced these Modules?** A user who upgrades the
-  compositor needs the app to notice, so retired Options can be kept rather than dropped
-  (ADR-0012).
+- **Which Hyprland version's Schema produced these Modules?** Recorded on every write.
+- **What did the user set that a Hyprland release removed?** `retired` keeps each such
+  Option's value and the version that retired it, so the app stops emitting the key without
+  losing the value, and puts it back on a downgrade or a `renamed_from` rename (ADR-0012
+  §Retirement). Detection, capture and restore are `state/retirement.py`; this file only
+  stores the result, and `retired_notices` the releases whose one-time notice was seen.
 - **Did anyone hand-edit an app-owned file?** Each Module carries the SHA-256 of the bytes
   the app last wrote. A mismatch means an editor got there first, and the recovery is a
   banner offering restore-or-adopt -- *never* a silent overwrite (ADR-0016).
 - **Where did this config come from?** Migration provenance (date, source hash) survives
   every later write, because the Importer records it once and the writer must not lose it.
+- **Which theming tools does the Entrypoint load?** `bridges` holds one entry per Bridge
+  module -- tool, line, file, mechanism, and whether it loads, waits for the tool's first
+  run, or is off for the Color source (ADR-0006 §Placement, `engine/bridge/entries.py`).
 
 The file is plain JSON with a `format_version`, read defensively: a corrupt or truncated
 Manifest never crashes the app. It does not read as "nothing was ever written" either --
@@ -26,12 +32,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from ..bridge.entries import BridgeEntry, BridgeState, entries_for, in_require_order
+from ..bridge.registry import ToolSpec
 from ..paths import ENTRYPOINT_NAME, ConfigPaths
+from ..schema.resolve import version_key
 
 FORMAT_VERSION = 4
 """Bumped from 1 when `ModuleRecord`'s `bytes` key became `size` (#51, pre-release), from
@@ -45,6 +55,12 @@ and guessing "all of the Section's" is exactly the over-claim `options` exists t
 version 3 file cannot say which requires are quarantined, and reading it as "none are"
 would silently re-enable a `user.lua` the user disabled because it was breaking their
 config -- putting the error back without ever saying so.
+
+Not bumped for `retired` (#134) or `bridges` (#163), and not to be bumped for a key like
+them: a bump makes every existing Manifest read as damaged, so the Writer would treat
+every file as hand-edited and stop writing until each user answered the prompt. A key
+whose absence reads correctly as
+"none" is added optional and read defensively instead.
 """
 
 
@@ -120,6 +136,88 @@ class ModuleRecord:
         )
 
 
+class RetireReason(StrEnum):
+    """Why the app stopped writing an Option, which decides whether the user is told.
+
+    Every reason is kept and restored the same way (`state/retirement.py`); only `REMOVED`
+    is news. The quiet ones describe an Option the user's Hyprland may well still have,
+    where a "removed" notice or pill would be false."""
+
+    REMOVED = "removed"
+    """A Hyprland release, or the schema the app loaded for it, no longer has the Option.
+    Announced once per release (`RetiredNotice`) and badged `Retired in <ver>` on its Row."""
+
+    NOT_IN_SCHEMA = "not_in_schema"
+    """The loaded schema lacks it but the running Hyprland still describes it: the startup
+    read missed a compositor newer than every shipped schema, so its supplement is not
+    loaded (#214). The next start that reads it loads the supplement and restores it."""
+
+    PLUGIN_NOT_LOADED = "plugin_not_loaded"
+    """A `plugin:*` Option the running Hyprland does not describe because the plugin is not
+    loaded now (#175). Restored once the plugin is loaded again."""
+
+    @property
+    def announced(self) -> bool:
+        """Whether the user is told: a Retired notice, and the Row's `Retired in` pill."""
+        return self is RetireReason.REMOVED
+
+
+@dataclass(frozen=True, slots=True)
+class RetiredValue:
+    """One retired Option's kept value: what it was, and the release that removed it."""
+
+    retired_in: str
+    """The Hyprland version the Option was retired in -- the Row's `Retired in <ver>`."""
+
+    value: Any
+    """The value as the Lua importer reads it from the app's own Module: JSON-native, the
+    shape `parse_lua` takes (a gradient is `{"colors": [...], "angle": 45}`).
+
+    Raw rather than typed, because typing needs the Option's schema entry and a retired
+    Option may have none; restoring parses it against whichever Option takes it back."""
+
+    reason: RetireReason = RetireReason.REMOVED
+    """Why it was retired. Added without a `FORMAT_VERSION` bump: an entry written before
+    the key existed, or with a reason this build does not know, reads as `REMOVED`."""
+
+    def as_json(self) -> dict[str, Any]:
+        return {"retired_in": self.retired_in, "value": self.value, "reason": self.reason}
+
+
+def _retired_from_json(payload: Any) -> dict[str, RetiredValue]:
+    """The `retired` table, entry by entry: a malformed one is dropped, never fatal."""
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        str(name): RetiredValue(entry["retired_in"], entry["value"], _reason(entry))
+        for name, entry in payload.items()
+        if isinstance(entry, dict)
+        and isinstance(entry.get("retired_in"), str)
+        and "value" in entry
+    }
+
+
+def _reason(entry: dict[str, Any]) -> RetireReason:
+    reason = entry.get("reason")
+    known = {member.value for member in RetireReason}
+    return RetireReason(reason) if reason in known else RetireReason.REMOVED
+
+
+def _bridges_from_json(payload: Any) -> tuple[BridgeEntry, ...]:
+    """The `bridges` list, entry by entry: a malformed one is dropped, never fatal."""
+    parsed = (BridgeEntry.from_json(entry) for entry in _list(payload))
+    return in_require_order(entry for entry in parsed if entry is not None)
+
+
+def _list(payload: Any) -> list[Any]:
+    return payload if isinstance(payload, list) else []
+
+
+def _releases(versions: Iterable[str]) -> tuple[str, ...]:
+    """Each release once, oldest first (`0.57.10` after `0.57.2`), so writes are stable."""
+    return tuple(sorted(set(versions), key=version_key))
+
+
 @dataclass(frozen=True, slots=True)
 class Manifest:
     """The App dir's record of itself."""
@@ -160,6 +258,39 @@ class Manifest:
     Only ever holds foreign requires. An app-owned Module is recovered by *fixing* it --
     Restore last good, or the next write -- and leaving out a Module the model still renders
     would put the model and the Entrypoint permanently at odds.
+    """
+
+    retired: dict[str, RetiredValue] = field(default_factory=dict)
+    """Values of Options the user set that a Hyprland release removed, by colon-form name.
+
+    ADR-0012 §Retirement: the app stops emitting a removed key (emitting it is a config
+    error under Lua) but keeps the value, so a downgrade or a `renamed_from` mapping can
+    put it back (`state/retirement.py`). Here rather than anywhere else because the value
+    has no other home once the Module is rewritten without it: the schema may no longer
+    describe the Option and the compositor answers `NoSuchOption` for it.
+    """
+
+    retired_notices: tuple[str, ...] = ()
+    """The releases whose Retired notice the user has seen, in release order.
+
+    ADR-0012's "a one-time notice lists the release's retired options": a release appears
+    here once its notice is dismissed, not when it is put on screen, so an app closed before
+    the user saw it says it again on the next start. Per release rather than a flag per
+    `retired` entry, because an entry leaves `retired` when its Option comes back, and a
+    release whose notice was shown stays shown.
+    """
+
+    bridges: tuple[BridgeEntry, ...] = ()
+    """The Bridge modules the Entrypoint carries a line for, in require order (ADR-0006).
+
+    Every entry always renders one line, loading or commented with its reason, so the
+    Entrypoint alone says what each bridge is doing and the Color source can be read off it
+    (`engine/bridge/entries.py`). Kept apart from `modules`: those are the app's files,
+    hashed for hand-edit detection and pruned when unrendered; a Bridge module is the tool's
+    and is never either. Quarantine of one is still `quarantined`, by module name, and wins.
+
+    Added without a `FORMAT_VERSION` bump: a Manifest without the key has no bridges, which
+    is what every Manifest written before #163 meant.
     """
 
     @classmethod
@@ -206,6 +337,13 @@ class Manifest:
                 if isinstance(raw_quarantined, list)
                 else ()
             ),
+            retired=_retired_from_json(payload.get("retired")),
+            bridges=_bridges_from_json(payload.get("bridges")),
+            retired_notices=_releases(
+                version
+                for version in _list(payload.get("retired_notices"))
+                if isinstance(version, str)
+            ),
         )
 
     def as_json(self) -> dict[str, Any]:
@@ -219,6 +357,9 @@ class Manifest:
             },
             "unverified": list(self.unverified),
             "quarantined": list(self.quarantined),
+            "retired": {name: entry.as_json() for name, entry in sorted(self.retired.items())},
+            "retired_notices": list(self.retired_notices),
+            "bridges": [entry.as_json() for entry in self.bridges],
             "migration": self.migration,
         }
 
@@ -248,6 +389,41 @@ class Manifest:
     def with_quarantine(self, requires: Sequence[str]) -> Manifest:
         """The Manifest with exactly `requires` quarantined. Sorted, so writes are stable."""
         return replace(self, quarantined=tuple(sorted(set(requires))))
+
+    def with_bridges(self, entries: Sequence[BridgeEntry]) -> Manifest:
+        """The Manifest carrying exactly `entries`, in require order."""
+        return replace(self, bridges=in_require_order(entries))
+
+    def add_bridge(self, spec: ToolSpec, *, present: Collection[str]) -> Manifest:
+        """Record `spec`'s modules as wired, replacing any entry the tool had. Idempotent.
+
+        Each loads if its file is in `present` (hypr-dir-relative paths that exist) and
+        waits for the tool's first run otherwise. Never gated: a Color source switch is
+        `bridge_states_for`, after this. What #166's `wire` calls.
+        """
+        kept = [entry for entry in self.bridges if entry.tool != spec.tool]
+        return self.with_bridges([*kept, *entries_for(spec, present=present)])
+
+    def set_bridge_state(self, module: str, state: BridgeState) -> Manifest:
+        """The Manifest with `module`'s entry in `state`. Unknown modules are ignored."""
+        return self.with_bridges(
+            [
+                entry.with_state(state) if entry.module == module else entry
+                for entry in self.bridges
+            ]
+        )
+
+    def remove_bridge(self, tool: str) -> Manifest:
+        """The Manifest without any of `tool`'s entries. Idempotent: what `unwire` calls."""
+        return self.with_bridges([entry for entry in self.bridges if entry.tool != tool])
+
+    def with_retired(self, retired: Mapping[str, RetiredValue]) -> Manifest:
+        """The Manifest keeping exactly `retired` (ADR-0012; `state/retirement.py`)."""
+        return replace(self, retired=dict(retired))
+
+    def with_retired_notice(self, release: str) -> Manifest:
+        """The Manifest recording that `release`'s Retired notice was seen. Idempotent."""
+        return replace(self, retired_notices=_releases((*self.retired_notices, release)))
 
     def path_for(self, name: str, paths: ConfigPaths) -> Path:
         """Where a recorded name lives -- the Entrypoint is the one outside the App dir."""

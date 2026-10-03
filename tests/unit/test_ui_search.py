@@ -72,6 +72,16 @@ def test_finds_by_help_text() -> None:
     assert any(hit.field is Field.DESCRIPTION for hit in hits)
 
 
+def test_finds_a_setting_by_a_word_only_its_curated_help_has() -> None:
+    """`grain` is in no upstream line: only `decoration:blur:noise`'s written help has it
+    (#129)."""
+    hits = INDEX.query("grain")
+
+    assert [(hit.name, hit.field) for hit in hits] == [
+        ("decoration:blur:noise", Field.DESCRIPTION)
+    ]
+
+
 def test_is_case_insensitive() -> None:
     assert [hit.name for hit in INDEX.query("BORDER SIZE")] == [
         hit.name for hit in INDEX.query("border size")
@@ -109,11 +119,12 @@ def test_word_prefix_outranks_bare_substring() -> None:
 def test_title_outranks_a_stronger_key_match() -> None:
     """ADR-0017's field order beats match quality: title substring > dotted-key prefix.
 
-    `group` is the case that makes the rule visible -- 34 Options have keys *beginning*
-    `group.`, and the two whose titles merely contain "group" still come first, because
-    someone typing a word is naming a setting rather than addressing a Section.
+    `cursor` is the case that makes the rule visible -- 15 Options have keys *beginning*
+    `cursor.`, and "Use hyprcursor", whose title merely contains "cursor", still comes
+    before them, because someone typing a word is naming a setting rather than addressing a
+    Section.
     """
-    hits = INDEX.query("group")
+    hits = INDEX.query("cursor")
     last_title = max(i for i, hit in enumerate(hits) if hit.field is Field.TITLE)
     first_key = min(i for i, hit in enumerate(hits) if hit.field is Field.KEY)
 
