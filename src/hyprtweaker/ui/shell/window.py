@@ -51,6 +51,7 @@ from hyprtweaker.engine.apply import (  # noqa: E402
 )
 from hyprtweaker.engine.apply import plan as recovery_plan  # noqa: E402
 from hyprtweaker.engine.binds_analysis import submap_names  # noqa: E402
+from hyprtweaker.engine.bridge.wire import shown as tilde_path  # noqa: E402
 from hyprtweaker.engine.importer.loss import LossReport  # noqa: E402
 from hyprtweaker.engine.ipc import CommandClient, NoInstance  # noqa: E402
 from hyprtweaker.engine.migration.detect import ConfigKind, Detection, detect  # noqa: E402
@@ -2567,7 +2568,19 @@ class MainWindow(Adw.ApplicationWindow):
     def _show_in_folder(self, path: Path) -> None:
         """Open the folder holding `path`, with `path` selected where the file manager can."""
         launcher = Gtk.FileLauncher(file=Gio.File.new_for_path(str(path)))
-        launcher.open_containing_folder(self, None, None)
+
+        def finished(source: Gtk.FileLauncher, result: Gio.AsyncResult) -> None:
+            try:
+                source.open_containing_folder_finish(result)
+            except GLib.Error as error:
+                # No file manager, or a portal that refused: the path is the way left to
+                # the copy (review m1 F8).
+                _log.info("could not open the folder of %s: %s", path, error)
+                where = tilde_path(path, self._session.paths)
+                said = f"The folder could not be opened. The copy is {where}"
+                self._toasts.add_toast(plain_toast(said, timeout=10, wrap=True))
+
+        launcher.open_containing_folder(self, None, finished)
 
     # --- plugins (#174) -------------------------------------------------------------------
 

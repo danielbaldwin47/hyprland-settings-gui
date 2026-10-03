@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from started_app import started_application
 
 APP_VERSION = "0.0.0-test"
@@ -371,6 +372,38 @@ def test_a_restore_offers_the_copy_of_the_edited_file_it_kept(tmp_path: Path) ->
     window._show_in_folder = shown.append
     toast.emit("button-clicked")
     assert shown == [copy]
+
+
+def test_show_copy_that_cannot_open_a_folder_names_the_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review m1 F8: with no file manager, or a portal that refuses, Show copy did nothing
+    and the toast had no path. The failure now toasts where the copy is."""
+    from gi.repository import GLib
+
+    from hyprtweaker.ui.shell import window as window_module
+
+    class NoFileManager:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def open_containing_folder(self, _parent: object, _cancel: object, done: Any) -> None:
+            done(self, None)
+
+        def open_containing_folder_finish(self, _result: object) -> bool:
+            raise GLib.Error("No application is registered as handling this file")
+
+    _session, window = build_window(tmp_path, (APP_ERROR,))
+    monkeypatch.setattr(window_module.Gtk, "FileLauncher", NoFileManager)
+    copy = tmp_path / "state" / "edited-copies" / "20261003-120000" / "options" / "general.lua"
+
+    window._show_in_folder(copy)
+
+    toast = window._toasts_shown[-1]
+    assert window_module.toast_text(toast) == (
+        f"The folder could not be opened. The copy is {copy}"
+    )
+    assert toast.get_custom_title().get_wrap()
 
 
 def test_a_restore_that_cannot_keep_a_copy_says_nothing_was_restored(tmp_path: Path) -> None:
