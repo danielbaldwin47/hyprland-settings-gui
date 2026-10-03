@@ -257,12 +257,15 @@ class PresetsGroup:
         self.save_button.set_tooltip_text(
             "Keep the current look as a preset" if live else save_off
         )
+        presets = self._session.presets()
+        # Read-only and empty, the empty row says the cause; said here as well it would be
+        # the same long sentence twice, one above the other.
+        reason = (self._session.offline_sentence or "") if presets else ""
         self.group.set_description(
             DESCRIPTION
             if live
-            else READ_ONLY_DESCRIPTION.format(reason=self._session.offline_sentence or "")
+            else " ".join(READ_ONLY_DESCRIPTION.format(reason=reason).split())
         )
-        presets = self._session.presets()
         remembered = self._actions.remembered()
         if remembered is not None:
             title, subtitle = remembered_row(remembered)

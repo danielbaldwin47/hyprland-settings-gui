@@ -301,6 +301,8 @@ def test_while_save_is_off_the_empty_group_says_why_not_to_press_it(
             f"your settings. {cause}",
         ),
     )
+    # The cause once on the group, not twice: the empty row carries it.
+    assert group.group.get_description() == "Applying is off. You can still export and import."
 
 
 def test_a_row_names_what_a_preset_keeps_and_when(tmp_path: Path) -> None:
