@@ -1988,7 +1988,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._refresh_entity_pages(DISPLAY_KINDS)
 
     def _end_countdown_over_nothing(self) -> None:
-        """Close the open countdown when a refusal took back all it was asking about (#272).
+        """Close the open countdown when a refusal or a failed commit took back all it was
+        asking about (#272, review addendum 1).
 
         The display is as it was when the countdown opened: Keep would record nothing, and
         Revert, a write into the file that refused, would be refused too. Answered as Keep,
@@ -2268,6 +2269,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         if not result.ok:
             self._dismiss_undo()
+            # A display commit that did not stand: nothing is left to keep or revert.
+            self._end_countdown_over_nothing()
         if not result.ok and not result.errors and not result.mismatches:
             toast = plain_toast(_result_summary(result), timeout=5)
             self._result_toast = toast
@@ -2283,6 +2286,7 @@ class MainWindow(Adw.ApplicationWindow):
         compositor's copy.
         """
         self._dismiss_undo()
+        self._end_countdown_over_nothing()
         toast = plain_toast(_revert_summary(revert), timeout=8)
         if revert.errors:
             toast.set_button_label("Details")

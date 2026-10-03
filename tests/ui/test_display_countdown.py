@@ -382,6 +382,37 @@ def test_an_activation_the_writer_kept_off_disk_ends_its_countdown(
     assert window.display_confirm is None
 
 
+def test_a_breaking_edit_whose_write_failed_ends_its_countdown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Review addendum 1 (carry 50/54/79): the write failed, the display went back, and the
+    countdown still asked to keep a change that did not stand. It closes, answered Keep."""
+    from hyprtweaker.engine.apply import ApplyOutcome, ApplyResult
+
+    session, window, applier, shown = countdown_window(tmp_path, monkeypatch)
+    from hyprtweaker.session import AutoRevert
+
+    window._apply_monitor_breaking("eDP-1", {"scale": 2})
+    window.flush_monitor_edits()
+    assert len(shown) == 1
+
+    applier.reported = applier.serial
+    session._applied(ApplyResult(ApplyOutcome.WRITE_FAILED, entities=applier.serial))
+    # What the session says once its auto-revert has landed; this tier runs no revert write.
+    window.show_revert(
+        AutoRevert(
+            keys=(),
+            modules=("monitors.lua",),
+            errors=(),
+            restored=True,
+            outcome=ApplyOutcome.WRITE_FAILED,
+        )
+    )
+
+    assert rules(session) == []
+    assert window.display_confirm is None
+
+
 def test_a_refusal_after_a_change_that_stood_keeps_the_countdown(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
